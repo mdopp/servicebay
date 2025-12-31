@@ -64,6 +64,18 @@ if [ $MISSING_DEPS -eq 1 ]; then
     exit 1
 fi
 
+# --- Configuration ---
+
+echo ""
+read -p "Enter desired port [3000]: " INPUT_PORT
+PORT=${INPUT_PORT:-3000}
+
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    error "Invalid port: $PORT. Using default 3000."
+    PORT=3000
+fi
+log "Using port: $PORT"
+
 # --- Installation ---
 
 if [ -d "$INSTALL_DIR" ]; then
