@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, RefreshCw, ChevronLeft, ChevronRight, Github } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, RefreshCw, ChevronLeft, Github } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 
 const plugins = [
@@ -20,6 +20,7 @@ export default function Sidebar() {
 
   useEffect(() => {
     if (window.innerWidth < 768) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsCollapsed(true);
     }
   }, []);

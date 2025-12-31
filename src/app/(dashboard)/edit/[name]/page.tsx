@@ -20,7 +20,7 @@ export default async function EditPage({ params }: { params: Promise<{ name: str
       yamlPath: files.yamlPath,
       servicePath: files.servicePath
     };
-  } catch (e) {
+  } catch {
     return <div className="text-center mt-8 text-red-600">Service not found</div>;
   }
 

@@ -1,6 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
-import { NextRequest, NextResponse } from 'next/server';
 
 // Use a fixed fallback key for development/unconfigured environments to ensure
 // consistency between Edge Runtime (Middleware) and Node Runtime (API).
@@ -8,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const SECRET_KEY = process.env.AUTH_SECRET || 'servicebay-insecure-fallback-secret-key-change-me';
 const key = new TextEncoder().encode(SECRET_KEY);
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function encrypt(payload: any) {
   return await new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
@@ -16,13 +16,14 @@ export async function encrypt(payload: any) {
     .sign(key);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function decrypt(input: string): Promise<any> {
   try {
     const { payload } = await jwtVerify(input, key, {
       algorithms: ['HS256'],
     });
     return payload;
-  } catch (error) {
+  } catch {
     return null;
   }
 }

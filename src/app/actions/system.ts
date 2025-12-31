@@ -92,7 +92,7 @@ export async function getSystemUpdates(): Promise<{ count: number; list: string[
     }
     
     return { count, list };
-  } catch (e) {
+  } catch {
     // Fallback or ignore if not supported
     return { count: 0, list: [] };
   }

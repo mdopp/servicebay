@@ -50,7 +50,7 @@ export async function getReadme(name: string, type: 'template' | 'stack'): Promi
     const basePath = type === 'stack' ? STACKS_PATH : TEMPLATES_PATH;
     const filePath = path.join(basePath, name, 'README.md');
     return await fs.readFile(filePath, 'utf-8');
-  } catch (e) {
+  } catch {
       return null;
   }
 }
@@ -59,7 +59,7 @@ export async function getTemplateYaml(name: string): Promise<string | null> {
   try {
     const filePath = path.join(TEMPLATES_PATH, name, 'template.yml');
     return await fs.readFile(filePath, 'utf-8');
-  } catch (e) {
+  } catch {
       return null;
   }
 }

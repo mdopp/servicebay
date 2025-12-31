@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, use } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { Terminal as TerminalIcon, ArrowLeft, Eraser, RefreshCw, X } from 'lucide-react';
+import { Terminal as TerminalIcon, ArrowLeft, Eraser, RefreshCw } from 'lucide-react';
 import type { TerminalRef } from '@/components/Terminal';
 
 const Terminal = dynamic(() => import('@/components/Terminal'), { 

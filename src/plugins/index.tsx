@@ -1,4 +1,4 @@
-import { Box, Layers, HardDrive, Activity, DownloadCloud, Terminal } from 'lucide-react';
+import { Box, Layers, Activity, DownloadCloud, Terminal } from 'lucide-react';
 import { Plugin } from './types';
 import ServicesPlugin from './ServicesPlugin';
 import ContainersPlugin from './ContainersPlugin';

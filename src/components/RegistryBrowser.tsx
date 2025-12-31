@@ -15,6 +15,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
 
   useEffect(() => {
     if (selected) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoading(true);
       fetchReadme(selected.name, selected.type).then((content) => {
         setReadme(content || '# No README found');

@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
@@ -53,8 +55,8 @@ export async function listServices(): Promise<ServiceInfo[]> {
 
     let active = false;
     let status = 'unknown';
-    let ports: { host?: string; container: string }[] = [];
-    let volumes: { host: string; container: string }[] = [];
+    const ports: { host?: string; container: string }[] = [];
+    const volumes: { host: string; container: string }[] = [];
 
     try {
       const { stdout } = await execAsync(`systemctl --user is-active ${name}.service`);
@@ -258,7 +260,7 @@ export async function getServiceStatus(name: string) {
 
 export async function updateAndRestartService(name: string) {
   const { yamlPath } = await getServiceFiles(name);
-  let logs: string[] = [];
+  const logs: string[] = [];
 
   if (yamlPath) {
     try {
@@ -375,7 +377,7 @@ export async function renameService(oldName: string, newName: string) {
   }
 
   // 3. Update and Rename Kube file
-  let newKubeContent = content.replace(/Yaml=.+/, `Yaml=${newYamlFile}`);
+  const newKubeContent = content.replace(/Yaml=.+/, `Yaml=${newYamlFile}`);
   
   // Also update AutoUpdate if present to ensure it's clean
   // (Optional, but good practice to ensure consistency)

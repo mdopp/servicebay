@@ -33,7 +33,7 @@ export default function LoginPage() {
       } else {
         addToast('error', 'Login failed', data.error || 'Invalid credentials');
       }
-    } catch (error) {
+    } catch {
       addToast('error', 'Login error', 'An unexpected error occurred');
     } finally {
       setLoading(false);

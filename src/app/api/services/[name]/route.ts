@@ -6,7 +6,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
     const { name } = await params;
     const files = await getServiceFiles(name);
     return NextResponse.json(files);
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 }

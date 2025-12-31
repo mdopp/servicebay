@@ -48,6 +48,7 @@ function verifyUserPassword(username: string, password: string): Promise<boolean
       cols: 80,
       rows: 30,
       cwd: process.env.HOME,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       env: process.env as any
     });
 
@@ -80,7 +81,7 @@ function verifyUserPassword(username: string, password: string): Promise<boolean
       }
     });
 
-    ptyProcess.onExit(({ exitCode }) => {
+    ptyProcess.onExit(() => {
       if (!isResolved) {
         // If we exit with 0, it might be success, but we rely on the echo
         // If we exit with 1, it's definitely failure

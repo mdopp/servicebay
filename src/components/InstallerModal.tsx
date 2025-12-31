@@ -76,6 +76,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     if (isOpen && template.type === 'template' && items.length > 0 && step === 'select') {
         fetchYamlsAndExtractVars();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, isOpen, template, step]);
 
 
@@ -107,6 +108,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             for (const match of matches) {
                 vars.add(match[1]);
             }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
             setError(e.message);
             return;
@@ -154,6 +156,7 @@ WantedBy=default.target`;
                 throw new Error(err.error || 'Unknown error');
             }
             setLogs(prev => [...prev, `✅ ${item.name} installed successfully.`]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
             setLogs(prev => [...prev, `❌ Failed to install ${item.name}: ${e.message}`]);
         }
@@ -184,7 +187,7 @@ WantedBy=default.target`;
                     <div>
                         {items.length === 0 ? (
                              <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 rounded border border-yellow-200 dark:border-yellow-800">
-                                No service definitions found in this stack's README.
+                                No service definitions found in this stack&apos;s README.
                                 <br/>
                                 <small>Expected format: <code>- [x] service-name</code></small>
                             </div>

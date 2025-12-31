@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw, Box, X, ArrowLeft } from 'lucide-react';
+import { RefreshCw, Box, ArrowLeft } from 'lucide-react';
 
 interface Container {
   Id: string;
@@ -115,6 +115,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                         <div>
                             <span className="block text-gray-500 text-xs">Ports</span>
                             <div className="space-y-1 mt-1">
+                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                 {container.Ports.map((p: any, i) => {
                                     const hostPort = p.PublicPort || p.host_port;
                                     const containerPort = p.PrivatePort || p.container_port;
@@ -132,6 +133,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                         <div>
                             <span className="block text-gray-500 text-xs">Mounts</span>
                             <div className="space-y-1 mt-1">
+                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                 {container.Mounts.map((m: any, i) => (
                                     <div key={i} className="text-xs bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded break-all">
                                         {typeof m === 'string' ? (

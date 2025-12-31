@@ -60,6 +60,7 @@ app.prepare().then(() => {
       cols: 80,
       rows: 30,
       cwd: process.env.HOME,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       env: { ...process.env, TERM: 'xterm-256color' } as any
     });
 

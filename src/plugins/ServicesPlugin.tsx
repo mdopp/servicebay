@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Download, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, X, Github } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, X, Github } from 'lucide-react';
 import Link from 'next/link';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
@@ -41,6 +41,7 @@ export default function ServicesPlugin() {
 
   useEffect(() => {
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const confirmDelete = (name: string) => {
@@ -61,7 +62,7 @@ export default function ServicesPlugin() {
             const data = await res.json();
             addToast('error', 'Delete failed', data.error);
         }
-    } catch (e) {
+    } catch {
         addToast('error', 'Delete failed', 'An unexpected error occurred.');
     }
   };

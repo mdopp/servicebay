@@ -1,8 +1,7 @@
 'use client';
 
-import { Box } from 'lucide-react';
-
 interface ContainerListProps {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   containers: any[];
 }
 
@@ -25,6 +24,7 @@ export default function ContainerList({ containers }: ContainerListProps) {
           </tr>
         </thead>
         <tbody>
+          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
           {containers.map((container: any) => (
             <tr key={container.Id} className="border-b border-gray-700 last:border-0 hover:bg-gray-800">
               <td className="py-2 pr-4 text-blue-400 font-mono" title={container.Id}>{container.Id?.substring(0, 12)}</td>

@@ -35,6 +35,7 @@ export async function POST(
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
     return NextResponse.json({ success: true });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error(`Failed to perform action ${action} on container ${id}:`, error);
     return NextResponse.json({ error: error.message }, { status: 500 });

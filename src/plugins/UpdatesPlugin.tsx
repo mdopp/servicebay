@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { getSystemUpdates } from '@/app/actions/system';
-import { RefreshCw, DownloadCloud, CheckCircle, AlertTriangle } from 'lucide-react';
+import { RefreshCw, CheckCircle, AlertTriangle } from 'lucide-react';
 
 export default function UpdatesPlugin() {
   const [updates, setUpdates] = useState<{ count: number; list: string[] } | null>(null);

@@ -41,6 +41,7 @@ export default function ContainersPlugin() {
 
   useEffect(() => {
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const openLogs = (container: Container) => {
@@ -168,6 +169,7 @@ export default function ContainersPlugin() {
                             <div className="md:col-span-2">
                                 <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Ports</span>
                                 <div className="flex flex-wrap gap-1">
+                                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                     {c.Ports.map((p: any, i) => {
                                         const hostPort = p.PublicPort || p.host_port;
                                         const containerPort = p.PrivatePort || p.container_port;

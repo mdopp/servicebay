@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -30,7 +31,7 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
   const [kubeContent, setKubeContent] = useState(initialData?.kubeContent || '');
   const [yamlContent, setYamlContent] = useState(initialData?.yamlContent || '');
   const [yamlFileName, setYamlFileName] = useState(initialData?.yamlFileName || 'pod.yml');
-  const [serviceContent, setServiceContent] = useState(initialData?.serviceContent || '');
+  const [serviceContent] = useState(initialData?.serviceContent || '');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [extractedPorts, setExtractedPorts] = useState<{ host?: string; container: string }[]>([]);
@@ -147,7 +148,7 @@ WantedBy=default.target`;
         try {
             const parsed = yaml.load(initialData.yamlContent);
             extractInfo(parsed);
-        } catch (e) {}
+        } catch {}
     }
   }, [initialData]);
 

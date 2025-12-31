@@ -10,6 +10,7 @@ export async function POST(
   try {
     const result = await updateAndRestartService(name);
     return NextResponse.json(result);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
