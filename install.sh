@@ -64,6 +64,17 @@ if [ $MISSING_DEPS -eq 1 ]; then
     exit 1
 fi
 
+# Check for build tools (required for node-pty native module)
+if ! command -v make &> /dev/null || ! command -v g++ &> /dev/null; then
+    echo ""
+    log "Warning: Build tools (make, g++) seem to be missing."
+    echo "       The 'Terminal' feature requires compiling native modules."
+    echo "       If the installation fails below, please install build tools:"
+    echo "       Debian/Ubuntu: sudo apt install -y build-essential python3"
+    echo "       Fedora/RHEL:   sudo dnf groupinstall -y 'Development Tools'"
+    echo ""
+fi
+
 # --- Configuration ---
 
 echo ""
@@ -97,7 +108,14 @@ cd "$INSTALL_DIR"
 log "Installing production dependencies..."
 # We need to install dependencies that might be missing from the standalone build
 # (like socket.io, node-pty) and ensure native modules match the system.
-npm install --production --no-audit --no-fund
+if ! npm install --production --no-audit --no-fund; then
+    echo ""
+    error "Dependency installation failed."
+    echo "       This is likely due to missing build tools for 'node-pty'."
+    echo "       Please install 'build-essential' (Ubuntu/Debian) or 'Development Tools' (Fedora)"
+    echo "       and try again."
+    exit 1
+fi
 
 # --- Build ---
 # Since we download a pre-built release, we don't need to build anything!
