@@ -67,8 +67,13 @@ fi
 # --- Configuration ---
 
 echo ""
-read -p "Enter desired port [3000]: " INPUT_PORT
-PORT=${INPUT_PORT:-3000}
+if [ -c /dev/tty ]; then
+    read -p "Enter desired port [3000]: " INPUT_PORT < /dev/tty
+    PORT=${INPUT_PORT:-3000}
+else
+    log "Non-interactive mode detected (no /dev/tty). Using default port 3000."
+    PORT=3000
+fi
 
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
     error "Invalid port: $PORT. Using default 3000."
