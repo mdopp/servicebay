@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js app
+        run: npm run build
+
+      - name: Compile server and config
+        run: |
+          npx tsc server.ts --esModuleInterop --module commonjs --target es2018 --skipLibCheck
+          npx tsc next.config.ts --esModuleInterop --module commonjs --target es2018 --skipLibCheck
+
+      - name: Prune dev dependencies
+        run: npm prune --production
+
+      - name: Create release archive
+        run: |
+          # Create a temporary directory for the release
+          mkdir -p release/servicebay
+          
+          # Copy necessary files
+          cp -r .next release/servicebay/
+          cp -r public release/servicebay/
+          cp -r node_modules release/servicebay/
+          cp -r templates release/servicebay/
+          cp -r stacks release/servicebay/
+          cp server.js release/servicebay/
+          cp next.config.js release/servicebay/
+          cp package.json release/servicebay/
+          cp install.sh release/servicebay/
+          cp README.md release/servicebay/
+          
+          # Create tarball
+          cd release
+          tar -czf ../servicebay-linux-x64.tar.gz servicebay
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: servicebay-linux-x64.tar.gz
+          generate_release_notes: true

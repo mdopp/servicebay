@@ -1,0 +1,50 @@
+import { SignJWT, jwtVerify } from 'jose';
+import { cookies } from 'next/headers';
+import { NextRequest, NextResponse } from 'next/server';
+
+// Use a fixed fallback key for development/unconfigured environments to ensure
+// consistency between Edge Runtime (Middleware) and Node Runtime (API).
+// In production, AUTH_SECRET should always be set.
+const SECRET_KEY = process.env.AUTH_SECRET || 'servicebay-insecure-fallback-secret-key-change-me';
+const key = new TextEncoder().encode(SECRET_KEY);
+
+export async function encrypt(payload: any) {
+  return await new SignJWT(payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime('24h')
+    .sign(key);
+}
+
+export async function decrypt(input: string): Promise<any> {
+  try {
+    const { payload } = await jwtVerify(input, key, {
+      algorithms: ['HS256'],
+    });
+    return payload;
+  } catch (error) {
+    return null;
+  }
+}
+
+export async function getSession() {
+  const cookieStore = await cookies();
+  const session = cookieStore.get('session')?.value;
+  if (!session) return null;
+  return await decrypt(session);
+}
+
+export async function login(username: string) {
+  // Create the session
+  const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+  const session = await encrypt({ user: username, expires });
+
+  // Save the session in a cookie
+  const cookieStore = await cookies();
+  cookieStore.set('session', session, { expires, httpOnly: true, sameSite: 'lax' });
+}
+
+export async function logout() {
+  const cookieStore = await cookies();
+  cookieStore.delete('session');
+}
