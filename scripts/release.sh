@@ -12,16 +12,17 @@ VERSION="$YEAR.$MONTH.$DAY"
 if git rev-parse "v$VERSION" >/dev/null 2>&1; then
   echo "Tag v$VERSION already exists."
   
-  # If tag exists, try to find a sub-version?
-  # Since we used all 3 slots (Major.Minor.Patch) for the date, we can't easily add a 4th number.
-  # We could use a pre-release tag like -1, -2 but that makes it "older" than the base.
-  # We could use build metadata +1, but that is ignored for precedence.
+  # If tag exists, we increment the "Day" (Patch) component.
+  # This results in dates like 2025.12.32, which are invalid calendar dates
+  # but valid SemVer and ensure correct upgrade precedence.
+  COUNTER=1
+  while git rev-parse "v$YEAR.$MONTH.$(($DAY + $COUNTER))" >/dev/null 2>&1; do
+    COUNTER=$(($COUNTER + 1))
+  done
   
-  # Alternative: If we really need multiple releases per day, we might need to change the scheme.
-  # But for "Tagesdatum" (Daily Date), usually one per day is implied.
-  
-  echo "Error: Release for today already exists. Manual intervention required."
-  exit 1
+  NEW_DAY=$(($DAY + $COUNTER))
+  VERSION="$YEAR.$MONTH.$NEW_DAY"
+  echo "Resolved conflict. New version: $VERSION"
 fi
 
 echo "Bumping version to $VERSION..."
