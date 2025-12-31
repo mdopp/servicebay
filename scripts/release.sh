@@ -30,7 +30,7 @@ echo "Bumping version to $VERSION..."
 npm version $VERSION --no-git-tag-version
 
 # Commit the change
-git add package.json
+git add package.json package-lock.json
 git commit -m "chore: release v$VERSION"
 
 # Create the tag
