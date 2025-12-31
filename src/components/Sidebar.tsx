@@ -26,8 +26,8 @@ export default function Sidebar() {
   }, []);
 
   return (
-    <div className={`${isCollapsed ? 'w-16' : 'w-64'} bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg flex flex-col transition-all duration-300 h-full shrink-0 shadow-sm`}>
-        <div className="h-16 flex items-center justify-between px-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+    <div className={`${isCollapsed ? 'w-16' : 'w-64'} flex flex-col transition-all duration-300 h-full shrink-0`}>
+        <div className="h-16 flex items-center justify-between px-4">
             {!isCollapsed && (
                 <div className="flex items-center gap-3 overflow-hidden">
                     <ServiceBayLogo size={24} className="text-blue-600 dark:text-blue-400 shrink-0" />
@@ -59,24 +59,24 @@ export default function Sidebar() {
                         onClick={() => router.push(p.path)}
                         className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${
                             isActive 
-                            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shadow-sm' 
-                            : 'hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 border border-transparent'
+                            ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm' 
+                            : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
                         } ${isCollapsed ? 'justify-center' : 'gap-3'}`}
                         title={isCollapsed ? p.name : ''}
                     >
-                        <Icon size={20} className={`shrink-0 ${isActive ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'}`} />
+                        <Icon size={20} className={`shrink-0 ${isActive ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-500'}`} />
                         {!isCollapsed && <span className="font-medium whitespace-nowrap overflow-hidden">{p.name}</span>}
                     </button>
                 );
             })}
         </div>
         
-        <div className="p-2 border-t border-gray-200 dark:border-gray-800">
+        <div className="p-2">
             <a 
                 href="https://github.com/mdopp/servicebay" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className={`w-full flex items-center px-3 py-3 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+                className={`w-full flex items-center px-3 py-3 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors ${isCollapsed ? 'justify-center' : 'gap-3'}`}
                 title="View on GitHub"
             >
                 <Github size={20} className="shrink-0" />

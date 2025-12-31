@@ -15,7 +15,7 @@ A Next.js web interface to manage Podman Quadlet services (Systemd).
 You can install ServiceBay with a single command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mdopp/servicebay/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/mdopp/servicebay/main/install.sh?$(date +%s)" | bash
 ```
 
 This will:
