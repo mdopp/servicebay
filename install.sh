@@ -93,6 +93,12 @@ mkdir -p "$INSTALL_DIR"
 curl -L "$TAR_URL" | tar xz -C "$INSTALL_DIR" --strip-components=1
 cd "$INSTALL_DIR"
 
+# --- Dependencies ---
+log "Installing production dependencies..."
+# We need to install dependencies that might be missing from the standalone build
+# (like socket.io, node-pty) and ensure native modules match the system.
+npm install --production --no-audit --no-fund
+
 # --- Build ---
 # Since we download a pre-built release, we don't need to build anything!
 # We just need to ensure node is available.

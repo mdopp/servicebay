@@ -50,6 +50,8 @@ jobs:
           cp server.js release/servicebay/
           
           # Copy other files
+          cp package.json release/servicebay/
+          cp package-lock.json release/servicebay/
           cp -r templates release/servicebay/
           cp -r stacks release/servicebay/
           cp install.sh release/servicebay/
