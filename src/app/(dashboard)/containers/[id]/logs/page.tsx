@@ -24,7 +24,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
   const [logsLoading, setLogsLoading] = useState(false);
 
   useEffect(() => {
-    const fetchContainerAndLogs = async () => {
+    const fetchContainer = async () => {
       setLoading(true);
       try {
         // Fetch container info (using list endpoint for now as we don't have single container endpoint)
@@ -34,7 +34,6 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
           const found = containers.find(c => c.Id.startsWith(id) || c.Id === id);
           if (found) {
             setContainer(found);
-            fetchLogs(found.Id);
           } else {
             console.error('Container not found');
           }
@@ -46,24 +45,50 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
       }
     };
 
-    fetchContainerAndLogs();
+    fetchContainer();
   }, [id]);
 
-  const fetchLogs = async (containerId: string) => {
+  useEffect(() => {
+    if (!container) return;
+
+    const abortController = new AbortController();
+    setLogs('');
     setLogsLoading(true);
-    try {
-      const res = await fetch(`/api/containers/${containerId}/logs`);
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs);
-      }
-    } catch (e) {
-      console.error('Failed to fetch logs', e);
-      setLogs('Failed to load logs.');
-    } finally {
-      setLogsLoading(false);
-    }
-  };
+
+    const streamLogs = async () => {
+        try {
+            const response = await fetch(`/api/containers/${container.Id}/logs/stream`, {
+                signal: abortController.signal
+            });
+            
+            if (!response.body) return;
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            setLogsLoading(false);
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                const text = decoder.decode(value, { stream: true });
+                setLogs(prev => prev + text);
+            }
+        } catch (e) {
+            if (e instanceof Error && e.name !== 'AbortError') {
+                console.error('Stream error', e);
+                setLogs(prev => prev + '\n[Error: Connection lost]');
+            }
+        } finally {
+            setLogsLoading(false);
+        }
+    };
+
+    streamLogs();
+
+    return () => {
+        abortController.abort();
+    };
+  }, [container]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-full text-gray-500">Loading...</div>;
@@ -155,13 +180,11 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
             {/* Logs Area */}
             <div className="flex-1 flex flex-col bg-gray-900 text-gray-300 font-mono text-xs">
                 <div className="p-2 bg-gray-800 text-gray-400 text-xs flex justify-between items-center">
-                    <span>Logs</span>
-                    <button onClick={() => fetchLogs(container.Id)} className="hover:text-white">
-                        <RefreshCw size={12} className={logsLoading ? 'animate-spin' : ''} />
-                    </button>
+                    <span>Live Logs</span>
+                    {logsLoading && <RefreshCw size={12} className="animate-spin" />}
                 </div>
                 <div className="flex-1 overflow-auto p-4 whitespace-pre-wrap">
-                    {logsLoading ? 'Loading logs...' : logs || 'No logs available.'}
+                    {logs || (logsLoading ? 'Connecting to log stream...' : 'No logs available.')}
                 </div>
             </div>
         </div>

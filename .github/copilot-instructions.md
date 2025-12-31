@@ -16,3 +16,6 @@
 - [x] Launch the Project
 
 - [x] Ensure Documentation is Complete
+
+- [x] Implement History System (Backend & UI)
+

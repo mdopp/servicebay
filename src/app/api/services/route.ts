@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { listServices, saveService } from '@/lib/manager';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const services = await listServices();
   return NextResponse.json(services);

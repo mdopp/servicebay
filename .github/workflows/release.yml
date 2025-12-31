@@ -38,10 +38,12 @@ jobs:
           # Create a temporary directory for the release
           mkdir -p release/servicebay
           
-          # Copy standalone build
+          # Copy standalone build (explicitly copy .next because * skips hidden files)
           cp -r .next/standalone/* release/servicebay/
+          cp -r .next/standalone/.next release/servicebay/
           
           # Copy static assets (required for standalone)
+          # .next folder should already exist from previous step
           mkdir -p release/servicebay/.next/static
           cp -r .next/static/* release/servicebay/.next/static/
           

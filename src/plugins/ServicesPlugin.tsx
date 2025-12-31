@@ -41,6 +41,29 @@ export default function ServicesPlugin() {
 
   useEffect(() => {
     fetchData();
+
+    // Setup SSE for real-time updates
+    const eventSource = new EventSource('/api/stream');
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'config' || data.type === 'container') {
+           // Refresh data on change
+           // We use a small debounce/delay because file writes might be atomic/multi-step
+           // or systemd might take a moment to reflect status
+           setTimeout(() => {
+               fetchData();
+           }, 500);
+        }
+      } catch (e) {
+        console.error('Error parsing SSE message', e);
+      }
+    };
+
+    return () => {
+      eventSource.close();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

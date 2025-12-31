@@ -66,18 +66,30 @@ fi
 
 # --- Configuration ---
 
+DEFAULT_PORT=3000
+EXISTING_SERVICE_FILE="$HOME/.config/systemd/user/$SERVICE_NAME.service"
+
+if [ -f "$EXISTING_SERVICE_FILE" ]; then
+    # Try to extract port from existing service file
+    EXISTING_PORT=$(grep "Environment=PORT=" "$EXISTING_SERVICE_FILE" | cut -d= -f3)
+    if [ -n "$EXISTING_PORT" ]; then
+        log "Found existing installation on port $EXISTING_PORT"
+        DEFAULT_PORT=$EXISTING_PORT
+    fi
+fi
+
 echo ""
 if [ -c /dev/tty ]; then
-    read -p "Enter desired port [3000]: " INPUT_PORT < /dev/tty
-    PORT=${INPUT_PORT:-3000}
+    read -p "Enter desired port [$DEFAULT_PORT]: " INPUT_PORT < /dev/tty
+    PORT=${INPUT_PORT:-$DEFAULT_PORT}
 else
-    log "Non-interactive mode detected (no /dev/tty). Using default port 3000."
-    PORT=3000
+    log "Non-interactive mode detected (no /dev/tty). Using default port $DEFAULT_PORT."
+    PORT=$DEFAULT_PORT
 fi
 
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-    error "Invalid port: $PORT. Using default 3000."
-    PORT=3000
+    error "Invalid port: $PORT. Using default $DEFAULT_PORT."
+    PORT=$DEFAULT_PORT
 fi
 log "Using port: $PORT"
 

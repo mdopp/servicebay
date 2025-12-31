@@ -179,9 +179,22 @@ export async function getServiceFiles(name: string) {
   return { kubeContent, yamlContent, yamlPath, serviceContent, kubePath, servicePath };
 }
 
+import { saveSnapshot } from './history';
+
 export async function saveService(name: string, kubeContent: string, yamlContent: string, yamlFileName: string) {
   const kubePath = path.join(SYSTEMD_DIR, `${name}.kube`);
   const yamlPath = path.join(SYSTEMD_DIR, yamlFileName);
+
+  // Save snapshots of existing files if they exist
+  try {
+    const existingKube = await fs.readFile(kubePath, 'utf-8');
+    await saveSnapshot(path.basename(kubePath), existingKube);
+  } catch (e) { /* ignore if new file */ }
+
+  try {
+    const existingYaml = await fs.readFile(yamlPath, 'utf-8');
+    await saveSnapshot(path.basename(yamlPath), existingYaml);
+  } catch (e) { /* ignore if new file */ }
 
   await fs.writeFile(kubePath, kubeContent);
   await fs.writeFile(yamlPath, yamlContent);

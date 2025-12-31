@@ -4,12 +4,13 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import yaml from 'js-yaml';
-import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle } from 'lucide-react';
+import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
 import 'prismjs/components/prism-ini'; // For systemd/kube files (ini-like)
 import 'prismjs/themes/prism-tomorrow.css'; // Dark theme for code
+import HistoryViewer from './HistoryViewer';
 
 interface ServiceFormProps {
   initialData?: {
@@ -42,7 +43,7 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
   const [newServiceName, setNewServiceName] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
-  const [activeTab, setActiveTab] = useState<'yaml' | 'kube' | 'service'>('yaml');
+  const [activeTab, setActiveTab] = useState<'yaml' | 'kube' | 'service' | 'history'>('yaml');
 
   // Options for generation
   const [autoUpdate, setAutoUpdate] = useState(() => {
@@ -426,6 +427,15 @@ WantedBy=default.target`;
                     <FileText size={16} /> Generated Service Unit
                 </button>
             )}
+            {isEdit && (
+                <button
+                    type="button"
+                    className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'history' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                    onClick={() => setActiveTab('history')}
+                >
+                    <Clock size={16} /> History
+                </button>
+            )}
         </div>
 
         <div className="p-6">
@@ -514,6 +524,25 @@ WantedBy=default.target`;
                         />
                     </div>
                 </>
+            )}
+
+            {activeTab === 'history' && isEdit && (
+                <HistoryViewer
+                    filename={yamlFileName}
+                    currentContent={yamlContent}
+                    onRestore={(content) => {
+                        setYamlContent(content);
+                        setActiveTab('yaml');
+                        // Trigger validation/extraction logic
+                        try {
+                            const parsed = yaml.load(content);
+                            extractInfo(parsed);
+                            setYamlError(null);
+                        } catch (e: any) {
+                            setYamlError(e.message);
+                        }
+                    }}
+                />
             )}
         </div>
       </div>
