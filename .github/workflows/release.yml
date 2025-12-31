@@ -57,6 +57,14 @@ jobs:
           cp install.sh release/servicebay/
           cp README.md release/servicebay/
           
+          # Install production dependencies to bundle native modules (node-pty)
+          # This ensures the user doesn't need build tools on their machine.
+          cd release/servicebay
+          # Remove prepare script to avoid husky issues
+          npm pkg delete scripts.prepare
+          npm ci --omit=dev
+          cd ../..
+          
           # Create tarball
           cd release
           tar -czf ../servicebay-linux-x64.tar.gz servicebay
