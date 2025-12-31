@@ -25,14 +25,9 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
   }, [selected]);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-200px)] min-h-[500px]">
+    <div className="flex h-full overflow-hidden">
       {/* Sidebar List */}
-      <div className="lg:col-span-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden flex flex-col shadow-sm">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-            <h3 className="font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
-                <Github size={20} /> Registry
-            </h3>
-        </div>
+      <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 flex flex-col bg-gray-50/50 dark:bg-gray-900/50">
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
             {templates.map(t => (
                 <button
@@ -40,8 +35,8 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
                     onClick={() => setSelected(t)}
                     className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors ${
                         selected?.name === t.name 
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shadow-sm' 
-                        : 'hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 border border-transparent'
+                        ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-gray-200 dark:ring-gray-700' 
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
                     }`}
                 >
                     {t.type === 'stack' ? (
@@ -62,10 +57,10 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
       </div>
 
       {/* Main Content */}
-      <div className="lg:col-span-8 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg flex flex-col overflow-hidden shadow-sm">
+      <div className="flex-1 flex flex-col min-w-0 bg-white dark:bg-gray-900">
         {selected ? (
             <>
-                <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 flex justify-between items-center">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900">
                     <h2 className="font-bold text-xl text-gray-900 dark:text-white flex items-center gap-2">
                         {selected.type === 'stack' && <Layers className="text-purple-600 dark:text-purple-400" />}
                         {selected.name}
@@ -77,7 +72,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
                         <Download size={18} /> Install {selected.type === 'stack' ? 'Stack' : 'Template'}
                     </button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-8 bg-white dark:bg-gray-900">
+                <div className="flex-1 overflow-y-auto p-8">
                     {loading ? (
                         <div className="flex items-center justify-center h-full text-gray-400">
                             <Loader2 size={32} className="animate-spin" />

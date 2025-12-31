@@ -1,6 +1,10 @@
 'use server'
 
-import { getReadme, getTemplateYaml } from '@/lib/registry';
+import { getReadme, getTemplateYaml, getTemplates } from '@/lib/registry';
+
+export async function fetchTemplates() {
+  return await getTemplates();
+}
 
 export async function fetchReadme(name: string, type: 'template' | 'stack' = 'template') {
   return await getReadme(name, type);

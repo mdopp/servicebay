@@ -24,7 +24,7 @@ export default function ServicesPlugin() {
   const [actionLoading, setActionLoading] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState<string | null>(null);
-  const { addToast } = useToast();
+  const { addToast, updateToast } = useToast();
 
   const fetchData = async () => {
     setLoading(true);
@@ -53,17 +53,19 @@ export default function ServicesPlugin() {
     if (!serviceToDelete) return;
     setDeleteModalOpen(false);
     
+    const toastId = addToast('loading', 'Deleting service...', `Removing ${serviceToDelete}`, 0);
+
     try {
         const res = await fetch(`/api/services/${serviceToDelete}`, { method: 'DELETE' });
         if (res.ok) {
-            addToast('success', 'Service deleted', `Service ${serviceToDelete} has been removed.`);
+            updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete} has been removed.`);
             fetchData();
         } else {
             const data = await res.json();
-            addToast('error', 'Delete failed', data.error);
+            updateToast(toastId, 'error', 'Delete failed', data.error);
         }
     } catch {
-        addToast('error', 'Delete failed', 'An unexpected error occurred.');
+        updateToast(toastId, 'error', 'Delete failed', 'An unexpected error occurred.');
     }
   };
 
@@ -75,6 +77,9 @@ export default function ServicesPlugin() {
   const handleAction = async (action: string) => {
     if (!selectedService) return;
     setActionLoading(true);
+    
+    const toastId = addToast('loading', 'Action in progress', `Executing ${action} on ${selectedService.name}...`, 0);
+
     try {
         const res = await fetch(`/api/services/${selectedService.name}/action`, {
             method: 'POST',
@@ -84,16 +89,16 @@ export default function ServicesPlugin() {
         
         if (!res.ok) {
             const data = await res.json();
-            addToast('error', 'Action failed', data.error);
+            updateToast(toastId, 'error', 'Action failed', data.error);
         } else {
             setShowActions(false);
-            addToast('success', 'Action initiated', `${action} command sent to ${selectedService.name}`);
+            updateToast(toastId, 'success', 'Action initiated', `${action} command sent to ${selectedService.name}`);
             // Wait a bit for the action to take effect
             setTimeout(fetchData, 1000);
         }
     } catch (e) {
         console.error('Action failed', e);
-        addToast('error', 'Action failed', 'An unexpected error occurred.');
+        updateToast(toastId, 'error', 'Action failed', 'An unexpected error occurred.');
     } finally {
         setActionLoading(false);
     }

@@ -24,7 +24,7 @@ export default function ContainersPlugin() {
   const [showActions, setShowActions] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const { addToast } = useToast();
+  const { addToast, updateToast } = useToast();
 
   const fetchData = async () => {
     setLoading(true);
@@ -70,6 +70,8 @@ export default function ContainersPlugin() {
     }
 
     setActionLoading(true);
+    const toastId = addToast('loading', 'Action in progress', `Executing ${action} on container...`, 0);
+
     try {
         const res = await fetch(`/api/containers/${selectedContainer.Id}/action`, {
             method: 'POST',
@@ -79,16 +81,16 @@ export default function ContainersPlugin() {
         
         if (!res.ok) {
             const data = await res.json();
-            addToast('error', 'Action failed', data.error);
+            updateToast(toastId, 'error', 'Action failed', data.error);
         } else {
             setShowActions(false);
-            addToast('success', 'Action initiated', `${action} command sent to container`);
+            updateToast(toastId, 'success', 'Action initiated', `${action} command sent to container`);
             // Wait a bit for the action to take effect
             setTimeout(fetchData, 1000);
         }
     } catch (e) {
         console.error('Action failed', e);
-        addToast('error', 'Action failed', 'An unexpected error occurred.');
+        updateToast(toastId, 'error', 'Action failed', 'An unexpected error occurred.');
     } finally {
         setActionLoading(false);
     }

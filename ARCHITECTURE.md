@@ -73,14 +73,38 @@ graph TD
   3.  User configures variables (Mustache templates).
   4.  Backend generates systemd unit and YAML files.
 
+## Update System
+
+ServiceBay includes a self-update mechanism to keep the application current.
+
+- **Versioning**: Uses CalVer (`YYYY.MM.DD`) based on the release date.
+- **Source**: Updates are fetched from GitHub Releases (`mdopp/servicebay`).
+- **Process**:
+  1.  **Check**: Compares local `package.json` version with the latest GitHub Release tag.
+  2.  **Download**: Fetches the release tarball (`servicebay-linux-x64.tar.gz`).
+  3.  **Install**: Extracts and overwrites the application files in `~/.servicebay`.
+  4.  **Restart**: Triggers `systemctl --user restart servicebay`.
+- **Automation**: Can be configured to check and update automatically on a schedule (default: daily at midnight).
+
+## Installation
+
+The installation is handled by `install.sh`, which:
+1.  Clones the repository or downloads the release tarball.
+2.  Installs dependencies (`npm install`).
+3.  Builds the application (`npm run build`).
+4.  Sets up a user-level systemd service (`servicebay.service`).
+5.  Prompts the user for a port (default: 3000).
+
 ## Tech Stack
 
-- **Frontend**: Next.js (App Router), React, Tailwind CSS.
+- **Frontend**: Next.js 16 (App Router), React 19, Tailwind CSS.
 - **Backend**: Next.js Server Actions & API Routes.
+- **Server**: Custom Node.js server (`server.ts`) for WebSocket support.
 - **Container Engine**: Podman (via CLI).
 - **System Integration**: `systemd` for service management.
 
 ## Plugin Guidelines
 
 - **Navigation**: For complex views (e.g., Logs, Terminal, Detailed Info), always navigate to a new page (e.g., `/containers/[id]/logs`) instead of using overlays or modals. Overlays should be reserved for simple interactions like confirmation dialogs or small forms.
+- **Design**: Follow the [Design Principles](DESIGN_PRINCIPLES.md) for consistent UI/UX.
 

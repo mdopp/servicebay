@@ -35,6 +35,11 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Documentation
+
+- [Architecture & Tech Stack](ARCHITECTURE.md)
+- [Frontend Design Principles](DESIGN_PRINCIPLES.md)
+
 ---
 
 > **Note:** This project was completely **vibe-coded**. 🤙

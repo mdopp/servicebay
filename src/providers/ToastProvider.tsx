@@ -1,19 +1,22 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { X, CheckCircle, AlertCircle, Info, AlertTriangle } from 'lucide-react';
+import { X, CheckCircle, AlertCircle, Info, AlertTriangle, Loader2 } from 'lucide-react';
 
-export type ToastType = 'success' | 'error' | 'info' | 'warning';
+export type ToastType = 'success' | 'error' | 'info' | 'warning' | 'loading';
 
 interface Toast {
   id: string;
   type: ToastType;
   title: string;
   message?: string;
+  duration?: number;
 }
 
 interface ToastContextType {
-  addToast: (type: ToastType, title: string, message?: string) => void;
+  addToast: (type: ToastType, title: string, message?: string, duration?: number) => string;
+  removeToast: (id: string) => void;
+  updateToast: (id: string, type: ToastType, title: string, message?: string, duration?: number) => void;
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
@@ -29,22 +32,34 @@ export function useToast() {
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const addToast = useCallback((type: ToastType, title: string, message?: string) => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, type, title, message }]);
-
-    // Auto remove after 5 seconds
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 5000);
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+  const addToast = useCallback((type: ToastType, title: string, message?: string, duration: number = 5000) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, type, title, message, duration }]);
+
+    if (duration > 0) {
+      setTimeout(() => {
+        removeToast(id);
+      }, duration);
+    }
+    return id;
+  }, [removeToast]);
+
+  const updateToast = useCallback((id: string, type: ToastType, title: string, message?: string, duration: number = 5000) => {
+    setToasts((prev) => prev.map(t => t.id === id ? { ...t, type, title, message, duration } : t));
+    
+    if (duration > 0) {
+      setTimeout(() => {
+        removeToast(id);
+      }, duration);
+    }
+  }, [removeToast]);
 
   return (
-    <ToastContext.Provider value={{ addToast }}>
+    <ToastContext.Provider value={{ addToast, removeToast, updateToast }}>
       {children}
       <div className="fixed bottom-4 right-4 z-[70] flex flex-col gap-2 w-full max-w-sm pointer-events-none">
         {toasts.map((toast) => (
@@ -62,6 +77,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               {toast.type === 'error' && <AlertCircle size={20} className="text-red-500" />}
               {toast.type === 'warning' && <AlertTriangle size={20} className="text-yellow-500" />}
               {toast.type === 'info' && <Info size={20} className="text-blue-500" />}
+              {toast.type === 'loading' && <Loader2 size={20} className="text-blue-500 animate-spin" />}
             </div>
             <div className="flex-1 min-w-0">
               <h4 className={`font-semibold text-sm ${
