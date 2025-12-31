@@ -27,28 +27,31 @@ jobs:
       - name: Build Next.js app
         run: npm run build
 
-      - name: Compile server and config
+      - name: Compile server
         run: |
           npx tsc server.ts --esModuleInterop --module commonjs --target es2018 --skipLibCheck
-          npx tsc next.config.ts --esModuleInterop --module commonjs --target es2018 --skipLibCheck
-
-      - name: Prune dev dependencies
-        run: npm prune --production
 
       - name: Create release archive
         run: |
           # Create a temporary directory for the release
           mkdir -p release/servicebay
           
-          # Copy necessary files
-          cp -r .next release/servicebay/
+          # Copy standalone build
+          cp -r .next/standalone/* release/servicebay/
+          
+          # Copy static assets (required for standalone)
+          mkdir -p release/servicebay/.next/static
+          cp -r .next/static/* release/servicebay/.next/static/
+          
+          # Copy public folder
           cp -r public release/servicebay/
-          cp -r node_modules release/servicebay/
+          
+          # Copy custom server (overwriting standalone server.js)
+          cp server.js release/servicebay/
+          
+          # Copy other files
           cp -r templates release/servicebay/
           cp -r stacks release/servicebay/
-          cp server.js release/servicebay/
-          cp next.config.js release/servicebay/
-          cp package.json release/servicebay/
           cp install.sh release/servicebay/
           cp README.md release/servicebay/
           

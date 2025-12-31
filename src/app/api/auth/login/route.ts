@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { login } from '@/lib/auth';
 import os from 'os';
 import * as pty from 'node-pty';
+// Import socket.io to ensure it is included in the standalone build
+import 'socket.io';
 
 export async function POST(request: NextRequest) {
   try {
