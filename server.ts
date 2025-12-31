@@ -4,6 +4,9 @@ import next from 'next';
 import { Server } from 'socket.io';
 import * as pty from 'node-pty';
 import os from 'os';
+import schedule from 'node-schedule';
+import { getConfig } from './src/lib/config';
+import { checkForUpdates, performUpdate } from './src/lib/updater';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -140,7 +143,27 @@ app.prepare().then(() => {
       }
   }, 60000);
 
-  server.listen(port, () => {
+  server.listen(port, async () => {
     console.log(`> Ready on http://${hostname}:${port}`);
+
+    // Initialize Auto-Update Scheduler
+    try {
+      const config = await getConfig();
+      if (config.autoUpdate.enabled) {
+        console.log(`Scheduling auto-updates with schedule: ${config.autoUpdate.schedule}`);
+        schedule.scheduleJob(config.autoUpdate.schedule, async () => {
+          console.log('Running scheduled update check...');
+          const status = await checkForUpdates();
+          if (status.hasUpdate && status.latest) {
+            console.log(`Update found: ${status.latest.version}. Installing...`);
+            await performUpdate(status.latest.version);
+          } else {
+            console.log('No updates found.');
+          }
+        });
+      }
+    } catch (e) {
+      console.error('Failed to initialize auto-updater:', e);
+    }
   });
 });
