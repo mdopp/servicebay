@@ -106,6 +106,10 @@ cd "$INSTALL_DIR"
 
 # --- Dependencies ---
 log "Installing production dependencies..."
+
+# Remove 'prepare' script (husky) to prevent failure in production (husky is devDep)
+npm pkg delete scripts.prepare || true
+
 # We need to install dependencies that might be missing from the standalone build
 # (like socket.io, node-pty) and ensure native modules match the system.
 if ! npm install --production --no-audit --no-fund; then
