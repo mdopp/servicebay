@@ -27,9 +27,11 @@ jobs:
       - name: Build Next.js app
         run: npm run build
 
-      - name: Compile server
+      - name: Bundle server
         run: |
-          npx tsc server.ts --esModuleInterop --module commonjs --target es2018 --skipLibCheck
+          # Bundle server.ts and local dependencies (src/lib/...) into a single server.js
+          # We keep node_modules external because we copy them later
+          npx esbuild server.ts --bundle --platform=node --target=node20 --outfile=server.js --packages=external
 
       - name: Create release archive
         run: |
