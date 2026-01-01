@@ -152,21 +152,18 @@ fi
 # Perform Install
 log "Installing..."
 
-# Preserve node_modules if we don't need to update them
-if [ "$NEED_DEPS" -eq 0 ] && [ -d "$INSTALL_DIR/node_modules" ]; then
-    mv "$INSTALL_DIR/node_modules" "$TEMP_DIR/node_modules"
-fi
-
-rm -rf "$INSTALL_DIR"
+# Create directory if it doesn't exist
 mkdir -p "$INSTALL_DIR"
 
-# Extract Code
+# Extract Code (overwriting existing files)
+# We do NOT delete the directory to preserve node_modules if they are unchanged
 tar xz -f "$TEMP_DIR/update.tar.gz" -C "$INSTALL_DIR" --strip-components=1
 
-# Restore or Extract Deps
-if [ "$NEED_DEPS" -eq 0 ] && [ -d "$TEMP_DIR/node_modules" ]; then
-    mv "$TEMP_DIR/node_modules" "$INSTALL_DIR/node_modules"
-elif [ "$NEED_DEPS" -eq 1 ]; then
+# Handle Dependencies
+if [ "$NEED_DEPS" -eq 1 ]; then
+    log "Updating dependencies..."
+    # Remove old node_modules to ensure clean state for new deps
+    rm -rf "$INSTALL_DIR/node_modules"
     tar xz -f "$TEMP_DIR/deps.tar.gz" -C "$INSTALL_DIR"
 fi
 
