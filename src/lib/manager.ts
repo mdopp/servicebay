@@ -188,6 +188,47 @@ export async function getServiceFiles(name: string) {
 
 import { saveSnapshot } from './history';
 
+export async function updateServiceDescription(name: string, description: string) {
+  const kubePath = path.join(SYSTEMD_DIR, `${name}.kube`);
+  
+  try {
+    let content = await fs.readFile(kubePath, 'utf-8');
+    const lines = content.split('\n');
+    let unitIndex = -1;
+    let descIndex = -1;
+
+    // Simple INI parser/updater
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line === '[Unit]') {
+            unitIndex = i;
+        } else if (unitIndex !== -1 && line.startsWith('[') && line.endsWith(']')) {
+            break; // End of Unit section
+        } else if (unitIndex !== -1 && line.startsWith('Description=')) {
+            descIndex = i;
+        }
+    }
+
+    if (unitIndex === -1) {
+        // Add [Unit] section at the top
+        content = `[Unit]\nDescription=${description}\n\n${content}`;
+    } else if (descIndex !== -1) {
+        // Update existing Description
+        lines[descIndex] = `Description=${description}`;
+        content = lines.join('\n');
+    } else {
+        // Add Description to existing [Unit] section
+        lines.splice(unitIndex + 1, 0, `Description=${description}`);
+        content = lines.join('\n');
+    }
+
+    await fs.writeFile(kubePath, content);
+    await execAsync('systemctl --user daemon-reload');
+  } catch (e) {
+    throw new Error(`Failed to update description for ${name}: ${e}`);
+  }
+}
+
 export async function saveService(name: string, kubeContent: string, yamlContent: string, yamlFileName: string) {
   const kubePath = path.join(SYSTEMD_DIR, `${name}.kube`);
   const yamlPath = path.join(SYSTEMD_DIR, yamlFileName);

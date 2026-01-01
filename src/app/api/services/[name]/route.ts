@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServiceFiles, deleteService, saveService } from '@/lib/manager';
+import { getServiceFiles, deleteService, saveService, updateServiceDescription } from '@/lib/manager';
 import { getConfig, saveConfig } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import crypto from 'crypto';
@@ -108,6 +108,17 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
       }
     }
     return NextResponse.json({ error: 'Link not found' }, { status: 404 });
+  }
+
+  // Handle Description Update for Managed Service
+  if (body.description !== undefined && !body.kubeContent) {
+      try {
+          await updateServiceDescription(name, body.description);
+          return NextResponse.json({ success: true });
+      } catch (e) {
+          const message = e instanceof Error ? e.message : 'Unknown error';
+          return NextResponse.json({ error: message }, { status: 500 });
+      }
   }
 
   const { kubeContent, yamlContent, yamlFileName } = body;
