@@ -1,5 +1,6 @@
 import { MonitoringStore } from './store';
 import { listServices } from '../manager';
+import { getConfig } from '../config';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import crypto from 'crypto';
@@ -14,7 +15,28 @@ export async function initializeDefaultChecks() {
   const exists = (type: string, target: string) => 
     existingChecks.some(c => c.type === type && c.target === target);
 
-  // 1. Gateway Check
+  // 0. Configured Gateway Check
+  try {
+    const config = await getConfig();
+    if (config.gateway?.enabled && config.gateway.host) {
+        if (!exists('ping', config.gateway.host)) {
+            console.log(`[Monitoring] Adding Configured Gateway check for ${config.gateway.host}`);
+            MonitoringStore.saveCheck({
+                id: crypto.randomUUID(),
+                name: 'Internet Gateway',
+                type: 'ping',
+                target: config.gateway.host,
+                interval: 60,
+                enabled: true,
+                created_at: new Date().toISOString()
+            });
+        }
+    }
+  } catch (e) {
+    console.error('Failed to add configured gateway check', e);
+  }
+
+  // 1. Auto-detected Gateway Check
   try {
     // ip route show default usually outputs: "default via 192.168.1.1 dev eth0 ..."
     const { stdout } = await execAsync("ip route show default");

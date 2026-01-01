@@ -10,6 +10,8 @@ export interface NetworkNode {
   status: 'up' | 'down' | 'unknown';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rawData?: any;
 }
 
 export interface NetworkEdge {

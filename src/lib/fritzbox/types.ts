@@ -12,6 +12,7 @@ export interface PortMapping {
 export interface FritzBoxStatus {
   connected: boolean;
   externalIP: string;
+  internalIP?: string;
   uptime: number;
   portMappings: PortMapping[];
 }

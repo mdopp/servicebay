@@ -23,7 +23,17 @@ export interface RegistriesSettings {
   items: RegistryConfig[];
 }
 
+export interface GatewayConfig {
+  enabled: boolean;
+  type: 'fritzbox';
+  host: string;
+  username?: string;
+  password?: string;
+  ssl?: boolean;
+}
+
 export interface AppConfig {
+  gateway?: GatewayConfig;
   autoUpdate: {
     enabled: boolean;
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight
