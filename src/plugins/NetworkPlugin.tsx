@@ -5,9 +5,11 @@ import { ReactFlow, Background, Controls, MiniMap, useNodesState, useEdgesState,
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { NetworkGraph } from '@/lib/network/types';
-import { RefreshCw, X, Trash2 } from 'lucide-react';
+import { RefreshCw, X, Trash2, Edit } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
+import ExternalLinkModal from '@/components/ExternalLinkModal';
+import Link from 'next/link';
 
 const nodeWidth = 172;
 const nodeHeight = 80;
@@ -53,6 +55,10 @@ export default function NetworkPlugin() {
    
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const { addToast } = useToast();
+
+  // Link Modal State
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '', monitor: false });
 
   const fetchGraph = useCallback(async () => {
     setLoading(true);
@@ -228,6 +234,64 @@ export default function NetworkPlugin() {
     fetchGraph();
   }, [fetchGraph]);
 
+  const handleSaveLink = async () => {
+    if (!linkForm.name || !linkForm.url) {
+        addToast('error', 'Name and URL are required');
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/services/${encodeURIComponent(linkForm.name)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: linkForm.url,
+                description: linkForm.description,
+                monitor: linkForm.monitor,
+                type: 'link'
+            })
+        });
+
+        if (!res.ok) throw new Error('Failed to update link');
+        
+        addToast('success', 'Link updated successfully');
+        setShowLinkModal(false);
+        fetchGraph(); // Refresh graph
+        
+        // Update selected node data if it's the one we just edited
+        if (selectedNodeData && selectedNodeData.rawData.name === linkForm.name) {
+             setSelectedNodeData({
+                 ...selectedNodeData,
+                 rawData: {
+                     ...selectedNodeData.rawData,
+                     url: linkForm.url,
+                     description: linkForm.description,
+                     monitor: linkForm.monitor
+                 }
+             });
+        }
+    } catch (error) {
+        console.error('Failed to update link', error);
+        addToast('error', 'Failed to update link');
+    }
+  };
+
+  const handleEditClick = () => {
+      if (!selectedNodeData || !selectedNodeData.rawData) return;
+      
+      const { type, name, url, description, monitor } = selectedNodeData.rawData;
+      
+      if (type === 'link') {
+          setLinkForm({
+              name: name,
+              url: url || '',
+              description: description || '',
+              monitor: monitor || false
+          });
+          setShowLinkModal(true);
+      }
+  };
+
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="Network Map" showBack={false} helpId="network">
@@ -286,12 +350,32 @@ export default function NetworkPlugin() {
             <div className="w-96 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 shadow-xl overflow-y-auto p-4 z-10 absolute right-0 top-0 bottom-0 animate-in slide-in-from-right duration-200">
                 <div className="flex justify-between items-center mb-4 sticky top-0 bg-white dark:bg-gray-800 pb-2 border-b border-gray-100 dark:border-gray-700">
                     <h3 className="font-bold text-lg">Node Details</h3>
-                    <button 
-                        onClick={() => setSelectedNodeData(null)}
-                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-                    >
-                        <X size={20} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {selectedNodeData.rawData.type === 'container' && (
+                            <Link 
+                                href={`/edit/${selectedNodeData.rawData.name}`}
+                                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors text-blue-600 dark:text-blue-400"
+                                title="Edit Container"
+                            >
+                                <Edit size={20} />
+                            </Link>
+                        )}
+                        {selectedNodeData.rawData.type === 'link' && (
+                            <button 
+                                onClick={handleEditClick}
+                                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors text-blue-600 dark:text-blue-400"
+                                title="Edit Link"
+                            >
+                                <Edit size={20} />
+                            </button>
+                        )}
+                        <button 
+                            onClick={() => setSelectedNodeData(null)}
+                            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
+                        >
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
                 <div className="space-y-4">
                     <div>
@@ -343,6 +427,16 @@ export default function NetworkPlugin() {
                 </div>
             </div>
         )}
+
+        {/* Link Modal */}
+        <ExternalLinkModal 
+            isOpen={showLinkModal}
+            onClose={() => setShowLinkModal(false)}
+            onSave={handleSaveLink}
+            isEditing={true}
+            form={linkForm}
+            setForm={setLinkForm}
+        />
       </div>
     </div>
   );
