@@ -122,12 +122,12 @@ if curl $CURL_OPTS "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz"; then
     
     if [ "$FORCE_INSTALL" -eq 0 ] && [ "$IS_UPDATE" -eq 1 ] && [ -f "$INSTALL_DIR/package-lock.json" ] && cmp -s "$INSTALL_DIR/package-lock.json" "$TEMP_DIR/package-lock.json"; then
         log "Dependencies unchanged. Checking for critical modules..."
-        # Verify critical modules exist
-        if [ -d "$INSTALL_DIR/node_modules/socket.io" ] && [ -d "$INSTALL_DIR/node_modules/next" ]; then
-             log "Critical dependencies found. Skipping dependency download."
+        # Verify critical modules exist (check for package.json to ensure not empty dir)
+        if [ -f "$INSTALL_DIR/node_modules/socket.io/package.json" ] && [ -f "$INSTALL_DIR/node_modules/next/package.json" ]; then
+             log "Critical dependencies are installed. Skipping dependency download."
              NEED_DEPS=0
         else
-             log "Critical dependencies missing. Forcing dependency download."
+             log "Critical dependencies missing or broken. Forcing dependency download."
              NEED_DEPS=1
         fi
     else
