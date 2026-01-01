@@ -56,6 +56,7 @@ jobs:
           # Copy other files
           cp package.json release/servicebay/
           cp package-lock.json release/servicebay/
+          cp next.config.ts release/servicebay/
           cp -r templates release/servicebay/
           cp -r stacks release/servicebay/
           cp install.sh release/servicebay/
@@ -72,6 +73,8 @@ jobs:
           cd release/servicebay
           # Remove prepare script to avoid husky issues
           npm pkg delete scripts.prepare
+          # We need typescript to load next.config.ts
+          npm install typescript --save-prod
           npm ci --omit=dev
           cd ../..
           
