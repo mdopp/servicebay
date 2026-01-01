@@ -720,11 +720,12 @@ export default function MonitoringPlugin() {
                   <option value="service">Managed Service</option>
                   <option value="systemd">System Service</option>
                   <option value="script">Custom Script (JS)</option>
+                  <option value="fritzbox">Fritz!Box Internet</option>
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {formData.type === 'script' ? 'Script Content' : 'Target'}
+                    {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
                 </label>
                 {formData.type === 'script' ? (
                     <textarea
@@ -768,11 +769,20 @@ export default function MonitoringPlugin() {
                       className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                       placeholder={
                         formData.type === 'http' ? 'https://example.com' : 
+                        formData.type === 'fritzbox' ? 'fritz.box' :
                         '192.168.1.1'
                       }
                     />
                 )}
               </div>
+
+              {formData.type === 'fritzbox' && (
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 text-sm text-blue-800 dark:text-blue-200">
+                    <p className="font-medium mb-1">Fritz!Box Configuration</p>
+                    <p>This check uses the TR-064 protocol (Port 49000) to query the internet connection status.</p>
+                    <p className="mt-2 text-xs opacity-80">Note: Ensure &quot;Status information over UPnP&quot; is enabled in your Fritz!Box settings (Home Network &gt; Network &gt; Network Settings).</p>
+                </div>
+              )}
 
               {formData.type === 'http' && (
                 <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">

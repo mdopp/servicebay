@@ -35,6 +35,10 @@ export class CheckRunner {
           await this.runSystemdCheck(check.target);
           status = 'ok';
           break;
+        case 'fritzbox':
+          await this.runFritzboxCheck(check);
+          status = 'ok';
+          break;
       }
     } catch (e: unknown) {
       status = 'fail';
@@ -210,6 +214,62 @@ export class CheckRunner {
     } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         throw new Error(`Script failed: ${msg}`);
+    }
+  }
+
+  private static async runFritzboxCheck(check: CheckConfig) {
+    const host = check.fritzboxConfig?.host || check.target || 'fritz.box';
+    const port = 49000;
+    const service = 'urn:schemas-upnp-org:service:WANIPConnection:1';
+    const action = 'GetStatusInfo';
+    const url = `http://${host}:${port}/igdupnp/control/WANIPConn1`;
+
+    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+<s:Body>
+<u:${action} xmlns:u="${service}" />
+</s:Body>
+</s:Envelope>`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'text/xml; charset="utf-8"',
+                'SoapAction': `${service}#${action}`
+            },
+            body: soapBody,
+            signal: controller.signal
+        });
+
+        if (!res.ok) {
+            if (res.status === 401) {
+                 throw new Error('FritzBox requires authentication. Please check if "Status information over UPnP" is enabled in Home Network > Network > Network Settings.');
+            }
+            if (res.status === 500) {
+                // SOAP Fault?
+                const text = await res.text();
+                if (text.includes('Invalid Action')) {
+                     throw new Error('FritzBox API: Invalid Action. The device might not support WANIPConnection:1.');
+                }
+            }
+            throw new Error(`FritzBox API Error: ${res.status} ${res.statusText}`);
+        }
+
+        const text = await res.text();
+        // Parse XML for NewConnectionStatus
+        const match = text.match(/<NewConnectionStatus>(.*?)<\/NewConnectionStatus>/);
+        if (!match) throw new Error('Invalid response from FritzBox (missing NewConnectionStatus)');
+        
+        const status = match[1];
+        if (status !== 'Connected') {
+            throw new Error(`Internet connection is ${status}`);
+        }
+    } finally {
+        clearTimeout(timeout);
     }
   }
 }

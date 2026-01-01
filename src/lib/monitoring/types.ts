@@ -1,4 +1,4 @@
-export type CheckType = 'http' | 'ping' | 'script' | 'podman' | 'service' | 'systemd';
+export type CheckType = 'http' | 'ping' | 'script' | 'podman' | 'service' | 'systemd' | 'fritzbox';
 
 export interface CheckConfig {
   id: string;
@@ -13,6 +13,12 @@ export interface CheckConfig {
     expectedStatus?: number;
     bodyMatch?: string;
     bodyMatchType?: 'contains' | 'regex';
+  };
+  // FritzBox specific options
+  fritzboxConfig?: {
+    host?: string;
+    user?: string;
+    password?: string;
   };
 }
 
