@@ -5,6 +5,7 @@ import { Activity, Plus, RefreshCw, CheckCircle, XCircle, AlertTriangle, Play, E
 import { useToast, ToastType } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import { Autocomplete } from '@/components/Autocomplete';
+import ConfirmModal from '@/components/ConfirmModal';
 import { CheckConfig, CheckType } from '@/lib/monitoring/types';
 
 // Extended type for UI
@@ -35,6 +36,8 @@ export default function MonitoringPlugin() {
   const [managedServices, setManagedServices] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [checkToDelete, setCheckToDelete] = useState<string | null>(null);
   const [editingCheck, setEditingCheck] = useState<CheckConfig | null>(null);
   const [historyCheck, setHistoryCheck] = useState<Check | null>(null);
   const [historyData, setHistoryData] = useState<HistoryItem[]>([]);
@@ -174,16 +177,25 @@ export default function MonitoringPlugin() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this check?')) return;
+  const handleDelete = (id: string) => {
+    setCheckToDelete(id);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!checkToDelete) return;
+    
     try {
         // We need a DELETE endpoint
-        const res = await fetch(`/api/monitoring/checks?id=${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/monitoring/checks?id=${checkToDelete}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Failed to delete');
         addToast('success', 'Check deleted');
         fetchData();
     } catch {
         addToast('error', 'Failed to delete check');
+    } finally {
+        setIsDeleteModalOpen(false);
+        setCheckToDelete(null);
     }
   };
 
@@ -834,6 +846,16 @@ export default function MonitoringPlugin() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={isDeleteModalOpen}
+        title="Delete Check"
+        message="Are you sure you want to delete this monitoring check? This action cannot be undone."
+        confirmText="Delete"
+        isDestructive={true}
+        onConfirm={confirmDelete}
+        onCancel={() => setIsDeleteModalOpen(false)}
+      />
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
+import ConfirmModal from '@/components/ConfirmModal';
 import { AppConfig } from '@/lib/config';
 
 interface AppUpdateStatus {
@@ -31,6 +32,7 @@ export default function SettingsPage() {
   // App Update State
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
 
   // Email Form State
   const [emailEnabled, setEmailEnabled] = useState(false);
@@ -130,9 +132,13 @@ export default function SettingsPage() {
     setRegistries(registries.filter(r => r.name !== name));
   };
 
-  const handleAppUpdate = async () => {
+  const handleAppUpdate = () => {
     if (!appUpdate?.latest) return;
-    if (!confirm(`Update ServiceBay to ${appUpdate.latest.version}? The service will restart.`)) return;
+    setIsUpdateModalOpen(true);
+  };
+
+  const confirmAppUpdate = async () => {
+    if (!appUpdate?.latest) return;
     
     setUpdating(true);
     try {
@@ -148,9 +154,10 @@ export default function SettingsPage() {
         throw new Error('Update failed');
       }
     } catch {
-      addToast('error', 'Update failed', 'Could not start update process.');
+      addToast('error', 'Update failed');
     } finally {
       setUpdating(false);
+      setIsUpdateModalOpen(false);
     }
   };
 
@@ -534,6 +541,15 @@ export default function SettingsPage() {
             )}
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={isUpdateModalOpen}
+        title="Update ServiceBay"
+        message={`Are you sure you want to update ServiceBay to version ${appUpdate?.latest?.version}? The service will restart automatically.`}
+        confirmText="Update Now"
+        onConfirm={confirmAppUpdate}
+        onCancel={() => setIsUpdateModalOpen(false)}
+      />
     </div>
   );
 }
