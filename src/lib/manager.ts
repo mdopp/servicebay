@@ -22,6 +22,7 @@ export interface ServiceInfo {
   description?: string;
   ports: { host?: string; container: string }[];
   volumes: { host: string; container: string }[];
+  labels: Record<string, string>;
 }
 
 export async function listServices(): Promise<ServiceInfo[]> {
@@ -59,6 +60,7 @@ export async function listServices(): Promise<ServiceInfo[]> {
     let description = '';
     const ports: { host?: string; container: string }[] = [];
     const volumes: { host: string; container: string }[] = [];
+    let labels: Record<string, string> = {};
 
     try {
       const { stdout } = await execAsync(`systemctl --user is-active ${name}.service`);
@@ -92,45 +94,52 @@ export async function listServices(): Promise<ServiceInfo[]> {
             
             // Iterate through all documents to find one with spec.containers
             documents.forEach((parsed) => {
-                if (parsed && parsed.spec) {
-                    // Extract Ports
-                    if (parsed.spec.containers) {
-                        parsed.spec.containers.forEach((container: any) => {
-                            if (container.ports) {
-                                container.ports.forEach((port: any) => {
-                                    if (port.hostPort) {
-                                        ports.push({ host: String(port.hostPort), container: String(port.containerPort) });
-                                    } else {
-                                    ports.push({ container: String(port.containerPort) });
+                if (parsed) {
+                    // Extract Labels
+                    if (parsed.metadata && parsed.metadata.labels) {
+                        labels = { ...labels, ...parsed.metadata.labels };
+                    }
+
+                    if (parsed.spec) {
+                        // Extract Ports
+                        if (parsed.spec.containers) {
+                            parsed.spec.containers.forEach((container: any) => {
+                                if (container.ports) {
+                                    container.ports.forEach((port: any) => {
+                                        if (port.hostPort) {
+                                            ports.push({ host: String(port.hostPort), container: String(port.containerPort) });
+                                        } else {
+                                            ports.push({ container: String(port.containerPort) });
+                                        }
+                                    });
                                 }
                             });
                         }
-                    });
-                }
 
-                // Extract Volumes
-                if (parsed.spec.volumes && parsed.spec.containers) {
-                    const volumeMap = new Map<string, string>(); // name -> hostPath
-                    
-                    parsed.spec.volumes.forEach((vol: any) => {
-                        if (vol.hostPath && vol.hostPath.path) {
-                            volumeMap.set(vol.name, vol.hostPath.path);
-                        } else if (vol.persistentVolumeClaim) {
-                             volumeMap.set(vol.name, `PVC:${vol.persistentVolumeClaim.claimName}`);
-                        }
-                    });
+                        // Extract Volumes
+                        if (parsed.spec.volumes && parsed.spec.containers) {
+                            const volumeMap = new Map<string, string>(); // name -> hostPath
+                            
+                            parsed.spec.volumes.forEach((vol: any) => {
+                                if (vol.hostPath && vol.hostPath.path) {
+                                    volumeMap.set(vol.name, vol.hostPath.path);
+                                } else if (vol.persistentVolumeClaim) {
+                                    volumeMap.set(vol.name, `PVC:${vol.persistentVolumeClaim.claimName}`);
+                                }
+                            });
 
-                    parsed.spec.containers.forEach((container: any) => {
-                        if (container.volumeMounts) {
-                            container.volumeMounts.forEach((mount: any) => {
-                                const source = volumeMap.get(mount.name);
-                                if (source) {
-                                    volumes.push({ host: source, container: mount.mountPath });
+                            parsed.spec.containers.forEach((container: any) => {
+                                if (container.volumeMounts) {
+                                    container.volumeMounts.forEach((mount: any) => {
+                                        const source = volumeMap.get(mount.name);
+                                        if (source) {
+                                            volumes.push({ host: source, container: mount.mountPath });
+                                        }
+                                    });
                                 }
                             });
                         }
-                    });
-                }
+                    }
                 }
             });
         } catch (e) {
@@ -148,7 +157,8 @@ export async function listServices(): Promise<ServiceInfo[]> {
       status,
       description,
       ports,
-      volumes
+      volumes,
+      labels
     });
   }
 

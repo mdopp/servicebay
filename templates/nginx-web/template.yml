@@ -4,6 +4,7 @@ metadata:
   name: nginx-web
   labels:
     app: nginx-web
+    podcli.role: reverse-proxy
 spec:
   containers:
   - name: nginx

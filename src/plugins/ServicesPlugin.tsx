@@ -1,13 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, X, Search, Link as LinkIcon, Layers, Globe, Server } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
-import { fetchTemplates, fetchTemplateYaml } from '@/app/actions';
-import { Template } from '@/lib/registry';
 import PageHeader from '@/components/PageHeader';
 
 interface Service {
@@ -23,6 +21,8 @@ interface Service {
   description?: string;
   id?: string;
   monitor?: boolean;
+  labels?: Record<string, string>;
+  verifiedDomains?: string[];
 }
 
 export default function ServicesPlugin() {
@@ -36,17 +36,6 @@ export default function ServicesPlugin() {
   const [serviceToDelete, setServiceToDelete] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const { addToast, updateToast } = useToast();
-
-  // New Service Modal State
-  const [showNewModal, setShowNewModal] = useState(false);
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [loadingTemplates, setLoadingTemplates] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [config, setConfig] = useState<any>(null);
-
-  // Proxy Modal State
-  const [showProxyModal, setShowProxyModal] = useState(false);
-  const [selectedProxyTemplate, setSelectedProxyTemplate] = useState<Template | null>(null);
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -96,105 +85,6 @@ export default function ServicesPlugin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleCreateGateway = async () => {
-    if (!config) return;
-    const newGateway = {
-        enabled: true,
-        type: 'fritzbox',
-        host: config.gateway?.host || 'fritz.box',
-        username: config.gateway?.username || '',
-        password: config.gateway?.password || '',
-        ssl: config.gateway?.ssl ?? true
-    };
-    
-    try {
-        await fetch('/api/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ gateway: newGateway })
-        });
-        addToast('success', 'Internet Gateway enabled');
-        setShowNewModal(false);
-        // Refresh config
-        fetch('/api/settings').then(res => res.json()).then(setConfig);
-    } catch (e) {
-        addToast('error', 'Failed to enable gateway');
-    }
-  };
-
-  const handleCreateProxy = async () => {
-      setShowNewModal(false);
-      setShowProxyModal(true);
-      if (templates.length === 0) {
-          setLoadingTemplates(true);
-          try {
-              const data = await fetchTemplates();
-              setTemplates(data);
-          } catch (e) {
-              console.error(e);
-          } finally {
-              setLoadingTemplates(false);
-          }
-      }
-  };
-
-  const handleSaveProxy = async () => {
-      if (!selectedProxyTemplate) return;
-      
-      setActionLoading(true);
-      try {
-          const yamlContent = await fetchTemplateYaml(selectedProxyTemplate.name, selectedProxyTemplate.source);
-          if (!yamlContent) throw new Error('Failed to fetch template');
-
-          const name = 'nginx';
-          const kubeContent = `[Unit]
-Description=Nginx Reverse Proxy
-After=network-online.target
-
-[Kube]
-Yaml=nginx.yaml
-
-[Install]
-WantedBy=default.target`;
-
-          const res = await fetch('/api/services', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                  name,
-                  kubeContent,
-                  yamlContent,
-                  yamlFileName: 'nginx.yaml'
-              })
-          });
-
-          if (!res.ok) throw new Error('Failed to create service');
-          
-          addToast('success', 'Nginx Proxy created');
-          setShowProxyModal(false);
-          fetchData();
-      } catch (e) {
-          addToast('error', 'Failed to create proxy');
-      } finally {
-          setActionLoading(false);
-      }
-  };
-
-  const handleOpenNew = async () => {
-    setShowNewModal(true);
-    if (templates.length === 0) {
-        setLoadingTemplates(true);
-        try {
-            const data = await fetchTemplates();
-            setTemplates(data);
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setLoadingTemplates(false);
-        }
-    }
-  };
-
   const handleEditLink = (service: Service) => {
     setLinkForm({
         name: service.name,
@@ -203,7 +93,7 @@ WantedBy=default.target`;
         monitor: service.monitor || false
     });
     setIsEditingLink(true);
-    setEditingLinkId(service.name);
+    setEditingLinkId(service.name); // Or service.id if available and consistent
     setShowLinkModal(true);
   };
 
@@ -318,7 +208,7 @@ WantedBy=default.target`;
                     <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                 </button>
                 <button 
-                    onClick={handleOpenNew}
+                    onClick={() => router.push('/registry')}
                     className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 shadow-sm transition-colors text-sm font-medium"
                 >
                     <Plus size={18} /> New
@@ -356,6 +246,7 @@ WantedBy=default.target`;
                                     {service.name}
                                     {service.type === 'link' && <span className="text-xs font-normal px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-500">Link</span>}
                                     {service.type === 'gateway' && <span className="text-xs font-normal px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 rounded text-amber-600 dark:text-amber-400">Gateway</span>}
+                                    {service.labels && service.labels['podcli.role'] === 'reverse-proxy' && <span className="text-xs font-normal px-2 py-0.5 bg-green-100 dark:bg-green-900/30 rounded text-green-600 dark:text-green-400">Reverse Proxy</span>}
                                 </h3>
                                 <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
                                     {service.type === 'link' ? (
@@ -363,7 +254,18 @@ WantedBy=default.target`;
                                             {service.url}
                                         </a>
                                     ) : service.type === 'gateway' ? (
-                                        service.description
+                                        <div className="flex flex-col gap-1">
+                                            <span>{service.description}</span>
+                                            {service.verifiedDomains && service.verifiedDomains.length > 0 && (
+                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                    {service.verifiedDomains.map(d => (
+                                                        <a key={d} href={`https://${d}`} target="_blank" rel="noopener noreferrer" className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded hover:underline">
+                                                            {d}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
                                     ) : (
                                         service.status
                                     )}
@@ -373,12 +275,12 @@ WantedBy=default.target`;
                         
                         <div className="flex items-center gap-2">
                             {service.type === 'gateway' ? (
-                                <Link href="/settings" className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Configure">
+                                <Link href="/registry?selected=gateway" className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit Gateway">
                                     <Edit size={18} />
                                 </Link>
                             ) : service.type === 'link' ? (
                                 <>
-                                    <button onClick={() => handleEditLink(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit">
+                                    <button onClick={() => handleEditLink(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit Link">
                                         <Edit size={18} />
                                     </button>
                                     <button onClick={() => confirmDelete(service.name)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
@@ -531,96 +433,12 @@ WantedBy=default.target`;
         </div>
       )}
 
-      {/* New Service Modal */}
-      {showNewModal && (
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-2xl border border-gray-200 dark:border-gray-800 flex flex-col max-h-[80vh]">
-                <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
-                    <h3 className="text-lg font-bold">Create New Service</h3>
-                    <button onClick={() => setShowNewModal(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                        <X size={20} />
-                    </button>
-                </div>
-                
-                <div className="p-4 overflow-y-auto">
-                    <div className="grid gap-4">
-                        {/* Manual */}
-                        <button 
-                            onClick={() => router.push('/create')}
-                            className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all text-left group"
-                        >
-                            <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform">
-                                <Edit size={24} />
-                            </div>
-                            <div>
-                                <h4 className="font-bold text-gray-900 dark:text-white">Manual Service</h4>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">Create a service from scratch using YAML/Kube definitions.</p>
-                            </div>
-                        </button>
-
-                        {/* Link */}
-                        <button 
-                            onClick={() => { 
-                                setShowNewModal(false); 
-                                setLinkForm({ name: '', url: '', description: '', monitor: false });
-                                setIsEditingLink(false);
-                                setEditingLinkId(null);
-                                setShowLinkModal(true); 
-                            }}
-                            className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-purple-500 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all text-left group"
-                        >
-                            <div className="p-3 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform">
-                                <LinkIcon size={24} />
-                            </div>
-                            <div>
-                                <h4 className="font-bold text-gray-900 dark:text-white">Link Existing Service</h4>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">Add a shortcut to an external service running on this server.</p>
-                            </div>
-                        </button>
-
-                        <div className="border-t border-gray-200 dark:border-gray-800 my-2"></div>
-                        <h4 className="text-sm font-medium text-gray-500 dark:text-gray-400 px-2">Stacks & Templates</h4>
-
-                        {/* Templates */}
-                        {loadingTemplates ? (
-                            <div className="p-8 text-center text-gray-500">Loading templates...</div>
-                        ) : (
-                            <div className="grid gap-2">
-                                {templates.slice(0, 5).map(template => (
-                                    <button 
-                                        key={template.name}
-                                        onClick={() => router.push(`/create?template=${template.name}`)}
-                                        className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left"
-                                    >
-                                        <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded text-gray-600 dark:text-gray-400">
-                                            <Layers size={18} />
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="font-medium text-gray-900 dark:text-white">{template.name}</div>
-                                            <div className="text-xs text-gray-500 dark:text-gray-400 capitalize">{template.type}</div>
-                                        </div>
-                                    </button>
-                                ))}
-                                <button 
-                                    onClick={() => router.push('/registry')}
-                                    className="p-3 text-center text-sm text-blue-600 dark:text-blue-400 hover:underline"
-                                >
-                                    View all templates in Registry
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </div>
-      )}
-
       {/* Link Modal */}
       {showLinkModal && (
         <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800">
                 <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
-                    <h3 className="text-lg font-bold">Add External Link</h3>
+                    <h3 className="text-lg font-bold">{isEditingLink ? 'Edit External Link' : 'Add External Link'}</h3>
                     <button onClick={() => setShowLinkModal(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
                         <X size={20} />
                     </button>
@@ -680,77 +498,13 @@ WantedBy=default.target`;
                         onClick={handleSaveLink}
                         className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium"
                     >
-                        Add Link
+                        {isEditingLink ? 'Save Changes' : 'Add Link'}
                     </button>
                 </div>
             </div>
         </div>
       )}
-      {/* Proxy Modal */}
-      {showProxyModal && (
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800">
-                <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
-                    <h3 className="text-lg font-bold">Setup Reverse Proxy</h3>
-                    <button onClick={() => setShowProxyModal(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                        <X size={20} />
-                    </button>
-                </div>
-                <div className="p-4 space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Proxy Software</label>
-                        <select 
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                            disabled
-                        >
-                            <option>Nginx</option>
-                        </select>
-                        <p className="text-xs text-gray-500 mt-1">Currently only Nginx is supported.</p>
-                    </div>
-                    
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Select Template</label>
-                        {loadingTemplates ? (
-                            <div className="text-sm text-gray-500">Loading templates...</div>
-                        ) : (
-                            <div className="grid gap-2 max-h-60 overflow-y-auto">
-                                {templates.filter(t => t.name.toLowerCase().includes('nginx')).map(template => (
-                                    <button 
-                                        key={template.name}
-                                        onClick={() => setSelectedProxyTemplate(template)}
-                                        className={`flex items-center gap-3 p-3 rounded-lg border transition-colors text-left ${selectedProxyTemplate?.name === template.name ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-                                    >
-                                        <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded text-gray-600 dark:text-gray-400">
-                                            <Layers size={18} />
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="font-medium text-gray-900 dark:text-white">{template.name}</div>
-                                            <div className="text-xs text-gray-500 dark:text-gray-400">{template.description || 'No description'}</div>
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-                <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
-                    <button 
-                        onClick={() => setShowProxyModal(false)}
-                        className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button 
-                        onClick={handleSaveProxy}
-                        disabled={!selectedProxyTemplate || actionLoading}
-                        className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {actionLoading ? 'Creating...' : 'Create Proxy'}
-                    </button>
-                </div>
-            </div>
-        </div>
-      )}
+
     </div>
   );
 }

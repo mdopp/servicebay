@@ -59,12 +59,7 @@ export default function SettingsPage() {
   const [newRegUrl, setNewRegUrl] = useState('');
   const [newRegBranch, setNewRegBranch] = useState('');
 
-  // Gateway State
-  const [gatewayEnabled, setGatewayEnabled] = useState(false);
-  const [gatewayType, setGatewayType] = useState('fritzbox');
-  const [gatewayHost, setGatewayHost] = useState('fritz.box');
-  const [gatewayUser, setGatewayUser] = useState('');
-  const [gatewayPass, setGatewayPass] = useState('');
+
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -99,13 +94,7 @@ export default function SettingsPage() {
         }
       }
 
-      if (data.gateway) {
-        setGatewayEnabled(data.gateway.enabled);
-        setGatewayType(data.gateway.type);
-        setGatewayHost(data.gateway.host);
-        setGatewayUser(data.gateway.username || '');
-        setGatewayPass(data.gateway.password || '');
-      }
+
 
       if (data.notifications?.email) {
         const e = data.notifications.email;
@@ -255,13 +244,7 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       const newConfig: Partial<AppConfig> = {
-        gateway: {
-            enabled: gatewayEnabled,
-            type: gatewayType as 'fritzbox',
-            host: gatewayHost,
-            username: gatewayUser,
-            password: gatewayPass
-        },
+
         registries: {
             enabled: registriesEnabled,
             items: registries
@@ -485,83 +468,7 @@ export default function SettingsPage() {
             )}
         </div>
 
-        {/* Internet Gateway Section */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-                <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg text-amber-600 dark:text-amber-400">
-                    <GitBranch size={20} className="rotate-90" />
-                </div>
-                <div>
-                    <h3 className="font-bold text-gray-900 dark:text-white">Internet Gateway</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Configure router connection for network map & monitoring</p>
-                </div>
-                <div className="ml-auto">
-                    <label className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                            type="checkbox" 
-                            className="sr-only peer" 
-                            checked={gatewayEnabled}
-                            onChange={e => setGatewayEnabled(e.target.checked)}
-                        />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-600"></div>
-                    </label>
-                </div>
-            </div>
-            
-            {gatewayEnabled && (
-                <div className="p-6 space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model</label>
-                            <select 
-                                value={gatewayType}
-                                onChange={e => setGatewayType(e.target.value)}
-                                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 outline-none"
-                            >
-                                <option value="fritzbox">AVM Fritz!Box</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Hostname / IP</label>
-                            <input 
-                                type="text" 
-                                value={gatewayHost}
-                                onChange={e => setGatewayHost(e.target.value)}
-                                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 outline-none"
-                                placeholder="fritz.box"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username (Optional)</label>
-                            <input 
-                                type="text" 
-                                value={gatewayUser}
-                                onChange={e => setGatewayUser(e.target.value)}
-                                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 outline-none"
-                                placeholder="admin"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password (Optional)</label>
-                            <input 
-                                type="password" 
-                                value={gatewayPass}
-                                onChange={e => setGatewayPass(e.target.value)}
-                                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 outline-none"
-                                placeholder="••••••••"
-                            />
-                        </div>
-                    </div>
-                    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 text-sm text-amber-800 dark:text-amber-200">
-                        <p className="font-medium mb-1">Note:</p>
-                        <p className="opacity-90">
-                            Providing credentials allows ServiceBay to fetch detailed port forwardings and internal network devices via TR-064. 
-                            Without credentials, only basic UPnP status is available.
-                        </p>
-                    </div>
-                </div>
-            )}
-        </div>
+
 
         {/* Email Notifications Section */}
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">

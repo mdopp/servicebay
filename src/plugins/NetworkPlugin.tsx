@@ -115,6 +115,24 @@ export default function NetworkPlugin() {
                             </div>
                         )}
 
+                        {/* Verified Domains */}
+                        {n.type === 'internet' && n.metadata?.verifiedDomains && n.metadata.verifiedDomains.length > 0 && (
+                            <div className="flex flex-col gap-0.5 mt-1 w-full">
+                                {n.metadata.verifiedDomains.map((domain: string) => (
+                                    <a 
+                                        key={domain}
+                                        href={`https://${domain}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[10px] text-center bg-white/50 dark:bg-black/20 px-1.5 py-0.5 rounded hover:bg-white/80 dark:hover:bg-black/40 transition-colors truncate"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        {domain}
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+
                         {/* Status & Link */}
                         <div className="flex items-center gap-2 mt-1">
                             <div 

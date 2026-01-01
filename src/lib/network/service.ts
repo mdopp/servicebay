@@ -4,6 +4,7 @@ import { NginxParser } from '../nginx/parser';
 import { getPodmanPs, listServices } from '../manager';
 import { getConfig } from '../config';
 import { NetworkStore } from './store';
+import { checkDomains } from './dns';
 import os from 'os';
 
 export class NetworkService {
@@ -25,19 +26,11 @@ export class NetworkService {
     const nodes: NetworkNode[] = [];
     const edges: NetworkEdge[] = [];
 
-    // 1. Internet Node
-    nodes.push({
-      id: 'internet',
-      type: 'internet',
-      label: 'Internet',
-      ports: [],
-      status: 'up'
-    });
-
-    // 2. Router Node (FritzBox)
+    // 0. Prepare Data
     const config = await getConfig();
+    
+    // FritzBox Status
     let fbClient: FritzBoxClient;
-
     if (config.gateway?.enabled && config.gateway.type === 'fritzbox') {
         fbClient = new FritzBoxClient({
             host: config.gateway.host,
@@ -45,7 +38,6 @@ export class NetworkService {
             password: config.gateway.password
         });
     } else {
-        // Fallback to default discovery/env vars
         fbClient = new FritzBoxClient();
     }
 
@@ -56,13 +48,34 @@ export class NetworkService {
       console.warn('Failed to get FritzBox status', e);
     }
 
+    // Nginx Config
+    const nginxParser = new NginxParser();
+    const nginxConfig = await nginxParser.parse();
+
+    // Check Domains
+    const domainStatuses = await checkDomains(nginxConfig, fbStatus);
+    const verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
+
+    // 1. Internet Node
+    nodes.push({
+      id: 'internet',
+      type: 'internet',
+      label: 'Internet',
+      ports: [],
+      status: 'up',
+      metadata: {
+          verifiedDomains
+      }
+    });
+
+    // 2. Router Node (FritzBox)
     const routerId = 'router';
     nodes.push({
       id: routerId,
       type: 'router',
       label: 'Fritz!Box',
       subLabel: fbStatus?.externalIP || 'Unknown IP',
-      ports: [80, 443], // Default management ports? Or WAN ports?
+      ports: [80, 443],
       status: fbStatus?.connected ? 'up' : 'down',
       metadata: { 
         uptime: fbStatus?.uptime,
@@ -77,14 +90,12 @@ export class NetworkService {
       id: 'edge-internet-router',
       source: 'internet',
       target: routerId,
-      protocol: 'tcp', // generic
+      protocol: 'tcp',
       port: 0,
       state: fbStatus?.connected ? 'active' : 'inactive'
     });
 
-    // 3. Parse Nginx Config
-    const nginxParser = new NginxParser();
-    const nginxConfig = await nginxParser.parse();
+    // 4. Nginx Node
 
     // 4. Nginx Node
     // We assume Nginx is running on the host
@@ -108,13 +119,23 @@ export class NetworkService {
 
     for (const service of services) {
         // Merge Nginx service with the existing Nginx node
-        if (service.name.toLowerCase() === 'nginx') {
+        // Check by name OR by label
+        const isProxy = service.name.toLowerCase() === 'nginx' || 
+                        service.name.toLowerCase() === 'nginx-web' ||
+                        (service.labels && service.labels['podcli.role'] === 'reverse-proxy');
+
+        if (isProxy) {
             const nginxNode = nodes.find(n => n.id === nginxId);
             if (nginxNode) {
                 nginxNode.status = service.active ? 'up' : 'down';
                 nginxNode.subLabel = 'Managed Proxy';
                 if (nginxNode.metadata) {
                     nginxNode.metadata.serviceDescription = service.description;
+                }
+                // Update ports from service definition if available
+                const servicePorts = service.ports.map(p => parseInt(p.host?.split(':')[1] || '0')).filter(p => p > 0);
+                if (servicePorts.length > 0) {
+                    nginxNode.ports = servicePorts;
                 }
                 continue;
             }
@@ -293,6 +314,28 @@ export class NetworkService {
     // Add remaining containers that are not linked (orphans)
      
     for (const container of containers) {
+        // Check if this container is the Reverse Proxy
+        // We check for the specific label, or if it matches the known nginx service name
+         
+        const isProxy = (container.Labels && container.Labels['podcli.role'] === 'reverse-proxy') ||
+                         
+                        (container.Names && container.Names.some((n: string) => n.includes('/nginx-web') || n.includes('/nginx')));
+
+        if (isProxy) {
+            const nginxNode = nodes.find(n => n.id === nginxId);
+            if (nginxNode) {
+                // Update status from container
+                nginxNode.status = container.State === 'running' ? 'up' : 'down';
+                
+                if (nginxNode.metadata) {
+                    nginxNode.metadata.containerId = container.Id;
+                    nginxNode.metadata.image = container.Image;
+                }
+                // Don't add as separate node
+                continue;
+            }
+        }
+
         const containerId = `container-${container.Id.substring(0, 12)}`;
         if (!nodes.find(n => n.id === containerId)) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any

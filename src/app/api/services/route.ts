@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { listServices, saveService } from '@/lib/manager';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
+import { FritzBoxClient } from '@/lib/fritzbox/client';
+import { NginxParser } from '@/lib/nginx/parser';
+import { checkDomains } from '@/lib/network/dns';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -31,9 +34,36 @@ export async function GET() {
         url: link.url,
         description: link.description,
         id: link.id,
-        monitor: link.monitor
+        monitor: link.monitor,
+        labels: {}
     };
   });
+
+  // Fetch Gateway Info & Domains
+  let gatewayDescription = `Fritz!Box at ${config.gateway?.host || 'unknown'}`;
+  let verifiedDomains: string[] = [];
+
+  if (config.gateway?.enabled && config.gateway.type === 'fritzbox') {
+      try {
+          const fbClient = new FritzBoxClient({
+              host: config.gateway.host,
+              username: config.gateway.username,
+              password: config.gateway.password
+          });
+          const status = await fbClient.getStatus();
+          if (status.externalIP) {
+              gatewayDescription = `Online: ${status.externalIP}`;
+              
+              // Check Domains
+              const nginxParser = new NginxParser();
+              const nginxConfig = await nginxParser.parse();
+              const domainStatuses = await checkDomains(nginxConfig, status);
+              verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
+          }
+      } catch (e) {
+          console.warn('Failed to fetch gateway status for services list', e);
+      }
+  }
 
   const gatewayService = config.gateway?.enabled ? [{
       name: 'Internet Gateway',
@@ -44,8 +74,10 @@ export async function GET() {
       ports: [],
       volumes: [],
       type: 'gateway',
-      description: `Fritz!Box at ${config.gateway.host}`,
-      id: 'gateway'
+      description: gatewayDescription,
+      id: 'gateway',
+      labels: {},
+      verifiedDomains // Pass to frontend
   }] : [];
 
   const mappedServices = services.map(s => ({ ...s, type: 'container' }));
