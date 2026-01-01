@@ -22,35 +22,35 @@ export default function SettingsPage() {
   const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
   const [newRecipient, setNewRecipient] = useState('');
 
-  useEffect(() => {
-    const fetchConfig = async () => {
-      try {
-        const res = await fetch('/api/settings');
-        if (!res.ok) throw new Error('Failed to fetch config');
-        const data: AppConfig = await res.json();
-        
-        // Initialize form
-        if (data.notifications?.email) {
-          const e = data.notifications.email;
-          setEmailEnabled(e.enabled);
-          setEmailHost(e.host);
-          setEmailPort(e.port);
-          setEmailSecure(e.secure);
-          setEmailUser(e.user);
-          setEmailPass(e.pass);
-          setEmailFrom(e.from);
-          setEmailRecipients(e.to || []);
-        }
-      } catch (error) {
-        console.error(error);
-        addToast('error', 'Failed to load settings');
-      } finally {
-        setLoading(false);
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch('/api/settings');
+      if (!res.ok) throw new Error('Failed to fetch config');
+      const data: AppConfig = await res.json();
+      
+      // Initialize form
+      if (data.notifications?.email) {
+        const e = data.notifications.email;
+        setEmailEnabled(e.enabled);
+        setEmailHost(e.host);
+        setEmailPort(e.port);
+        setEmailSecure(e.secure);
+        setEmailUser(e.user);
+        setEmailPass(e.pass);
+        setEmailFrom(e.from);
+        setEmailRecipients(e.to || []);
       }
-    };
+    } catch (error) {
+      console.error(error);
+      addToast('error', 'Failed to load settings');
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchConfig();
-  }, [addToast]);
+  }, []);
 
   const handleAddRecipient = () => {
     if (newRecipient && !emailRecipients.includes(newRecipient)) {

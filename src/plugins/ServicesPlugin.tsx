@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, X, Github, Search } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, X, Github, Search, Globe, Link as LinkIcon, Layers } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
+import { fetchTemplates } from '@/app/actions';
+import { Template } from '@/lib/registry';
 
 interface Service {
   name: string;
@@ -14,9 +17,14 @@ interface Service {
   yamlPath: string | null;
   ports: { host?: string; container: string }[];
   volumes: { host: string; container: string }[];
+  type?: 'container' | 'link';
+  url?: string;
+  description?: string;
+  id?: string;
 }
 
 export default function ServicesPlugin() {
+  const router = useRouter();
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
@@ -26,6 +34,15 @@ export default function ServicesPlugin() {
   const [serviceToDelete, setServiceToDelete] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const { addToast, updateToast } = useToast();
+
+  // New Service Modal State
+  const [showNewModal, setShowNewModal] = useState(false);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+
+  // Link Modal State
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '', monitor: false });
 
   const fetchData = async () => {
     setLoading(true);
@@ -67,6 +84,45 @@ export default function ServicesPlugin() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleOpenNew = async () => {
+    setShowNewModal(true);
+    if (templates.length === 0) {
+        setLoadingTemplates(true);
+        try {
+            const data = await fetchTemplates();
+            setTemplates(data);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoadingTemplates(false);
+        }
+    }
+  };
+
+  const handleSaveLink = async () => {
+    if (!linkForm.name || !linkForm.url) {
+        addToast('error', 'Name and URL are required');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/services', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...linkForm, type: 'link' })
+        });
+
+        if (!res.ok) throw new Error('Failed to save link');
+
+        addToast('success', 'Link added successfully');
+        setShowLinkModal(false);
+        setLinkForm({ name: '', url: '', description: '', monitor: false });
+        fetchData();
+    } catch (error) {
+        addToast('error', 'Failed to add link');
+    }
+  };
 
   const confirmDelete = (name: string) => {
     setServiceToDelete(name);
@@ -150,12 +206,12 @@ export default function ServicesPlugin() {
                 <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
                     <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                 </button>
-                <Link href="/registry" className="flex items-center gap-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-700 px-3 py-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors text-sm font-medium">
-                    <Github size={18} /> Registry
-                </Link>
-                <Link href="/create" className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 shadow-sm transition-colors text-sm font-medium">
-                    <Plus size={18} /> New Service
-                </Link>
+                <button 
+                    onClick={handleOpenNew}
+                    className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 shadow-sm transition-colors text-sm font-medium"
+                >
+                    <Plus size={18} /> New
+                </button>
             </div>
         </div>
         <div className="relative">
@@ -183,51 +239,83 @@ export default function ServicesPlugin() {
                 <div key={service.name} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
                     <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
                         <div className="flex items-center gap-3">
-                            <div className={`w-3 h-3 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} />
+                            {service.type === 'link' ? (
+                                <div className={`p-2 rounded-full ${service.active ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
+                                    <Globe size={20} />
+                                </div>
+                            ) : (
+                                <div className={`w-3 h-3 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} />
+                            )}
                             <div>
-                                <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100">{service.name}</h3>
-                                <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{service.status}</div>
+                                <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                                    {service.name}
+                                    {service.type === 'link' && <span className="text-xs font-normal px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-500">Link</span>}
+                                </h3>
+                                <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                                    {service.type === 'link' ? service.url : service.status}
+                                </div>
                             </div>
                         </div>
                         
                         <div className="flex items-center gap-2">
-                            <Link href={`/monitor/${service.name}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Monitor">
-                                <Activity size={18} />
-                            </Link>
-                            <Link href={`/edit/${service.name}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit">
-                                <Edit size={18} />
-                            </Link>
-                            <button onClick={() => openActions(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors" title="Actions">
-                                <MoreVertical size={18} />
-                            </button>
+                            {service.type === 'link' ? (
+                                <>
+                                    <a href={service.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Open Link">
+                                        <Globe size={18} />
+                                    </a>
+                                    <button onClick={() => confirmDelete(service.name)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
+                                        <Trash2 size={18} />
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <Link href={`/monitor/${service.name}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Monitor">
+                                        <Activity size={18} />
+                                    </Link>
+                                    <Link href={`/edit/${service.name}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit">
+                                        <Edit size={18} />
+                                    </Link>
+                                    <button onClick={() => openActions(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors" title="Actions">
+                                        <MoreVertical size={18} />
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                     
                     {/* Details */}
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600 dark:text-gray-400">
-                        {service.ports.length > 0 && (
-                            <div>
-                                <span className="font-semibold block mb-1">Ports:</span>
-                                <div className="flex flex-wrap gap-1">
-                                    {service.ports.map((p, i) => (
-                                        <span key={i} className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono">
-                                            {p.host ? `${p.host}:` : ''}{p.container}
-                                        </span>
-                                    ))}
-                                </div>
+                        {service.type === 'link' ? (
+                            <div className="col-span-2 text-gray-500 italic">
+                                {service.description || 'No description provided'}
                             </div>
-                        )}
-                        {service.volumes.length > 0 && (
-                            <div>
-                                <span className="font-semibold block mb-1">Volumes:</span>
-                                <div className="flex flex-col gap-1">
-                                    {service.volumes.map((v, i) => (
-                                        <span key={i} className="truncate text-xs font-mono" title={`${v.host} -> ${v.container}`}>
-                                            {v.host} → {v.container}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
+                        ) : (
+                            <>
+                                {service.ports.length > 0 && (
+                                    <div>
+                                        <span className="font-semibold block mb-1">Ports:</span>
+                                        <div className="flex flex-wrap gap-1">
+                                            {service.ports.map((p, i) => (
+                                                <span key={i} className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono">
+                                                    {p.host ? `${p.host}:` : ''}{p.container}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {service.volumes.length > 0 && (
+                                    <div>
+                                        <span className="font-semibold block mb-1">Volumes:</span>
+                                        <div className="flex flex-col gap-1">
+                                            {service.volumes.map((v, i) => (
+                                                <span key={i} className="truncate text-xs font-mono" title={`${v.host} -> ${v.container}`}>
+                                                    {v.host} → {v.container}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </div>
                 </div>
@@ -311,6 +399,156 @@ export default function ServicesPlugin() {
                     >
                         <Trash2 size={18} />
                         <span className="font-medium">Delete Service</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* New Service Modal */}
+      {showNewModal && (
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-2xl border border-gray-200 dark:border-gray-800 flex flex-col max-h-[80vh]">
+                <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
+                    <h3 className="text-lg font-bold">Create New Service</h3>
+                    <button onClick={() => setShowNewModal(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <div className="p-4 overflow-y-auto">
+                    <div className="grid gap-4">
+                        {/* Manual */}
+                        <button 
+                            onClick={() => router.push('/create')}
+                            className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all text-left group"
+                        >
+                            <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform">
+                                <Edit size={24} />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-gray-900 dark:text-white">Manual Service</h4>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">Create a service from scratch using YAML/Kube definitions.</p>
+                            </div>
+                        </button>
+
+                        {/* Link */}
+                        <button 
+                            onClick={() => { setShowNewModal(false); setShowLinkModal(true); }}
+                            className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-purple-500 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all text-left group"
+                        >
+                            <div className="p-3 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform">
+                                <LinkIcon size={24} />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-gray-900 dark:text-white">Link Existing Service</h4>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">Add a shortcut to an external service running on this server.</p>
+                            </div>
+                        </button>
+
+                        <div className="border-t border-gray-200 dark:border-gray-800 my-2"></div>
+                        <h4 className="text-sm font-medium text-gray-500 dark:text-gray-400 px-2">Stacks & Templates</h4>
+
+                        {/* Templates */}
+                        {loadingTemplates ? (
+                            <div className="p-8 text-center text-gray-500">Loading templates...</div>
+                        ) : (
+                            <div className="grid gap-2">
+                                {templates.slice(0, 5).map(template => (
+                                    <button 
+                                        key={template.name}
+                                        onClick={() => router.push(`/create?template=${template.name}`)}
+                                        className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left"
+                                    >
+                                        <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded text-gray-600 dark:text-gray-400">
+                                            <Layers size={18} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="font-medium text-gray-900 dark:text-white">{template.name}</div>
+                                            <div className="text-xs text-gray-500 dark:text-gray-400 capitalize">{template.type}</div>
+                                        </div>
+                                    </button>
+                                ))}
+                                <button 
+                                    onClick={() => router.push('/registry')}
+                                    className="p-3 text-center text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                                >
+                                    View all templates in Registry
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Link Modal */}
+      {showLinkModal && (
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800">
+                <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
+                    <h3 className="text-lg font-bold">Add External Link</h3>
+                    <button onClick={() => setShowLinkModal(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                        <X size={20} />
+                    </button>
+                </div>
+                <div className="p-4 space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
+                        <input 
+                            type="text" 
+                            value={linkForm.name}
+                            onChange={e => setLinkForm({...linkForm, name: e.target.value})}
+                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="e.g. Home Assistant"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL</label>
+                        <input 
+                            type="url" 
+                            value={linkForm.url}
+                            onChange={e => setLinkForm({...linkForm, url: e.target.value})}
+                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="http://192.168.1.10:8123"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description (Optional)</label>
+                        <input 
+                            type="text" 
+                            value={linkForm.description}
+                            onChange={e => setLinkForm({...linkForm, description: e.target.value})}
+                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="Smart Home Control"
+                        />
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="checkbox" 
+                            id="monitor"
+                            checked={linkForm.monitor}
+                            onChange={e => setLinkForm({...linkForm, monitor: e.target.checked})}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <label htmlFor="monitor" className="text-sm text-gray-700 dark:text-gray-300">
+                            Monitor this service (HTTP Check)
+                        </label>
+                    </div>
+                </div>
+                <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
+                    <button 
+                        onClick={() => setShowLinkModal(false)}
+                        className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={handleSaveLink}
+                        className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium"
+                    >
+                        Add Link
                     </button>
                 </div>
             </div>

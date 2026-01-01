@@ -4,12 +4,21 @@ import os from 'os';
 
 const CONFIG_PATH = path.join(os.homedir(), '.servicebay', 'config.json');
 
+export interface ExternalLink {
+  id: string;
+  name: string;
+  url: string;
+  description?: string;
+  monitor?: boolean;
+}
+
 export interface AppConfig {
   autoUpdate: {
     enabled: boolean;
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight
     channel: 'stable' | 'beta';
   };
+  externalLinks?: ExternalLink[];
   notifications?: {
     email?: {
       enabled: boolean;
