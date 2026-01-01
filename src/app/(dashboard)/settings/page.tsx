@@ -32,6 +32,7 @@ export default function SettingsPage() {
   // App Update State
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
 
   // Email Form State
@@ -130,6 +131,26 @@ export default function SettingsPage() {
 
   const handleRemoveRegistry = (name: string) => {
     setRegistries(registries.filter(r => r.name !== name));
+  };
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+        const res = await fetch('/api/system/update');
+        if (res.ok) {
+            const data = await res.json();
+            setAppUpdate(data);
+            if (data.hasUpdate) {
+                addToast('success', 'Update available', `Version ${data.latest.version} is available.`);
+            } else {
+                addToast('info', 'No updates', 'You are on the latest version.');
+            }
+        }
+    } catch {
+        addToast('error', 'Failed to check for updates');
+    } finally {
+        setCheckingUpdate(false);
+    }
   };
 
   const handleAppUpdate = () => {
@@ -249,13 +270,21 @@ export default function SettingsPage() {
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
                     <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
-                        <RefreshCw size={20} className={updating ? 'animate-spin' : ''} />
+                        <RefreshCw size={20} className={updating || checkingUpdate ? 'animate-spin' : ''} />
                     </div>
                     <div>
                         <h3 className="font-bold text-gray-900 dark:text-white">ServiceBay Updates</h3>
                         <p className="text-xs text-gray-500 dark:text-gray-400">Manage application updates</p>
                     </div>
-                    <div className="ml-auto">
+                    <div className="ml-auto flex items-center gap-4">
+                        <button
+                            onClick={handleCheckUpdate}
+                            disabled={checkingUpdate || updating}
+                            className="text-xs text-purple-600 dark:text-purple-400 hover:underline disabled:opacity-50"
+                        >
+                            {checkingUpdate ? 'Checking...' : 'Check Now'}
+                        </button>
+                        <div className="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
                         <label className="relative inline-flex items-center cursor-pointer" title="Enable Auto-Updates">
                             <input 
                                 type="checkbox" 
