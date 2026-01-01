@@ -64,12 +64,24 @@ export async function listServices(): Promise<ServiceInfo[]> {
       const { stdout } = await execAsync(`systemctl --user is-active ${name}.service`);
       status = stdout.trim();
       active = status === 'active';
-      
+    } catch (e) {
+      status = 'inactive';
+    }
+
+    try {
       // Get Description
       const { stdout: descStdout } = await execAsync(`systemctl --user show -p Description --value ${name}.service`);
       description = descStdout.trim();
     } catch (e) {
-      status = 'inactive'; // or error
+      console.warn(`Failed to get description for ${name}`, e);
+    }
+
+    // Fallback: If systemd description is empty (e.g. unit not loaded yet), try to parse from .kube file
+    if (!description && content) {
+        const match = content.match(/Description=(.+)/);
+        if (match) {
+            description = match[1].trim();
+        }
     }
 
     if (yamlPath) {
