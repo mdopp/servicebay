@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
-import { Terminal as XTerm } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
+import { Terminal as XTerm } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 import { io, Socket } from 'socket.io-client';
 import { Eraser, RefreshCw } from 'lucide-react';
-import 'xterm/css/xterm.css';
+import '@xterm/xterm/css/xterm.css';
 
 export interface TerminalRef {
     clear: () => void;
