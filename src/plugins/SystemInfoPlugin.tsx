@@ -1,23 +1,36 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getSystemInfo, getDiskUsage, SystemInfo, DiskInfo } from '@/app/actions/system';
-import { RefreshCw, Cpu, HardDrive, Network, Server } from 'lucide-react';
+import { getSystemInfo, getDiskUsage, getSystemUpdates, SystemInfo, DiskInfo } from '@/app/actions/system';
+import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check } from 'lucide-react';
+import { useToast } from '@/providers/ToastProvider';
 
 export default function SystemInfoPlugin() {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
   const [diskInfo, setDiskInfo] = useState<DiskInfo[]>([]);
+  const [updates, setUpdates] = useState<{ count: number; list: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const { addToast } = useToast();
+
+  const handleCopyCommand = () => {
+    navigator.clipboard.writeText('sudo apt update && sudo apt upgrade -y');
+    setCopied(true);
+    addToast('success', 'Copied to clipboard', 'Update command copied.');
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [sys, disk] = await Promise.all([
+      const [sys, disk, up] = await Promise.all([
         getSystemInfo(),
-        getDiskUsage()
+        getDiskUsage(),
+        getSystemUpdates()
       ]);
       setSysInfo(sys);
       setDiskInfo(disk);
+      setUpdates(up);
     } catch (error) {
       console.error('Failed to fetch system info', error);
     } finally {
@@ -147,6 +160,54 @@ export default function SystemInfoPlugin() {
                     </div>
                 ))}
             </div>
+        </div>
+
+        {/* OS Updates */}
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
+            <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+                <Package size={18} /> System Updates
+            </h3>
+            {updates ? (
+                <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                        <div className={`p-3 rounded-full ${updates.count > 0 ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400' : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'}`}>
+                            <Package size={24} />
+                        </div>
+                        <div>
+                            <p className="font-medium text-gray-900 dark:text-white">
+                                {updates.count > 0 ? `${updates.count} updates available` : 'System is up to date'}
+                            </p>
+                            <div className="flex items-center gap-2">
+                                <p className="text-sm text-gray-500 dark:text-gray-400">
+                                    {updates.count > 0 ? 'Run system update via terminal to apply.' : 'Last checked just now'}
+                                </p>
+                                {updates.count > 0 && (
+                                    <button 
+                                        onClick={handleCopyCommand}
+                                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                                        title="Copy update command"
+                                    >
+                                        {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    {updates.list.length > 0 && (
+                        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 max-h-40 overflow-y-auto">
+                            <ul className="space-y-1">
+                                {updates.list.map((pkg, i) => (
+                                    <li key={i} className="text-xs font-mono text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 last:border-0 pb-1 last:pb-0">
+                                        {pkg}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            ) : (
+                <div className="text-sm text-gray-500">Checking for updates...</div>
+            )}
         </div>
 
       </div>

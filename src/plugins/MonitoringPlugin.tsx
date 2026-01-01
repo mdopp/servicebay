@@ -229,7 +229,8 @@ export default function MonitoringPlugin() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="h-full flex flex-col">
+      <div className="shrink-0">
       <PageHeader title="Monitoring" showBack={false}>
         <button 
             onClick={fetchData} 
@@ -246,47 +247,64 @@ export default function MonitoringPlugin() {
             Add Check
         </button>
       </PageHeader>
-
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 px-2">
-        <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-green-500/10 rounded-lg">
-              <CheckCircle className="w-6 h-6 text-green-500" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Healthy</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'ok').length}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-red-500/10 rounded-lg">
-              <XCircle className="w-6 h-6 text-red-500" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Failing</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'fail').length}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-yellow-500/10 rounded-lg">
-              <AlertTriangle className="w-6 h-6 text-yellow-500" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Unknown</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'unknown').length}</p>
-            </div>
-          </div>
-        </div>
       </div>
 
-      {/* Search and Filter */}
-      <div className="flex flex-col md:flex-row gap-4 px-2">
-        <div className="relative flex-1">
+      <div className="flex-1 overflow-y-auto space-y-6 pb-6">
+      {/* Stats Overview & Filters */}
+      <div className="grid grid-cols-3 gap-2 px-2">
+        <button 
+            onClick={() => setStatusFilter(statusFilter === 'ok' ? 'all' : 'ok')}
+            className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
+                statusFilter === 'ok'
+                ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 ring-2 ring-green-500 ring-opacity-50'
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+            }`}
+        >
+            <div className="p-2 bg-green-500/10 rounded-lg mb-1">
+              <CheckCircle className="w-5 h-5 text-green-500" />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Healthy</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'ok').length}</p>
+            </div>
+        </button>
+        <button 
+            onClick={() => setStatusFilter(statusFilter === 'fail' ? 'all' : 'fail')}
+            className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
+                statusFilter === 'fail'
+                ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 ring-2 ring-red-500 ring-opacity-50'
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+            }`}
+        >
+            <div className="p-2 bg-red-500/10 rounded-lg mb-1">
+              <XCircle className="w-5 h-5 text-red-500" />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Failing</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'fail').length}</p>
+            </div>
+        </button>
+        <button 
+            onClick={() => setStatusFilter(statusFilter === 'unknown' ? 'all' : 'unknown')}
+            className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
+                statusFilter === 'unknown'
+                ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 ring-2 ring-yellow-500 ring-opacity-50'
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+            }`}
+        >
+            <div className="p-2 bg-yellow-500/10 rounded-lg mb-1">
+              <AlertTriangle className="w-5 h-5 text-yellow-500" />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Unknown</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'unknown').length}</p>
+            </div>
+        </button>
+      </div>
+
+      {/* Search */}
+      <div className="px-2">
+        <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input 
                 type="text" 
@@ -295,51 +313,6 @@ export default function MonitoringPlugin() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
             />
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-1 md:pb-0">
-            <button 
-                onClick={() => setStatusFilter('all')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                    statusFilter === 'all' 
-                    ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900' 
-                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-            >
-                All
-            </button>
-            <button 
-                onClick={() => setStatusFilter('ok')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors flex items-center gap-2 ${
-                    statusFilter === 'ok' 
-                    ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' 
-                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-            >
-                <div className={`w-2 h-2 rounded-full ${statusFilter === 'ok' ? 'bg-green-500' : 'bg-green-500/50'}`} />
-                Healthy
-            </button>
-            <button 
-                onClick={() => setStatusFilter('fail')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors flex items-center gap-2 ${
-                    statusFilter === 'fail' 
-                    ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800' 
-                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-            >
-                <div className={`w-2 h-2 rounded-full ${statusFilter === 'fail' ? 'bg-red-500' : 'bg-red-500/50'}`} />
-                Failing
-            </button>
-            <button 
-                onClick={() => setStatusFilter('unknown')}
-                className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors flex items-center gap-2 ${
-                    statusFilter === 'unknown' 
-                    ? 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-600' 
-                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-            >
-                <div className={`w-2 h-2 rounded-full ${statusFilter === 'unknown' ? 'bg-gray-500' : 'bg-gray-500/50'}`} />
-                Unknown
-            </button>
         </div>
       </div>
 
@@ -366,7 +339,8 @@ export default function MonitoringPlugin() {
             )}
           </div>
         ) : (
-          <table className="w-full text-left">
+          <>
+            <table className="w-full text-left hidden xl:table">
             <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 text-sm">
               <tr>
                 <th className="p-4">Name</th>
@@ -380,13 +354,13 @@ export default function MonitoringPlugin() {
             <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
               {filteredChecks.map(check => (
                 <tr key={check.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
-                  <td className="p-4 font-medium text-gray-900 dark:text-white">{check.name}</td>
+                  <td className="p-4 font-medium text-gray-900 dark:text-white break-words whitespace-normal max-w-[150px]">{check.name}</td>
                   <td className="p-4">
                     <span className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs text-gray-600 dark:text-gray-300 uppercase border border-gray-200 dark:border-gray-700">
                       {check.type}
                     </span>
                   </td>
-                  <td className="p-4 text-gray-500 dark:text-gray-400 font-mono text-sm">{check.target}</td>
+                  <td className="p-4 text-gray-500 dark:text-gray-400 font-mono text-sm break-all whitespace-normal min-w-[250px] max-w-[350px]">{check.target}</td>
                   <td className="p-4">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
                       check.status === 'ok' ? 'bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400' :
@@ -439,6 +413,69 @@ export default function MonitoringPlugin() {
               ))}
             </tbody>
           </table>
+
+          <div className="xl:hidden divide-y divide-gray-200 dark:divide-gray-800">
+                {filteredChecks.map(check => (
+                    <div key={check.id} className="p-4 space-y-3">
+                        <div className="flex justify-between items-start gap-2">
+                            <span className="font-medium text-gray-900 dark:text-white break-words">{check.name}</span>
+                            <span className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                                check.status === 'ok' ? 'bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400' :
+                                check.status === 'fail' ? 'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400' :
+                                'bg-gray-100 dark:bg-gray-500/10 text-gray-700 dark:text-gray-400'
+                            }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                    check.status === 'ok' ? 'bg-green-500 dark:bg-green-400' :
+                                    check.status === 'fail' ? 'bg-red-500 dark:bg-red-400' :
+                                    'bg-gray-500 dark:bg-gray-400'
+                                }`} />
+                                {check.status.toUpperCase()}
+                            </span>
+                        </div>
+                        
+                        <div className="flex justify-between items-center gap-2 text-sm">
+                             <span className="text-gray-500 dark:text-gray-400 font-mono break-all whitespace-normal flex-1">{check.target}</span>
+                             <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px] text-gray-600 dark:text-gray-300 uppercase border border-gray-200 dark:border-gray-700 shrink-0">
+                                {check.type}
+                            </span>
+                        </div>
+
+                        <div className="flex justify-between items-center pt-1">
+                            <div className="flex items-end gap-0.5 h-6 w-24">
+                                {check.history && check.history.length > 0 ? (
+                                    [...check.history].reverse().map((h, i) => (
+                                        <div 
+                                            key={i}
+                                            className={`w-1.5 rounded-t-sm ${
+                                                h.status === 'ok' ? 'bg-green-500 dark:bg-green-400' : 'bg-red-500 dark:bg-red-400'
+                                            }`}
+                                            style={{ height: `${Math.min(100, Math.max(20, (h.latency || 0) / 2))}%` }}
+                                        />
+                                    ))
+                                ) : (
+                                    <span className="text-gray-400 text-xs">-</span>
+                                )}
+                            </div>
+                            
+                            <div className="flex gap-1">
+                                <button onClick={() => handleRun(check.id)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                                    <Play className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => handleShowHistory(check)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors">
+                                    <History className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => handleOpenModal(check)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-yellow-600 dark:hover:text-yellow-400 transition-colors">
+                                    <Edit className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => handleDelete(check.id)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors">
+                                    <Trash2 className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -797,6 +834,7 @@ export default function MonitoringPlugin() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

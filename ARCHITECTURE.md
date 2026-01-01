@@ -20,15 +20,18 @@ The dashboard (`/`) is built using a modular plugin architecture. This allows fo
   }
   ```
 - **Plugin Registry**: `src/plugins/index.tsx` exports an array of available plugins.
-- **Layout**: The main page uses a two-column layout (Sidebar + Main Content) similar to the Registry browser.
+- **Layout**: The main page uses a responsive layout:
+  - **Desktop**: Sidebar + Main Content.
+  - **Mobile**: Top Bar + Main Content + Bottom Bar (`MobileNav.tsx`).
 
 ### Current Plugins
 
 1.  **Services**: Manages the core "containered services" (systemd units).
 2.  **Running Containers**: Lists all active Podman containers.
-3.  **System Info**: Displays CPU, Memory, OS, Network, and Disk Usage information.
-4.  **System Updates**: Checks for available package updates (apt-based).
+3.  **Monitoring**: Real-time health checks, history, and notifications.
+4.  **System Info**: Displays CPU, Memory, OS, Network, Disk Usage, and OS Updates.
 5.  **SSH Terminal**: A fully functional web-based terminal using `xterm.js` and `node-pty` over WebSockets.
+6.  **Settings**: Application settings and ServiceBay updates.
 
 ### Server Architecture
 
@@ -64,6 +67,19 @@ graph TD
     Page -->|Imports| PluginRegistry[src/plugins/index.tsx]
 ```
 
+## Monitoring System
+
+The monitoring system (`src/lib/monitoring/`) provides real-time health checks for services.
+
+- **Gateway**: `MonitoringGateway` manages the active monitoring loop.
+- **Discovery**: Automatically discovers targets from:
+  - **Podman**: Running containers.
+  - **Services**: Managed systemd services.
+  - **Manual**: User-defined external URLs.
+- **Checks**: Supports HTTP (Status, Body Regex) and TCP (Port Open) checks.
+- **History**: Stores check results in-memory with time-based bucketing for visualization.
+- **Notifications**: Uses Socket.IO to push state changes (Up/Down) to the frontend in real-time.
+
 ## Registry & Installation
 
 - **Local Registry**: Templates are read from `templates/` and `stacks/` directories.
@@ -75,16 +91,18 @@ graph TD
 
 ## Update System
 
-ServiceBay includes a self-update mechanism to keep the application current.
+ServiceBay handles two types of updates:
 
-- **Versioning**: Uses CalVer (`YYYY.MM.DD`) based on the release date.
-- **Source**: Updates are fetched from GitHub Releases (`mdopp/servicebay`).
-- **Process**:
-  1.  **Check**: Compares local `package.json` version with the latest GitHub Release tag.
-  2.  **Download**: Fetches the release tarball (`servicebay-linux-x64.tar.gz`).
-  3.  **Install**: Extracts and overwrites the application files in `~/.servicebay`.
-  4.  **Restart**: Triggers `systemctl --user restart servicebay`.
-- **Automation**: Can be configured to check and update automatically on a schedule (default: daily at midnight).
+### Application Updates
+- **Location**: Settings Plugin.
+- **Source**: GitHub Releases (`mdopp/servicebay`).
+- **Mechanism**: Checks `package.json` version against latest tag. Downloads and installs tarball.
+
+### System Updates
+- **Location**: System Info Plugin.
+- **Source**: OS Package Manager (`apt`).
+- **Mechanism**: Checks for available updates using `apt list --upgradable`.
+- **Action**: Provides a copy-paste command for the user to run in the terminal (`sudo apt update && ...`).
 
 ## Installation
 

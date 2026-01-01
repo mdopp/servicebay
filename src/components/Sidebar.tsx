@@ -2,15 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, RefreshCw, ChevronLeft, Github, Settings } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, RefreshCw, ChevronLeft, Github, Settings, Server } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 
-const plugins = [
+export const plugins = [
     { id: 'services', name: 'Services', icon: Box, path: '/services' },
     { id: 'containers', name: 'Running Containers', icon: LayoutDashboard, path: '/containers' },
     { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
-    { id: 'system', name: 'System Info', icon: Activity, path: '/system' },
-    { id: 'updates', name: 'System Updates', icon: RefreshCw, path: '/updates' },
+    { id: 'system', name: 'System Info', icon: Server, path: '/system' },
     { id: 'terminal', name: 'SSH Terminal', icon: Terminal, path: '/terminal' },
     { id: 'settings', name: 'Settings', icon: Settings, path: '/settings' },
 ];

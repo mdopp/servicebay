@@ -1,15 +1,36 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Save, Mail, Plus, Trash2 } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import { AppConfig } from '@/lib/config';
+
+interface AppUpdateStatus {
+  hasUpdate: boolean;
+  current: string;
+  latest: {
+    version: string;
+    url: string;
+    date: string;
+    notes: string;
+  } | null;
+  config: {
+    autoUpdate: {
+      enabled: boolean;
+      schedule: string;
+    }
+  };
+}
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { addToast } = useToast();
+
+  // App Update State
+  const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
+  const [updating, setUpdating] = useState(false);
 
   // Email Form State
   const [emailEnabled, setEmailEnabled] = useState(false);
@@ -24,9 +45,17 @@ export default function SettingsPage() {
 
   const fetchConfig = async () => {
     try {
-      const res = await fetch('/api/settings');
+      const [res, updateRes] = await Promise.all([
+        fetch('/api/settings'),
+        fetch('/api/system/update')
+      ]);
+      
       if (!res.ok) throw new Error('Failed to fetch config');
       const data: AppConfig = await res.json();
+      
+      if (updateRes.ok) {
+        setAppUpdate(await updateRes.json());
+      }
       
       // Initialize form
       if (data.notifications?.email) {
@@ -61,6 +90,54 @@ export default function SettingsPage() {
 
   const handleRemoveRecipient = (email: string) => {
     setEmailRecipients(emailRecipients.filter(e => e !== email));
+  };
+
+  const handleAppUpdate = async () => {
+    if (!appUpdate?.latest) return;
+    if (!confirm(`Update ServiceBay to ${appUpdate.latest.version}? The service will restart.`)) return;
+    
+    setUpdating(true);
+    try {
+      const res = await fetch('/api/system/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update', version: appUpdate.latest.version })
+      });
+      
+      if (res.ok) {
+        addToast('success', 'Update started', 'Service is restarting. Please reload the page in a few seconds.');
+      } else {
+        throw new Error('Update failed');
+      }
+    } catch {
+      addToast('error', 'Update failed', 'Could not start update process.');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const toggleAutoUpdate = async () => {
+    if (!appUpdate) return;
+    const newState = !appUpdate.config.autoUpdate.enabled;
+    
+    try {
+      const res = await fetch('/api/system/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            action: 'configure', 
+            autoUpdate: { enabled: newState } 
+        })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setAppUpdate(prev => prev ? { ...prev, config: data.config } : null);
+        addToast('success', 'Settings saved', `Auto-update ${newState ? 'enabled' : 'disabled'}.`);
+      }
+    } catch {
+      addToast('error', 'Error', 'Failed to save settings.');
+    }
   };
 
   const handleSave = async () => {
@@ -105,7 +182,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="h-full overflow-y-auto space-y-6">
       <PageHeader title="Settings" showBack={false}>
         <button 
             onClick={handleSave}
@@ -117,7 +194,72 @@ export default function SettingsPage() {
         </button>
       </PageHeader>
 
-      <div className="px-4 pb-8 w-full">
+      <div className="px-4 pb-8 w-full space-y-6">
+        {/* ServiceBay Updates */}
+        {appUpdate && (
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
+                    <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
+                        <RefreshCw size={20} className={updating ? 'animate-spin' : ''} />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-gray-900 dark:text-white">ServiceBay Updates</h3>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Manage application updates</p>
+                    </div>
+                    <div className="ml-auto">
+                        <label className="relative inline-flex items-center cursor-pointer" title="Enable Auto-Updates">
+                            <input 
+                                type="checkbox" 
+                                className="sr-only peer" 
+                                checked={appUpdate.config.autoUpdate.enabled}
+                                onChange={toggleAutoUpdate}
+                            />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 dark:peer-focus:ring-purple-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-purple-600"></div>
+                        </label>
+                    </div>
+                </div>
+                <div className="p-6">
+                    <div className="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
+                        <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm text-gray-500 dark:text-gray-400">Current Version:</span>
+                                <span className="font-mono font-medium text-gray-900 dark:text-white">{appUpdate.current}</span>
+                            </div>
+                            {appUpdate.hasUpdate && appUpdate.latest ? (
+                                <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                                    <Download size={16} />
+                                    <span className="text-sm font-medium">New version available: {appUpdate.latest.version}</span>
+                                </div>
+                            ) : (
+                                <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+                                    <Clock size={16} />
+                                    <span className="text-sm">You are on the latest version</span>
+                                </div>
+                            )}
+                        </div>
+                        
+                        {appUpdate.hasUpdate && appUpdate.latest && (
+                            <button 
+                                onClick={handleAppUpdate}
+                                disabled={updating}
+                                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <Download size={18} />
+                                {updating ? 'Updating...' : 'Update Now'}
+                            </button>
+                        )}
+                    </div>
+                    
+                    {appUpdate.hasUpdate && appUpdate.latest && appUpdate.latest.notes && (
+                        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-2">Release Notes</h4>
+                            <p className="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{appUpdate.latest.notes}</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
+
         {/* Email Notifications Section */}
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">

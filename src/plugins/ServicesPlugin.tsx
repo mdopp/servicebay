@@ -304,9 +304,9 @@ export default function ServicesPlugin() {
                     </div>
                     
                     {/* Details */}
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600 dark:text-gray-400">
+                    <div className="mt-4 flex flex-wrap gap-4 text-sm text-gray-600 dark:text-gray-400">
                         {service.description && (
-                            <div className="col-span-2 text-gray-500 italic">
+                            <div className="w-full text-gray-500 italic">
                                 {service.description}
                             </div>
                         )}
@@ -314,7 +314,7 @@ export default function ServicesPlugin() {
                         {service.type !== 'link' && (
                             <>
                                 {service.ports.length > 0 && (
-                                    <div>
+                                    <div className="flex-1 min-w-[250px]">
                                         <span className="font-semibold block mb-1">Ports:</span>
                                         <div className="flex flex-wrap gap-1">
                                             {service.ports.map((p, i) => (
@@ -332,7 +332,7 @@ export default function ServicesPlugin() {
                                     </div>
                                 )}
                                 {service.volumes.length > 0 && (
-                                    <div>
+                                    <div className="flex-1 min-w-[250px]">
                                         <span className="font-semibold block mb-1">Volumes:</span>
                                         <div className="flex flex-col gap-1">
                                             {service.volumes.map((v, i) => (

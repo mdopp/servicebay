@@ -4,11 +4,14 @@ A Next.js web interface to manage Podman Quadlet services (Systemd).
 
 ## Features
 
-- **Dashboard:** List and monitor existing services in `~/.config/containers/systemd/`.
+- **Dashboard:** List and manage existing services in `~/.config/containers/systemd/`.
+- **Monitoring:** Real-time health checks (HTTP/TCP), history visualization, and smart notifications.
 - **Registry:** Install services from a GitHub template registry.
 - **Editor:** Create and edit services with real-time YAML validation.
-- **Management:** Start, stop, restart, and view logs of your services.
-- **Auto-Update:** Configure Podman AutoUpdate for your containers.
+- **System Info:** View server resources (CPU, RAM, Disk) and manage OS updates.
+- **Terminal:** Integrated web-based SSH terminal.
+- **Mobile Ready:** Fully responsive design with dedicated mobile navigation.
+- **Auto-Update:** Keep ServiceBay and your containers up to date.
 
 ## Installation
 
