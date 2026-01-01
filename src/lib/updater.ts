@@ -4,6 +4,19 @@ import os from 'os';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import semver from 'semver';
+import { Server } from 'socket.io';
+
+let io: Server | null = null;
+
+export function setUpdaterIO(socketIo: Server) {
+  io = socketIo;
+}
+
+function emitProgress(step: string, progress: number, message: string) {
+  if (io) {
+    io.emit('update:progress', { step, progress, message });
+  }
+}
 
 const execAsync = promisify(exec);
 const REPO = 'mdopp/servicebay';
@@ -67,26 +80,63 @@ export async function performUpdate(version: string) {
   const tarPath = path.join(tempDir, 'update.tar.gz');
 
   try {
+    emitProgress('init', 0, 'Initializing update...');
     await fs.mkdir(tempDir, { recursive: true });
 
     // 1. Download
     console.log(`Downloading update from ${downloadUrl}...`);
+    emitProgress('download', 0, 'Downloading update package...');
+    
     const res = await fetch(downloadUrl);
     if (!res.ok) throw new Error(`Failed to download update: ${res.statusText}`);
     
-    const buffer = await res.arrayBuffer();
-    await fs.writeFile(tarPath, Buffer.from(buffer));
+    const contentLength = res.headers.get('content-length');
+    const total = contentLength ? parseInt(contentLength, 10) : 0;
+    let loaded = 0;
+
+    if (res.body) {
+        const reader = res.body.getReader();
+        const chunks = [];
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            chunks.push(value);
+            loaded += value.length;
+            
+            if (total > 0) {
+                const progress = Math.round((loaded / total) * 100);
+                // Emit every 5% or so to avoid spamming
+                if (progress % 5 === 0) {
+                    emitProgress('download', progress, `Downloading... ${progress}%`);
+                }
+            }
+        }
+        
+        const buffer = Buffer.concat(chunks);
+        await fs.writeFile(tarPath, buffer);
+    } else {
+        // Fallback if no body (shouldn't happen with fetch)
+        const buffer = await res.arrayBuffer();
+        await fs.writeFile(tarPath, Buffer.from(buffer));
+    }
+    
+    emitProgress('download', 100, 'Download complete');
 
     // 2. Extract
     console.log('Extracting update...');
+    emitProgress('extract', 0, 'Extracting update package...');
     // We extract to tempDir first
     await execAsync(`tar xzf "${tarPath}" -C "${tempDir}"`);
+    emitProgress('extract', 100, 'Extraction complete');
     
     // The tarball contains a 'servicebay' folder. We need the contents of that folder.
     const sourceDir = path.join(tempDir, 'servicebay');
 
     // 3. Install (Overwrite)
     console.log(`Installing to ${INSTALL_DIR}...`);
+    emitProgress('install', 0, 'Installing update...');
     // Use rsync or cp to overwrite files. cp -r is simpler but we need to be careful about open files.
     // Since we are running from INSTALL_DIR, we are overwriting ourself.
     // Linux allows this (unlink/rename).
@@ -98,12 +148,15 @@ export async function performUpdate(version: string) {
     
     // Use cp -rf with /. to include hidden files (like .next)
     await execAsync(`cp -rf "${sourceDir}/." "${INSTALL_DIR}/"`);
+    emitProgress('install', 100, 'Installation complete');
 
     // 4. Cleanup
     await fs.rm(tempDir, { recursive: true, force: true });
 
     // 5. Restart
     console.log('Restarting service...');
+    emitProgress('restart', 0, 'Restarting service...');
+    
     // We can't await this because the process will die.
     // We spawn it detached.
     const subprocess = spawn('systemctl', ['--user', 'restart', 'servicebay'], {
@@ -116,6 +169,7 @@ export async function performUpdate(version: string) {
   } catch (e) {
     console.error('Update failed:', e);
     const message = e instanceof Error ? e.message : 'Unknown error';
+    if (io) io.emit('update:error', { error: message });
     throw new Error(`Update failed: ${message}`);
   }
 }

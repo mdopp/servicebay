@@ -6,7 +6,7 @@ import * as pty from 'node-pty';
 import os from 'os';
 import schedule from 'node-schedule';
 import { getConfig } from './src/lib/config';
-import { checkForUpdates, performUpdate } from './src/lib/updater';
+import { checkForUpdates, performUpdate, setUpdaterIO } from './src/lib/updater';
 import scheduler from './src/lib/monitoring/scheduler'; // Initialize monitoring scheduler
 import { initializeDefaultChecks } from './src/lib/monitoring/init';
 
@@ -42,6 +42,9 @@ app.prepare().then(() => {
   
   // Pass IO to scheduler
   scheduler.setIO(io);
+  
+  // Pass IO to updater
+  setUpdaterIO(io);
 
   // Initialize default monitoring checks (Auto-discovery)
   initializeDefaultChecks().catch(err => {

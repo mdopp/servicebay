@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -34,6 +34,12 @@ export default function SettingsPage() {
   const [updating, setUpdating] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+  
+  // Update Progress State
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'updating' | 'restarting' | 'error' | 'success'>('idle');
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateMessage, setUpdateMessage] = useState('');
+  const [updateError, setUpdateError] = useState('');
 
   // Email Form State
   const [emailEnabled, setEmailEnabled] = useState(false);
@@ -161,24 +167,48 @@ export default function SettingsPage() {
   const confirmAppUpdate = async () => {
     if (!appUpdate?.latest) return;
     
-    setUpdating(true);
+    setIsUpdateModalOpen(false);
+    setUpdateStatus('updating');
+    setUpdateProgress(0);
+    setUpdateMessage('Initializing update...');
+    
     try {
+      // Connect to socket for progress updates
+      const { io } = await import('socket.io-client');
+      const socket = io();
+
+      socket.on('update:progress', (data: { step: string, progress: number, message: string }) => {
+          setUpdateProgress(data.progress);
+          setUpdateMessage(data.message);
+          if (data.step === 'restart') {
+              setUpdateStatus('restarting');
+              setUpdateMessage('Service is restarting. This page will reload automatically...');
+              
+              // Wait a bit then try to reload
+              setTimeout(() => {
+                  window.location.reload();
+              }, 5000);
+          }
+      });
+
+      socket.on('update:error', (data: { error: string }) => {
+          setUpdateStatus('error');
+          setUpdateError(data.error);
+          socket.disconnect();
+      });
+
       const res = await fetch('/api/system/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'update', version: appUpdate.latest.version })
       });
       
-      if (res.ok) {
-        addToast('success', 'Update started', 'Service is restarting. Please reload the page in a few seconds.');
-      } else {
-        throw new Error('Update failed');
+      if (!res.ok) {
+        throw new Error('Update failed to start');
       }
-    } catch {
-      addToast('error', 'Update failed');
-    } finally {
-      setUpdating(false);
-      setIsUpdateModalOpen(false);
+    } catch (e) {
+      setUpdateStatus('error');
+      setUpdateError(e instanceof Error ? e.message : 'Unknown error');
     }
   };
 
@@ -570,6 +600,58 @@ export default function SettingsPage() {
             )}
         </div>
       </div>
+
+      {/* Update Progress Modal */}
+      {updateStatus !== 'idle' && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl max-w-md w-full border border-gray-200 dark:border-gray-800 overflow-hidden">
+            <div className="p-6 text-center space-y-6">
+              {updateStatus === 'error' ? (
+                <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto">
+                  <XCircle size={32} />
+                </div>
+              ) : updateStatus === 'restarting' ? (
+                <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                  <CheckCircle2 size={32} />
+                </div>
+              ) : (
+                <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-full flex items-center justify-center mx-auto">
+                  <Loader2 size={32} className="animate-spin" />
+                </div>
+              )}
+              
+              <div>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                  {updateStatus === 'error' ? 'Update Failed' : 
+                   updateStatus === 'restarting' ? 'Update Complete' : 
+                   'Updating ServiceBay'}
+                </h3>
+                <p className="text-gray-500 dark:text-gray-400 text-sm">
+                  {updateStatus === 'error' ? updateError : updateMessage}
+                </p>
+              </div>
+
+              {updateStatus === 'updating' && (
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 overflow-hidden">
+                  <div 
+                    className="bg-purple-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
+                    style={{ width: `${updateProgress}%` }}
+                  ></div>
+                </div>
+              )}
+
+              {updateStatus === 'error' && (
+                <button
+                  onClick={() => setUpdateStatus('idle')}
+                  className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium text-sm"
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={isUpdateModalOpen}
