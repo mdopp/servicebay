@@ -65,6 +65,24 @@ if [ $MISSING_DEPS -eq 1 ]; then
     exit 1
 fi
 
+# --- Version Check ---
+
+log "Checking latest version..."
+LATEST_VERSION=$(curl -s https://api.github.com/repos/mdopp/servicebay/releases/latest | node -e "
+    const fs = require('fs');
+    try {
+        const input = fs.readFileSync(0, 'utf-8');
+        const json = JSON.parse(input);
+        console.log(json.tag_name || 'unknown');
+    } catch { console.log('unknown'); }
+")
+
+if [ "$LATEST_VERSION" != "unknown" ]; then
+    log "Target Version: ${GREEN}$LATEST_VERSION${NC}"
+else
+    log "Target Version: ${BLUE}latest${NC}"
+fi
+
 # --- Installation Strategy ---
 
 if [ -d "$INSTALL_DIR" ]; then
