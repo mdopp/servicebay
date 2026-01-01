@@ -6,16 +6,19 @@ import { promisify } from 'util';
 import semver from 'semver';
 import { Server } from 'socket.io';
 
-let io: Server | null = null;
+declare global {
+   
+  var updaterIO: Server | null;
+}
 
 export function setUpdaterIO(socketIo: Server) {
-  io = socketIo;
+  global.updaterIO = socketIo;
 }
 
 function emitProgress(step: string, progress: number, message: string) {
   console.log(`[Update Progress] ${step}: ${progress}% - ${message}`);
-  if (io) {
-    io.emit('update:progress', { step, progress, message });
+  if (global.updaterIO) {
+    global.updaterIO.emit('update:progress', { step, progress, message });
   } else {
     console.warn('[Update] Socket.IO instance not set, cannot emit progress');
   }
@@ -182,7 +185,7 @@ export async function performUpdate(version: string) {
   } catch (e) {
     console.error('Update failed:', e);
     const message = e instanceof Error ? e.message : 'Unknown error';
-    if (io) io.emit('update:error', { error: message });
+    if (global.updaterIO) global.updaterIO.emit('update:error', { error: message });
     throw new Error(`Update failed: ${message}`);
   }
 }
