@@ -13,8 +13,11 @@ export function setUpdaterIO(socketIo: Server) {
 }
 
 function emitProgress(step: string, progress: number, message: string) {
+  console.log(`[Update Progress] ${step}: ${progress}% - ${message}`);
   if (io) {
     io.emit('update:progress', { step, progress, message });
+  } else {
+    console.warn('[Update] Socket.IO instance not set, cannot emit progress');
   }
 }
 
@@ -87,39 +90,49 @@ export async function performUpdate(version: string) {
     console.log(`Downloading update from ${downloadUrl}...`);
     emitProgress('download', 0, 'Downloading update package...');
     
-    const res = await fetch(downloadUrl);
-    if (!res.ok) throw new Error(`Failed to download update: ${res.statusText}`);
-    
-    const contentLength = res.headers.get('content-length');
-    const total = contentLength ? parseInt(contentLength, 10) : 0;
-    let loaded = 0;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout for initial connection
 
-    if (res.body) {
-        const reader = res.body.getReader();
-        const chunks = [];
+    try {
+        const res = await fetch(downloadUrl, { signal: controller.signal });
+        clearTimeout(timeout);
         
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+        if (!res.ok) throw new Error(`Failed to download update: ${res.statusText} (${res.status})`);
+        
+        const contentLength = res.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        let loaded = 0;
+
+        if (res.body) {
+            const reader = res.body.getReader();
+            const chunks = [];
             
-            chunks.push(value);
-            loaded += value.length;
-            
-            if (total > 0) {
-                const progress = Math.round((loaded / total) * 100);
-                // Emit every 5% or so to avoid spamming
-                if (progress % 5 === 0) {
-                    emitProgress('download', progress, `Downloading... ${progress}%`);
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                chunks.push(value);
+                loaded += value.length;
+                
+                if (total > 0) {
+                    const progress = Math.round((loaded / total) * 100);
+                    // Emit every 5% or so to avoid spamming
+                    if (progress % 5 === 0) {
+                        emitProgress('download', progress, `Downloading... ${progress}%`);
+                    }
                 }
             }
+            
+            const buffer = Buffer.concat(chunks);
+            await fs.writeFile(tarPath, buffer);
+        } else {
+            // Fallback if no body (shouldn't happen with fetch)
+            const buffer = await res.arrayBuffer();
+            await fs.writeFile(tarPath, Buffer.from(buffer));
         }
-        
-        const buffer = Buffer.concat(chunks);
-        await fs.writeFile(tarPath, buffer);
-    } else {
-        // Fallback if no body (shouldn't happen with fetch)
-        const buffer = await res.arrayBuffer();
-        await fs.writeFile(tarPath, Buffer.from(buffer));
+    } catch (e) {
+        clearTimeout(timeout);
+        throw e;
     }
     
     emitProgress('download', 100, 'Download complete');

@@ -22,6 +22,7 @@ export interface NetworkEdge {
   protocol: 'http' | 'https' | 'tcp' | 'udp';
   port: number;
   state: 'active' | 'inactive'; // For visualization (e.g. animated line)
+  isManual?: boolean;
 }
 
 export interface NetworkGraph {

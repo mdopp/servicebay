@@ -270,7 +270,6 @@ export class NetworkService {
             protocol: 'tcp',
             port: 0,
             state: 'active',
-            // @ts-expect-error - Adding custom property for UI
             isManual: true
         });
     }

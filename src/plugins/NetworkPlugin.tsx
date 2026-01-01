@@ -145,12 +145,9 @@ export default function NetworkPlugin() {
         target: e.target,
         label: e.label,
         animated: e.state === 'active',
-        // @ts-expect-error - Custom property
         type: e.isManual ? 'default' : 'default',
         style: { 
-            // @ts-expect-error - Custom property
             stroke: e.isManual ? '#8b5cf6' : (e.state === 'active' ? '#22c55e' : '#9ca3af'),
-            // @ts-expect-error - Custom property
             strokeDasharray: e.isManual ? '5,5' : undefined,
             strokeWidth: 2
         },
