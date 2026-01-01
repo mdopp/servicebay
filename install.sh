@@ -113,8 +113,8 @@ for arg in "$@"; do
 done
 
 log "Downloading application code..."
-# Use robust curl options: follow redirects, progress bar, retries, compressed
-CURL_OPTS="-L --progress-bar --retry 3 --retry-delay 2 --connect-timeout 15 --compressed --fail"
+# Use robust curl options: follow redirects, retries, compressed (standard output shows details)
+CURL_OPTS="-L --retry 3 --retry-delay 2 --connect-timeout 15 --compressed --fail"
 
 if curl $CURL_OPTS "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz"; then
     # Check dependencies
