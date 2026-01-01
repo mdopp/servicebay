@@ -193,10 +193,16 @@ export default function ContainersPlugin() {
         ) : (
             <div className="space-y-8">
                 {sortedGroups.map(group => (
-                    <div key={group}>
-                        <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 px-1 border-b border-gray-200 dark:border-gray-800 pb-2">
-                            {group}
-                        </h3>
+                    <div key={group} className="bg-gray-50/50 dark:bg-gray-900/30 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+                        <div className="flex items-center gap-2 mb-4 pb-2 border-b border-gray-200 dark:border-gray-700">
+                            <Box className="text-indigo-500" size={20} />
+                            <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 uppercase tracking-wider">
+                                {group}
+                            </h3>
+                            <span className="ml-auto text-xs font-mono bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded-full text-gray-600 dark:text-gray-400">
+                                {groupedContainers[group].length} containers
+                            </span>
+                        </div>
                         <div className="grid gap-4">
                             {groupedContainers[group].map((c) => (
                             <div key={c.Id} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
