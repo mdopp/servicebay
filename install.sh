@@ -84,18 +84,34 @@ fi
 # Determine Install Strategy
 TEMP_DIR=$(mktemp -d)
 NEED_DEPS=1
+FORCE_INSTALL=0
+
+# Parse arguments
+for arg in "$@"; do
+    if [ "$arg" == "--force" ]; then
+        FORCE_INSTALL=1
+        log "Force installation enabled."
+    fi
+done
 
 log "Downloading application code..."
 if curl -L "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz" --fail; then
     # Check dependencies
     tar -xzf "$TEMP_DIR/update.tar.gz" -C "$TEMP_DIR" --strip-components=1 servicebay/package-lock.json
     
-    if [ "$IS_UPDATE" -eq 1 ] && [ -f "$INSTALL_DIR/package-lock.json" ] && cmp -s "$INSTALL_DIR/package-lock.json" "$TEMP_DIR/package-lock.json"; then
-        log "Dependencies unchanged. Skipping dependency download."
-        NEED_DEPS=0
+    if [ "$FORCE_INSTALL" -eq 0 ] && [ "$IS_UPDATE" -eq 1 ] && [ -f "$INSTALL_DIR/package-lock.json" ] && cmp -s "$INSTALL_DIR/package-lock.json" "$TEMP_DIR/package-lock.json"; then
+        log "Dependencies unchanged. Checking for critical modules..."
+        # Verify critical modules exist
+        if [ -d "$INSTALL_DIR/node_modules/socket.io" ] && [ -d "$INSTALL_DIR/node_modules/next" ]; then
+             log "Critical dependencies found. Skipping dependency download."
+             NEED_DEPS=0
+        else
+             log "Critical dependencies missing. Forcing dependency download."
+             NEED_DEPS=1
+        fi
     else
         if [ "$IS_UPDATE" -eq 1 ]; then
-            log "Dependencies changed. Downloading new dependencies..."
+            log "Dependencies changed or force enabled. Downloading new dependencies..."
         else
             log "Fresh install. Downloading dependencies..."
         fi

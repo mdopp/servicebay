@@ -96,7 +96,8 @@ export async function performUpdate(version: string) {
     // but currently config is in ~/.servicebay/config.json which is NOT in the tarball (tarball has code).
     // So overwriting everything is safe, assuming tarball structure matches.
     
-    await execAsync(`cp -rf "${sourceDir}/"* "${INSTALL_DIR}/"`);
+    // Use cp -rf with /. to include hidden files (like .next)
+    await execAsync(`cp -rf "${sourceDir}/." "${INSTALL_DIR}/"`);
 
     // 4. Cleanup
     await fs.rm(tempDir, { recursive: true, force: true });
