@@ -11,6 +11,8 @@ interface Container {
   State: string;
   Status: string;
   Created: number;
+  Pod?: string;
+  PodName?: string;
   // Support both formats (standard Podman JSON vs Docker-like)
   Ports?: ({ IP?: string; PrivatePort: number; PublicPort?: number; Type: string } | { host_ip?: string; container_port: number; host_port?: number; protocol: string })[];
   Mounts?: (string | { Source: string; Destination: string; Type: string })[];
@@ -129,6 +131,7 @@ export default function ContainersPlugin() {
   });
 
   const getGroupName = (c: Container) => {
+    if (c.PodName) return `Pod: ${c.PodName}`;
     if (c.Labels) {
         if (c.Labels['io.kubernetes.pod.name']) return `Pod: ${c.Labels['io.kubernetes.pod.name']}`;
         if (c.Labels['io.podman.pod.name']) return `Pod: ${c.Labels['io.podman.pod.name']}`;

@@ -308,7 +308,7 @@ export async function getPodmanLogs() {
 
 export async function getPodmanPs() {
   try {
-    const { stdout } = await execAsync(`podman ps -a --format json`);
+    const { stdout } = await execAsync(`podman ps -a --pod --format json`);
     return JSON.parse(stdout);
   } catch (e) {
     console.error('Error fetching podman ps:', e);
