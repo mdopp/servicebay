@@ -107,6 +107,19 @@ export class NetworkService {
     const externalLinks = config.externalLinks || [];
 
     for (const service of services) {
+        // Merge Nginx service with the existing Nginx node
+        if (service.name.toLowerCase() === 'nginx') {
+            const nginxNode = nodes.find(n => n.id === nginxId);
+            if (nginxNode) {
+                nginxNode.status = service.active ? 'up' : 'down';
+                nginxNode.subLabel = 'Managed Proxy';
+                if (nginxNode.metadata) {
+                    nginxNode.metadata.serviceDescription = service.description;
+                }
+                continue;
+            }
+        }
+
         const serviceId = `service-${service.name}`;
         nodes.push({
             id: serviceId,
