@@ -56,29 +56,32 @@ export default function NetworkPlugin() {
       const data: NetworkGraph = await res.json();
 
       // Transform to React Flow format
-      const flowNodes: Node[] = data.nodes.map(n => ({
-        id: n.id,
-        type: 'default', // We can customize this later
-        position: { x: 0, y: 0 },
-        data: { 
-            label: (
-                <div className="flex flex-col items-center">
-                    <div className="font-bold">{n.label}</div>
-                    {n.subLabel && <div className="text-xs text-gray-500">{n.subLabel}</div>}
-                    <div className={`mt-1 w-2 h-2 rounded-full ${n.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
-                </div>
-            ) 
-        },
-        style: { 
-            background: n.type === 'internet' ? '#e0f2fe' : 
-                        n.type === 'router' ? '#fef3c7' : 
-                        n.type === 'proxy' ? '#dcfce7' : '#fff',
-            border: '1px solid #ddd',
-            borderRadius: '8px',
-            padding: '10px',
-            width: nodeWidth,
-        }
-      }));
+      const flowNodes: Node[] = data.nodes.map(n => {
+        let className = 'border rounded-xl shadow-sm p-2 ';
+        if (n.type === 'internet') className += 'bg-sky-100 dark:bg-sky-900 border-sky-200 dark:border-sky-800 text-sky-900 dark:text-sky-100';
+        else if (n.type === 'router') className += 'bg-amber-100 dark:bg-amber-900 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-100';
+        else if (n.type === 'proxy') className += 'bg-emerald-100 dark:bg-emerald-900 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100';
+        else className += 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white';
+
+        return {
+            id: n.id,
+            type: 'default',
+            position: { x: 0, y: 0 },
+            className,
+            data: { 
+                label: (
+                    <div className="flex flex-col items-center">
+                        <div className="font-bold">{n.label}</div>
+                        {n.subLabel && <div className={`text-xs ${n.type === 'internet' || n.type === 'router' || n.type === 'proxy' ? 'opacity-80' : 'text-gray-500 dark:text-gray-400'}`}>{n.subLabel}</div>}
+                        <div className={`mt-2 w-2 h-2 rounded-full ${n.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
+                    </div>
+                ) 
+            },
+            style: { 
+                width: nodeWidth,
+            }
+        };
+      });
 
       const flowEdges: Edge[] = data.edges.map(e => ({
         id: e.id,
