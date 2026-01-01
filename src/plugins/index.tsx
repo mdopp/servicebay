@@ -2,6 +2,7 @@ import { Box, Layers, Activity, DownloadCloud, Terminal } from 'lucide-react';
 import { Plugin } from './types';
 import ServicesPlugin from './ServicesPlugin';
 import ContainersPlugin from './ContainersPlugin';
+import MonitoringPlugin from './MonitoringPlugin';
 import SystemInfoPlugin from './SystemInfoPlugin';
 import UpdatesPlugin from './UpdatesPlugin';
 import dynamic from 'next/dynamic';
@@ -23,6 +24,12 @@ export const plugins: Plugin[] = [
     name: 'Running Containers',
     icon: Box,
     component: <ContainersPlugin />,
+  },
+  {
+    id: 'monitoring',
+    name: 'Monitoring',
+    icon: Activity,
+    component: <MonitoringPlugin />,
   },
   {
     id: 'system',

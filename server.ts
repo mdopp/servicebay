@@ -7,6 +7,8 @@ import os from 'os';
 import schedule from 'node-schedule';
 import { getConfig } from './src/lib/config';
 import { checkForUpdates, performUpdate } from './src/lib/updater';
+import scheduler from './src/lib/monitoring/scheduler'; // Initialize monitoring scheduler
+import { initializeDefaultChecks } from './src/lib/monitoring/init';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -37,6 +39,14 @@ app.prepare().then(() => {
   });
 
   const io = new Server(server);
+  
+  // Pass IO to scheduler
+  scheduler.setIO(io);
+
+  // Initialize default monitoring checks (Auto-discovery)
+  initializeDefaultChecks().catch(err => {
+    console.error('[Monitoring] Failed to initialize default checks:', err);
+  });
 
   // Function to spawn a PTY
   const ensurePty = (id: string) => {

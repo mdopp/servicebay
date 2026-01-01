@@ -1,0 +1,81 @@
+import { MonitoringStore } from './store';
+import { listServices } from '../manager';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import crypto from 'crypto';
+
+const execAsync = promisify(exec);
+
+export async function initializeDefaultChecks() {
+  console.log('[Monitoring] Initializing default checks...');
+  const existingChecks = MonitoringStore.getChecks();
+
+  // Helper to check if exists
+  const exists = (type: string, target: string) => 
+    existingChecks.some(c => c.type === type && c.target === target);
+
+  // 1. Gateway Check
+  try {
+    // ip route show default usually outputs: "default via 192.168.1.1 dev eth0 ..."
+    const { stdout } = await execAsync("ip route show default");
+    const match = stdout.match(/via\s+([0-9.]+)/);
+    if (match && match[1]) {
+      const gateway = match[1];
+      if (!exists('ping', gateway)) {
+          console.log(`[Monitoring] Adding Gateway check for ${gateway}`);
+          MonitoringStore.saveCheck({
+              id: crypto.randomUUID(),
+              name: 'Gateway',
+              type: 'ping',
+              target: gateway,
+              interval: 60,
+              enabled: true,
+              created_at: new Date().toISOString()
+          });
+      }
+    }
+  } catch (e) {
+    console.error('Failed to detect gateway', e);
+  }
+
+  // 2. Podman Service
+  if (!exists('systemd', 'podman.service')) {
+    console.log('[Monitoring] Adding Podman Service check');
+    MonitoringStore.saveCheck({
+        id: crypto.randomUUID(),
+        name: 'Podman Service',
+        type: 'systemd',
+        target: 'podman.service',
+        interval: 60,
+        enabled: true,
+        created_at: new Date().toISOString()
+    });
+  }
+
+  // 3. Managed Services
+  try {
+    const services = await listServices();
+    for (const service of services) {
+        // Check if we have a check for this service (either by name or target)
+        const alreadyMonitored = existingChecks.some(c => 
+            (c.type === 'service' && c.target === service.name) ||
+            (c.name === `Service: ${service.name}`)
+        );
+
+        if (!alreadyMonitored) {
+            console.log(`[Monitoring] Adding Managed Service check for ${service.name}`);
+            MonitoringStore.saveCheck({
+                id: crypto.randomUUID(),
+                name: `Service: ${service.name}`,
+                type: 'service',
+                target: service.name,
+                interval: 60,
+                enabled: true,
+                created_at: new Date().toISOString()
+            });
+        }
+    }
+  } catch (e) {
+    console.error('Failed to list managed services for auto-discovery', e);
+  }
+}

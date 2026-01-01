@@ -2,15 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, RefreshCw, ChevronLeft, Github } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, RefreshCw, ChevronLeft, Github, Settings } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 
 const plugins = [
     { id: 'services', name: 'Services', icon: Box, path: '/services' },
     { id: 'containers', name: 'Running Containers', icon: LayoutDashboard, path: '/containers' },
+    { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
     { id: 'system', name: 'System Info', icon: Activity, path: '/system' },
     { id: 'updates', name: 'System Updates', icon: RefreshCw, path: '/updates' },
     { id: 'terminal', name: 'SSH Terminal', icon: Terminal, path: '/terminal' },
+    { id: 'settings', name: 'Settings', icon: Settings, path: '/settings' },
 ];
 
 export default function Sidebar() {
@@ -52,7 +54,7 @@ export default function Sidebar() {
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
             {plugins.map(p => {
                 const Icon = p.icon;
-                const isActive = pathname.startsWith(p.path);
+                const isActive = pathname?.startsWith(p.path) ?? false;
                 return (
                     <button
                         key={p.id}

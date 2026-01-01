@@ -271,6 +271,38 @@ export async function getServiceStatus(name: string) {
   }
 }
 
+export async function getAllSystemServices() {
+  try {
+    // List both user and system services? 
+    // Usually 'systemctl list-units' lists system services. 
+    // 'systemctl --user list-units' lists user services.
+    // Let's provide system services as requested.
+    const { stdout } = await execAsync('systemctl list-units --type=service --all --no-pager --plain --no-legend --output=json');
+    // Note: --output=json is available in newer systemd versions. 
+    // If not available, we might need to parse text.
+    // Let's try text parsing for compatibility if json fails or just use text parsing to be safe.
+    
+    // Actually, let's stick to text parsing for broader compatibility
+    const { stdout: textOut } = await execAsync('systemctl list-units --type=service --all --no-pager --plain --no-legend');
+    
+    return textOut.split('\n')
+      .filter(line => line.trim())
+      .map(line => {
+        const parts = line.trim().split(/\s+/);
+        return {
+          unit: parts[0],
+          load: parts[1],
+          active: parts[2],
+          sub: parts[3],
+          description: parts.slice(4).join(' ')
+        };
+      });
+  } catch (e) {
+    console.error('Failed to list system services', e);
+    return [];
+  }
+}
+
 export async function updateAndRestartService(name: string) {
   const { yamlPath } = await getServiceFiles(name);
   const logs: string[] = [];

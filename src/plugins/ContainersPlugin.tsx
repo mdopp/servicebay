@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw, Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft } from 'lucide-react';
+import { RefreshCw, Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft, Search } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 
@@ -24,6 +24,7 @@ export default function ContainersPlugin() {
   const [showActions, setShowActions] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const { addToast, updateToast } = useToast();
 
   const fetchData = async () => {
@@ -117,6 +118,15 @@ export default function ContainersPlugin() {
     }
   };
 
+  const filteredContainers = containers.filter(c => {
+    const query = searchQuery.toLowerCase();
+    return (
+        c.Names[0].toLowerCase().includes(query) ||
+        c.Image.toLowerCase().includes(query) ||
+        c.Id.toLowerCase().includes(query)
+    );
+  });
+
   return (
     <div className="h-full flex flex-col relative">
       <ConfirmModal 
@@ -128,21 +138,35 @@ export default function ContainersPlugin() {
         onConfirm={() => handleAction('delete')}
         onCancel={() => setDeleteModalOpen(false)}
       />
-      <div className="flex justify-between items-center mb-6 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white">Running Containers</h2>
-        <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
-            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-        </button>
+      <div className="flex flex-col gap-4 mb-6 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+        <div className="flex justify-between items-center">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white">Running Containers</h2>
+            <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
+                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+            </button>
+        </div>
+        <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input 
+                type="text" 
+                placeholder="Search containers by name, image or ID..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
         {loading ? (
             <div className="text-center text-gray-500 mt-10">Loading containers...</div>
-        ) : containers.length === 0 ? (
-            <div className="text-center text-gray-500 mt-10">No active containers found.</div>
+        ) : filteredContainers.length === 0 ? (
+            <div className="text-center text-gray-500 mt-10">
+                {containers.length > 0 ? 'No containers match your search.' : 'No active containers found.'}
+            </div>
         ) : (
             <div className="grid gap-4">
-                {containers.map((c) => (
+                {filteredContainers.map((c) => (
                 <div key={c.Id} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
                     <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
                         <div className="flex items-center gap-3">

@@ -19,3 +19,13 @@
 
 - [x] Implement History System (Backend & UI)
 
+- [x] Implement Monitoring Auto-Discovery (Gateway, Podman, Services)
+
+- [x] Implement Smart Notifications (Socket.IO, State Change Detection)
+
+- [x] Enhance HTTP Checks (Status Code, Body Match/Regex)
+
+- [x] Improve History Visualization (Time Ranges, Bucketing, Refresh)
+
+- [x] Add Search and Filtering to Dashboards
+

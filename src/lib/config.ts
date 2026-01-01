@@ -10,6 +10,18 @@ export interface AppConfig {
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight
     channel: 'stable' | 'beta';
   };
+  notifications?: {
+    email?: {
+      enabled: boolean;
+      host: string;
+      port: number;
+      secure: boolean;
+      user: string;
+      pass: string;
+      from: string;
+      to: string[];
+    };
+  };
 }
 
 const DEFAULT_CONFIG: AppConfig = {
