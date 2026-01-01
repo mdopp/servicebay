@@ -1,6 +1,6 @@
 {
   "name": "servicebay",
-  "version": "2026.1.20",
+  "version": "2026.1.21",
   "private": true,
   "scripts": {
     "dev": "tsx server.ts",
