@@ -47,40 +47,6 @@ export default function ServicesPlugin() {
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '', monitor: false });
 
-  // Description Edit Modal State
-  const [showDescModal, setShowDescModal] = useState(false);
-  const [descForm, setDescForm] = useState({ name: '', description: '' });
-
-  const handleEditDescription = (service: Service) => {
-    setDescForm({
-        name: service.name,
-        description: service.description || ''
-    });
-    setShowDescModal(true);
-  };
-
-  const handleSaveDescription = async () => {
-    try {
-        const res = await fetch(`/api/services/${descForm.name}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ description: descForm.description })
-        });
-
-        if (!res.ok) {
-            const data = await res.json();
-            throw new Error(data.error || 'Failed to update description');
-        }
-
-        addToast('success', 'Description updated successfully');
-        setShowDescModal(false);
-        fetchData();
-    } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to update description';
-        addToast('error', message);
-    }
-  };
-
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -339,20 +305,11 @@ export default function ServicesPlugin() {
                     
                     {/* Details */}
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600 dark:text-gray-400">
-                        <div className="col-span-2 flex items-start gap-2 group/desc">
-                            <div className="text-gray-500 italic flex-1">
-                                {service.description || 'No description provided'}
+                        {service.description && (
+                            <div className="col-span-2 text-gray-500 italic">
+                                {service.description}
                             </div>
-                            {service.type !== 'link' && (
-                                <button 
-                                    onClick={() => handleEditDescription(service)}
-                                    className="opacity-0 group-hover/desc:opacity-100 p-1 text-gray-400 hover:text-blue-600 transition-all"
-                                    title="Edit Description"
-                                >
-                                    <Edit size={14} />
-                                </button>
-                            )}
-                        </div>
+                        )}
                         
                         {service.type !== 'link' && (
                             <>
@@ -555,45 +512,6 @@ export default function ServicesPlugin() {
                             </div>
                         )}
                     </div>
-                </div>
-            </div>
-        </div>
-      )}
-
-      {/* Description Edit Modal */}
-      {showDescModal && (
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800">
-                <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
-                    <h3 className="text-lg font-bold">Edit Description</h3>
-                    <button onClick={() => setShowDescModal(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                        <X size={20} />
-                    </button>
-                </div>
-                <div className="p-4 space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
-                        <textarea 
-                            value={descForm.description}
-                            onChange={e => setDescForm({...descForm, description: e.target.value})}
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none min-h-[100px]"
-                            placeholder="Enter service description..."
-                        />
-                    </div>
-                </div>
-                <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
-                    <button 
-                        onClick={() => setShowDescModal(false)}
-                        className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button 
-                        onClick={handleSaveDescription}
-                        className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium"
-                    >
-                        Save
-                    </button>
                 </div>
             </div>
         </div>

@@ -33,6 +33,7 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
   const [yamlContent, setYamlContent] = useState(initialData?.yamlContent || '');
   const [yamlFileName, setYamlFileName] = useState(initialData?.yamlFileName || 'pod.yml');
   const [serviceContent] = useState(initialData?.serviceContent || '');
+  const [description, setDescription] = useState('');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [extractedPorts, setExtractedPorts] = useState<{ host?: string; container: string }[]>([]);
@@ -53,6 +54,16 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
     return true;
   });
 
+  // Initialize Description from KubeContent
+  useEffect(() => {
+    if (initialData?.kubeContent) {
+        const match = initialData.kubeContent.match(/Description=(.+)/);
+        if (match) {
+            setDescription(match[1].trim());
+        }
+    }
+  }, [initialData]);
+
   const updateCursorPosition = (e: any) => {
     const textarea = e.target;
     if (textarea) {
@@ -62,8 +73,11 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
     }
   };
 
-  const generateKubeContent = (fileName: string, autoUpd: boolean) => {
-    return `[Kube]
+  const generateKubeContent = (fileName: string, autoUpd: boolean, desc: string) => {
+    return `[Unit]
+Description=${desc}
+
+[Kube]
 Yaml=${fileName}
 ${autoUpd ? 'AutoUpdate=registry' : ''}
 
@@ -134,7 +148,7 @@ WantedBy=default.target`;
           setName(extractedName);
           const newFileName = `${extractedName}.yml`;
           setYamlFileName(newFileName);
-          setKubeContent(generateKubeContent(newFileName, autoUpdate));
+          setKubeContent(generateKubeContent(newFileName, autoUpdate, description));
         }
       }
     } catch (e: any) {
@@ -156,7 +170,7 @@ WantedBy=default.target`;
   useEffect(() => {
     if (name && yamlFileName) {
        if (!isEdit) {
-          setKubeContent(generateKubeContent(yamlFileName, autoUpdate));
+          setKubeContent(generateKubeContent(yamlFileName, autoUpdate, description));
        } else {
           // In edit mode, we try to preserve the existing structure but update our managed fields
           setKubeContent(prev => {
@@ -167,7 +181,7 @@ WantedBy=default.target`;
                  newContent = newContent.replace(/Yaml=.+/, `Yaml=${yamlFileName}`);
              } else {
                  // Fallback if file is empty or weird
-                 return generateKubeContent(yamlFileName, autoUpdate);
+                 return generateKubeContent(yamlFileName, autoUpdate, description);
              }
 
              // Update AutoUpdate
@@ -185,11 +199,32 @@ WantedBy=default.target`;
                      newContent = newContent.replace(/\n?AutoUpdate=.+/, '');
                  }
              }
+
+             // Update Description
+             const hasDescription = /Description=.+/.test(newContent);
+             const hasUnit = /\[Unit\]/.test(newContent);
+
+             if (description) {
+                 if (hasDescription) {
+                     newContent = newContent.replace(/Description=.+/, `Description=${description}`);
+                 } else if (hasUnit) {
+                     newContent = newContent.replace(/\[Unit\]/, `[Unit]\nDescription=${description}`);
+                 } else {
+                     newContent = `[Unit]\nDescription=${description}\n\n${newContent}`;
+                 }
+             } else {
+                 // If description is empty, maybe remove it? Or keep empty?
+                 // Let's remove it if empty
+                 if (hasDescription) {
+                     newContent = newContent.replace(/\n?Description=.+/, '');
+                 }
+             }
+
              return newContent;
           });
        }
     }
-  }, [yamlFileName, autoUpdate, isEdit, name]);
+  }, [yamlFileName, autoUpdate, isEdit, name, description]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -316,6 +351,17 @@ WantedBy=default.target`;
             </div>
 
             <div>
+                <label className="block text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">Description</label>
+                <input
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full p-3 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Optional description"
+                />
+            </div>
+
+            <div>
                 <label className="block text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">YAML Filename</label>
                 <div className="flex gap-2">
                     <input
@@ -342,7 +388,7 @@ WantedBy=default.target`;
                 </div>
             </div>
 
-            <div className="flex items-end pb-3">
+            <div className="flex items-end pb-3 md:col-span-3">
                 <label className="flex items-center gap-3 cursor-pointer">
                     <input 
                         type="checkbox" 
