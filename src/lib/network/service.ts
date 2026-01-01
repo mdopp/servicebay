@@ -126,11 +126,18 @@ export class NetworkService {
 
     for (const link of externalLinks) {
         const linkId = `link-${link.id}`;
+        let hostname = 'External Link';
+        try {
+            hostname = new URL(link.url).hostname;
+        } catch {
+            // ignore invalid urls
+        }
+
         nodes.push({
             id: linkId,
             type: 'service',
             label: link.name,
-            subLabel: 'External Link',
+            subLabel: hostname,
             ports: [],
             status: 'up',
             metadata: {
