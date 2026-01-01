@@ -36,7 +36,8 @@ export class CheckRunner {
           status = 'ok';
           break;
         case 'fritzbox':
-          await this.runFritzboxCheck(check);
+          const fbMsg = await this.runFritzboxCheck(check);
+          if (fbMsg) message = fbMsg;
           status = 'ok';
           break;
       }
@@ -217,7 +218,7 @@ export class CheckRunner {
     }
   }
 
-  private static async runFritzboxCheck(check: CheckConfig) {
+  private static async runFritzboxCheck(check: CheckConfig): Promise<string> {
     const host = check.fritzboxConfig?.host || check.target || 'fritz.box';
     const port = 49000;
     const service = 'urn:schemas-upnp-org:service:WANIPConnection:1';
@@ -268,6 +269,22 @@ export class CheckRunner {
         if (status !== 'Connected') {
             throw new Error(`Internet connection is ${status}`);
         }
+
+        // Parse Uptime
+        const uptimeMatch = text.match(/<NewUptime>(.*?)<\/NewUptime>/);
+        const uptime = uptimeMatch ? parseInt(uptimeMatch[1], 10) : 0;
+        
+        // Format uptime
+        const days = Math.floor(uptime / 86400);
+        const hours = Math.floor((uptime % 86400) / 3600);
+        const minutes = Math.floor((uptime % 3600) / 60);
+        
+        let uptimeStr = '';
+        if (days > 0) uptimeStr += `${days}d `;
+        if (hours > 0) uptimeStr += `${hours}h `;
+        uptimeStr += `${minutes}m`;
+
+        return `Connected (Uptime: ${uptimeStr})`;
     } finally {
         clearTimeout(timeout);
     }
