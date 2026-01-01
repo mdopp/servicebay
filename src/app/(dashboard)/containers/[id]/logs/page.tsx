@@ -61,7 +61,10 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                 signal: abortController.signal
             });
             
-            if (!response.body) return;
+            if (!response.body) {
+                setLogsLoading(false);
+                return;
+            }
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
 
