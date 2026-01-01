@@ -28,6 +28,44 @@ This will:
 
 The web interface will be available at [http://localhost:3000](http://localhost:3000).
 
+## Reverse Proxy Configuration
+
+If you are running ServiceBay behind a reverse proxy (like Nginx or Nginx Proxy Manager), you **must** configure it to support WebSockets and disable buffering for Live Logs (Server-Sent Events) to work correctly.
+
+### Nginx Proxy Manager (NPM)
+1. Edit the Proxy Host.
+2. Enable **Websockets Support** in the "Details" tab.
+3. Go to the **Advanced** tab and add the following to "Custom Nginx Configuration":
+   ```nginx
+   proxy_buffering off;
+   proxy_request_buffering off;
+   proxy_cache off;
+   proxy_read_timeout 86400;
+   ```
+
+### Standard Nginx
+Add the following to your `location /` block:
+```nginx
+location / {
+    proxy_pass http://localhost:3000;
+    
+    # Required for Live Logs (SSE)
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_cache off;
+
+    # Required for Terminal (WebSockets)
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    
+    # Standard Headers
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
 ## Manual Development
 
 First, run the development server:
