@@ -6,11 +6,11 @@
 set -e
 
 # Configuration
-# Use the latest release tarball instead of source code
-TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-linux-x64.tar.gz"
+FULL_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-linux-x64.tar.gz"
+UPDATE_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-update-linux-x64.tar.gz"
 INSTALL_DIR="$HOME/.servicebay"
 SERVICE_NAME="servicebay"
-PORT=3000
+DEFAULT_PORT=3000
 
 # Colors
 GREEN='\033[0;32m'
@@ -64,87 +64,131 @@ if [ $MISSING_DEPS -eq 1 ]; then
     exit 1
 fi
 
-# --- Configuration ---
-
-DEFAULT_PORT=3000
-EXISTING_SERVICE_FILE="$HOME/.config/systemd/user/$SERVICE_NAME.service"
-
-if [ -f "$EXISTING_SERVICE_FILE" ]; then
-    # Try to extract port from existing service file
-    EXISTING_PORT=$(grep "Environment=PORT=" "$EXISTING_SERVICE_FILE" | cut -d= -f3)
-    if [ -n "$EXISTING_PORT" ]; then
-        log "Found existing installation on port $EXISTING_PORT"
-        DEFAULT_PORT=$EXISTING_PORT
-    fi
-fi
-
-echo ""
-if [ -c /dev/tty ]; then
-    read -p "Enter desired port [$DEFAULT_PORT]: " INPUT_PORT < /dev/tty
-    PORT=${INPUT_PORT:-$DEFAULT_PORT}
-else
-    log "Non-interactive mode detected (no /dev/tty). Using default port $DEFAULT_PORT."
-    PORT=$DEFAULT_PORT
-fi
-
-if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-    error "Invalid port: $PORT. Using default $DEFAULT_PORT."
-    PORT=$DEFAULT_PORT
-fi
-log "Using port: $PORT"
-
-# --- Installation ---
+# --- Installation Strategy ---
 
 if [ -d "$INSTALL_DIR" ]; then
-    log "Found existing installation."
-    
-    # Backup config
-    if [ -f "$INSTALL_DIR/config.json" ]; then
-        log "Backing up config.json..."
-        cp "$INSTALL_DIR/config.json" /tmp/servicebay_config_backup.json
-    fi
-
-    log "Removing old installation..."
-    rm -rf "$INSTALL_DIR"
+    IS_UPDATE=1
+    log "Found existing installation at $INSTALL_DIR."
+else
+    IS_UPDATE=0
+    log "Starting fresh installation..."
 fi
 
-log "Downloading release..."
-mkdir -p "$INSTALL_DIR"
-curl -L "$TAR_URL" | tar xz -C "$INSTALL_DIR" --strip-components=1
-cd "$INSTALL_DIR"
+# Backup Config
+if [ -f "$INSTALL_DIR/config.json" ]; then
+    log "Backing up config.json..."
+    cp "$INSTALL_DIR/config.json" /tmp/servicebay_config_backup.json
+fi
 
-# Restore config
+# Determine Install Strategy
+TEMP_DIR=$(mktemp -d)
+USE_FULL=1
+
+if [ "$IS_UPDATE" -eq 1 ]; then
+    log "Checking for optimized update..."
+    # Try download update bundle
+    if curl -L "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz" --fail --silent; then
+        # Check dependencies
+        tar -xzf "$TEMP_DIR/update.tar.gz" -C "$TEMP_DIR" --strip-components=1 servicebay/package-lock.json
+        if [ -f "$INSTALL_DIR/package-lock.json" ] && cmp -s "$INSTALL_DIR/package-lock.json" "$TEMP_DIR/package-lock.json"; then
+            log "Dependencies unchanged. Using optimized update."
+            USE_FULL=0
+        else
+            log "Dependencies changed. Using full bundle."
+        fi
+    else
+        log "Update bundle not found. Using full bundle."
+    fi
+fi
+
+# Perform Install
+if [ "$USE_FULL" -eq 0 ]; then
+    # Optimized Update
+    log "Installing optimized version..."
+    
+    if [ -d "$INSTALL_DIR/node_modules" ]; then
+        mv "$INSTALL_DIR/node_modules" "$TEMP_DIR/node_modules"
+    fi
+    
+    rm -rf "$INSTALL_DIR"/*
+    mkdir -p "$INSTALL_DIR"
+    tar xz -f "$TEMP_DIR/update.tar.gz" -C "$INSTALL_DIR" --strip-components=1
+    
+    if [ -d "$TEMP_DIR/node_modules" ]; then
+        mv "$TEMP_DIR/node_modules" "$INSTALL_DIR/node_modules"
+    fi
+else
+    # Full Install
+    log "Downloading full release..."
+    # Extract to temp/full first to avoid partial install on failure
+    mkdir -p "$TEMP_DIR/full"
+    curl -L "$FULL_TAR_URL" | tar xz -C "$TEMP_DIR/full" --strip-components=1
+    
+    log "Installing full version..."
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
+    
+    # Move files
+    cp -r "$TEMP_DIR/full/"* "$INSTALL_DIR/"
+    cp -r "$TEMP_DIR/full/".* "$INSTALL_DIR/" 2>/dev/null || true
+fi
+
+# Restore Config
 if [ -f "/tmp/servicebay_config_backup.json" ]; then
     log "Restoring config.json..."
     mv /tmp/servicebay_config_backup.json "$INSTALL_DIR/config.json"
 fi
 
-# --- Dependencies ---
-# Dependencies are now bundled in the release tarball!
-# No need to run npm install or compile anything.
-
-# --- Build ---
-# Since we download a pre-built release, we don't need to build anything!
-# We just need to ensure node is available.
+rm -rf "$TEMP_DIR"
 
 log "Verifying installation..."
-if [ ! -f "server.js" ]; then
+if [ ! -f "$INSTALL_DIR/server.js" ]; then
     error "Installation failed: server.js not found."
     exit 1
 fi
 
 # --- Service Setup ---
 
-log "Configuring systemd user service..."
-mkdir -p ~/.config/systemd/user
+SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
 
-# Get absolute path to node
-NODE_PATH=$(which node)
+if [ -f "$SERVICE_FILE" ] && [ "$IS_UPDATE" -eq 1 ]; then
+    log "Service file exists. Restarting..."
+    systemctl --user daemon-reload
+    systemctl --user restart ${SERVICE_NAME}
+else
+    log "Configuring systemd service..."
+    
+    # Port Selection
+    if [ -f "$SERVICE_FILE" ]; then
+        EXISTING_PORT=$(grep "Environment=PORT=" "$SERVICE_FILE" | cut -d= -f3)
+        if [ -n "$EXISTING_PORT" ]; then
+            DEFAULT_PORT=$EXISTING_PORT
+        fi
+    fi
 
-# Generate a random secret for session encryption
-AUTH_SECRET=$($NODE_PATH -e "console.log(crypto.randomBytes(32).toString('hex'))")
+    echo ""
+    if [ -c /dev/tty ]; then
+        read -p "Enter desired port [$DEFAULT_PORT]: " INPUT_PORT < /dev/tty
+        PORT=${INPUT_PORT:-$DEFAULT_PORT}
+    else
+        log "Non-interactive mode detected. Using default port $DEFAULT_PORT."
+        PORT=$DEFAULT_PORT
+    fi
 
-cat <<EOF > ~/.config/systemd/user/${SERVICE_NAME}.service
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+        error "Invalid port: $PORT. Using default $DEFAULT_PORT."
+        PORT=$DEFAULT_PORT
+    fi
+    
+    mkdir -p ~/.config/systemd/user
+
+    # Get absolute path to node
+    NODE_PATH=$(which node)
+
+    # Generate a random secret for session encryption
+    AUTH_SECRET=$($NODE_PATH -e "console.log(crypto.randomBytes(32).toString('hex'))")
+
+    cat <<EOF > "$SERVICE_FILE"
 [Unit]
 Description=ServiceBay - Podman Systemd Manager
 After=network.target
@@ -162,21 +206,3 @@ Environment="PATH=$PATH"
 
 [Install]
 WantedBy=default.target
-EOF
-
-log "Reloading systemd..."
-systemctl --user daemon-reload
-
-log "Enabling and starting service..."
-systemctl --user enable ${SERVICE_NAME}
-systemctl --user restart ${SERVICE_NAME}
-
-# --- Finish ---
-
-echo ""
-success "Installation complete!"
-echo "--------------------------------------------------"
-echo "Web Interface: http://localhost:${PORT}"
-echo "Service Status: systemctl --user status ${SERVICE_NAME}"
-echo "Logs: journalctl --user -u ${SERVICE_NAME} -f"
-echo "--------------------------------------------------"
