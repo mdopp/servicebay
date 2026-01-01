@@ -38,14 +38,14 @@ export async function initializeDefaultChecks() {
     console.error('Failed to detect gateway', e);
   }
 
-  // 2. Podman Service
-  if (!exists('systemd', 'podman.service')) {
-    console.log('[Monitoring] Adding Podman Service check');
+  // 2. Podman Socket (more reliable than service for API availability)
+  if (!exists('systemd', 'podman.socket')) {
+    console.log('[Monitoring] Adding Podman Socket check');
     MonitoringStore.saveCheck({
         id: crypto.randomUUID(),
-        name: 'Podman Service',
+        name: 'Podman Socket',
         type: 'systemd',
-        target: 'podman.service',
+        target: 'podman.socket',
         interval: 60,
         enabled: true,
         created_at: new Date().toISOString()
