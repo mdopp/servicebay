@@ -95,7 +95,10 @@ for arg in "$@"; do
 done
 
 log "Downloading application code..."
-if curl -L "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz" --fail; then
+# Use robust curl options: follow redirects, progress bar, retries, compressed
+CURL_OPTS="-L --progress-bar --retry 3 --retry-delay 2 --connect-timeout 15 --compressed --fail"
+
+if curl $CURL_OPTS "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz"; then
     # Check dependencies
     tar -xzf "$TEMP_DIR/update.tar.gz" -C "$TEMP_DIR" --strip-components=1 servicebay/package-lock.json
     
@@ -122,7 +125,7 @@ else
 fi
 
 if [ "$NEED_DEPS" -eq 1 ]; then
-    if ! curl -L "$DEPS_TAR_URL" -o "$TEMP_DIR/deps.tar.gz" --fail; then
+    if ! curl $CURL_OPTS "$DEPS_TAR_URL" -o "$TEMP_DIR/deps.tar.gz"; then
         error "Failed to download dependencies bundle."
         exit 1
     fi
