@@ -55,6 +55,15 @@ check_cmd "npm"
 check_cmd "podman"
 check_cmd "systemctl"
 
+# Optional: Check for axel
+if command -v axel &> /dev/null; then
+    HAS_AXEL=1
+    success "axel found (accelerated downloads)."
+else
+    HAS_AXEL=0
+    log "axel not found. Install 'axel' for faster downloads."
+fi
+
 if [ $MISSING_DEPS -eq 1 ]; then
     echo ""
     echo "Please install the missing dependencies and try again."
@@ -116,7 +125,22 @@ log "Downloading application code..."
 # Use robust curl options: follow redirects, retries, compressed (standard output shows details)
 CURL_OPTS="-L --retry 3 --retry-delay 2 --connect-timeout 15 --compressed --fail"
 
-if curl $CURL_OPTS "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz"; then
+download_file() {
+    local url="$1"
+    local output="$2"
+    
+    if [ "$HAS_AXEL" -eq 1 ]; then
+        # -n 8: 8 connections, -a: alternate progress, -o: output
+        if axel -n 8 -a -o "$output" "$url"; then
+            return 0
+        fi
+        log "Axel download failed. Falling back to curl..."
+    fi
+    
+    curl $CURL_OPTS "$url" -o "$output"
+}
+
+if download_file "$UPDATE_TAR_URL" "$TEMP_DIR/update.tar.gz"; then
     # Check dependencies
     tar -xzf "$TEMP_DIR/update.tar.gz" -C "$TEMP_DIR" --strip-components=1 servicebay/package-lock.json
     
@@ -143,7 +167,7 @@ else
 fi
 
 if [ "$NEED_DEPS" -eq 1 ]; then
-    if ! curl $CURL_OPTS "$DEPS_TAR_URL" -o "$TEMP_DIR/deps.tar.gz"; then
+    if ! download_file "$DEPS_TAR_URL" "$TEMP_DIR/deps.tar.gz"; then
         error "Failed to download dependencies bundle."
         exit 1
     fi
