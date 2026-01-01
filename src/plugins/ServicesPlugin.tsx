@@ -58,7 +58,6 @@ export default function ServicesPlugin() {
 
   useEffect(() => {
     fetchData();
-    fetch('/api/settings').then(res => res.json()).then(setConfig).catch(console.error);
 
     // Setup SSE for real-time updates
     const eventSource = new EventSource('/api/stream');
