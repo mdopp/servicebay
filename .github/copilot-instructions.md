@@ -23,6 +23,8 @@
 
 - [x] Implement Smart Notifications (Socket.IO, State Change Detection)
 
+- [x] Implement Multiple Registries Support (Config, UI, Install Script)
+
 - [x] Enhance HTTP Checks (Status Code, Body Match/Regex)
 
 - [x] Improve History Visualization (Time Ranges, Bucketing, Refresh)

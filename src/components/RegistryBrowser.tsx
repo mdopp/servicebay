@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Template } from '@/lib/registry';
 import { fetchReadme } from '@/app/actions';
 import ReactMarkdown from 'react-markdown';
-import { Download, Loader2, Github, Folder, Layers } from 'lucide-react';
+import { Download, Loader2, Folder, Layers } from 'lucide-react';
 import InstallerModal from './InstallerModal';
 
 export default function RegistryBrowser({ templates }: { templates: Template[] }) {
@@ -17,7 +17,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
     if (selected) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoading(true);
-      fetchReadme(selected.name, selected.type).then((content) => {
+      fetchReadme(selected.name, selected.type, selected.source).then((content) => {
         setReadme(content || '# No README found');
         setLoading(false);
       });
@@ -31,10 +31,10 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
             {templates.map(t => (
                 <button
-                    key={t.name}
+                    key={`${t.source}-${t.name}`}
                     onClick={() => setSelected(t)}
                     className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors ${
-                        selected?.name === t.name 
+                        selected?.name === t.name && selected?.source === t.source
                         ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-gray-200 dark:ring-gray-700' 
                         : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
                     }`}
@@ -44,7 +44,10 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
                     ) : (
                         <Folder size={18} className={selected?.name === t.name ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'} />
                     )}
-                    <span className="font-medium">{t.name}</span>
+                    <div className="flex flex-col items-start min-w-0 flex-1">
+                        <span className="font-medium truncate w-full">{t.name}</span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400 truncate w-full">{t.source}</span>
+                    </div>
                     {t.type === 'stack' && <span className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full ml-auto">Stack</span>}
                 </button>
             ))}
@@ -61,10 +64,15 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
         {selected ? (
             <>
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900">
-                    <h2 className="font-bold text-xl text-gray-900 dark:text-white flex items-center gap-2">
-                        {selected.type === 'stack' && <Layers className="text-purple-600 dark:text-purple-400" />}
-                        {selected.name}
-                    </h2>
+                    <div className="flex flex-col">
+                        <h2 className="font-bold text-xl text-gray-900 dark:text-white flex items-center gap-2">
+                            {selected.type === 'stack' && <Layers className="text-purple-600 dark:text-purple-400" />}
+                            {selected.name}
+                        </h2>
+                        <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                            Source: <span className="font-mono">{selected.source}</span>
+                        </span>
+                    </div>
                     <button 
                         onClick={() => setIsModalOpen(true)}
                         className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors shadow-sm font-medium"

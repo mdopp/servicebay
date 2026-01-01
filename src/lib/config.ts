@@ -12,12 +12,24 @@ export interface ExternalLink {
   monitor?: boolean;
 }
 
+export interface RegistryConfig {
+  name: string;
+  url: string;
+  branch?: string;
+}
+
+export interface RegistriesSettings {
+  enabled: boolean;
+  items: RegistryConfig[];
+}
+
 export interface AppConfig {
   autoUpdate: {
     enabled: boolean;
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight
     channel: 'stable' | 'beta';
   };
+  registries?: RegistriesSettings;
   externalLinks?: ExternalLink[];
   notifications?: {
     email?: {

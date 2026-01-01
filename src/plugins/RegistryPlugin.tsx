@@ -2,15 +2,16 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { fetchTemplates } from '@/app/actions';
+import { fetchTemplates, syncAllRegistries } from '@/app/actions';
 import { Template } from '@/lib/registry';
 import RegistryBrowser from '@/components/RegistryBrowser';
-import { Loader2, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Loader2, ArrowLeft, RefreshCw, DownloadCloud } from 'lucide-react';
 
 export default function RegistryPlugin() {
   const router = useRouter();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -20,6 +21,16 @@ export default function RegistryPlugin() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSync = async () => {
+      setSyncing(true);
+      try {
+          await syncAllRegistries();
+          await loadData();
+      } finally {
+          setSyncing(false);
+      }
   };
 
   useEffect(() => {
@@ -39,13 +50,23 @@ export default function RegistryPlugin() {
                 </button>
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">Service Registry</h2>
             </div>
-            <button 
-                onClick={loadData}
-                className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
-                title="Refresh"
-            >
-                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-            </button>
+            <div className="flex items-center gap-2">
+                <button 
+                    onClick={handleSync}
+                    disabled={syncing}
+                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 shadow-sm transition-colors disabled:opacity-50"
+                >
+                    <DownloadCloud size={16} className={syncing ? 'animate-pulse' : ''} />
+                    {syncing ? 'Syncing...' : 'Sync Registries'}
+                </button>
+                <button 
+                    onClick={loadData}
+                    className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
+                    title="Refresh"
+                >
+                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                </button>
+            </div>
         </div>
         <div className="flex-1 min-h-0">
             {loading ? (

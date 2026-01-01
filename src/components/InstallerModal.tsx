@@ -96,7 +96,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     for (const item of selectedItems) {
         try {
             // If we already have yaml (e.g. re-running), skip fetch? No, safer to fetch.
-            const yaml = await fetchTemplateYaml(item.name);
+            const yaml = await fetchTemplateYaml(item.name, template.source);
             if (!yaml) {
                 throw new Error(`Could not fetch template for ${item.name}`);
             }

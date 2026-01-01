@@ -141,6 +141,95 @@ fi
 
 rm -rf "$TEMP_DIR"
 
+# --- Registry Configuration ---
+
+CONFIG_FILE="$INSTALL_DIR/config.json"
+
+# Ensure config exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "{}" > "$CONFIG_FILE"
+fi
+
+# Helper to write JSON
+add_registry() {
+    local name="$1"
+    local url="$2"
+    local branch="$3"
+    node -e "
+        const fs = require('fs');
+        try {
+            const c = require('$CONFIG_FILE');
+            if (Array.isArray(c.registries)) {
+                c.registries = { enabled: true, items: c.registries };
+            }
+            c.registries = c.registries || { enabled: true, items: [] };
+            if (!c.registries.items.find(r => r.name === '$name')) {
+                c.registries.items.push({ name: '$name', url: '$url', branch: '$branch' || undefined });
+                fs.writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2));
+            }
+        } catch (e) { console.error(e); }
+    "
+}
+
+if [ -c /dev/tty ]; then
+    echo ""
+    log "--- Template Registries ---"
+    
+    # Check if default registry is configured
+    HAS_DEFAULT=$(node -e "
+        try { 
+            const c = require('$CONFIG_FILE'); 
+            let items = [];
+            if (Array.isArray(c.registries)) items = c.registries;
+            else if (c.registries) items = c.registries.items || [];
+            console.log(items.some(r => r.name === 'default') ? 'yes' : 'no'); 
+        } catch { console.log('no'); }
+    ")
+
+    if [ "$HAS_DEFAULT" == "no" ]; then
+        read -p "Add default template registry (recommended)? [Y/n]: " ADD_DEFAULT < /dev/tty
+        ADD_DEFAULT=${ADD_DEFAULT:-Y}
+        if [[ "$ADD_DEFAULT" =~ ^[Yy]$ ]]; then
+            add_registry "default" "https://github.com/mdopp/servicebay-templates.git" "main"
+            success "Added default registry."
+        fi
+    fi
+
+    while true; do
+        echo ""
+        echo "Current Registries:"
+        node -e "
+            try {
+                const c = require('$CONFIG_FILE');
+                let items = [];
+                if (Array.isArray(c.registries)) items = c.registries;
+                else if (c.registries) items = c.registries.items || [];
+                
+                items.forEach(r => console.log(' - ' + r.name + ' (' + r.url + ')'));
+                if (!items.length) console.log('   (none)');
+            } catch {}
+        "
+        echo ""
+        read -p "Add another registry? [y/N]: " ADD_MORE < /dev/tty
+        ADD_MORE=${ADD_MORE:-N}
+        
+        if [[ ! "$ADD_MORE" =~ ^[Yy]$ ]]; then
+            break
+        fi
+
+        read -p "Registry Name: " REG_NAME < /dev/tty
+        read -p "Git URL: " REG_URL < /dev/tty
+        read -p "Branch (optional): " REG_BRANCH < /dev/tty
+
+        if [ -n "$REG_NAME" ] && [ -n "$REG_URL" ]; then
+            add_registry "$REG_NAME" "$REG_URL" "$REG_BRANCH"
+            success "Added registry '$REG_NAME'."
+        else
+            error "Name and URL are required."
+        fi
+    done
+fi
+
 log "Verifying installation..."
 if [ ! -f "$INSTALL_DIR/server.js" ]; then
     error "Installation failed: server.js not found."
@@ -206,3 +295,33 @@ Environment="PATH=$PATH"
 
 [Install]
 WantedBy=default.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now ${SERVICE_NAME}
+    log "Service started and enabled."
+fi
+
+# --- Final Output ---
+
+# Get IP address (simple attempt)
+IP_ADDR=$(hostname -I | awk '{print $1}')
+if [ -z "$IP_ADDR" ]; then
+    IP_ADDR="localhost"
+fi
+
+echo ""
+echo -e "${GREEN}==========================================${NC}"
+echo -e "${GREEN}   ServiceBay Installed Successfully!     ${NC}"
+echo -e "${GREEN}==========================================${NC}"
+echo ""
+echo -e "Access the dashboard at:"
+echo -e "  ${BLUE}http://localhost:${PORT}${NC}"
+echo -e "  ${BLUE}http://${IP_ADDR}:${PORT}${NC}"
+echo ""
+echo -e "Manage the service with:"
+echo -e "  systemctl --user status ${SERVICE_NAME}"
+echo -e "  systemctl --user restart ${SERVICE_NAME}"
+echo -e "  systemctl --user stop ${SERVICE_NAME}"
+echo ""
+log "Installation complete."
