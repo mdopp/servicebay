@@ -318,6 +318,11 @@ export class NetworkService {
     // Add remaining containers that are not linked (orphans)
      
     for (const container of containers) {
+        // Skip system containers (e.g. podman-pause)
+        if (container.Image === 'localhost/podman-pause:4.3.1-0' || container.Names?.some((n: string) => n.includes('-infra'))) {
+            continue;
+        }
+
         // Check if this container is the Reverse Proxy
         // We check for the specific label, or if it matches the known nginx service name
          

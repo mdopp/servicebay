@@ -402,6 +402,53 @@ export default function NetworkPlugin() {
                         </div>
                     )}
 
+                    {(selectedNodeData.rawData.type === 'container' || selectedNodeData.rawData.type === 'service') && (
+                        <div className="space-y-3">
+                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                                <div className="text-sm text-gray-500 mb-1">Status</div>
+                                <div className="flex items-center gap-2">
+                                    <div className={`w-2 h-2 rounded-full ${selectedNodeData.rawData.State === 'running' || selectedNodeData.rawData.active ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    <span className="capitalize">{selectedNodeData.rawData.State || (selectedNodeData.rawData.active ? 'active' : 'inactive')}</span>
+                                </div>
+                            </div>
+                            
+                            {selectedNodeData.rawData.Image && (
+                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                                    <div className="text-sm text-gray-500 mb-1">Image</div>
+                                    <div className="break-all font-mono text-xs">{selectedNodeData.rawData.Image}</div>
+                                </div>
+                            )}
+
+                            {selectedNodeData.rawData.Ports && selectedNodeData.rawData.Ports.length > 0 && (
+                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                                    <div className="text-sm text-gray-500 mb-1">Ports</div>
+                                    <div className="space-y-1">
+                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                        {selectedNodeData.rawData.Ports.map((p: any, i: number) => (
+                                            <div key={i} className="text-xs font-mono">
+                                                {p.HostPort ? `${p.HostPort} -> ` : ''}{p.ContainerPort}/{p.Protocol || 'tcp'}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {selectedNodeData.rawData.ports && selectedNodeData.rawData.ports.length > 0 && (
+                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                                    <div className="text-sm text-gray-500 mb-1">Ports</div>
+                                    <div className="space-y-1">
+                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                        {selectedNodeData.rawData.ports.map((p: any, i: number) => (
+                                            <div key={i} className="text-xs font-mono">
+                                                {p.host ? `${p.host} -> ` : ''}{p.container}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     <div>
                         <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Raw Data</h4>
                         <pre className="text-xs overflow-x-auto bg-gray-50 dark:bg-gray-900 p-3 rounded-lg border border-gray-200 dark:border-gray-700 font-mono text-gray-700 dark:text-gray-300">
