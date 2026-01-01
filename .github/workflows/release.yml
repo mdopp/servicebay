@@ -75,9 +75,14 @@ jobs:
           npm ci --omit=dev
           cd ../..
           
-          # Create tarball
-          cd release
-          tar -czf ../servicebay-linux-x64.tar.gz servicebay
+          # Create DEPS tarball (node_modules only)
+          tar -czf servicebay-deps-linux-x64.tar.gz -C release/servicebay node_modules
+          
+          # Create tarball (full)
+          tar -czf servicebay-linux-x64.tar.gz -C release servicebay
+          
+          # Verify files
+          ls -lh *.tar.gz
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -85,4 +90,5 @@ jobs:
           files: |
             servicebay-linux-x64.tar.gz
             servicebay-update-linux-x64.tar.gz
+            servicebay-deps-linux-x64.tar.gz
           generate_release_notes: true
