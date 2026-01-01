@@ -1,7 +1,7 @@
 import { NetworkGraph, NetworkNode, NetworkEdge } from './types';
 import { FritzBoxClient } from '../fritzbox/client';
 import { NginxParser } from '../nginx/parser';
-import { getPodmanPs } from '../manager';
+import { getPodmanPs, listServices } from '../manager';
 import { getConfig } from '../config';
 import { NetworkStore } from './store';
 import os from 'os';
@@ -101,6 +101,45 @@ export class NetworkService {
       },
       rawData: nginxConfig
     });
+
+    // 4.5 Add Managed Services & External Links
+    const services = await listServices();
+    const externalLinks = config.externalLinks || [];
+
+    for (const service of services) {
+        const serviceId = `service-${service.name}`;
+        nodes.push({
+            id: serviceId,
+            type: 'service',
+            label: service.name,
+            subLabel: 'Managed Service',
+            ports: service.ports.map(p => parseInt(p.host?.split(':')[1] || '0')).filter(p => p > 0),
+            status: service.active ? 'up' : 'down',
+            metadata: {
+                source: 'Systemd/Podman',
+                description: service.description,
+                link: null
+            },
+            rawData: service
+        });
+    }
+
+    for (const link of externalLinks) {
+        const linkId = `link-${link.id}`;
+        nodes.push({
+            id: linkId,
+            type: 'service',
+            label: link.name,
+            subLabel: 'External Link',
+            ports: [],
+            status: 'up',
+            metadata: {
+                source: 'External Link',
+                link: link.url,
+                description: link.description
+            }
+        });
+    }
 
     // 5. Get Containers
     const containers = await getPodmanPs();
@@ -256,6 +295,43 @@ export class NetworkService {
                 },
                 rawData: container
             });
+        }
+    }
+
+    // 6.5 Link Services to Containers
+    for (const node of nodes) {
+        if (node.type === 'container' && node.rawData) {
+            const container = node.rawData;
+            // Try to find parent service
+            // 1. By Pod Name Label
+            const podName = container.Labels?.['io.podman.pod.name'] || container.Labels?.['io.kubernetes.pod.name'];
+            // 2. By Name convention (Service Name is prefix of Container Name)
+            const containerName = container.Names[0].replace(/^\//, ''); // Remove leading slash
+            
+            const parentService = services.find(s => {
+                if (podName && (s.name === podName || podName.includes(s.name))) return true;
+                // Strict prefix match: service "app", container "app-web"
+                if (containerName.startsWith(s.name + '-')) return true;
+                if (containerName === s.name) return true;
+                return false;
+            });
+
+            if (parentService) {
+                const serviceId = `service-${parentService.name}`;
+                // Avoid duplicates
+                if (!edges.find(e => e.source === serviceId && e.target === node.id)) {
+                    edges.push({
+                        id: `edge-service-${parentService.name}-${node.id}`,
+                        source: serviceId,
+                        target: node.id,
+                        label: undefined, // No label for hierarchy
+                        protocol: 'tcp',
+                        port: 0,
+                        state: 'active',
+                        isManual: false
+                    });
+                }
+            }
         }
     }
 

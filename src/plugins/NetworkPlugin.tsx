@@ -67,6 +67,7 @@ export default function NetworkPlugin() {
         if (n.type === 'internet') className += '!bg-sky-100 dark:!bg-sky-900 !border-sky-200 dark:!border-sky-800 !text-sky-900 dark:!text-sky-100';
         else if (n.type === 'router') className += '!bg-amber-100 dark:!bg-amber-900 !border-amber-200 dark:!border-amber-800 !text-amber-900 dark:!text-amber-100';
         else if (n.type === 'proxy') className += '!bg-emerald-100 dark:!bg-emerald-900 !border-emerald-200 dark:!border-emerald-800 !text-emerald-900 dark:!text-emerald-100';
+        else if (n.type === 'service') className += '!bg-indigo-100 dark:!bg-indigo-900 !border-indigo-200 dark:!border-indigo-800 !text-indigo-900 dark:!text-indigo-100';
         else className += '!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 !text-gray-900 dark:!text-white';
 
         return {
@@ -254,6 +255,7 @@ export default function NetworkPlugin() {
                     if (type === 'internet') return '#0ea5e9'; // sky-500
                     if (type === 'router') return '#f59e0b'; // amber-500
                     if (type === 'proxy') return '#10b981'; // emerald-500
+                    if (type === 'service') return '#6366f1'; // indigo-500
                     if (type === 'container') return '#6b7280'; // gray-500
                     return '#9ca3af'; // gray-400
                 }}
