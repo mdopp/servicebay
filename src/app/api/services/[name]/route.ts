@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServiceFiles, deleteService, saveService } from '@/lib/manager';
 import { getConfig, saveConfig } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
+import crypto from 'crypto';
 
 export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
   try {
@@ -48,6 +49,67 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
 export async function PUT(request: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
   const body = await request.json();
+
+  // Check if it's a link update
+  if (body.type === 'link') {
+    const config = await getConfig();
+    if (config.externalLinks) {
+      const linkIndex = config.externalLinks.findIndex(l => l.name === name || l.id === name);
+      if (linkIndex !== -1) {
+        // Update existing link
+        const oldLink = config.externalLinks[linkIndex];
+        const newName = body.name || oldLink.name;
+        
+        config.externalLinks[linkIndex] = {
+          ...oldLink,
+          name: newName,
+          url: body.url || oldLink.url,
+          description: body.description || oldLink.description
+        };
+        
+        await saveConfig(config);
+
+        // Update monitor if needed
+        if (body.monitor !== undefined) {
+             const checks = MonitoringStore.getChecks();
+             const checkName = `Link: ${oldLink.name}`; // Use old name to find
+             const check = checks.find(c => c.name === checkName);
+             
+             if (body.monitor) {
+                 if (check) {
+                     // Update check
+                     MonitoringStore.saveCheck({
+                         ...check,
+                         name: `Link: ${newName}`,
+                         target: body.url,
+                         interval: 60
+                     });
+                 } else {
+                     // Create check
+                     MonitoringStore.saveCheck({
+                         id: crypto.randomUUID(),
+                         name: `Link: ${newName}`,
+                         type: 'http',
+                         target: body.url,
+                         interval: 60,
+                         enabled: true,
+                         created_at: new Date().toISOString(),
+                         httpConfig: { expectedStatus: 200 }
+                     });
+                 }
+             } else {
+                 if (check) {
+                     MonitoringStore.deleteCheck(check.id);
+                 }
+             }
+        }
+
+        return NextResponse.json({ success: true });
+      }
+    }
+    return NextResponse.json({ error: 'Link not found' }, { status: 404 });
+  }
+
   const { kubeContent, yamlContent, yamlFileName } = body;
    
   await saveService(name, kubeContent, yamlContent, yamlFileName);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, X, Github, Search, Globe, Link as LinkIcon, Layers } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, X, Search, Link as LinkIcon, Layers } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -21,6 +21,7 @@ interface Service {
   url?: string;
   description?: string;
   id?: string;
+  monitor?: boolean;
 }
 
 export default function ServicesPlugin() {
@@ -42,6 +43,8 @@ export default function ServicesPlugin() {
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
+  const [isEditingLink, setIsEditingLink] = useState(false);
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '', monitor: false });
 
   const fetchData = async () => {
@@ -100,6 +103,18 @@ export default function ServicesPlugin() {
     }
   };
 
+  const handleEditLink = (service: Service) => {
+    setLinkForm({
+        name: service.name,
+        url: service.url || '',
+        description: service.description || '',
+        monitor: service.monitor || false
+    });
+    setIsEditingLink(true);
+    setEditingLinkId(service.name);
+    setShowLinkModal(true);
+  };
+
   const handleSaveLink = async () => {
     if (!linkForm.name || !linkForm.url) {
         addToast('error', 'Name and URL are required');
@@ -107,20 +122,25 @@ export default function ServicesPlugin() {
     }
 
     try {
-        const res = await fetch('/api/services', {
-            method: 'POST',
+        const method = isEditingLink ? 'PUT' : 'POST';
+        const url = isEditingLink ? `/api/services/${editingLinkId}` : '/api/services';
+
+        const res = await fetch(url, {
+            method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...linkForm, type: 'link' })
         });
 
         if (!res.ok) throw new Error('Failed to save link');
 
-        addToast('success', 'Link added successfully');
+        addToast('success', isEditingLink ? 'Link updated successfully' : 'Link added successfully');
         setShowLinkModal(false);
         setLinkForm({ name: '', url: '', description: '', monitor: false });
+        setIsEditingLink(false);
+        setEditingLinkId(null);
         fetchData();
-    } catch (error) {
-        addToast('error', 'Failed to add link');
+    } catch {
+        addToast('error', 'Failed to save link');
     }
   };
 
@@ -239,16 +259,16 @@ export default function ServicesPlugin() {
                 <div key={service.name} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
                     <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
                         <div className="flex items-center gap-3">
-                            {service.type === 'link' ? (
-                                <div className={`p-2 rounded-full ${service.active ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
-                                    <Globe size={20} />
-                                </div>
-                            ) : (
-                                <div className={`w-3 h-3 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} />
-                            )}
+                            <div className={`w-3 h-3 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
                             <div>
                                 <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                                    {service.name}
+                                    {service.type === 'link' ? (
+                                        <a href={service.url} target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-blue-600 transition-colors">
+                                            {service.name}
+                                        </a>
+                                    ) : (
+                                        service.name
+                                    )}
                                     {service.type === 'link' && <span className="text-xs font-normal px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-500">Link</span>}
                                 </h3>
                                 <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
@@ -260,9 +280,9 @@ export default function ServicesPlugin() {
                         <div className="flex items-center gap-2">
                             {service.type === 'link' ? (
                                 <>
-                                    <a href={service.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Open Link">
-                                        <Globe size={18} />
-                                    </a>
+                                    <button onClick={() => handleEditLink(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit">
+                                        <Edit size={18} />
+                                    </button>
                                     <button onClick={() => confirmDelete(service.name)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
                                         <Trash2 size={18} />
                                     </button>
@@ -297,7 +317,13 @@ export default function ServicesPlugin() {
                                         <div className="flex flex-wrap gap-1">
                                             {service.ports.map((p, i) => (
                                                 <span key={i} className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono">
-                                                    {p.host ? `${p.host}:` : ''}{p.container}
+                                                    {p.host ? (
+                                                        <a href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${p.host}`} target="_blank" rel="noopener noreferrer" className="hover:underline text-blue-600 dark:text-blue-400">
+                                                            {p.host}:{p.container}
+                                                        </a>
+                                                    ) : (
+                                                        p.container
+                                                    )}
                                                 </span>
                                             ))}
                                         </div>
@@ -434,7 +460,13 @@ export default function ServicesPlugin() {
 
                         {/* Link */}
                         <button 
-                            onClick={() => { setShowNewModal(false); setShowLinkModal(true); }}
+                            onClick={() => { 
+                                setShowNewModal(false); 
+                                setLinkForm({ name: '', url: '', description: '', monitor: false });
+                                setIsEditingLink(false);
+                                setEditingLinkId(null);
+                                setShowLinkModal(true); 
+                            }}
                             className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-purple-500 dark:hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all text-left group"
                         >
                             <div className="p-3 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform">
