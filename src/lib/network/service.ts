@@ -178,6 +178,10 @@ export class NetworkService {
                 source: 'External Link',
                 link: link.url,
                 description: link.description
+            },
+            rawData: {
+                ...link,
+                type: 'link'
             }
         });
     }

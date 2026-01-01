@@ -378,6 +378,30 @@ export default function NetworkPlugin() {
                     </div>
                 </div>
                 <div className="space-y-4">
+                    {selectedNodeData.rawData.type === 'link' && (
+                        <div className="space-y-3">
+                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                                <div className="text-sm text-gray-500 mb-1">URL</div>
+                                <a href={selectedNodeData.rawData.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">
+                                    {selectedNodeData.rawData.url}
+                                </a>
+                            </div>
+                            {selectedNodeData.rawData.description && (
+                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                                    <div className="text-sm text-gray-500 mb-1">Description</div>
+                                    <div>{selectedNodeData.rawData.description}</div>
+                                </div>
+                            )}
+                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                                <div className="text-sm text-gray-500 mb-1">Monitoring</div>
+                                <div className="flex items-center gap-2">
+                                    <div className={`w-2 h-2 rounded-full ${selectedNodeData.rawData.monitor ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                    <span>{selectedNodeData.rawData.monitor ? 'Enabled' : 'Disabled'}</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     <div>
                         <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Raw Data</h4>
                         <pre className="text-xs overflow-x-auto bg-gray-50 dark:bg-gray-900 p-3 rounded-lg border border-gray-200 dark:border-gray-700 font-mono text-gray-700 dark:text-gray-300">
