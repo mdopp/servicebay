@@ -35,9 +35,22 @@ export async function GET() {
     };
   });
 
+  const gatewayService = config.gateway?.enabled ? [{
+      name: 'Internet Gateway',
+      active: true,
+      status: 'gateway',
+      kubePath: '',
+      yamlPath: null,
+      ports: [],
+      volumes: [],
+      type: 'gateway',
+      description: `Fritz!Box at ${config.gateway.host}`,
+      id: 'gateway'
+  }] : [];
+
   const mappedServices = services.map(s => ({ ...s, type: 'container' }));
 
-  return NextResponse.json([...mappedLinks, ...mappedServices]);
+  return NextResponse.json([...mappedLinks, ...gatewayService, ...mappedServices]);
 }
 
 export async function POST(request: Request) {
