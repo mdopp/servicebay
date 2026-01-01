@@ -59,8 +59,15 @@ jobs:
           cp -r templates release/servicebay/
           cp -r stacks release/servicebay/
           cp install.sh release/servicebay/
+          cp update.sh release/servicebay/
           cp README.md release/servicebay/
           
+          # Create UPDATE tarball (code only, no node_modules)
+          # We do this before installing dependencies
+          cd release
+          tar -czf ../servicebay-update-linux-x64.tar.gz servicebay
+          cd ..
+
           # Install production dependencies to bundle native modules (node-pty)
           # This ensures the user doesn't need build tools on their machine.
           cd release/servicebay
@@ -76,5 +83,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: servicebay-linux-x64.tar.gz
+          files: |
+            servicebay-linux-x64.tar.gz
+            servicebay-update-linux-x64.tar.gz
           generate_release_notes: true

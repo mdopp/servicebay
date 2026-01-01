@@ -6,7 +6,8 @@
 set -e
 
 # Configuration
-TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-linux-x64.tar.gz"
+FULL_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-linux-x64.tar.gz"
+UPDATE_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-update-linux-x64.tar.gz"
 INSTALL_DIR="$HOME/.servicebay"
 SERVICE_NAME="servicebay"
 
@@ -31,19 +32,56 @@ if [ -f "$INSTALL_DIR/config.json" ]; then
     cp "$INSTALL_DIR/config.json" /tmp/servicebay_config_backup.json
 fi
 
-log "Downloading and extracting update..."
-# We download to a temp dir to avoid partial overwrites if download fails
+log "Checking for updates..."
 TEMP_DIR=$(mktemp -d)
-curl -L "$TAR_URL" | tar xz -C "$TEMP_DIR" --strip-components=1
 
-# Replace files
-log "Installing new version..."
-# Remove old files but keep the directory structure to avoid permission issues?
-# Safer to just rsync or cp. 
-# Since we want to remove old unused files, we should clear the dir, but we need to be careful.
-# Let's stick to the install.sh method: wipe and replace.
-rm -rf "$INSTALL_DIR"/*
-cp -r "$TEMP_DIR"/* "$INSTALL_DIR/"
+# 1. Download update bundle (small)
+log "Downloading update bundle..."
+if ! curl -L "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz" --fail; then
+    log "Update bundle not found. Falling back to full bundle."
+    USE_FULL=1
+else
+    # 2. Check if dependencies changed
+    # Extract new package-lock.json
+    tar -xzf "$TEMP_DIR/update.tar.gz" -C "$TEMP_DIR" --strip-components=1 servicebay/package-lock.json
+    
+    if [ -f "$INSTALL_DIR/package-lock.json" ] && cmp -s "$INSTALL_DIR/package-lock.json" "$TEMP_DIR/package-lock.json"; then
+        log "Dependencies unchanged. Using optimized update."
+        USE_FULL=0
+    else
+        log "Dependencies changed. Downloading full bundle..."
+        USE_FULL=1
+    fi
+fi
+
+if [ "$USE_FULL" -eq 1 ]; then
+    # Download full bundle
+    curl -L "$FULL_TAR_URL" -o "$TEMP_DIR/full.tar.gz"
+    
+    log "Installing full version..."
+    rm -rf "$INSTALL_DIR"/*
+    tar xz -f "$TEMP_DIR/full.tar.gz" -C "$INSTALL_DIR" --strip-components=1
+else
+    log "Installing optimized version..."
+    
+    # Move node_modules aside
+    if [ -d "$INSTALL_DIR/node_modules" ]; then
+        mv "$INSTALL_DIR/node_modules" "$TEMP_DIR/node_modules"
+    fi
+    
+    # Wipe directory
+    rm -rf "$INSTALL_DIR"/*
+    
+    # Extract update
+    tar xz -f "$TEMP_DIR/update.tar.gz" -C "$INSTALL_DIR" --strip-components=1
+    
+    # Restore node_modules
+    if [ -d "$TEMP_DIR/node_modules" ]; then
+        mv "$TEMP_DIR/node_modules" "$INSTALL_DIR/node_modules"
+    fi
+fi
+
+# Cleanup
 rm -rf "$TEMP_DIR"
 
 # Restore config
