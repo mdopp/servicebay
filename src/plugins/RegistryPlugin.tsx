@@ -1,14 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { fetchTemplates, syncAllRegistries } from '@/app/actions';
 import { Template } from '@/lib/registry';
 import RegistryBrowser from '@/components/RegistryBrowser';
-import { Loader2, ArrowLeft, RefreshCw, DownloadCloud } from 'lucide-react';
+import { Loader2, RefreshCw, DownloadCloud } from 'lucide-react';
+import PageHeader from '@/components/PageHeader';
 
 export default function RegistryPlugin() {
-  const router = useRouter();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -39,17 +38,7 @@ export default function RegistryPlugin() {
 
   return (
     <div className="h-full flex flex-col">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between bg-gray-50 dark:bg-gray-900/50">
-            <div className="flex items-center gap-4">
-                <button 
-                    onClick={() => router.back()}
-                    className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-                    title="Go Back"
-                >
-                    <ArrowLeft size={20} className="text-gray-600 dark:text-gray-300" />
-                </button>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-white">Service Registry</h2>
-            </div>
+        <PageHeader title="Service Registry" helpId="registry">
             <div className="flex items-center gap-2">
                 <button 
                     onClick={handleSync}
@@ -67,7 +56,7 @@ export default function RegistryPlugin() {
                     <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                 </button>
             </div>
-        </div>
+        </PageHeader>
         <div className="flex-1 min-h-0">
             {loading ? (
                 <div className="h-full flex items-center justify-center">

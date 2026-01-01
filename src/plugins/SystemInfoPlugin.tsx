@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { getSystemInfo, getDiskUsage, getSystemUpdates, SystemInfo, DiskInfo } from '@/app/actions/system';
 import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import PageHeader from '@/components/PageHeader';
 
 export default function SystemInfoPlugin() {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
@@ -47,12 +48,11 @@ export default function SystemInfoPlugin() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex justify-between items-center mb-6 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white">System Information</h2>
+      <PageHeader title="System Information" showBack={false} helpId="system-info">
         <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
             <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
         </button>
-      </div>
+      </PageHeader>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         

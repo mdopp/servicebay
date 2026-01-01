@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ReactFlow, Background, Controls, MiniMap, useNodesState, useEdgesState, Node, Edge, Position, Connection, addEdge } from '@xyflow/react';
+import { ReactFlow, Background, Controls, MiniMap, useNodesState, useEdgesState, Node, Edge, Position, Connection } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { NetworkGraph } from '@/lib/network/types';
@@ -208,7 +208,7 @@ export default function NetworkPlugin() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="Network Map" showBack={false}>
+      <PageHeader title="Network Map" showBack={false} helpId="network">
         <button 
             onClick={fetchGraph}
             disabled={loading}
@@ -302,7 +302,7 @@ export default function NetworkPlugin() {
                         </div>
                     </div>
 
-                    {selectedEdge.data?.isManual && (
+                    {!!selectedEdge.data?.isManual && (
                         <button
                             onClick={handleDeleteEdge}
                             className="w-full py-2 px-4 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg border border-red-200 transition-colors flex items-center justify-center gap-2"

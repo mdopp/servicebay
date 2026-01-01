@@ -243,7 +243,7 @@ export default function MonitoringPlugin() {
   return (
     <div className="h-full flex flex-col">
       <div className="shrink-0">
-      <PageHeader title="Monitoring" showBack={false}>
+      <PageHeader title="Monitoring" showBack={false} helpId="monitoring">
         <button 
             onClick={fetchData} 
             className="p-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"

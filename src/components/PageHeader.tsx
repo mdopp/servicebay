@@ -2,14 +2,16 @@
 
 import { ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import PluginHelp from './PluginHelp';
 
 interface PageHeaderProps {
   title: string;
   children?: React.ReactNode;
   showBack?: boolean;
+  helpId?: string;
 }
 
-export default function PageHeader({ title, children, showBack = true }: PageHeaderProps) {
+export default function PageHeader({ title, children, showBack = true, helpId }: PageHeaderProps) {
   const router = useRouter();
   
   return (
@@ -25,6 +27,7 @@ export default function PageHeader({ title, children, showBack = true }: PageHea
           </button>
         )}
         <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
+        {helpId && <PluginHelp helpId={helpId} />}
       </div>
       {children && <div className="flex gap-3">{children}</div>}
     </div>
