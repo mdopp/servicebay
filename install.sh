@@ -255,6 +255,15 @@ fi
 # --- Service Setup ---
 
 SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
+PORT=$DEFAULT_PORT
+
+# Try to detect existing port from service file
+if [ -f "$SERVICE_FILE" ]; then
+    EXISTING_PORT=$(grep "Environment=PORT=" "$SERVICE_FILE" | cut -d= -f3)
+    if [ -n "$EXISTING_PORT" ]; then
+        PORT=$EXISTING_PORT
+    fi
+fi
 
 if [ -f "$SERVICE_FILE" ] && [ "$IS_UPDATE" -eq 1 ]; then
     log "Service file exists. Restarting..."
@@ -263,21 +272,12 @@ if [ -f "$SERVICE_FILE" ] && [ "$IS_UPDATE" -eq 1 ]; then
 else
     log "Configuring systemd service..."
     
-    # Port Selection
-    if [ -f "$SERVICE_FILE" ]; then
-        EXISTING_PORT=$(grep "Environment=PORT=" "$SERVICE_FILE" | cut -d= -f3)
-        if [ -n "$EXISTING_PORT" ]; then
-            DEFAULT_PORT=$EXISTING_PORT
-        fi
-    fi
-
     echo ""
     if [ -c /dev/tty ]; then
-        read -p "Enter desired port [$DEFAULT_PORT]: " INPUT_PORT < /dev/tty
-        PORT=${INPUT_PORT:-$DEFAULT_PORT}
+        read -p "Enter desired port [$PORT]: " INPUT_PORT < /dev/tty
+        PORT=${INPUT_PORT:-$PORT}
     else
-        log "Non-interactive mode detected. Using default port $DEFAULT_PORT."
-        PORT=$DEFAULT_PORT
+        log "Non-interactive mode detected. Using port $PORT."
     fi
 
     if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
