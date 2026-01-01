@@ -16,7 +16,7 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-  dagreGraph.setGraph({ rankdir: 'LR' });
+  dagreGraph.setGraph({ rankdir: 'LR', ranksep: 150, nodesep: 80 });
 
   nodes.forEach((node) => {
     dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
@@ -116,7 +116,10 @@ export default function NetworkPlugin() {
 
                         {/* Status & Link */}
                         <div className="flex items-center gap-2 mt-1">
-                            <div className={`w-2.5 h-2.5 rounded-full ${n.status === 'up' ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.6)]' : 'bg-red-500'}`} />
+                            <div 
+                                className={`w-2.5 h-2.5 rounded-full ${n.status === 'up' ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.6)]' : 'bg-red-500'}`} 
+                                title={n.status === 'up' ? 'Status: Up' : 'Status: Down'}
+                            />
                             
                             {n.metadata?.link && (
                                 <a 
