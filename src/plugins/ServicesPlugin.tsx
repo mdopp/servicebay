@@ -262,17 +262,17 @@ export default function ServicesPlugin() {
                             <div className={`w-3 h-3 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
                             <div>
                                 <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                                    {service.type === 'link' ? (
-                                        <a href={service.url} target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-blue-600 transition-colors">
-                                            {service.name}
-                                        </a>
-                                    ) : (
-                                        service.name
-                                    )}
+                                    {service.name}
                                     {service.type === 'link' && <span className="text-xs font-normal px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-500">Link</span>}
                                 </h3>
                                 <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                                    {service.type === 'link' ? service.url : service.status}
+                                    {service.type === 'link' ? (
+                                        <a href={service.url} target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-blue-600 transition-colors">
+                                            {service.url}
+                                        </a>
+                                    ) : (
+                                        service.status
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -305,11 +305,13 @@ export default function ServicesPlugin() {
                     
                     {/* Details */}
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600 dark:text-gray-400">
-                        {service.type === 'link' ? (
+                        {service.description && (
                             <div className="col-span-2 text-gray-500 italic">
-                                {service.description || 'No description provided'}
+                                {service.description}
                             </div>
-                        ) : (
+                        )}
+                        
+                        {service.type !== 'link' && (
                             <>
                                 {service.ports.length > 0 && (
                                     <div>

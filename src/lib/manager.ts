@@ -19,6 +19,7 @@ export interface ServiceInfo {
   yamlPath: string | null;
   active: boolean;
   status: string;
+  description?: string;
   ports: { host?: string; container: string }[];
   volumes: { host: string; container: string }[];
 }
@@ -55,6 +56,7 @@ export async function listServices(): Promise<ServiceInfo[]> {
 
     let active = false;
     let status = 'unknown';
+    let description = '';
     const ports: { host?: string; container: string }[] = [];
     const volumes: { host: string; container: string }[] = [];
 
@@ -62,6 +64,10 @@ export async function listServices(): Promise<ServiceInfo[]> {
       const { stdout } = await execAsync(`systemctl --user is-active ${name}.service`);
       status = stdout.trim();
       active = status === 'active';
+      
+      // Get Description
+      const { stdout: descStdout } = await execAsync(`systemctl --user show -p Description --value ${name}.service`);
+      description = descStdout.trim();
     } catch (e) {
       status = 'inactive'; // or error
     }
@@ -124,6 +130,7 @@ export async function listServices(): Promise<ServiceInfo[]> {
       yamlPath,
       active,
       status,
+      description,
       ports,
       volumes
     });
