@@ -61,7 +61,8 @@ function verifyUserPassword(username: string, password: string): Promise<boolean
       
       // Look for password prompt
       // Different distros have different prompts, usually "Password:" or "Password for user:"
-      if (data.includes('assword:') || data.includes('assword')) {
+      // Also handle German "Passwort:"
+      if (data.includes('assword:') || data.includes('assword') || data.includes('asswort:') || data.includes('asswort')) {
         ptyProcess.write(password + '\n');
       }
 

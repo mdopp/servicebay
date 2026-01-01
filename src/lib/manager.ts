@@ -87,17 +87,20 @@ export async function listServices(): Promise<ServiceInfo[]> {
     if (yamlPath) {
         try {
             const yamlContent = await fs.readFile(yamlPath, 'utf-8');
-            const parsed = yaml.load(yamlContent) as any;
+            // Handle multi-document YAML files
+            const documents = yaml.loadAll(yamlContent) as any[];
             
-            if (parsed && parsed.spec) {
-                // Extract Ports
-                if (parsed.spec.containers) {
-                    parsed.spec.containers.forEach((container: any) => {
-                        if (container.ports) {
-                            container.ports.forEach((port: any) => {
-                                if (port.hostPort) {
-                                    ports.push({ host: String(port.hostPort), container: String(port.containerPort) });
-                                } else {
+            // Iterate through all documents to find one with spec.containers
+            documents.forEach((parsed) => {
+                if (parsed && parsed.spec) {
+                    // Extract Ports
+                    if (parsed.spec.containers) {
+                        parsed.spec.containers.forEach((container: any) => {
+                            if (container.ports) {
+                                container.ports.forEach((port: any) => {
+                                    if (port.hostPort) {
+                                        ports.push({ host: String(port.hostPort), container: String(port.containerPort) });
+                                    } else {
                                     ports.push({ container: String(port.containerPort) });
                                 }
                             });
@@ -128,7 +131,8 @@ export async function listServices(): Promise<ServiceInfo[]> {
                         }
                     });
                 }
-            }
+                }
+            });
         } catch (e) {
             console.error(`Error parsing YAML for ${name}`, e);
         }
