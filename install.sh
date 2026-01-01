@@ -96,6 +96,14 @@ log "Using port: $PORT"
 # --- Installation ---
 
 if [ -d "$INSTALL_DIR" ]; then
+    log "Found existing installation."
+    
+    # Backup config
+    if [ -f "$INSTALL_DIR/config.json" ]; then
+        log "Backing up config.json..."
+        cp "$INSTALL_DIR/config.json" /tmp/servicebay_config_backup.json
+    fi
+
     log "Removing old installation..."
     rm -rf "$INSTALL_DIR"
 fi
@@ -104,6 +112,12 @@ log "Downloading release..."
 mkdir -p "$INSTALL_DIR"
 curl -L "$TAR_URL" | tar xz -C "$INSTALL_DIR" --strip-components=1
 cd "$INSTALL_DIR"
+
+# Restore config
+if [ -f "/tmp/servicebay_config_backup.json" ]; then
+    log "Restoring config.json..."
+    mv /tmp/servicebay_config_backup.json "$INSTALL_DIR/config.json"
+fi
 
 # --- Dependencies ---
 # Dependencies are now bundled in the release tarball!
@@ -154,7 +168,8 @@ log "Reloading systemd..."
 systemctl --user daemon-reload
 
 log "Enabling and starting service..."
-systemctl --user enable --now ${SERVICE_NAME}
+systemctl --user enable ${SERVICE_NAME}
+systemctl --user restart ${SERVICE_NAME}
 
 # --- Finish ---
 

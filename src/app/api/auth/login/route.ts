@@ -57,6 +57,7 @@ function verifyUserPassword(username: string, password: string): Promise<boolean
 
     ptyProcess.onData((data) => {
       output += data;
+      console.log('[Auth Debug] PTY Output:', JSON.stringify(data));
       
       // Look for password prompt
       // Different distros have different prompts, usually "Password:" or "Password for user:"

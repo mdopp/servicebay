@@ -4,6 +4,8 @@ import "./globals.css";
 import { ToastProvider } from "@/providers/ToastProvider";
 import os from 'os';
 
+export const dynamic = 'force-dynamic';
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
