@@ -8,6 +8,7 @@ set -e
 # Configuration
 FULL_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-linux-x64.tar.gz"
 UPDATE_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-update-linux-x64.tar.gz"
+DEPS_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-deps-linux-x64.tar.gz"
 INSTALL_DIR="$HOME/.servicebay"
 SERVICE_NAME="servicebay"
 DEFAULT_PORT=3000
@@ -82,55 +83,54 @@ fi
 
 # Determine Install Strategy
 TEMP_DIR=$(mktemp -d)
-USE_FULL=1
+NEED_DEPS=1
 
-if [ "$IS_UPDATE" -eq 1 ]; then
-    log "Checking for optimized update..."
-    # Try download update bundle
-    if curl -L "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz" --fail --silent; then
-        # Check dependencies
-        tar -xzf "$TEMP_DIR/update.tar.gz" -C "$TEMP_DIR" --strip-components=1 servicebay/package-lock.json
-        if [ -f "$INSTALL_DIR/package-lock.json" ] && cmp -s "$INSTALL_DIR/package-lock.json" "$TEMP_DIR/package-lock.json"; then
-            log "Dependencies unchanged. Using optimized update."
-            USE_FULL=0
-        else
-            log "Dependencies changed. Using full bundle."
-        fi
+log "Downloading application code..."
+if curl -L "$UPDATE_TAR_URL" -o "$TEMP_DIR/update.tar.gz" --fail; then
+    # Check dependencies
+    tar -xzf "$TEMP_DIR/update.tar.gz" -C "$TEMP_DIR" --strip-components=1 servicebay/package-lock.json
+    
+    if [ "$IS_UPDATE" -eq 1 ] && [ -f "$INSTALL_DIR/package-lock.json" ] && cmp -s "$INSTALL_DIR/package-lock.json" "$TEMP_DIR/package-lock.json"; then
+        log "Dependencies unchanged. Skipping dependency download."
+        NEED_DEPS=0
     else
-        log "Update bundle not found. Using full bundle."
+        if [ "$IS_UPDATE" -eq 1 ]; then
+            log "Dependencies changed. Downloading new dependencies..."
+        else
+            log "Fresh install. Downloading dependencies..."
+        fi
+    fi
+else
+    error "Failed to download update bundle."
+    exit 1
+fi
+
+if [ "$NEED_DEPS" -eq 1 ]; then
+    if ! curl -L "$DEPS_TAR_URL" -o "$TEMP_DIR/deps.tar.gz" --fail; then
+        error "Failed to download dependencies bundle."
+        exit 1
     fi
 fi
 
 # Perform Install
-if [ "$USE_FULL" -eq 0 ]; then
-    # Optimized Update
-    log "Installing optimized version..."
-    
-    if [ -d "$INSTALL_DIR/node_modules" ]; then
-        mv "$INSTALL_DIR/node_modules" "$TEMP_DIR/node_modules"
-    fi
-    
-    rm -rf "$INSTALL_DIR"/*
-    mkdir -p "$INSTALL_DIR"
-    tar xz -f "$TEMP_DIR/update.tar.gz" -C "$INSTALL_DIR" --strip-components=1
-    
-    if [ -d "$TEMP_DIR/node_modules" ]; then
-        mv "$TEMP_DIR/node_modules" "$INSTALL_DIR/node_modules"
-    fi
-else
-    # Full Install
-    log "Downloading full release..."
-    # Extract to temp/full first to avoid partial install on failure
-    mkdir -p "$TEMP_DIR/full"
-    curl -L "$FULL_TAR_URL" | tar xz -C "$TEMP_DIR/full" --strip-components=1
-    
-    log "Installing full version..."
-    rm -rf "$INSTALL_DIR"
-    mkdir -p "$INSTALL_DIR"
-    
-    # Move files
-    cp -r "$TEMP_DIR/full/"* "$INSTALL_DIR/"
-    cp -r "$TEMP_DIR/full/".* "$INSTALL_DIR/" 2>/dev/null || true
+log "Installing..."
+
+# Preserve node_modules if we don't need to update them
+if [ "$NEED_DEPS" -eq 0 ] && [ -d "$INSTALL_DIR/node_modules" ]; then
+    mv "$INSTALL_DIR/node_modules" "$TEMP_DIR/node_modules"
+fi
+
+rm -rf "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+
+# Extract Code
+tar xz -f "$TEMP_DIR/update.tar.gz" -C "$INSTALL_DIR" --strip-components=1
+
+# Restore or Extract Deps
+if [ "$NEED_DEPS" -eq 0 ] && [ -d "$TEMP_DIR/node_modules" ]; then
+    mv "$TEMP_DIR/node_modules" "$INSTALL_DIR/node_modules"
+elif [ "$NEED_DEPS" -eq 1 ]; then
+    tar xz -f "$TEMP_DIR/deps.tar.gz" -C "$INSTALL_DIR"
 fi
 
 # Restore Config
