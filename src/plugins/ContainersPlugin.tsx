@@ -14,6 +14,7 @@ interface Container {
   // Support both formats (standard Podman JSON vs Docker-like)
   Ports?: ({ IP?: string; PrivatePort: number; PublicPort?: number; Type: string } | { host_ip?: string; container_port: number; host_port?: number; protocol: string })[];
   Mounts?: (string | { Source: string; Destination: string; Type: string })[];
+  Labels?: { [key: string]: string };
 }
 
 export default function ContainersPlugin() {
@@ -127,6 +128,28 @@ export default function ContainersPlugin() {
     );
   });
 
+  const getGroupName = (c: Container) => {
+    if (c.Labels) {
+        if (c.Labels['io.kubernetes.pod.name']) return `Pod: ${c.Labels['io.kubernetes.pod.name']}`;
+        if (c.Labels['io.podman.pod.name']) return `Pod: ${c.Labels['io.podman.pod.name']}`;
+        if (c.Labels['com.docker.compose.project']) return `Compose: ${c.Labels['com.docker.compose.project']}`;
+    }
+    return 'Standalone Containers';
+  };
+
+  const groupedContainers = filteredContainers.reduce((acc, c) => {
+    const group = getGroupName(c);
+    if (!acc[group]) acc[group] = [];
+    acc[group].push(c);
+    return acc;
+  }, {} as Record<string, Container[]>);
+
+  const sortedGroups = Object.keys(groupedContainers).sort((a, b) => {
+    if (a === 'Standalone Containers') return 1;
+    if (b === 'Standalone Containers') return -1;
+    return a.localeCompare(b);
+  });
+
   return (
     <div className="h-full flex flex-col relative">
       <ConfirmModal 
@@ -165,73 +188,82 @@ export default function ContainersPlugin() {
                 {containers.length > 0 ? 'No containers match your search.' : 'No active containers found.'}
             </div>
         ) : (
-            <div className="grid gap-4">
-                {filteredContainers.map((c) => (
-                <div key={c.Id} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
-                    <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className={`w-3 h-3 rounded-full ${c.State === 'running' ? 'bg-green-500' : 'bg-gray-500'}`} />
-                            <div>
-                                <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100">{c.Names[0].replace(/^\//, '')}</h3>
-                                <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{c.Id.substring(0, 12)}</div>
-                            </div>
-                        </div>
-                        
-                        <div className="flex items-center gap-2">
-                            <button 
-                                onClick={() => openLogs(c)}
-                                className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
-                                title="Logs & Info"
-                            >
-                                <Activity size={18} />
-                            </button>
-                            <button 
-                                onClick={() => openTerminal(c)}
-                                className="p-2 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors"
-                                title="Terminal"
-                            >
-                                <TerminalIcon size={18} />
-                            </button>
-                            <button 
-                                onClick={() => openActions(c)}
-                                className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors"
-                                title="Actions"
-                            >
-                                <MoreVertical size={18} />
-                            </button>
-                        </div>
-                    </div>
-                    
-                    {/* Details */}
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600 dark:text-gray-400">
-                        <div>
-                            <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Image</span>
-                            <span className="break-all">{c.Image}</span>
-                        </div>
-                        <div>
-                            <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Status</span>
-                            <span>{c.Status}</span>
-                        </div>
-                        {c.Ports && c.Ports.length > 0 && (
-                            <div className="md:col-span-2">
-                                <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Ports</span>
-                                <div className="flex flex-wrap gap-1">
-                                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                    {c.Ports.map((p: any, i) => {
-                                        const hostPort = p.PublicPort || p.host_port;
-                                        const containerPort = p.PrivatePort || p.container_port;
-                                        const protocol = p.Type || p.protocol;
-                                        return (
-                                            <span key={i} className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono">
-                                                {hostPort ? `${hostPort}:` : ''}{containerPort}/{protocol}
-                                            </span>
-                                        );
-                                    })}
+            <div className="space-y-8">
+                {sortedGroups.map(group => (
+                    <div key={group}>
+                        <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 px-1 border-b border-gray-200 dark:border-gray-800 pb-2">
+                            {group}
+                        </h3>
+                        <div className="grid gap-4">
+                            {groupedContainers[group].map((c) => (
+                            <div key={c.Id} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
+                                <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-3 h-3 rounded-full ${c.State === 'running' ? 'bg-green-500' : 'bg-gray-500'}`} />
+                                        <div>
+                                            <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100">{c.Names[0].replace(/^\//, '')}</h3>
+                                            <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{c.Id.substring(0, 12)}</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2">
+                                        <button 
+                                            onClick={() => openLogs(c)}
+                                            className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                                            title="Logs & Info"
+                                        >
+                                            <Activity size={18} />
+                                        </button>
+                                        <button 
+                                            onClick={() => openTerminal(c)}
+                                            className="p-2 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors"
+                                            title="Terminal"
+                                        >
+                                            <TerminalIcon size={18} />
+                                        </button>
+                                        <button 
+                                            onClick={() => openActions(c)}
+                                            className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors"
+                                            title="Actions"
+                                        >
+                                            <MoreVertical size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                {/* Details */}
+                                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600 dark:text-gray-400">
+                                    <div>
+                                        <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Image</span>
+                                        <span className="break-all">{c.Image}</span>
+                                    </div>
+                                    <div>
+                                        <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Status</span>
+                                        <span>{c.Status}</span>
+                                    </div>
+                                    {c.Ports && c.Ports.length > 0 && (
+                                        <div className="md:col-span-2">
+                                            <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Ports</span>
+                                            <div className="flex flex-wrap gap-1">
+                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                                {c.Ports.map((p: any, i) => {
+                                                    const hostPort = p.PublicPort || p.host_port;
+                                                    const containerPort = p.PrivatePort || p.container_port;
+                                                    const protocol = p.Type || p.protocol;
+                                                    return (
+                                                        <span key={i} className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono">
+                                                            {hostPort ? `${hostPort}:` : ''}{containerPort}/{protocol}
+                                                        </span>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
-                        )}
+                            ))}
+                        </div>
                     </div>
-                </div>
                 ))}
             </div>
         )}
