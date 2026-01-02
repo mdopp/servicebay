@@ -319,7 +319,14 @@ export async function getPodmanLogs() {
 export async function getPodmanPs() {
   try {
     const { stdout } = await execAsync(`podman ps -a --pod --format json`);
-    return JSON.parse(stdout);
+    const containers = JSON.parse(stdout);
+    // Filter out system containers
+     
+    return containers.filter((c: any) => {
+        const isInfra = c.Names && c.Names.some((n: string) => n.includes('-infra'));
+        const isPause = c.Image && c.Image.includes('podman-pause');
+        return !isInfra && !isPause;
+    });
   } catch (e) {
     console.error('Error fetching podman ps:', e);
     return [];

@@ -154,7 +154,10 @@ export class NetworkService {
                 description: service.description,
                 link: null
             },
-            rawData: service
+            rawData: {
+                ...service,
+                type: 'service'
+            }
         });
     }
 
@@ -294,7 +297,10 @@ export class NetworkService {
                                     link: targetPort ? `http://localhost:${targetPort}` : null,
                                     containerId: targetContainer.Id
                                 },
-                                rawData: targetContainer
+                                rawData: {
+                                    ...targetContainer,
+                                    type: 'container'
+                                }
                             });
                         }
 
@@ -365,7 +371,10 @@ export class NetworkService {
                     link: hostPort ? `http://localhost:${hostPort}` : null,
                     containerId: container.Id
                 },
-                rawData: container
+                rawData: {
+                    ...container,
+                    type: 'container'
+                }
             });
         }
     }
