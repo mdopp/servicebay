@@ -110,7 +110,11 @@ export class NetworkService {
         source: 'Nginx Config',
         link: null
       },
-      rawData: nginxConfig
+      rawData: {
+          ...nginxConfig,
+          type: 'gateway',
+          name: 'nginx-web' // Assuming this is the service name for editing
+      }
     });
 
     // 4.5 Add Managed Services & External Links

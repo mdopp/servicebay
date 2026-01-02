@@ -351,11 +351,11 @@ export default function NetworkPlugin() {
                 <div className="flex justify-between items-center mb-4 sticky top-0 bg-white dark:bg-gray-800 pb-2 border-b border-gray-100 dark:border-gray-700">
                     <h3 className="font-bold text-lg">Node Details</h3>
                     <div className="flex items-center gap-2">
-                        {selectedNodeData.rawData.type === 'container' && (
+                        {(selectedNodeData.rawData.type === 'container' || selectedNodeData.rawData.type === 'service' || selectedNodeData.rawData.type === 'gateway') && (
                             <Link 
-                                href={`/edit/${selectedNodeData.rawData.name}`}
+                                href={selectedNodeData.rawData.type === 'gateway' ? '/settings' : `/edit/${selectedNodeData.rawData.name}`}
                                 className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors text-blue-600 dark:text-blue-400"
-                                title="Edit Container"
+                                title={selectedNodeData.rawData.type === 'gateway' ? 'Configure Gateway' : 'Edit Service'}
                             >
                                 <Edit size={20} />
                             </Link>
@@ -378,6 +378,13 @@ export default function NetworkPlugin() {
                     </div>
                 </div>
                 <div className="space-y-4">
+                    {/* Source Info */}
+                    {selectedNodeData.metadata?.source && (
+                        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800">
+                            <div className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase mb-1">Source</div>
+                            <div className="text-sm text-blue-900 dark:text-blue-100">{selectedNodeData.metadata.source}</div>
+                        </div>
+                    )}
                     {selectedNodeData.rawData.type === 'link' && (
                         <div className="space-y-3">
                             <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
