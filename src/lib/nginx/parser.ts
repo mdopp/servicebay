@@ -1,6 +1,10 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { NginxConfig, NginxServerBlock, NginxLocation } from './types';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 // Simple tokenizer
 const tokenize = (input: string) => {
@@ -64,13 +68,16 @@ const tokenize = (input: string) => {
 
 export class NginxParser {
   private rootDir: string;
+  private containerId?: string;
 
-  constructor(rootDir: string = '/etc/nginx') {
+  constructor(rootDir: string = '/etc/nginx', containerId?: string) {
     this.rootDir = rootDir;
+    this.containerId = containerId;
   }
 
   async parse(): Promise<NginxConfig> {
     const mainConfigPath = path.join(this.rootDir, 'nginx.conf');
+    console.log(`[NginxParser] Parsing config from: ${mainConfigPath}`);
     const servers: NginxServerBlock[] = [];
     
     try {
@@ -83,14 +90,23 @@ export class NginxParser {
   }
 
   private async parseFile(filePath: string, servers: NginxServerBlock[]) {
+    console.log(`[NginxParser] Reading file: ${filePath}`);
     let content = '';
     try {
-      content = await fs.readFile(filePath, 'utf-8');
-    } catch {
+      if (this.containerId) {
+        const { stdout } = await execAsync(`podman exec ${this.containerId} cat ${filePath}`);
+        content = stdout;
+      } else {
+        content = await fs.readFile(filePath, 'utf-8');
+      }
+      console.log(`[NginxParser] File content length: ${content.length}`);
+    } catch (e) {
+      console.warn(`[NginxParser] Failed to read file ${filePath}:`, e);
       return; // File not found or not readable
     }
 
     const tokens = tokenize(content);
+    console.log(`[NginxParser] Tokenized ${tokens.length} tokens:`, JSON.stringify(tokens));
     let i = 0;
 
     const parseBlock = async (context: 'main' | 'http' | 'server' | 'location', currentServer?: NginxServerBlock, currentLocation?: NginxLocation) => {
@@ -105,6 +121,7 @@ export class NginxParser {
         if (token === 'include') {
           i++;
           const pattern = tokens[i]; // e.g. /etc/nginx/conf.d/*.conf
+          console.log(`[NginxParser] Found include: ${pattern}`);
           i++; // skip pattern
           if (tokens[i] === ';') i++; // skip ;
           
@@ -113,6 +130,9 @@ export class NginxParser {
           let globPattern = pattern;
           if (!path.isAbsolute(pattern)) {
             globPattern = path.join(this.rootDir, pattern);
+          } else if (!this.containerId && this.rootDir !== '/etc/nginx' && pattern.startsWith('/etc/nginx/')) {
+            // Rebase /etc/nginx paths to rootDir if running locally with custom root
+            globPattern = path.join(this.rootDir, pattern.replace('/etc/nginx/', ''));
           }
 
           // Simple glob expansion (only * supported for now to avoid deps)
@@ -120,14 +140,27 @@ export class NginxParser {
           if (globPattern.includes('*')) {
              const dir = path.dirname(globPattern);
              const ext = path.extname(globPattern); // .conf
+             console.log(`[NginxParser] expanding glob: ${globPattern} in dir: ${dir}`);
              try {
-                const files = await fs.readdir(dir);
+                let files: string[] = [];
+                if (this.containerId) {
+                    const { stdout } = await execAsync(`podman exec ${this.containerId} ls ${dir}`);
+                    files = stdout.split('\n').map(f => f.trim()).filter(f => f);
+                } else {
+                    files = await fs.readdir(dir);
+                }
+                
+                console.log(`[NginxParser] found files: ${files.join(', ')}`);
+
                 for (const f of files) {
                     if (f.endsWith(ext)) {
+                        console.log(`[NginxParser] parsing included file: ${path.join(dir, f)}`);
                         await this.parseFile(path.join(dir, f), servers);
                     }
                 }
-             } catch {}
+             } catch (e) {
+                 console.error(`[NginxParser] failed to expand glob:`, e);
+             }
           } else {
              await this.parseFile(globPattern, servers);
           }
@@ -174,6 +207,15 @@ export class NginxParser {
             if (currentServer) currentServer.locations.push(newLocation);
           }
           continue;
+        }
+
+        // Generic block handler (e.g. events, types)
+        if (tokens[i + 1] === '{') {
+            console.log(`[NginxParser] Skipping generic block: ${token}`);
+            i += 2; // skip name and {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await parseBlock('unknown' as any);
+            continue;
         }
 
         // Directives

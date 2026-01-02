@@ -1,10 +1,10 @@
 import { NetworkGraph, NetworkNode, NetworkEdge } from './types';
 import { FritzBoxClient } from '../fritzbox/client';
 import { NginxParser } from '../nginx/parser';
-import { getPodmanPs, listServices } from '../manager';
+import { getPodmanPs, listServices, getAllContainersInspect } from '../manager';
 import { getConfig } from '../config';
 import { NetworkStore } from './store';
-import { checkDomains } from './dns';
+import { checkDomains, resolveHostname } from './dns';
 import os from 'os';
 
 export class NetworkService {
@@ -28,6 +28,8 @@ export class NetworkService {
 
     // 0. Prepare Data
     const config = await getConfig();
+    const containers = await getPodmanPs();
+    const containerInspections = await getAllContainersInspect();
     
     // FritzBox Status
     let fbClient: FritzBoxClient;
@@ -49,12 +51,32 @@ export class NetworkService {
     }
 
     // Nginx Config
-    const nginxParser = new NginxParser();
+    // Find Nginx Container
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nginxContainer = containers.find((c: any) => 
+        (c.Labels && c.Labels['podcli.role'] === 'reverse-proxy') ||
+        (c.Names && c.Names.some((n: string) => n.includes('/nginx-web') || n.includes('/nginx')))
+    );
+
+    let nginxParser: NginxParser;
+    if (process.env.MOCK_NGINX_PATH) {
+        console.log('Using mock Nginx config from:', process.env.MOCK_NGINX_PATH);
+        nginxParser = new NginxParser(process.env.MOCK_NGINX_PATH);
+    } else {
+        nginxParser = new NginxParser('/etc/nginx', nginxContainer?.Id);
+    }
     const nginxConfig = await nginxParser.parse();
+    console.log('[NetworkService] Nginx Config Servers:', JSON.stringify(nginxConfig.servers, null, 2));
 
     // Check Domains
     const domainStatuses = await checkDomains(nginxConfig, fbStatus);
-    const verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
+    let verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
+
+    if (process.env.MOCK_NGINX_PATH) {
+        // In mock mode, treat all found domains as verified so they appear in the graph
+        verifiedDomains = domainStatuses.map(d => d.domain);
+        console.log('[NetworkService] Mock Mode - Verified Domains:', verifiedDomains);
+    }
 
     // 1. Internet Node
     nodes.push({
@@ -64,24 +86,33 @@ export class NetworkService {
       ports: [],
       status: 'up',
       metadata: {
-          verifiedDomains
+          // verifiedDomains moved to Router
       }
     });
 
     // 2. Router Node (FritzBox)
     const routerId = 'router';
+    const routerHost = config.gateway?.host || 'fritz.box';
+    const resolvedRouterHost = await resolveHostname(routerHost);
+    
+    const isRouterResolved = resolvedRouterHost && resolvedRouterHost !== routerHost;
+    const routerSubLabel = isRouterResolved ? routerHost : (resolvedRouterHost || routerHost);
+    const routerHostnameField = isRouterResolved ? resolvedRouterHost : undefined;
+
     nodes.push({
       id: routerId,
       type: 'router',
       label: 'Fritz!Box',
-      subLabel: fbStatus?.externalIP || 'Unknown IP',
+      subLabel: routerSubLabel, 
+      hostname: routerHostnameField,
       ports: [80, 443],
       status: fbStatus?.connected ? 'up' : 'down',
       metadata: { 
         uptime: fbStatus?.uptime,
         source: 'FritzBox TR-064',
         link: 'http://fritz.box',
-        internalIP: fbStatus?.internalIP
+        internalIP: fbStatus?.internalIP,
+        verifiedDomains
       },
       rawData: {
           ...fbStatus,
@@ -90,12 +121,12 @@ export class NetworkService {
     });
 
     edges.push({
-      id: 'edge-internet-router',
-      source: 'internet',
-      target: routerId,
-      protocol: 'tcp',
-      port: 0,
-      state: fbStatus?.connected ? 'active' : 'inactive'
+        id: 'edge-internet-router',
+        source: 'internet',
+        target: routerId,
+        protocol: 'tcp',
+        port: 0,
+        state: fbStatus?.connected ? 'active' : 'inactive'
     });
 
     // 4. Nginx Node
@@ -105,7 +136,7 @@ export class NetworkService {
     const nginxId = 'nginx';
     nodes.push({
       id: nginxId,
-      type: 'group', // Changed to group to act as a container
+      type: 'proxy', // Changed to proxy to act as a container
       label: 'Nginx',
       subLabel: 'Reverse Proxy',
       ports: [80, 443], // We will refine this from config
@@ -141,7 +172,15 @@ export class NetworkService {
                     nginxNode.metadata.serviceDescription = service.description;
                 }
                 // Update ports from service definition if available
-                const servicePorts = service.ports.map(p => parseInt(p.host?.split(':')[1] || '0')).filter(p => p > 0);
+                const servicePorts = service.ports.map(p => {
+                    const hostPort = p.host ? (p.host.includes(':') ? parseInt(p.host.split(':')[1]) : parseInt(p.host)) : 0;
+                    const containerPort = p.container ? parseInt(p.container) : 0;
+                    if (hostPort > 0 && containerPort > 0) {
+                        return { host: hostPort, container: containerPort };
+                    }
+                    return hostPort;
+                }).filter(p => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true));
+                
                 if (servicePorts.length > 0) {
                     nginxNode.ports = servicePorts;
                 }
@@ -152,10 +191,17 @@ export class NetworkService {
         const serviceId = `service-${service.name}`;
         nodes.push({
             id: serviceId,
-            type: 'group',
+            type: 'service',
             label: service.name,
             subLabel: 'Managed Service',
-            ports: service.ports.map(p => parseInt(p.host?.split(':')[1] || '0')).filter(p => p > 0),
+            ports: service.ports.map(p => {
+                const hostPort = p.host ? (p.host.includes(':') ? parseInt(p.host.split(':')[1]) : parseInt(p.host)) : 0;
+                const containerPort = p.container ? parseInt(p.container) : 0;
+                if (hostPort > 0 && containerPort > 0) {
+                    return { host: hostPort, container: containerPort };
+                }
+                return hostPort;
+            }).filter(p => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true)),
             status: service.active ? 'up' : 'down',
             metadata: {
                 source: 'Systemd/Podman',
@@ -178,11 +224,19 @@ export class NetworkService {
             // ignore invalid urls
         }
 
+        const resolvedHostname = await resolveHostname(hostname);
+        
+        // If we have both an IP (hostname) and a resolved name, show IP in subLabel and Name in hostname field (with icon)
+        const isResolved = resolvedHostname && resolvedHostname !== hostname;
+        const subLabel = isResolved ? hostname : (resolvedHostname || hostname);
+        const hostnameField = isResolved ? resolvedHostname : undefined;
+
         nodes.push({
             id: linkId,
-            type: 'service',
+            type: 'link',
             label: link.name,
-            subLabel: hostname,
+            subLabel: subLabel,
+            hostname: hostnameField,
             ports: [],
             status: 'up',
             metadata: {
@@ -197,8 +251,8 @@ export class NetworkService {
         });
     }
 
-    // 5. Get Containers
-    const containers = await getPodmanPs();
+    // 5. Get Containers (Already fetched at step 0)
+    // const containers = await getPodmanPs();
 
     // 6. Build Graph Logic
     const localIPs = this.getLocalIPs();
@@ -217,7 +271,7 @@ export class NetworkService {
                     id: `edge-router-nginx-${mapping.externalPort}`,
                     source: routerId,
                     target: nginxId,
-                    label: `${mapping.externalPort} -> ${mapping.internalPort}`,
+                    label: `:${mapping.internalPort}`,
                     protocol: mapping.protocol.toLowerCase() as 'tcp' | 'udp',
                     port: mapping.externalPort,
                     state: 'active'
@@ -227,11 +281,14 @@ export class NetworkService {
                 const deviceId = `device-${mapping.internalClient.replace(/\./g, '-')}`;
                 
                 if (!nodes.find(n => n.id === deviceId)) {
+                    const resolvedHostname = await resolveHostname(mapping.internalClient);
+
                     nodes.push({
                         id: deviceId,
-                        type: 'service', // Generic service/device
-                        label: mapping.description || mapping.internalClient,
+                        type: 'device', // Generic service/device
+                        label: resolvedHostname || mapping.description || mapping.internalClient,
                         subLabel: mapping.internalClient,
+                        hostname: resolvedHostname || mapping.internalClient, // Usually an IP, but could be hostname
                         ports: [],
                         status: 'unknown',
                         metadata: {
@@ -250,7 +307,7 @@ export class NetworkService {
                     id: `edge-router-${deviceId}-${mapping.externalPort}`,
                     source: routerId,
                     target: deviceId,
-                    label: `${mapping.externalPort} -> ${mapping.internalPort}`,
+                    label: `:${mapping.internalPort}`,
                     protocol: mapping.protocol.toLowerCase() as 'tcp' | 'udp',
                     port: mapping.externalPort,
                     state: 'active'
@@ -293,39 +350,118 @@ export class NetworkService {
                         const containerName = targetContainer.Names[0].replace(/^\//, '');
                         
                         // Add container node if not exists
-                        if (!nodes.find(n => n.id === containerId)) {
+                        let node = nodes.find(n => n.id === containerId);
+                        if (!node) {
+                            // Extract IP from Networks
+                            let ip = null;
+                            if (targetContainer.Networks) {
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                const networks = Object.values(targetContainer.Networks) as any[];
+                                if (networks.length > 0 && networks[0].IPAddress) {
+                                    ip = networks[0].IPAddress;
+                                }
+                            }
+
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const ports = targetContainer.Ports?.map((p: any) => p.ContainerPort || p.container_port) || [];
-                            nodes.push({
+                            const ports = targetContainer.Ports?.map((p: any) => {
+                                const containerPort = parseInt(p.ContainerPort || p.container_port || '0');
+                                const hostPort = parseInt(p.HostPort || p.host_port || '0');
+                                if (hostPort > 0 && containerPort > 0) {
+                                    return { host: hostPort, container: containerPort };
+                                }
+                                return containerPort || hostPort || 0;
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            }).filter((p: any) => p !== 0) || [];
+                            
+                            node = {
                                 id: containerId,
                                 type: 'container',
                                 label: containerName || targetContainer.Id.substring(0, 12),
-                                subLabel: targetContainer.Image,
+                                subLabel: ip, // Only show IP if available
+                                ip: ip,
                                 ports: ports,
                                 status: targetContainer.State === 'running' ? 'up' : 'down',
                                 metadata: {
                                     source: 'Podman',
                                     link: targetPort ? `http://localhost:${targetPort}` : null,
-                                    containerId: targetContainer.Id
+                                    containerId: targetContainer.Id,
+                                    verifiedDomains: []
                                 },
                                 rawData: {
                                     ...targetContainer,
                                     type: 'container',
                                     name: containerName
                                 }
-                            });
+                            };
+                            nodes.push(node);
+                        }
+
+                        // Update verifiedDomains
+                        if (!node.metadata) node.metadata = {};
+                        if (!node.metadata.verifiedDomains) node.metadata.verifiedDomains = [];
+                        for (const domain of server.server_name) {
+                            if (!node.metadata.verifiedDomains.includes(domain)) {
+                                node.metadata.verifiedDomains.push(domain);
+                            }
                         }
 
                         // Add Edge Nginx -> Container
-                        const serverNames = server.server_name.join(', ');
                         edges.push({
                             id: `edge-nginx-${containerId}-${targetPort}`,
                             source: nginxId,
                             target: containerId,
-                            label: `${serverNames}${loc.path} -> :${targetPort}`,
+                            label: `:${targetPort}`,
                             protocol: 'http',
                             port: targetPort,
                             state: 'active'
+                        });
+                    } else if (process.env.MOCK_NGINX_PATH) {
+                        console.log(`[NetworkService] Mock Mode - Creating phantom node for ${loc.proxy_pass}`);
+                        // Create a phantom node for the upstream service in mock mode
+                        const upstreamHost = loc.proxy_pass.replace(/^https?:\/\//, '').split(':')[0];
+                        const containerId = `mock-${upstreamHost}`;
+                        
+                        let node = nodes.find(n => n.id === containerId);
+                        if (!node) {
+                            node = {
+                                id: containerId,
+                                type: 'container',
+                                label: upstreamHost,
+                                subLabel: 'Mock Container',
+                                ports: [{ host: targetPort, container: targetPort }],
+                                status: 'down',
+                                metadata: {
+                                    source: 'Nginx Upstream (Mock)',
+                                    link: null,
+                                    verifiedDomains: []
+                                },
+                                rawData: {
+                                    type: 'container',
+                                    name: upstreamHost,
+                                    Id: containerId,
+                                    Names: [`/${upstreamHost}`]
+                                }
+                            };
+                            nodes.push(node);
+                        }
+
+                        // Update verifiedDomains
+                        if (!node.metadata) node.metadata = {};
+                        if (!node.metadata.verifiedDomains) node.metadata.verifiedDomains = [];
+                        for (const domain of server.server_name) {
+                            if (!node.metadata.verifiedDomains.includes(domain)) {
+                                node.metadata.verifiedDomains.push(domain);
+                            }
+                        }
+
+                        edges.push({
+                            id: `edge-nginx-${containerId}-${targetPort}`,
+                            source: nginxId,
+                            target: containerId,
+                            label: `:${targetPort}`,
+                            protocol: 'http',
+                            port: targetPort,
+                            state: 'inactive'
                         });
                     }
                 }
@@ -336,6 +472,11 @@ export class NetworkService {
     // Add remaining containers that are not linked (orphans)
      
     for (const container of containers) {
+        if (!container || (!container.Id && (!container.Names || container.Names.length === 0))) {
+            console.warn('[NetworkService] Skipping invalid container:', container);
+            continue;
+        }
+
         // Skip system containers (e.g. podman-pause)
         if (container.Image === 'localhost/podman-pause:4.3.1-0' || container.Names?.some((n: string) => n.includes('-infra'))) {
             continue;
@@ -367,16 +508,43 @@ export class NetworkService {
 
         if (!nodes.find(n => n.id === containerId)) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const ports = container.Ports?.map((p: any) => p.ContainerPort || p.container_port) || [];
+            const ports = container.Ports?.map((p: any) => {
+                const containerPort = parseInt(p.ContainerPort || p.container_port || '0');
+                const hostPort = parseInt(p.HostPort || p.host_port || '0');
+                if (hostPort > 0 && containerPort > 0) {
+                    return { host: hostPort, container: containerPort };
+                }
+                return containerPort || hostPort || 0;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            }).filter((p: any) => p !== 0) || [];
             // Try to find a host port for link
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const hostPort = container.Ports?.find((p: any) => (p.HostPort || p.host_port))?.HostPort || container.Ports?.find((p: any) => (p.HostPort || p.host_port))?.host_port;
+
+            // Extract IP from Networks
+            let ip = null;
+            if (container.Networks) {
+                // Podman JSON format for Networks can vary, usually it's an object with network names as keys
+                // e.g. "Networks": { "podman": { "IPAddress": "10.88.0.2" } }
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const networks = Object.values(container.Networks) as any[];
+                if (networks.length > 0 && networks[0].IPAddress) {
+                    ip = networks[0].IPAddress;
+                }
+            }
+
+            // Extract Hostname from Inspection Data
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const inspection = containerInspections.find((i: any) => i.Id.startsWith(containerId) || containerId.startsWith(i.Id));
+            const hostname = inspection?.Config?.Hostname || containerId.substring(0, 12);
 
             nodes.push({
                 id: containerId,
                 type: 'container',
                 label: containerName || container.Id.substring(0, 12),
-                subLabel: container.Image,
+                subLabel: ip, // Only show IP if available, user requested to remove Image name
+                hostname: hostname,
+                ip: ip,
                 ports: ports,
                 status: container.State === 'running' ? 'up' : 'down',
                 parentNode: isProxy ? nginxId : undefined,
@@ -410,7 +578,7 @@ export class NetworkService {
                 if (!nodes.find(n => n.id === podId)) {
                     nodes.push({
                         id: podId,
-                        type: 'group',
+                        type: 'pod',
                         label: podName,
                         subLabel: 'Pod',
                         ports: [],
@@ -423,10 +591,15 @@ export class NetworkService {
                 // Assign Container to Pod
                 node.parentNode = podId;
                 node.extent = 'parent';
+                if (node.metadata) {
+                    node.metadata.source = 'Podman Pod';
+                }
             }
 
             // 2. Identify Service
-            const containerName = container.Names[0].replace(/^\//, ''); // Remove leading slash
+            const containerName = (container.Names && container.Names.length > 0) 
+                ? container.Names[0].replace(/^\//, '') 
+                : (container.Id ? container.Id.substring(0, 12) : (container.name || 'unknown'));
             
             const parentService = services.find(s => {
                 if (podName && (s.name === podName || podName.includes(s.name))) return true;
@@ -446,11 +619,21 @@ export class NetworkService {
                     if (podNode) {
                         podNode.parentNode = serviceId;
                         podNode.extent = 'parent';
+                        if (podNode.metadata) {
+                            podNode.metadata.source = 'Managed Service';
+                        }
+                    }
+                    // Also update container source to reflect it's part of a service
+                    if (node.metadata) {
+                        node.metadata.source = 'Managed Service (Pod)';
                     }
                 } else {
                     // Container directly in Service
                     node.parentNode = serviceId;
                     node.extent = 'parent';
+                    if (node.metadata) {
+                        node.metadata.source = 'Managed Service';
+                    }
                 }
             }
         }
@@ -459,13 +642,17 @@ export class NetworkService {
     // 7. Add Manual Edges
     const manualEdges = await NetworkStore.getEdges();
     for (const edge of manualEdges) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const port = (edge as any).port;
+        const label = port ? `:${port} (manual)` : 'Manual Link';
+        
         edges.push({
             id: edge.id,
             source: edge.source,
             target: edge.target,
-            label: edge.label || 'Manual',
+            label: label,
             protocol: 'tcp',
-            port: 0,
+            port: port || 0,
             state: 'active',
             isManual: true
         });

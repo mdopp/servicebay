@@ -1,274 +1,347 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { ReactFlow, Background, Controls, MiniMap, useNodesState, useEdgesState, Node, Edge, Position, Connection, Handle, NodeProps } from '@xyflow/react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { 
+  ReactFlow, 
+  Background, 
+  Controls, 
+  MiniMap, 
+  useNodesState, 
+  useEdgesState,
+  Node,
+  Edge,
+  Connection,
+  addEdge,
+  Panel,
+  MarkerType,
+  Handle,
+  Position,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getSmoothStepPath
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import dagre from 'dagre';
+import { getLayoutedElements } from '@/lib/network/layout';
 import { NetworkGraph } from '@/lib/network/types';
-import { RefreshCw, X, Trash2, Edit } from 'lucide-react';
+import { RefreshCw, X, Trash2, Edit, ExternalLink, Info, Globe } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import Link from 'next/link';
 
-const nodeWidth = 172;
-const nodeHeight = 150; // Increased from 80 to account for variable content height
-
-interface GroupNodeData {
-    label: string;
-    subLabel?: string;
-    status?: string;
-    ports?: number[];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rawData?: any;
-}
-
-const GroupNode = ({ data }: { data: GroupNodeData }) => {
-    const isGateway = data.rawData?.type === 'gateway';
-    const statusColor = data.status === 'up' ? 'bg-green-500' : (data.status === 'down' ? 'bg-red-500' : 'bg-gray-400');
-    
-    return (
-      <div className={`w-full h-full min-w-[200px] min-h-[100px] border-2 border-dashed rounded-lg flex flex-col ${isGateway ? 'border-emerald-500 bg-emerald-50/50 dark:border-emerald-500 dark:bg-emerald-900/20' : 'border-gray-400 dark:border-gray-500 bg-gray-50/50 dark:bg-gray-800/50'}`}>
-        <Handle type="target" position={Position.Left} className="!bg-gray-400 !w-2 !h-2 !top-1/2" />
-        
-        {/* Header Area */}
-        <div className={`h-[32px] border-b-2 border-dashed flex items-center px-3 gap-2 shrink-0 ${isGateway ? 'border-emerald-500/50 dark:border-emerald-500/50 bg-emerald-100/80 dark:bg-emerald-900/50' : 'border-gray-400/50 dark:border-gray-500/50 bg-gray-200/80 dark:bg-gray-700/50'} rounded-t-md`}>
-            <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-            <div className="flex flex-col flex-1 min-w-0 justify-center">
-                <div className={`text-[10px] font-bold uppercase truncate leading-tight ${isGateway ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-gray-300'}`}>{data.label || 'Unknown Group'}</div>
-                {data.subLabel && <div className="text-[8px] opacity-70 truncate leading-tight text-gray-600 dark:text-gray-400">{data.subLabel}</div>}
-            </div>
-            {data.ports && data.ports.length > 0 && (
-                <div className="text-[8px] font-mono bg-white/50 dark:bg-black/20 px-1.5 py-0.5 rounded text-gray-600 dark:text-gray-300">
-                    :{data.ports.join(', :')}
-                </div>
-            )}
-        </div>
-
-        {/* Body Area - Implicitly fills the rest */}
-        <div className="flex-1 relative">
-            {/* Content moves here */}
-        </div>
-
-        <Handle type="source" position={Position.Right} className="!bg-gray-400 !w-2 !h-2 !top-1/2" />
-      </div>
-    );
-};
-  
-const nodeTypes = {
-    group: GroupNode,
-};
-
-const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
-  const dagreGraph = new dagre.graphlib.Graph({ compound: true });
-  dagreGraph.setDefaultEdgeLabel(() => ({}));
-
-  dagreGraph.setGraph({ rankdir: 'LR', ranksep: 100, nodesep: 50 });
-
-  // Safe ID Mapping to prevent Dagre from choking on special characters
-  const safeIdMap = new Map<string, string>();
-  const reverseIdMap = new Map<string, string>();
-  
-  nodes.forEach((node, index) => {
-      const safeId = `n${index}`;
-      safeIdMap.set(node.id, safeId);
-      reverseIdMap.set(safeId, node.id);
+// Custom Edge Component
+const CustomEdge = ({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style = {},
+  markerEnd,
+  label,
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+}: any) => {
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
   });
 
-  const nodeIds = new Set(nodes.map(n => n.id));
-
-  nodes.forEach((node) => {
-    const safeId = safeIdMap.get(node.id)!;
-    
-    if (node.type === 'group') {
-        const hasChildren = nodes.some(n => n.parentId === node.id);
-        if (!hasChildren) {
-             dagreGraph.setNode(safeId, { label: safeId, width: 300, height: 150 });
-        } else {
-             // Add padding for groups with children
-             dagreGraph.setNode(safeId, { 
-                 label: safeId,
-                 paddingLeft: 40,
-                 paddingRight: 40,
-                 paddingTop: 80, // Header height (32) + internal padding (48)
-                 paddingBottom: 40 // Internal padding (40)
-             });
-        }
-    } else {
-        dagreGraph.setNode(safeId, { width: nodeWidth, height: nodeHeight });
-    }
-    
-    if (node.parentId && nodeIds.has(node.parentId)) {
-        const safeParentId = safeIdMap.get(node.parentId);
-        if (safeParentId) {
-            dagreGraph.setParent(safeId, safeParentId);
-        }
-    }
-  });
-
-  // Create a map of node ID to parent ID for quick lookup
-  const parentMap = new Map(nodes.map(n => [n.id, n.parentId]));
-
-  // Helper to check if ancestorId is an ancestor of nodeId
-  const isAncestor = (ancestorId: string, nodeId: string) => {
-      if (ancestorId === nodeId) return true; // Self is ancestor of self in this context check
-      let current = nodeId;
-      let depth = 0;
-      while (current && depth < 100) { // Prevent infinite loops
-          const parent = parentMap.get(current);
-          if (parent === ancestorId) return true;
-          if (!parent) break;
-          current = parent;
-          depth++;
-      }
-      return false;
-  };
-
-  // Helper to find a representative child node for a group
-  // If a group has children, we should connect edges to one of the children instead of the group itself
-  // This helps Dagre avoid issues with edges connected to compound nodes
-  const getRepresentativeId = (nodeId: string): string => {
-      const children = nodes.filter(n => n.parentId === nodeId);
-      if (children.length > 0) {
-          // Recursively find a leaf node
-          return getRepresentativeId(children[0].id);
-      }
-      return nodeId;
-  };
-
-  edges.forEach((edge) => {
-    // Ensure both source and target exist in the graph
-    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
-        console.warn(`Invalid Edge (Missing Node): ${edge.source} -> ${edge.target}`);
-        return;
-    }
-
-    // Skip self-loops
-    if (edge.source === edge.target) {
-        console.warn(`Invalid Edge (Self-loop): ${edge.source} -> ${edge.target}`);
-        return;
-    }
-
-    // Skip edges that connect a node to its own ancestor or descendant
-    // This prevents "compound" cycles that confuse Dagre
-    if (isAncestor(edge.source, edge.target) || isAncestor(edge.target, edge.source)) {
-        console.warn(`Invalid Edge (Ancestor/Descendant): ${edge.source} -> ${edge.target}`);
-        return;
-    }
-
-    // Use representative nodes for layout edges
-    const sourceRep = getRepresentativeId(edge.source);
-    const targetRep = getRepresentativeId(edge.target);
-
-    const safeSource = safeIdMap.get(sourceRep);
-    const safeTarget = safeIdMap.get(targetRep);
-
-    if (safeSource && safeTarget) {
-        // Avoid self-loops created by representative mapping
-        if (safeSource !== safeTarget) {
-            dagreGraph.setEdge(safeSource, safeTarget);
-        }
-    }
-  });
-
-  // Debug: Check for disconnected subgraphs or other anomalies
-  // Sometimes Dagre fails if the graph is not connected in a specific way?
-  // Or if there are edges between nodes in different clusters that cause crossing issues?
-  
-  try {
-    dagre.layout(dagreGraph);
-  } catch (error) {
-    console.error("Dagre layout failed:", error);
-    
-    // DEBUG: Dump the graph structure to help identify the issue
-    const debugNodes = dagreGraph.nodes().map(n => {
-        const node = dagreGraph.node(n);
-        const parent = dagreGraph.parent(n);
-        return { id: n, parent, ...node };
-    });
-    const debugEdges = dagreGraph.edges().map(e => ({ v: e.v, w: e.w }));
-    
-    console.log("--- DAGRE DEBUG INFO ---");
-    console.log("Nodes:", JSON.stringify(debugNodes, null, 2));
-    console.log("Edges:", JSON.stringify(debugEdges, null, 2));
-    console.log("Original Nodes:", JSON.stringify(nodes.map(n => ({ id: n.id, parent: n.parentId, type: n.type })), null, 2));
-    console.log("------------------------");
-
-    // Fallback Layout: Simple Grid
-    // This ensures the user sees SOMETHING instead of an empty screen
-    let x = 0;
-    let y = 0;
-    const fallbackNodes = nodes.map((node, index) => {
-        const isGroup = node.type === 'group';
-        const width = isGroup ? 400 : nodeWidth;
-        const height = isGroup ? 300 : nodeHeight;
-        
-        const currentNode = {
-            ...node,
-            position: { x, y },
-            style: isGroup ? { width, height } : undefined
-        };
-
-        x += width + 50;
-        if ((index + 1) % 5 === 0) {
-            x = 0;
-            y += 300;
-        }
-        return currentNode;
-    });
-    
-    return { nodes: fallbackNodes, edges };
+  if (!label) {
+      return <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />;
   }
 
-  const layoutedNodes = nodes.map((node) => {
-    const safeId = safeIdMap.get(node.id);
-    const nodeWithPosition = safeId ? dagreGraph.node(safeId) : null;
-    
-    // Fallback if dagre failed to layout node
-    if (!nodeWithPosition) {
-        return {
-            ...node,
-            position: { x: 0, y: 0 }
-        };
-    }
-    
-    const width = nodeWithPosition.width || (node.type === 'group' ? 200 : nodeWidth);
-    const height = nodeWithPosition.height || (node.type === 'group' ? 100 : nodeHeight);
+  return (
+    <>
+      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all',
+          }}
+          className="nodrag nopan bg-white dark:bg-gray-800 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 shadow-sm text-[10px] font-mono text-gray-600 dark:text-gray-400 text-center z-10"
+        >
+          {String(label).split('\n').map((line: string, i: number) => (
+            <div key={i} className={i === 0 && String(label).includes('\n') ? "font-bold border-b border-gray-100 dark:border-gray-700/50 mb-0.5 pb-0.5" : ""}>
+                {line}
+            </div>
+          ))}
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+};
 
-    let x = nodeWithPosition.x - width / 2;
-    let y = nodeWithPosition.y - height / 2;
+// Custom Node Component
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const CustomNode = ({ data }: any) => {
+  const isGroup = ['group', 'proxy', 'service', 'pod'].includes(data.type);
+  const isGateway = data.rawData?.type === 'gateway';
+  
+  const typeLabels: Record<string, string> = {
+      container: 'Container',
+      service: 'Managed Service',
+      pod: 'Pod',
+      router: 'Internet Gateway',
+      link: 'External Link',
+      proxy: 'Reverse Proxy',
+      internet: 'Internet',
+      device: 'Network Device'
+  };
 
-    if (node.parentId) {
-        const safeParentId = safeIdMap.get(node.parentId);
-        const parentNode = safeParentId ? dagreGraph.node(safeParentId) : null;
-        if (parentNode) {
-            const parentWidth = parentNode.width || 200;
-            const parentHeight = parentNode.height || 100;
-            const parentX = parentNode.x - parentWidth / 2;
-            const parentY = parentNode.y - parentHeight / 2;
+  // Color Mapping
+  const typeColors: Record<string, string> = {
+      container: 'border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/40',
+      service: 'border-purple-400 dark:border-purple-600 bg-purple-100 dark:bg-purple-900/40',
+      pod: 'border-pink-400 dark:border-pink-600 bg-pink-100 dark:bg-pink-900/40',
+      router: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-900/40',
+      internet: 'border-gray-400 dark:border-gray-600 bg-gray-100 dark:bg-gray-800/60',
+      proxy: 'border-emerald-400 dark:border-emerald-600 bg-emerald-100 dark:bg-emerald-900/40',
+      link: 'border-cyan-400 dark:border-cyan-600 bg-cyan-100 dark:bg-cyan-900/40',
+      device: 'border-indigo-400 dark:border-indigo-600 bg-indigo-100 dark:bg-indigo-900/40',
+  };
+
+  const nodeColor = typeColors[data.type] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900';
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type DetailItem = { label: string; value: any; full?: boolean };
+
+  // Helper to get display details based on type
+  const getDetails = (): DetailItem[] => {
+      const raw = data.rawData || {};
+      const common: DetailItem[] = [];
+
+      if (data.type === 'container') {
+          return [
+              ...common,
+              { label: 'Created', value: raw.Created ? new Date(raw.Created * 1000).toLocaleDateString() : null },
+              { label: 'Status', value: raw.Status },
+          ];
+      }
+      if (data.type === 'service') {
+          return [
+              ...common,
+              { label: 'State', value: raw.active ? 'Active' : 'Inactive' },
+              { label: 'Load', value: raw.load },
+          ];
+      }
+      if (data.type === 'link') {
+          return [
+              ...common,
+              { label: 'URL', value: raw.url, full: true },
+          ];
+      }
+      if (data.type === 'router') {
+          return [
+              { label: 'Ext IP', value: raw.externalIP },
+              { label: 'Int IP', value: raw.internalIP },
+              { label: 'Uptime', value: raw.uptime ? `${Math.floor(raw.uptime / 3600)}h` : 'N/A', full: true }
+          ];
+      }
+      if (data.type === 'device') {
+          return [];
+      }
+      return common;
+  };
+
+  const details = getDetails();
+
+  if (data.type === 'internet') {
+      return (
+        <div className="flex flex-col items-center justify-center w-32 h-32 rounded-full bg-blue-50 dark:bg-blue-900/20 border-4 border-blue-200 dark:border-blue-800 shadow-lg relative group">
+            <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-blue-400 !-right-1.5" />
+            <Globe className="w-12 h-12 text-blue-500 dark:text-blue-400 mb-1" />
+            <span className="font-bold text-sm text-blue-700 dark:text-blue-300 uppercase tracking-wider">Internet</span>
+        </div>
+      );
+  }
+
+  return (
+    <div className={`w-full ${isGroup ? 'h-full' : 'min-w-[320px] h-auto'}`}>
+      {/* Handles for connecting */}
+      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-blue-400" />
+      <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-blue-400" />
+      
+      {isGroup ? (
+         <div className={`w-full h-full rounded-xl border-2 flex flex-col justify-between p-2 transition-all bg-transparent ${
+            isGateway 
+                ? 'border-emerald-200 dark:border-emerald-800' 
+                : 'border-gray-300 dark:border-gray-700'
+        }`}>
+            <div className="flex justify-between items-start w-full">
+                <div className={`self-start px-3 py-1.5 rounded-md text-sm font-bold uppercase tracking-wider border shadow-sm flex items-center gap-2 ${
+                    isGateway 
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900 dark:text-emerald-300 dark:border-emerald-800' 
+                        : 'bg-white text-gray-600 border-gray-200 dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700'
+                }`}>
+                    {data.status && (
+                        <div className={`w-2.5 h-2.5 rounded-full ${data.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
+                    )}
+                    {data.label}
+                </div>
+
+                {/* Show Ports for Groups if available */}
+                {data.ports && data.ports.length > 0 && (
+                    <div className="flex flex-col gap-1 items-end">
+                        {data.ports.map((port: number | { host: number, container: number }, idx: number) => {
+                            const isMapping = typeof port === 'object';
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const hostPort = isMapping ? (port as any).host : port;
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const containerPort = isMapping ? (port as any).container : null;
+                            
+                            return (
+                                <div key={idx} className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-1">
+                                    <a 
+                                        href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${hostPort}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="hover:text-blue-500 hover:underline"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        :{hostPort}
+                                    </a>
+                                    {containerPort && (
+                                        <span className="text-gray-400 dark:text-gray-500">
+                                            (to :{containerPort})
+                                        </span>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        </div>
+      ) : (
+        <div className={`w-full h-full rounded-xl border shadow-sm hover:shadow-md transition-all p-4 flex flex-col gap-3 ${nodeColor}`}>
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800/50 pb-2">
+                <div className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate pr-2" title={data.label}>
+                    {data.label}
+                </div>
+                {data.status && (
+                    <div className={`w-3 h-3 rounded-full shrink-0 ${data.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
+                )}
+            </div>
             
-            x = x - parentX;
-            y = y - parentY;
-        }
-    }
+            <div className="flex-1 flex flex-col gap-2 min-h-0">
+                {data.subLabel && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-white/50 dark:bg-black/20 px-2 py-1 rounded break-all" title={data.subLabel}>
+                        {data.subLabel}
+                    </div>
+                )}
 
-    // Ensure no NaNs
-    if (isNaN(x)) x = 0;
-    if (isNaN(y)) y = 0;
+                {/* Dynamic Details Grid */}
+                {details.length > 0 && (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                        {details.map((d, i) => d.value && (
+                            <div key={i} className={`flex flex-col min-w-0 ${d.full ? 'col-span-2' : ''}`}>
+                                <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold">{d.label}</span>
+                                {d.label === 'URL' ? (
+                                    <a 
+                                        href={d.value} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className="text-sm text-blue-600 dark:text-blue-400 font-medium break-words hover:underline" 
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        {d.value}
+                                    </a>
+                                ) : (
+                                    <span className="text-sm text-gray-800 dark:text-gray-200 font-medium break-words" title={String(d.value)}>{d.value}</span>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
 
-    return {
-      ...node,
-      targetPosition: Position.Left,
-      sourcePosition: Position.Right,
-      position: { x, y },
-      style: node.type === 'group' ? {
-          width: width,
-          height: height,
-      } : undefined
-    };
-  });
+                {/* Verified Domains List */}
+                {data.metadata?.verifiedDomains && data.metadata.verifiedDomains.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
+                        <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold block mb-1">Verified Domains</span>
+                        <div className="flex flex-wrap gap-1">
+                            {data.metadata.verifiedDomains.map((domain: string) => (
+                                <div key={domain} className="flex items-center gap-1.5 text-[10px] font-mono text-gray-700 dark:text-gray-300 px-1.5 py-0.5 bg-gray-50 dark:bg-gray-800 rounded border border-gray-100 dark:border-gray-700">
+                                    <div className="w-1 h-1 rounded-full bg-green-500 shrink-0" />
+                                    <span className="truncate max-w-[120px]" title={domain}>{domain}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
-  return { nodes: layoutedNodes, edges };
+                {data.hostname && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-white/50 dark:bg-black/20 px-2 py-1 rounded break-all flex items-center gap-1" title="Hostname">
+                        <Globe size={10} className="opacity-50" />
+                        {data.hostname}
+                    </div>
+                )}
+
+                {data.metadata?.description && data.type !== 'link' && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1 italic" title={data.metadata.description}>
+                        {data.metadata.description}
+                    </div>
+                )}
+                
+                <div className="mt-auto pt-3 flex items-center justify-between border-t border-gray-100 dark:border-gray-800/50">
+                    <div className="flex flex-wrap gap-1.5">
+                        {data.ports && data.ports.map((p: string | number | { host: number, container: number }, idx: number) => {
+                            const isMapping = typeof p === 'object';
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const hostPort = isMapping ? (p as any).host : p;
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const containerPort = isMapping ? (p as any).container : null;
+
+                            const link = data.metadata?.link;
+                            const content = (
+                                <span className="text-[11px] font-medium px-2 py-0.5 bg-white dark:bg-black/20 text-blue-600 dark:text-blue-400 rounded border border-blue-100 dark:border-blue-800/30 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors cursor-pointer flex items-center gap-1">
+                                    <span>:{hostPort}</span>
+                                    {containerPort && <span className="text-gray-400 dark:text-gray-500 opacity-75">(to :{containerPort})</span>}
+                                </span>
+                            );
+
+                            if (link) {
+                                return (
+                                    <a 
+                                        key={idx} 
+                                        href={link} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        onClick={(e) => e.stopPropagation()}
+                                        title={`Open ${link}`}
+                                    >
+                                        {content}
+                                    </a>
+                                );
+                            }
+                            return <React.Fragment key={idx}>{content}</React.Fragment>;
+                        })}
+                    </div>
+                    
+                    <span className="text-[10px] font-semibold px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded border border-gray-200 dark:border-gray-700 uppercase tracking-wider ml-2 whitespace-nowrap">
+                        {typeLabels[data.type] || data.type}
+                    </span>
+                </div>
+            </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const nodeTypes = {
+  custom: CustomNode,
+};
+
+const edgeTypes = {
+  custom: CustomEdge,
 };
 
 export default function NetworkPlugin() {
@@ -277,13 +350,75 @@ export default function NetworkPlugin() {
   const [loading, setLoading] = useState(true);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
-   
-  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const { addToast } = useToast();
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '', monitor: false });
+
+  // Connection Modal State
+  const [showConnectionModal, setShowConnectionModal] = useState(false);
+  const [pendingConnection, setPendingConnection] = useState<Connection | null>(null);
+  const [connectionPort, setConnectionPort] = useState('');
+  const [availablePorts, setAvailablePorts] = useState<number[]>([]);
+
+  const onConnect = useCallback(
+    (params: Connection) => {
+        setPendingConnection(params);
+        setConnectionPort('');
+        
+        // Find target node to get available ports
+        const targetNode = nodes.find(n => n.id === params.target);
+        if (targetNode && targetNode.data.ports && Array.isArray(targetNode.data.ports)) {
+            // Extract ports (handle both number and object format)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const ports = targetNode.data.ports.map((p: any) => {
+                if (typeof p === 'object') return p.host || p.container;
+                return p;
+            }).filter((p: number) => p > 0);
+            setAvailablePorts(ports);
+            // If there's only one port, pre-select it? No, user might want generic link.
+            // But user asked for default to be that port.
+            if (ports.length > 0) {
+                setConnectionPort(ports[0].toString());
+            }
+        } else {
+            setAvailablePorts([]);
+        }
+
+        setShowConnectionModal(true);
+    },
+    [nodes]
+  );
+
+  const handleSaveConnection = async () => {
+      if (!pendingConnection) return;
+
+      // Optimistic update
+      setEdges((eds) => addEdge(pendingConnection, eds));
+      setShowConnectionModal(false);
+      
+      try {
+        const res = await fetch('/api/network/edges', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source: pendingConnection.source,
+                target: pendingConnection.target,
+                type: 'manual',
+                port: connectionPort
+            })
+        });
+
+        if (!res.ok) throw new Error('Failed');
+        addToast('success', 'Connection created');
+        fetchGraph(); // Rerender layout
+      } catch {
+        addToast('error', 'Failed to create connection');
+        fetchGraph(); // Revert on error
+      }
+  };
 
   const fetchGraph = useCallback(async () => {
     setLoading(true);
@@ -294,119 +429,29 @@ export default function NetworkPlugin() {
 
       // Transform to React Flow format
       const flowNodes: Node[] = data.nodes.map(n => {
-        if (n.type === 'group' || n.type === 'proxy') {
-             return {
-                id: n.id,
-                type: 'group',
-                position: { x: 0, y: 0 },
-                data: { 
-                    label: n.label, 
-                    subLabel: n.subLabel,
-                    status: n.status,
-                    ports: n.ports,
-                    rawData: n.rawData 
-                },
-                parentId: n.parentNode,
-                extent: n.extent,
-             };
-        }
-
-        let className = 'border rounded-xl shadow-sm p-2 ';
-        if (n.type === 'internet') className += '!bg-sky-100 dark:!bg-sky-900 !border-sky-200 dark:!border-sky-800 !text-sky-900 dark:!text-sky-100';
-        else if (n.type === 'router') className += '!bg-amber-100 dark:!bg-amber-900 !border-amber-200 dark:!border-amber-800 !text-amber-900 dark:!text-amber-100';
-        else if (n.type === 'service') className += '!bg-indigo-100 dark:!bg-indigo-900 !border-indigo-200 dark:!border-indigo-800 !text-indigo-900 dark:!text-indigo-100';
-        else className += '!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 !text-gray-900 dark:!text-white';
-
+        const isGroup = ['group', 'proxy', 'service', 'pod'].includes(n.type);
+        
         return {
             id: n.id,
-            type: 'default',
-            position: { x: 0, y: 0 },
-            className,
-            parentId: n.parentNode,
-            extent: n.extent,
-            data: { 
-                originalType: n.type,
-                rawData: n.rawData,
-                label: (
-                    <div className="flex flex-col items-center min-w-[150px]">
-                        <div className="font-bold text-sm mb-1">{n.label}</div>
-                        
-                        {/* Sublabel (IP/Image) */}
-                        {n.subLabel && (
-                            <div className={`text-xs mb-1 truncate max-w-full ${n.type === 'internet' || n.type === 'router' ? '!opacity-100' : '!text-gray-600 dark:!text-gray-300'}`}>
-                                {n.subLabel}
-                            </div>
-                        )}
-                        
-                        {/* Internal IP for Router */}
-                        {n.type === 'router' && n.metadata?.internalIP && (
-                            <div className="text-[10px] mb-1 text-amber-800 dark:text-amber-200 font-mono">
-                                LAN: {n.metadata.internalIP}
-                            </div>
-                        )}
-
-                        {/* Ports */}
-                        {n.ports && n.ports.length > 0 && (
-                            <div className="flex flex-wrap gap-1 justify-center mb-1">
-                                {n.ports.slice(0, 3).map(p => (
-                                    <span key={p} className="text-[10px] px-1.5 py-0.5 rounded-full bg-black/10 dark:bg-white/20 font-mono">
-                                        :{p}
-                                    </span>
-                                ))}
-                                {n.ports.length > 3 && <span className="text-[10px] opacity-70">+{n.ports.length - 3}</span>}
-                            </div>
-                        )}
-
-                        {/* Source Badge */}
-                        {n.metadata?.source && (
-                            <div className="text-[9px] uppercase tracking-wider opacity-70 mb-1">
-                                via {n.metadata.source}
-                            </div>
-                        )}
-
-                        {/* Verified Domains */}
-                        {n.type === 'internet' && n.metadata?.verifiedDomains && n.metadata.verifiedDomains.length > 0 && (
-                            <div className="flex flex-col gap-0.5 mt-1 w-full">
-                                {n.metadata.verifiedDomains.map((domain: string) => (
-                                    <a 
-                                        key={domain}
-                                        href={`https://${domain}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-[10px] text-center bg-white/50 dark:bg-black/20 px-1.5 py-0.5 rounded hover:bg-white/80 dark:hover:bg-black/40 transition-colors truncate"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        {domain}
-                                    </a>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Status & Link */}
-                        <div className="flex items-center gap-2 mt-1">
-                            <div 
-                                className={`w-2.5 h-2.5 rounded-full ${n.status === 'up' ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.6)]' : 'bg-red-500'}`} 
-                                title={n.status === 'up' ? 'Status: Up' : 'Status: Down'}
-                            />
-                            
-                            {n.metadata?.link && (
-                                <a 
-                                    href={n.metadata.link} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="text-xs hover:underline flex items-center gap-1 font-medium"
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    Open ↗
-                                </a>
-                            )}
-                        </div>
-                    </div>
-                ) 
+            type: 'custom', // Use our custom node
+            position: { x: 0, y: 0 }, // Initial position, will be set by ELK
+            data: {
+                ...n,
+                label: n.label,
+                type: n.type,
+                status: n.status,
+                subLabel: n.subLabel,
+                ports: n.ports,
+                rawData: n.rawData
             },
-            style: { 
-                width: nodeWidth,
-            }
+            parentId: n.parentNode,
+            extent: n.parentNode ? 'parent' : undefined,
+            style: isGroup ? { 
+                width: 400, // Initial guess, ELK will resize
+                height: 200,
+                backgroundColor: 'rgba(0,0,0,0.05)',
+                border: '1px dashed #ccc'
+            } : undefined
         };
       });
 
@@ -415,20 +460,22 @@ export default function NetworkPlugin() {
         source: e.source,
         target: e.target,
         label: e.label,
-        animated: e.state === 'active',
-        type: e.isManual ? 'default' : 'default',
-        style: { 
-            stroke: e.isManual ? '#8b5cf6' : (e.state === 'active' ? '#22c55e' : '#9ca3af'),
-            strokeDasharray: e.isManual ? '5,5' : undefined,
-            strokeWidth: 2
+        type: 'smoothstep',
+        markerEnd: {
+            type: MarkerType.ArrowClosed,
         },
-        data: { isManual: e.isManual }
+        data: {
+            isManual: e.isManual,
+            state: e.state
+        },
+        animated: e.state === 'active'
       }));
 
-      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(flowNodes, flowEdges);
-
-      setNodes(layoutedNodes);
-      setEdges(layoutedEdges);
+      // Apply Layout
+      const layouted = await getLayoutedElements(flowNodes, flowEdges);
+      
+      setNodes(layouted.nodes);
+      setEdges(layouted.edges);
     } catch (e) {
       console.error(e);
     } finally {
@@ -436,46 +483,22 @@ export default function NetworkPlugin() {
     }
   }, [setNodes, setEdges]);
 
-  const onConnect = useCallback(async (params: Connection) => {
-    if (!params.source || !params.target) return;
-
-    try {
-        const res = await fetch('/api/network/edges', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ source: params.source, target: params.target })
-        });
-
-        if (!res.ok) throw new Error('Failed to create edge');
-        
-        addToast('success', 'Connection created');
-        fetchGraph();
-    } catch {
-        addToast('error', 'Failed to create connection');
-    }
-  }, [addToast, fetchGraph]);
-
-  const handleDeleteEdge = async () => {
-    if (!selectedEdge) return;
-    
-    try {
-        const res = await fetch(`/api/network/edges?id=${selectedEdge.id}`, {
-            method: 'DELETE'
-        });
-
-        if (!res.ok) throw new Error('Failed to delete edge');
-        
-        addToast('success', 'Connection removed');
-        setSelectedEdge(null);
-        fetchGraph();
-    } catch {
-        addToast('error', 'Failed to remove connection');
-    }
-  };
-
   useEffect(() => {
     fetchGraph();
   }, [fetchGraph]);
+
+  const handleEditLink = () => {
+      if (!selectedNodeData) return;
+      const { name, url, description, monitor } = selectedNodeData.rawData;
+      
+      setLinkForm({
+          name: name,
+          url: url || '',
+          description: description || '',
+          monitor: monitor || false
+      });
+      setShowLinkModal(true);
+  };
 
   const handleSaveLink = async () => {
     if (!linkForm.name || !linkForm.url) {
@@ -499,9 +522,8 @@ export default function NetworkPlugin() {
         
         addToast('success', 'Link updated successfully');
         setShowLinkModal(false);
-        fetchGraph(); // Refresh graph
+        fetchGraph(); 
         
-        // Update selected node data if it's the one we just edited
         if (selectedNodeData && selectedNodeData.rawData.name === linkForm.name) {
              setSelectedNodeData({
                  ...selectedNodeData,
@@ -519,19 +541,20 @@ export default function NetworkPlugin() {
     }
   };
 
-  const handleEditClick = () => {
-      if (!selectedNodeData || !selectedNodeData.rawData) return;
-      
-      const { type, name, url, description, monitor } = selectedNodeData.rawData;
-      
-      if (type === 'link') {
-          setLinkForm({
-              name: name,
-              url: url || '',
-              description: description || '',
-              monitor: monitor || false
+
+
+  const handleDeleteEdge = async () => {
+      if (!selectedEdge) return;
+      try {
+          const res = await fetch(`/api/network/edges?id=${selectedEdge}`, {
+              method: 'DELETE'
           });
-          setShowLinkModal(true);
+          if (!res.ok) throw new Error('Failed to delete edge');
+          addToast('success', 'Connection removed');
+          setSelectedEdge(null);
+          fetchGraph();
+      } catch {
+          addToast('error', 'Failed to remove connection');
       }
   };
 
@@ -547,260 +570,339 @@ export default function NetworkPlugin() {
         </button>
       </PageHeader>
       
-      <div className="flex-1 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 relative flex">
-        <div className="flex-1 h-full">
-            <ReactFlow
+      <div className="flex-1 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 relative overflow-hidden">
+        <ReactFlow
             nodes={nodes}
             edges={edges}
-            nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            fitView
+            minZoom={0.1}
+            maxZoom={2}
+            defaultEdgeOptions={{
+                type: 'custom',
+                animated: true,
+                style: { stroke: '#b1b1b7', strokeWidth: 2 },
+            }}
             onNodeClick={(_, node) => {
                 setSelectedNodeData(node.data);
                 setSelectedEdge(null);
             }}
             onEdgeClick={(_, edge) => {
-                setSelectedEdge(edge);
+                setSelectedEdge(edge.id);
                 setSelectedNodeData(null);
             }}
-            onPaneClick={() => {
-                setSelectedNodeData(null);
-                setSelectedEdge(null);
-            }}
-            fitView
-            >
-            <Background />
-            <Controls className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 [&>button]:!border-gray-200 dark:[&>button]:!border-gray-700 [&>button]:!bg-white dark:[&>button]:!bg-gray-800 [&>button:hover]:!bg-gray-50 dark:[&>button:hover]:!bg-gray-700 [&>button>svg]:!fill-gray-900 dark:[&>button>svg]:!fill-gray-100 [&>button>svg>path]:!fill-gray-900 dark:[&>button>svg>path]:!fill-gray-100" />
+        >
+            <Background color="#999" gap={16} size={1} className="opacity-10" />
+            <Controls 
+                showInteractive={false} 
+                className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg [&>button]:!bg-white dark:[&>button]:!bg-gray-800 [&>button]:!border-gray-100 dark:[&>button]:!border-gray-700 [&>button]:!text-gray-900 dark:[&>button]:!text-gray-100 [&>button:hover]:!bg-gray-100 dark:[&>button:hover]:!bg-gray-700 [&>button>svg]:!fill-current"
+            />
             <MiniMap 
-                className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700"
-                maskColor="rgba(0, 0, 0, 0.1)"
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                nodeColor={(n: any) => {
-                    const type = n.data?.originalType;
-                    if (type === 'internet') return '#0ea5e9'; // sky-500
-                    if (type === 'router') return '#f59e0b'; // amber-500
-                    if (type === 'proxy') return '#10b981'; // emerald-500
-                    if (type === 'service') return '#6366f1'; // indigo-500
-                    if (type === 'container') return '#6b7280'; // gray-500
-                    return '#9ca3af'; // gray-400
+                className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg"
+                maskColor="transparent"
+                nodeStrokeColor={(n) => {
+                    const type = n.data?.type as string;
+                    switch (type) {
+                        case 'container': return '#2563eb'; // blue-600
+                        case 'service': return '#9333ea'; // purple-600
+                        case 'pod': return '#db2777'; // pink-600
+                        case 'router': return '#ea580c'; // orange-600
+                        case 'internet': return '#4b5563'; // gray-600
+                        case 'proxy': return '#059669'; // emerald-600
+                        case 'link': return '#0891b2'; // cyan-600
+                        case 'device': return '#4f46e5'; // indigo-600
+                        case 'group': return '#d1d5db'; // gray-300
+                        default: return '#9ca3af';
+                    }
+                }}
+                nodeColor={(n) => {
+                    const type = n.data?.type as string;
+                    switch (type) {
+                        case 'container': return '#60a5fa'; // blue-400
+                        case 'service': return 'transparent';
+                        case 'pod': return 'transparent';
+                        case 'proxy': return 'transparent';
+                        case 'router': return '#fb923c'; // orange-400
+                        case 'internet': return '#9ca3af'; // gray-400
+                        case 'link': return '#22d3ee'; // cyan-400
+                        case 'device': return '#818cf8'; // indigo-400
+                        case 'group': return 'transparent';
+                        default: return '#d1d5db';
+                    }
                 }}
             />
-            </ReactFlow>
-        </div>
-
-        {/* Details Sidebar */}
-        {selectedNodeData && selectedNodeData.rawData && (
-            <div className="w-96 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 shadow-xl overflow-y-auto p-4 z-10 absolute right-0 top-0 bottom-0 animate-in slide-in-from-right duration-200">
-                <div className="flex justify-between items-center mb-4 sticky top-0 bg-white dark:bg-gray-800 pb-2 border-b border-gray-100 dark:border-gray-700">
-                    <h3 className="font-bold text-lg">Node Details</h3>
+            <Panel position="top-right" className="bg-white dark:bg-gray-800 p-2 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Legend</div>
+                <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                        {(selectedNodeData.rawData.type === 'container' || selectedNodeData.rawData.type === 'service' || selectedNodeData.rawData.type === 'gateway' || selectedNodeData.rawData.type === 'router') && (
-                            <Link 
-                                href={(selectedNodeData.rawData.type === 'gateway' || selectedNodeData.rawData.type === 'router') ? '/registry?selected=gateway' : `/edit/${selectedNodeData.rawData.name}`}
-                                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors text-blue-600 dark:text-blue-400"
-                                title={(selectedNodeData.rawData.type === 'gateway' || selectedNodeData.rawData.type === 'router') ? 'Configure Gateway' : 'Edit Service'}
-                            >
-                                <Edit size={20} />
-                            </Link>
-                        )}
-                        {selectedNodeData.rawData.type === 'link' && (
-                            <button 
-                                onClick={handleEditClick}
-                                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors text-blue-600 dark:text-blue-400"
-                                title="Edit Link"
-                            >
-                                <Edit size={20} />
-                            </button>
-                        )}
-                        <button 
-                            onClick={() => setSelectedNodeData(null)}
-                            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-                        >
-                            <X size={20} />
-                        </button>
+                        <div className="w-2 h-2 rounded-full bg-green-500" />
+                        <span className="text-xs">Healthy</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-red-500" />
+                        <span className="text-xs">Issue</span>
                     </div>
                 </div>
-                <div className="space-y-4">
-                    {/* Source Info */}
-                    {selectedNodeData.metadata?.source && (
-                        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800">
-                            <div className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase mb-1">Source</div>
-                            <div className="text-sm text-blue-900 dark:text-blue-100">{selectedNodeData.metadata.source}</div>
-                        </div>
-                    )}
-                    {selectedNodeData.rawData.type === 'link' && (
-                        <div className="space-y-3">
-                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <div className="text-sm text-gray-500 mb-1">URL</div>
-                                <a href={selectedNodeData.rawData.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">
-                                    {selectedNodeData.rawData.url}
-                                </a>
-                            </div>
-                            {selectedNodeData.rawData.description && (
-                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                    <div className="text-sm text-gray-500 mb-1">Description</div>
-                                    <div>{selectedNodeData.rawData.description}</div>
-                                </div>
-                            )}
-                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <div className="text-sm text-gray-500 mb-1">Monitoring</div>
-                                <div className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full ${selectedNodeData.rawData.monitor ? 'bg-green-500' : 'bg-gray-300'}`} />
-                                    <span>{selectedNodeData.rawData.monitor ? 'Enabled' : 'Disabled'}</span>
-                                </div>
-                            </div>
-                        </div>
-                    )}
+            </Panel>
+        </ReactFlow>
 
-                    {selectedNodeData.rawData.type === 'device' && (
-                        <div className="space-y-3">
-                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <div className="text-sm text-gray-500 mb-1">IP Address</div>
-                                <div className="font-mono">{selectedNodeData.rawData.ip}</div>
-                            </div>
-                            {selectedNodeData.rawData.description && (
-                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                    <div className="text-sm text-gray-500 mb-1">Description</div>
-                                    <div>{selectedNodeData.rawData.description}</div>
-                                </div>
-                            )}
-                        </div>
-                    )}
+      </div>
+      
+      {/* Link Modal */}
+      <ExternalLinkModal
+        isOpen={showLinkModal}
+        onClose={() => setShowLinkModal(false)}
+        onSave={handleSaveLink}
+        form={linkForm}
+        setForm={setLinkForm}
+        isEditing={true}
+      />
 
-                    {selectedNodeData.rawData.type === 'router' && (
-                        <div className="space-y-3">
-                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <div className="text-sm text-gray-500 mb-1">Status</div>
-                                <div className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full ${selectedNodeData.rawData.connected ? 'bg-green-500' : 'bg-red-500'}`} />
-                                    <span>{selectedNodeData.rawData.connected ? 'Connected' : 'Disconnected'}</span>
-                                </div>
-                            </div>
-                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <div className="text-sm text-gray-500 mb-1">External IP</div>
-                                <div className="font-mono">{selectedNodeData.rawData.externalIP || 'Unknown'}</div>
-                            </div>
-                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <div className="text-sm text-gray-500 mb-1">Internal IP</div>
-                                <div className="font-mono">{selectedNodeData.rawData.internalIP || 'Unknown'}</div>
-                            </div>
-                            {selectedNodeData.rawData.uptime && (
-                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                    <div className="text-sm text-gray-500 mb-1">Uptime</div>
-                                    <div className="font-mono">{Math.floor(selectedNodeData.rawData.uptime / 3600)}h {Math.floor((selectedNodeData.rawData.uptime % 3600) / 60)}m</div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {(selectedNodeData.rawData.type === 'container' || selectedNodeData.rawData.type === 'service' || selectedNodeData.rawData.type === 'gateway') && (
-                        <div className="space-y-3">
-                            <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <div className="text-sm text-gray-500 mb-1">Status</div>
-                                <div className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full ${selectedNodeData.rawData.State === 'running' || selectedNodeData.rawData.active ? 'bg-green-500' : 'bg-red-500'}`} />
-                                    <span className="capitalize">{selectedNodeData.rawData.State || (selectedNodeData.rawData.active ? 'active' : 'inactive')}</span>
-                                </div>
-                            </div>
-                            
-                            {selectedNodeData.rawData.Image && (
-                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                    <div className="text-sm text-gray-500 mb-1">Image</div>
-                                    <div className="break-all font-mono text-xs">{selectedNodeData.rawData.Image}</div>
-                                </div>
-                            )}
-
-                            {selectedNodeData.rawData.Ports && selectedNodeData.rawData.Ports.length > 0 && (
-                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                    <div className="text-sm text-gray-500 mb-1">Ports</div>
-                                    <div className="space-y-1">
-                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                        {selectedNodeData.rawData.Ports.map((p: any, i: number) => (
-                                            <div key={i} className="text-xs font-mono">
-                                                {(p.HostPort || p.host_port) ? `${p.HostPort || p.host_port} -> ` : ''}{p.ContainerPort || p.container_port}/{p.Protocol || p.protocol || 'tcp'}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {selectedNodeData.rawData.ports && selectedNodeData.rawData.ports.length > 0 && (
-                                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                    <div className="text-sm text-gray-500 mb-1">Ports</div>
-                                    <div className="space-y-1">
-                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                        {selectedNodeData.rawData.ports.map((p: any, i: number) => (
-                                            <div key={i} className="text-xs font-mono">
-                                                {p.host ? `${p.host} -> ` : ''}{p.container}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    <div>
-                        <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Raw Data</h4>
-                        <pre className="text-xs overflow-x-auto bg-gray-50 dark:bg-gray-900 p-3 rounded-lg border border-gray-200 dark:border-gray-700 font-mono text-gray-700 dark:text-gray-300">
-                            {JSON.stringify(selectedNodeData.rawData, null, 2)}
-                        </pre>
-                    </div>
-                </div>
-            </div>
-        )}
-
-        {/* Edge Details Sidebar */}
-        {selectedEdge && (
-            <div className="w-80 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 shadow-xl p-4 z-10 absolute right-0 top-0 bottom-0 animate-in slide-in-from-right duration-200">
+      {/* Connection Modal */}
+      {showConnectionModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 w-96 max-w-full m-4">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold text-lg">Connection</h3>
-                    <button 
-                        onClick={() => setSelectedEdge(null)}
-                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-                    >
+                    <h3 className="text-lg font-bold">Create Connection</h3>
+                    <button onClick={() => setShowConnectionModal(false)} className="text-gray-500 hover:text-gray-700">
                         <X size={20} />
                     </button>
                 </div>
                 
                 <div className="space-y-4">
-                    <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="text-sm text-gray-500 mb-1">Type</div>
-                        <div className="font-medium">
-                            {selectedEdge.data?.isManual ? 'Manual Connection' : 'Auto-detected'}
-                        </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Target Port
+                        </label>
+                        
+                        {availablePorts.length > 0 && (
+                            <div className="space-y-2 mb-3">
+                                {availablePorts.map(port => (
+                                    <label key={port} className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 border border-transparent hover:border-gray-200 dark:hover:border-gray-700">
+                                        <input
+                                            type="radio"
+                                            name="targetPort"
+                                            value={port}
+                                            checked={connectionPort === port.toString()}
+                                            onChange={(e) => setConnectionPort(e.target.value)}
+                                            className="text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm font-mono">:{port}</span>
+                                    </label>
+                                ))}
+                                <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 border border-transparent hover:border-gray-200 dark:hover:border-gray-700">
+                                    <input
+                                        type="radio"
+                                        name="targetPort"
+                                        value="custom"
+                                        checked={!availablePorts.includes(parseInt(connectionPort))}
+                                        onChange={() => setConnectionPort('')}
+                                        className="text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span className="text-sm">Other</span>
+                                </label>
+                            </div>
+                        )}
+
+                        {(!availablePorts.length || !availablePorts.includes(parseInt(connectionPort))) && (
+                             <input
+                                type="number"
+                                value={connectionPort}
+                                onChange={(e) => setConnectionPort(e.target.value)}
+                                placeholder="e.g. 8080"
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
+                                autoFocus={!availablePorts.length}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveConnection();
+                                }}
+                            />
+                        )}
+                       
+                        <p className="text-xs text-gray-500 mt-1">
+                            {availablePorts.length > 0 ? 'Select a known port or enter a custom one.' : 'Enter the target port for this connection.'}
+                        </p>
                     </div>
 
-                    {!!selectedEdge.data?.isManual && (
+                    <div className="flex justify-end gap-2 pt-2">
                         <button
-                            onClick={handleDeleteEdge}
-                            className="w-full py-2 px-4 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg border border-red-200 transition-colors flex items-center justify-center gap-2"
+                            onClick={() => setShowConnectionModal(false)}
+                            className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                         >
-                            <Trash2 size={16} />
-                            Remove Connection
+                            Cancel
                         </button>
-                    )}
-                    
-                    {!selectedEdge.data?.isManual && (
-                        <div className="text-xs text-gray-500 italic text-center">
-                            Auto-detected connections cannot be removed manually.
-                        </div>
-                    )}
+                        <button
+                            onClick={handleSaveConnection}
+                            className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors"
+                        >
+                            Create Link
+                        </button>
+                    </div>
                 </div>
             </div>
-        )}
+        </div>
+      )}
+      
+      {/* Context Menu / Details Panel */}
+      {selectedNodeData && (
+          <div className="absolute right-4 top-20 w-80 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-10 animate-in slide-in-from-right-5">
+              <div className="flex justify-between items-start mb-4">
+                  <div>
+                      <h3 className="font-bold text-lg">{selectedNodeData.label}</h3>
+                      <div className="text-xs text-gray-500 font-mono">{selectedNodeData.id}</div>
+                  </div>
+                  <button onClick={() => setSelectedNodeData(null)} className="text-gray-400 hover:text-gray-600">
+                      <X size={16} />
+                  </button>
+              </div>
+              
+              <div className="space-y-3 max-h-[80vh] overflow-y-auto pr-1">
+                  <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-900 rounded-lg">
+                      <span className="text-sm text-gray-500">Status</span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          selectedNodeData.status === 'up' 
+                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
+                              : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                      }`}>
+                          {selectedNodeData.status?.toUpperCase() || 'UNKNOWN'}
+                      </span>
+                  </div>
 
-        {/* Link Modal */}
-        <ExternalLinkModal 
-            isOpen={showLinkModal}
-            onClose={() => setShowLinkModal(false)}
-            onSave={handleSaveLink}
-            isEditing={true}
-            form={linkForm}
-            setForm={setLinkForm}
-        />
-      </div>
+                  {/* Actions */}
+                  <div className="grid grid-cols-1 gap-2">
+                    {selectedNodeData.type === 'link' && (
+                        <button 
+                            onClick={handleEditLink}
+                            className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
+                        >
+                            <Edit size={14} />
+                            Edit Link
+                        </button>
+                    )}
+
+                    {selectedNodeData.type === 'container' && selectedNodeData.rawData?.Id && (
+                        <Link 
+                            href={`/containers/${selectedNodeData.rawData.Id}`}
+                            className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
+                        >
+                            <Info size={14} />
+                            Inspect Container
+                        </Link>
+                    )}
+
+                    {selectedNodeData.type === 'service' && selectedNodeData.rawData?.name && (
+                        <Link 
+                            href={`/edit/${selectedNodeData.rawData.name}`}
+                            className="w-full flex items-center justify-center gap-2 p-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors text-sm font-medium"
+                        >
+                            <Edit size={14} />
+                            Edit Service
+                        </Link>
+                    )}
+
+                    {selectedNodeData.type === 'proxy' && (
+                        <Link 
+                            href="/proxy"
+                            className="w-full flex items-center justify-center gap-2 p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors text-sm font-medium"
+                        >
+                            <Edit size={14} />
+                            Configure Proxy
+                        </Link>
+                    )}
+
+                    {selectedNodeData.rawData?.metadata?.link && (
+                        <Link 
+                            href={selectedNodeData.rawData.metadata.link}
+                            target="_blank"
+                            className="block w-full text-center p-2 bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium"
+                        >
+                            Open Service ↗
+                        </Link>
+                    )}
+                  </div>
+
+                  {/* Network Info */}
+                  <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Network Details</h4>
+                      <div className="space-y-1 text-sm">
+                          {selectedNodeData.ip && (
+                              <div className="flex justify-between">
+                                  <span className="text-gray-500">IP Address</span>
+                                  <span className="font-mono">{selectedNodeData.ip}</span>
+                              </div>
+                          )}
+                          {selectedNodeData.ports && selectedNodeData.ports.length > 0 && (
+                              <div className="flex justify-between">
+                                  <span className="text-gray-500">Ports</span>
+                                  <span className="font-mono">{selectedNodeData.ports.join(', ')}</span>
+                              </div>
+                          )}
+                          {selectedNodeData.rawData?.MacAddress && (
+                              <div className="flex justify-between">
+                                  <span className="text-gray-500">MAC</span>
+                                  <span className="font-mono">{selectedNodeData.rawData.MacAddress}</span>
+                              </div>
+                          )}
+                      </div>
+                  </div>
+
+                  {/* Debug Info */}
+                  <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Debug Info</h4>
+                      <div className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400">
+                          <div className="flex justify-between">
+                              <span>Node ID</span>
+                              <span>{selectedNodeData.id}</span>
+                          </div>
+                          <div className="flex justify-between">
+                              <span>Type</span>
+                              <span>{selectedNodeData.type}</span>
+                          </div>
+                          {selectedNodeData.parentId && (
+                              <div className="flex justify-between">
+                                  <span>Parent</span>
+                                  <span>{selectedNodeData.parentId}</span>
+                              </div>
+                          )}
+                      </div>
+                  </div>
+
+                  {/* Raw Data */}
+                  <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
+                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Raw Data</h4>
+                      <div className="bg-gray-50 dark:bg-gray-900 p-2 rounded-lg overflow-x-auto">
+                          <pre className="text-[10px] font-mono text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all">
+                              {JSON.stringify(selectedNodeData.rawData, null, 2)}
+                          </pre>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {selectedEdge && (
+          <div className="absolute right-4 top-20 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-10 animate-in slide-in-from-right-5">
+              <div className="flex justify-between items-start mb-4">
+                  <h3 className="font-bold">Connection</h3>
+                  <button onClick={() => setSelectedEdge(null)} className="text-gray-400 hover:text-gray-600">
+                      <X size={16} />
+                  </button>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                  Manual connection between nodes.
+              </p>
+              <button 
+                  onClick={handleDeleteEdge}
+                  className="w-full flex items-center justify-center gap-2 p-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors text-sm font-medium"
+              >
+                  <Trash2 size={14} />
+                  Remove Connection
+              </button>
+          </div>
+      )}
     </div>
   );
 }
