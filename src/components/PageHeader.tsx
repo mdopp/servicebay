@@ -15,7 +15,7 @@ export default function PageHeader({ title, children, showBack = true, helpId }:
   const router = useRouter();
   
   return (
-    <div className="flex justify-between items-center mb-6 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+    <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
       <div className="flex items-center gap-4">
         {showBack && (
           <button 

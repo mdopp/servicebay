@@ -83,7 +83,10 @@ export class NetworkService {
         link: 'http://fritz.box',
         internalIP: fbStatus?.internalIP
       },
-      rawData: fbStatus
+      rawData: {
+          ...fbStatus,
+          type: 'router'
+      }
     });
 
     edges.push({
@@ -102,7 +105,7 @@ export class NetworkService {
     const nginxId = 'nginx';
     nodes.push({
       id: nginxId,
-      type: 'proxy',
+      type: 'group', // Changed to group to act as a container
       label: 'Nginx',
       ports: [80, 443], // We will refine this from config
       status: 'up', // We should check systemd status really
@@ -148,7 +151,7 @@ export class NetworkService {
         const serviceId = `service-${service.name}`;
         nodes.push({
             id: serviceId,
-            type: 'service',
+            type: 'group',
             label: service.name,
             subLabel: 'Managed Service',
             ports: service.ports.map(p => parseInt(p.host?.split(':')[1] || '0')).filter(p => p > 0),
@@ -233,14 +236,13 @@ export class NetworkService {
                         metadata: {
                             source: 'FritzBox Port Forwarding',
                             link: `http://${mapping.internalClient}` // Guess
+                        },
+                        rawData: {
+                            type: 'device',
+                            ip: mapping.internalClient,
+                            description: mapping.description || 'Auto-detected device via Port Forwarding'
                         }
                     });
-                }
-
-                // Add port to device ports list
-                const deviceNode = nodes.find(n => n.id === deviceId);
-                if (deviceNode && !deviceNode.ports.includes(mapping.internalPort)) {
-                    deviceNode.ports.push(mapping.internalPort);
                 }
 
                 edges.push({
@@ -279,20 +281,24 @@ export class NetworkService {
                     const targetContainer = containers.find((c: any) => {
                         if (!c.Ports) return false;
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        return c.Ports.some((p: any) => p.HostPort === targetPort);
+                        return c.Ports.some((p: any) => {
+                            const hostPort = p.HostPort || p.host_port;
+                            return hostPort === targetPort;
+                        });
                     });
 
                     if (targetContainer) {
                         const containerId = `container-${targetContainer.Id.substring(0, 12)}`;
+                        const containerName = targetContainer.Names[0].replace(/^\//, '');
                         
                         // Add container node if not exists
                         if (!nodes.find(n => n.id === containerId)) {
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const ports = targetContainer.Ports?.map((p: any) => p.ContainerPort) || [];
+                            const ports = targetContainer.Ports?.map((p: any) => p.ContainerPort || p.container_port) || [];
                             nodes.push({
                                 id: containerId,
                                 type: 'container',
-                                label: targetContainer.Names[0] || targetContainer.Id.substring(0, 12),
+                                label: containerName || targetContainer.Id.substring(0, 12),
                                 subLabel: targetContainer.Image,
                                 ports: ports,
                                 status: targetContainer.State === 'running' ? 'up' : 'down',
@@ -303,7 +309,8 @@ export class NetworkService {
                                 },
                                 rawData: {
                                     ...targetContainer,
-                                    type: 'container'
+                                    type: 'container',
+                                    name: containerName
                                 }
                             });
                         }
@@ -333,6 +340,8 @@ export class NetworkService {
             continue;
         }
 
+        const containerId = container.Id;
+
         // Check if this container is the Reverse Proxy
         // We check for the specific label, or if it matches the known nginx service name
          
@@ -350,26 +359,28 @@ export class NetworkService {
                     nginxNode.metadata.containerId = container.Id;
                     nginxNode.metadata.image = container.Image;
                 }
-                // Don't add as separate node
-                continue;
             }
+            // Do NOT continue, we want to add the container node inside the Nginx group
         }
 
-        const containerId = `container-${container.Id.substring(0, 12)}`;
+        const containerName = container.Names[0].replace(/^\//, '');
+
         if (!nodes.find(n => n.id === containerId)) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const ports = container.Ports?.map((p: any) => p.ContainerPort) || [];
+            const ports = container.Ports?.map((p: any) => p.ContainerPort || p.container_port) || [];
             // Try to find a host port for link
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const hostPort = container.Ports?.find((p: any) => p.HostPort)?.HostPort;
+            const hostPort = container.Ports?.find((p: any) => (p.HostPort || p.host_port))?.HostPort || container.Ports?.find((p: any) => (p.HostPort || p.host_port))?.host_port;
 
             nodes.push({
                 id: containerId,
                 type: 'container',
-                label: container.Names[0] || container.Id.substring(0, 12),
+                label: containerName || container.Id.substring(0, 12),
                 subLabel: container.Image,
                 ports: ports,
                 status: container.State === 'running' ? 'up' : 'down',
+                parentNode: isProxy ? nginxId : undefined,
+                extent: isProxy ? 'parent' : undefined,
                 metadata: {
                     source: 'Podman (Orphan)',
                     link: hostPort ? `http://localhost:${hostPort}` : null,
@@ -377,7 +388,8 @@ export class NetworkService {
                 },
                 rawData: {
                     ...container,
-                    type: 'container'
+                    type: 'container',
+                    name: containerName
                 }
             });
         }
@@ -387,10 +399,33 @@ export class NetworkService {
     for (const node of nodes) {
         if (node.type === 'container' && node.rawData) {
             const container = node.rawData;
-            // Try to find parent service
-            // 1. By Pod Name Label
+            
+            // 1. Identify Pod
             const podName = container.Labels?.['io.podman.pod.name'] || container.Labels?.['io.kubernetes.pod.name'];
-            // 2. By Name convention (Service Name is prefix of Container Name)
+            let podId: string | null = null;
+
+            if (podName) {
+                podId = `pod-${podName}`;
+                // Create Pod Node if not exists
+                if (!nodes.find(n => n.id === podId)) {
+                    nodes.push({
+                        id: podId,
+                        type: 'group',
+                        label: podName,
+                        subLabel: 'Pod',
+                        ports: [],
+                        status: 'up',
+                        metadata: { source: 'Podman Pod' },
+                        rawData: { type: 'pod', name: podName }
+                    });
+                }
+                
+                // Assign Container to Pod
+                node.parentNode = podId;
+                node.extent = 'parent';
+            }
+
+            // 2. Identify Service
             const containerName = container.Names[0].replace(/^\//, ''); // Remove leading slash
             
             const parentService = services.find(s => {
@@ -402,19 +437,20 @@ export class NetworkService {
             });
 
             if (parentService) {
-                const serviceId = `service-${parentService.name}`;
-                // Avoid duplicates
-                if (!edges.find(e => e.source === serviceId && e.target === node.id)) {
-                    edges.push({
-                        id: `edge-service-${parentService.name}-${node.id}`,
-                        source: serviceId,
-                        target: node.id,
-                        label: undefined, // No label for hierarchy
-                        protocol: 'tcp',
-                        port: 0,
-                        state: 'active',
-                        isManual: false
-                    });
+                const isProxyService = parentService.name === 'nginx' || parentService.name === 'nginx-web' || (parentService.labels && parentService.labels['podcli.role'] === 'reverse-proxy');
+                const serviceId = isProxyService ? 'nginx' : `service-${parentService.name}`;
+                
+                // If Container is in a Pod, the POD goes into the Service
+                if (podId) {
+                    const podNode = nodes.find(n => n.id === podId);
+                    if (podNode) {
+                        podNode.parentNode = serviceId;
+                        podNode.extent = 'parent';
+                    }
+                } else {
+                    // Container directly in Service
+                    node.parentNode = serviceId;
+                    node.extent = 'parent';
                 }
             }
         }

@@ -1,8 +1,10 @@
-export type NodeType = 'internet' | 'router' | 'proxy' | 'service' | 'container';
+export type NodeType = 'internet' | 'router' | 'proxy' | 'service' | 'container' | 'group';
 
 export interface NetworkNode {
   id: string;
   type: NodeType;
+  parentNode?: string;
+  extent?: 'parent';
   label: string;
   subLabel?: string;
   ip?: string;
