@@ -107,6 +107,7 @@ export class NetworkService {
       id: nginxId,
       type: 'group', // Changed to group to act as a container
       label: 'Nginx',
+      subLabel: 'Reverse Proxy',
       ports: [80, 443], // We will refine this from config
       status: 'up', // We should check systemd status really
       metadata: {
@@ -343,10 +344,9 @@ export class NetworkService {
         const containerId = container.Id;
 
         // Check if this container is the Reverse Proxy
-        // We check for the specific label, or if it matches the known nginx service name
+        // We check for the specific label, or if it matches the known nginx service name, OR if it's configured in settings
          
         const isProxy = (container.Labels && container.Labels['podcli.role'] === 'reverse-proxy') ||
-                         
                         (container.Names && container.Names.some((n: string) => n.includes('/nginx-web') || n.includes('/nginx')));
 
         if (isProxy) {
@@ -401,7 +401,7 @@ export class NetworkService {
             const container = node.rawData;
             
             // 1. Identify Pod
-            const podName = container.Labels?.['io.podman.pod.name'] || container.Labels?.['io.kubernetes.pod.name'];
+            const podName = container.PodName || container.Labels?.['io.podman.pod.name'] || container.Labels?.['io.kubernetes.pod.name'];
             let podId: string | null = null;
 
             if (podName) {

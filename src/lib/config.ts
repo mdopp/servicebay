@@ -32,8 +32,13 @@ export interface GatewayConfig {
   ssl?: boolean;
 }
 
+export interface ReverseProxyConfig {
+  enabled: boolean;
+}
+
 export interface AppConfig {
   gateway?: GatewayConfig;
+  reverseProxy?: ReverseProxyConfig;
   autoUpdate: {
     enabled: boolean;
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight

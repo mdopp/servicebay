@@ -539,3 +539,14 @@ export async function forceRestartContainer(id: string) {
 export async function deleteContainer(id: string) {
   await execAsync(`podman rm -f ${id}`);
 }
+
+export async function getContainerInspect(id: string) {
+  try {
+    const { stdout } = await execAsync(`podman inspect ${id}`);
+    const data = JSON.parse(stdout);
+    return data[0];
+  } catch (e) {
+    console.error(`Error inspecting container ${id}:`, e);
+    return null;
+  }
+}

@@ -19,6 +19,8 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const router = useRouter();
   const [container, setContainer] = useState<Container | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [details, setDetails] = useState<any>(null);
   const [logs, setLogs] = useState('');
   const [loading, setLoading] = useState(true);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -37,6 +39,13 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
           } else {
             console.error('Container not found');
           }
+        }
+
+        // Fetch detailed info
+        const detailRes = await fetch(`/api/containers/${id}`);
+        if (detailRes.ok) {
+            const data = await detailRes.json();
+            setDetails(data);
         }
       } catch (error) {
         console.error('Failed to fetch data', error);
@@ -139,6 +148,23 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                         <span className="block text-gray-500 text-xs">Created</span>
                         <span>{new Date(container.Created * 1000).toLocaleString()}</span>
                     </div>
+                    
+                    {details?.Config?.Env && (
+                        <div>
+                            <span className="block text-gray-500 text-xs">Environment</span>
+                            <div className="space-y-1 mt-1">
+                                {details.Config.Env
+                                    .filter((e: string) => ['POD', 'NODE_ENV', 'PORT'].some(key => e.startsWith(key + '=')))
+                                    .map((e: string, i: number) => (
+                                        <div key={i} className="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded break-all">
+                                            {e}
+                                        </div>
+                                    ))
+                                }
+                            </div>
+                        </div>
+                    )}
+
                     {container.Ports && container.Ports.length > 0 && (
                         <div>
                             <span className="block text-gray-500 text-xs">Ports</span>

@@ -1,13 +1,22 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
+
+interface DiscoveredService {
+    serviceName: string;
+    containerNames: string[];
+    unitFile?: string;
+    sourcePath?: string;
+    status: 'managed' | 'unmanaged';
+    type: 'kube' | 'container' | 'pod' | 'compose' | 'other';
+}
 
 interface Service {
   name: string;
@@ -29,6 +38,7 @@ interface Service {
 export default function ServicesPlugin() {
   const router = useRouter();
   const [services, setServices] = useState<Service[]>([]);
+  const [discoveredServices, setDiscoveredServices] = useState<DiscoveredService[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [showActions, setShowActions] = useState(false);
@@ -47,14 +57,36 @@ export default function ServicesPlugin() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/services');
-      if (res.ok) setServices(await res.json());
+      const [servicesRes, discoveryRes] = await Promise.all([
+        fetch('/api/services'),
+        fetch('/api/system/discovery')
+      ]);
+      
+      if (servicesRes.ok) setServices(await servicesRes.json());
+      if (discoveryRes.ok) setDiscoveredServices(await discoveryRes.json());
     } catch (error) {
       console.error('Failed to fetch services', error);
       addToast('error', 'Failed to fetch services');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleMigrate = async (service: DiscoveredService) => {
+      try {
+          const res = await fetch('/api/system/discovery/migrate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(service)
+          });
+          
+          if (!res.ok) throw new Error('Migration failed');
+          
+          addToast('success', `Service ${service.serviceName} migrated successfully`);
+          fetchData();
+      } catch (error) {
+          addToast('error', 'Failed to migrate service');
+      }
   };
 
   useEffect(() => {
@@ -348,6 +380,55 @@ export default function ServicesPlugin() {
                     </div>
                 </div>
                 ))}
+            </div>
+        )}
+
+        {/* Unmanaged Services Section */}
+        {discoveredServices.filter(s => s.status === 'unmanaged').length > 0 && (
+            <div className="mt-12 border-t border-gray-200 dark:border-gray-800 pt-8">
+                <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-orange-600 dark:text-orange-400">
+                    <AlertCircle size={20} />
+                    Unmanaged Services ({discoveredServices.filter(s => s.status === 'unmanaged').length})
+                </h2>
+                <div className="grid gap-4">
+                    {discoveredServices.filter(s => s.status === 'unmanaged').map((service) => (
+                        <div key={service.serviceName} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
+                            <div className="flex justify-between items-start mb-3">
+                                <div>
+                                    <h3 className="font-bold text-lg break-all">{service.serviceName}</h3>
+                                    <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 mt-1">
+                                        Type: {service.type}
+                                    </span>
+                                </div>
+                                <button 
+                                    onClick={() => handleMigrate(service)}
+                                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg flex items-center gap-1 transition-colors"
+                                >
+                                    Migrate <ArrowRight size={16} />
+                                </button>
+                            </div>
+
+                            <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+                                <div className="flex gap-2">
+                                    <Box size={16} className="shrink-0 mt-0.5" />
+                                    <div className="flex flex-wrap gap-1">
+                                        {service.containerNames.map(c => (
+                                            <span key={c} className="bg-gray-200 dark:bg-gray-700 px-1.5 rounded text-xs text-gray-800 dark:text-gray-200">
+                                                {c}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                                {service.sourcePath && (
+                                    <div className="flex gap-2 break-all">
+                                        <FileCode size={16} className="shrink-0 mt-0.5" />
+                                        <span className="font-mono text-xs">{service.sourcePath}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
         )}
       </div>
