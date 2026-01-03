@@ -23,7 +23,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@/lib/network/layout';
 import { NetworkGraph } from '@/lib/network/types';
-import { RefreshCw, X, Trash2, Edit, Info, Globe } from 'lucide-react';
+import { RefreshCw, X, Trash2, Edit, Info, Globe, Search } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
@@ -356,6 +356,7 @@ export default function NetworkPlugin() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
@@ -428,6 +429,67 @@ export default function NetworkPlugin() {
       }
   };
 
+  const matchesSearch = useCallback((node: Node, query: string) => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    const data = node.data;
+    const raw = data.rawData || {};
+    
+    // Check basic fields
+    if (data.label && String(data.label).toLowerCase().includes(q)) return true;
+    if (data.subLabel && String(data.subLabel).toLowerCase().includes(q)) return true;
+    if (data.hostname && String(data.hostname).toLowerCase().includes(q)) return true;
+    
+    // Check ports
+    if (data.ports && Array.isArray(data.ports)) {
+        const portsStr = data.ports.map((p: number | { host: number, container: number }) => {
+            if (typeof p === 'object') return `${p.host} ${p.container}`;
+            return String(p);
+        }).join(' ');
+        if (portsStr.includes(q)) return true;
+    }
+    
+    // Check raw data fields
+    if (raw.url && String(raw.url).toLowerCase().includes(q)) return true;
+    if (raw.externalIP && String(raw.externalIP).includes(q)) return true;
+    if (raw.internalIP && String(raw.internalIP).includes(q)) return true;
+    
+    // Check verified domains
+    if (data.metadata?.verifiedDomains && Array.isArray(data.metadata.verifiedDomains)) {
+         if (data.metadata.verifiedDomains.some((d: string) => d.toLowerCase().includes(q))) return true;
+    }
+    
+    return false;
+  }, []);
+
+  const applyFilter = useCallback((nodesToFilter: Node[], query: string) => {
+    return nodesToFilter.map(node => {
+        const isMatch = matchesSearch(node, query);
+        const targetOpacity = isMatch ? 1 : 0.2;
+        const targetFilter = isMatch ? 'none' : 'grayscale(100%)';
+        
+        if (node.style?.opacity === targetOpacity && node.style?.filter === targetFilter) {
+            return node;
+        }
+
+        return {
+            ...node,
+            style: {
+                ...node.style,
+                opacity: targetOpacity,
+                filter: targetFilter,
+                transition: 'all 0.3s ease'
+            }
+        };
+    });
+  }, [matchesSearch]);
+
+  const searchQueryRef = React.useRef(searchQuery);
+  useEffect(() => {
+      searchQueryRef.current = searchQuery;
+      setNodes((nds) => applyFilter(nds, searchQuery));
+  }, [searchQuery, applyFilter, setNodes]);
+
   const fetchGraph = useCallback(async () => {
     setLoading(true);
     try {
@@ -482,14 +544,14 @@ export default function NetworkPlugin() {
       // Apply Layout
       const layouted = await getLayoutedElements(flowNodes, flowEdges);
       
-      setNodes(layouted.nodes);
+      setNodes(applyFilter(layouted.nodes, searchQueryRef.current));
       setEdges(layouted.edges);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, applyFilter]);
 
   useEffect(() => {
     fetchGraph();
@@ -568,14 +630,30 @@ export default function NetworkPlugin() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="Network Map" showBack={false} helpId="network">
-        <button 
-            onClick={fetchGraph}
-            disabled={loading}
-            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-        >
-            <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-        </button>
+      <PageHeader 
+        title="Map" 
+        showBack={false} 
+        helpId="network"
+        actions={
+            <button 
+                onClick={fetchGraph}
+                disabled={loading}
+                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+                <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+            </button>
+        }
+      >
+        <div className="relative flex-1 max-w-md min-w-[100px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input 
+                type="text" 
+                placeholder="Search..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+            />
+        </div>
       </PageHeader>
       
       <div className="flex-1 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 relative overflow-hidden">
@@ -610,7 +688,7 @@ export default function NetworkPlugin() {
                 className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg [&>button]:!bg-white dark:[&>button]:!bg-gray-800 [&>button]:!border-gray-100 dark:[&>button]:!border-gray-700 [&>button]:!text-gray-900 dark:[&>button]:!text-gray-100 [&>button:hover]:!bg-gray-100 dark:[&>button:hover]:!bg-gray-700 [&>button>svg]:!fill-current"
             />
             <MiniMap 
-                className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg"
+                className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg scale-50 origin-bottom-right md:scale-100"
                 maskColor="transparent"
                 nodeStrokeColor={(n) => {
                     const type = n.data?.type as string;

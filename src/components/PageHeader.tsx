@@ -7,15 +7,16 @@ import PluginHelp from './PluginHelp';
 interface PageHeaderProps {
   title: string;
   children?: React.ReactNode;
+  actions?: React.ReactNode;
   showBack?: boolean;
   helpId?: string;
 }
 
-export default function PageHeader({ title, children, showBack = true, helpId }: PageHeaderProps) {
+export default function PageHeader({ title, children, actions, showBack = true, helpId }: PageHeaderProps) {
   const router = useRouter();
   
   return (
-    <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-4 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+    <div className="flex items-center gap-4 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
       <div className="flex items-center gap-4 shrink-0">
         {showBack && (
           <button 
@@ -29,7 +30,18 @@ export default function PageHeader({ title, children, showBack = true, helpId }:
         <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
         {helpId && <PluginHelp helpId={helpId} />}
       </div>
-      {children && <div className="flex items-center gap-3 w-full md:w-auto md:flex-1 md:justify-end overflow-hidden">{children}</div>}
+
+      {children && (
+        <div className="flex-1 min-w-0 mx-2 md:mx-4">
+            {children}
+        </div>
+      )}
+
+      {actions && (
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
+            {actions}
+        </div>
+      )}
     </div>
   );
 }

@@ -362,27 +362,34 @@ export default function ServicesPlugin() {
         onConfirm={handleDelete}
         onCancel={() => setDeleteModalOpen(false)}
       />
-      <PageHeader title="Managed Services" showBack={false} helpId="services">
-        <div className="relative flex-1 max-w-md min-w-[200px]">
+      <PageHeader 
+        title="Services" 
+        showBack={false} 
+        helpId="services"
+        actions={
+            <>
+                <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
+                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                </button>
+                <button 
+                    onClick={() => router.push('/registry')}
+                    className="flex items-center gap-2 bg-blue-600 text-white p-2 rounded hover:bg-blue-700 shadow-sm transition-colors text-sm font-medium"
+                    title="New Service"
+                >
+                    <Plus size={18} />
+                </button>
+            </>
+        }
+      >
+        <div className="relative flex-1 max-w-md min-w-[100px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input 
                 type="text" 
-                placeholder="Search services..." 
+                placeholder="Search..." 
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
             />
-        </div>
-        <div className="flex gap-2 shrink-0">
-            <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
-                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-            </button>
-            <button 
-                onClick={() => router.push('/registry')}
-                className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 shadow-sm transition-colors text-sm font-medium"
-            >
-                <Plus size={18} /> New
-            </button>
         </div>
       </PageHeader>
 

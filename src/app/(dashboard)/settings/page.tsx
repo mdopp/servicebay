@@ -288,16 +288,20 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto space-y-6">
-      <PageHeader title="Settings" showBack={false}>
-        <button 
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm transition-colors font-medium disabled:opacity-50"
-        >
-            <Save className="w-4 h-4" />
-            {saving ? 'Saving...' : 'Save Changes'}
-        </button>
-      </PageHeader>
+      <PageHeader 
+        title="Settings" 
+        showBack={false}
+        actions={
+            <button 
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm transition-colors font-medium disabled:opacity-50"
+            >
+                <Save className="w-4 h-4" />
+                {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+        }
+      />
 
       <div className="px-4 pb-8 w-full space-y-6">
         {/* ServiceBay Updates */}

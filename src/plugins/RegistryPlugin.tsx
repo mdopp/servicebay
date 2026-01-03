@@ -38,25 +38,29 @@ export default function RegistryPlugin() {
 
   return (
     <div className="h-full flex flex-col">
-        <PageHeader title="Service Registry" helpId="registry">
-            <div className="flex items-center gap-2">
-                <button 
-                    onClick={handleSync}
-                    disabled={syncing}
-                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 shadow-sm transition-colors disabled:opacity-50"
-                >
-                    <DownloadCloud size={16} className={syncing ? 'animate-pulse' : ''} />
-                    {syncing ? 'Syncing...' : 'Sync Registries'}
-                </button>
-                <button 
-                    onClick={loadData}
-                    className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
-                    title="Refresh"
-                >
-                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-                </button>
-            </div>
-        </PageHeader>
+        <PageHeader 
+            title="Service Registry" 
+            helpId="registry"
+            actions={
+                <div className="flex items-center gap-2">
+                    <button 
+                        onClick={handleSync}
+                        disabled={syncing}
+                        className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 shadow-sm transition-colors disabled:opacity-50"
+                    >
+                        <DownloadCloud size={16} className={syncing ? 'animate-pulse' : ''} />
+                        {syncing ? 'Syncing...' : 'Sync Registries'}
+                    </button>
+                    <button 
+                        onClick={loadData}
+                        className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
+                        title="Refresh"
+                    >
+                        <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                    </button>
+                </div>
+            }
+        />
         <div className="flex-1 min-h-0">
             {loading ? (
                 <div className="h-full flex items-center justify-center">

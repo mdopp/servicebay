@@ -21,7 +21,7 @@ export const plugins: Plugin[] = [
   },
   {
     id: 'containers',
-    name: 'Running Containers',
+    name: 'Containers',
     icon: Box,
     component: <ContainersPlugin />,
   },

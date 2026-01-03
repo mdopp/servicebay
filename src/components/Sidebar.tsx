@@ -7,7 +7,7 @@ import ServiceBayLogo from './ServiceBayLogo';
 
 export const plugins = [
     { id: 'services', name: 'Services', icon: Box, path: '/services' },
-    { id: 'containers', name: 'Running Containers', icon: LayoutDashboard, path: '/containers' },
+    { id: 'containers', name: 'Containers', icon: LayoutDashboard, path: '/containers' },
     { id: 'network', name: 'Network Map', icon: Network, path: '/network' },
     { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
     { id: 'system', name: 'System Info', icon: Server, path: '/system' },

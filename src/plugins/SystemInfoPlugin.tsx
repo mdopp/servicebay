@@ -48,11 +48,16 @@ export default function SystemInfoPlugin() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="System Information" showBack={false} helpId="system-info">
-        <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
-            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-        </button>
-      </PageHeader>
+      <PageHeader 
+        title="System Information" 
+        showBack={false} 
+        helpId="system-info"
+        actions={
+            <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
+                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+            </button>
+        }
+      />
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         
