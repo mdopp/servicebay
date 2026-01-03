@@ -7,8 +7,6 @@ set -e
 
 # Configuration
 FULL_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-linux-x64.tar.gz"
-UPDATE_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-update-linux-x64.tar.gz"
-DEPS_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-deps-linux-x64.tar.gz"
 INSTALL_DIR="$HOME/.servicebay"
 SERVICE_NAME="servicebay"
 DEFAULT_PORT=3000
@@ -110,18 +108,8 @@ fi
 
 # Determine Install Strategy
 TEMP_DIR=$(mktemp -d)
-NEED_DEPS=1
-FORCE_INSTALL=0
 
-# Parse arguments
-for arg in "$@"; do
-    if [ "$arg" == "--force" ]; then
-        FORCE_INSTALL=1
-        log "Force installation enabled."
-    fi
-done
-
-log "Downloading application code..."
+log "Downloading application..."
 # Use robust curl options: follow redirects, retries, compressed (standard output shows details)
 CURL_OPTS="-L --retry 3 --retry-delay 2 --connect-timeout 15 --compressed --fail"
 
@@ -140,37 +128,9 @@ download_file() {
     curl $CURL_OPTS "$url" -o "$output"
 }
 
-if download_file "$UPDATE_TAR_URL" "$TEMP_DIR/update.tar.gz"; then
-    # Check dependencies
-    tar -xzf "$TEMP_DIR/update.tar.gz" -C "$TEMP_DIR" --strip-components=1 servicebay/package-lock.json
-    
-    if [ "$FORCE_INSTALL" -eq 0 ] && [ "$IS_UPDATE" -eq 1 ] && [ -f "$INSTALL_DIR/package-lock.json" ] && cmp -s "$INSTALL_DIR/package-lock.json" "$TEMP_DIR/package-lock.json"; then
-        log "Dependencies unchanged. Checking for critical modules..."
-        # Verify critical modules exist (check for package.json to ensure not empty dir)
-        if [ -f "$INSTALL_DIR/node_modules/socket.io/package.json" ] && [ -f "$INSTALL_DIR/node_modules/next/package.json" ]; then
-             log "Critical dependencies are installed. Skipping dependency download."
-             NEED_DEPS=0
-        else
-             log "Critical dependencies missing or broken. Forcing dependency download."
-             NEED_DEPS=1
-        fi
-    else
-        if [ "$IS_UPDATE" -eq 1 ]; then
-            log "Dependencies changed or force enabled. Downloading new dependencies..."
-        else
-            log "Fresh install. Downloading dependencies..."
-        fi
-    fi
-else
-    error "Failed to download update bundle."
+if ! download_file "$FULL_TAR_URL" "$TEMP_DIR/servicebay.tar.gz"; then
+    error "Failed to download application bundle."
     exit 1
-fi
-
-if [ "$NEED_DEPS" -eq 1 ]; then
-    if ! download_file "$DEPS_TAR_URL" "$TEMP_DIR/deps.tar.gz"; then
-        error "Failed to download dependencies bundle."
-        exit 1
-    fi
 fi
 
 # Perform Install
@@ -179,17 +139,12 @@ log "Installing..."
 # Create directory if it doesn't exist
 mkdir -p "$INSTALL_DIR"
 
-# Extract Code (overwriting existing files)
-# We do NOT delete the directory to preserve node_modules if they are unchanged
-tar xz -f "$TEMP_DIR/update.tar.gz" -C "$INSTALL_DIR" --strip-components=1
+# Clean old installation (except config) to ensure no artifacts remain
+# We remove node_modules to ensure a clean slate from the full tarball
+rm -rf "$INSTALL_DIR/node_modules"
 
-# Handle Dependencies
-if [ "$NEED_DEPS" -eq 1 ]; then
-    log "Updating dependencies..."
-    # Remove old node_modules to ensure clean state for new deps
-    rm -rf "$INSTALL_DIR/node_modules"
-    tar xz -f "$TEMP_DIR/deps.tar.gz" -C "$INSTALL_DIR"
-fi
+# Extract Code
+tar xz -f "$TEMP_DIR/servicebay.tar.gz" -C "$INSTALL_DIR" --strip-components=1
 
 # Restore Config
 if [ -f "/tmp/servicebay_config_backup.json" ]; then
