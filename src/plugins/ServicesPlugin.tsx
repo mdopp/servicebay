@@ -37,6 +37,14 @@ interface Service {
   hostNetwork?: boolean;
 }
 
+interface MigrationPlan {
+    filesToCreate: string[];
+    filesToBackup: string[];
+    servicesToStop: string[];
+    targetName: string;
+    backupDir: string;
+}
+
 export default function ServicesPlugin() {
   const router = useRouter();
   const [services, setServices] = useState<Service[]>([]);
@@ -51,6 +59,10 @@ export default function ServicesPlugin() {
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
   const [mergeName, setMergeName] = useState('');
+  const [migrationPlan, setMigrationPlan] = useState<MigrationPlan | null>(null);
+  const [migrationModalOpen, setMigrationModalOpen] = useState(false);
+  const [selectedForMigration, setSelectedForMigration] = useState<DiscoveredService | null>(null);
+  const [migrationName, setMigrationName] = useState('');
   const { addToast, updateToast } = useToast();
 
   // Link Modal State
@@ -77,20 +89,91 @@ export default function ServicesPlugin() {
     }
   };
 
-  const handleMigrate = async (service: DiscoveredService) => {
+  const openMigrationModal = async (service: DiscoveredService) => {
+      setSelectedForMigration(service);
+      setMigrationName(service.serviceName.replace('.service', ''));
+      setMigrationModalOpen(true);
+      
+      // Fetch Plan
       try {
           const res = await fetch('/api/system/discovery/migrate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(service)
+              body: JSON.stringify({ service, customName: service.serviceName.replace('.service', ''), dryRun: true })
+          });
+          if (res.ok) {
+              const data = await res.json();
+              setMigrationPlan(data.plan);
+          }
+      } catch (e) {
+          console.error('Failed to fetch migration plan', e);
+      }
+  };
+
+  const handleMigrate = async () => {
+      if (!selectedForMigration) return;
+      
+      try {
+          const res = await fetch('/api/system/discovery/migrate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ service: selectedForMigration, customName: migrationName })
           });
           
           if (!res.ok) throw new Error('Migration failed');
           
-          addToast('success', `Service ${service.serviceName} migrated successfully`);
+          addToast('success', `Service ${migrationName} migrated successfully`);
+          setMigrationModalOpen(false);
+          setMigrationPlan(null);
           fetchData();
       } catch (_error) {
           addToast('error', 'Failed to migrate service');
+      }
+  };
+
+  const updateMigrationPlan = async (name: string) => {
+      setMigrationName(name);
+      if (!selectedForMigration) return;
+      
+      try {
+          const res = await fetch('/api/system/discovery/migrate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ service: selectedForMigration, customName: name, dryRun: true })
+          });
+          if (res.ok) {
+              const data = await res.json();
+              setMigrationPlan(data.plan);
+          }
+      } catch (e) {
+          console.error('Failed to fetch migration plan', e);
+      }
+  };
+
+  const openMergeModal = async () => {
+      setMergeModalOpen(true);
+      setMergeName('');
+      setMigrationPlan(null);
+  };
+
+  const updateMergePlan = async (name: string) => {
+      setMergeName(name);
+      if (selectedForMerge.length < 2 || !name) return;
+
+      const servicesToMerge = discoveredServices.filter(s => selectedForMerge.includes(s.serviceName));
+      
+      try {
+          const res = await fetch('/api/system/discovery/merge', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ services: servicesToMerge, newName: name, dryRun: true })
+          });
+          if (res.ok) {
+              const data = await res.json();
+              setMigrationPlan(data.plan);
+          }
+      } catch (e) {
+          console.error('Failed to fetch merge plan', e);
       }
   };
 
@@ -119,6 +202,7 @@ export default function ServicesPlugin() {
           setMergeModalOpen(false);
           setSelectedForMerge([]);
           setMergeName('');
+          setMigrationPlan(null);
           fetchData();
       } catch (error: unknown) {
           const message = error instanceof Error ? error.message : 'Failed to merge services';
@@ -446,7 +530,7 @@ export default function ServicesPlugin() {
                     </h2>
                     {selectedForMerge.length > 1 && (
                         <button 
-                            onClick={() => setMergeModalOpen(true)}
+                            onClick={openMergeModal}
                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg flex items-center gap-2 transition-colors shadow-sm"
                         >
                             <Box size={16} />
@@ -473,7 +557,7 @@ export default function ServicesPlugin() {
                                     </div>
                                 </div>
                                 <button 
-                                    onClick={() => handleMigrate(service)}
+                                    onClick={() => openMigrationModal(service)}
                                     className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg flex items-center gap-1 transition-colors"
                                 >
                                     Migrate <ArrowRight size={16} />
@@ -505,10 +589,103 @@ export default function ServicesPlugin() {
         )}
       </div>
 
+      {/* Migration Modal */}
+      {migrationModalOpen && selectedForMigration && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-2xl border border-gray-200 dark:border-gray-800 p-6 max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-bold">Migrate Service</h3>
+                    <button onClick={() => setMigrationModalOpen(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <div className="space-y-6">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Service Name
+                        </label>
+                        <input
+                            type="text"
+                            value={migrationName}
+                            onChange={(e) => updateMigrationPlan(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                            This will be the name of the systemd service and the pod.
+                        </p>
+                    </div>
+
+                    {migrationPlan ? (
+                        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 space-y-4 border border-gray-200 dark:border-gray-700">
+                            <h4 className="font-semibold text-sm text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                                <FileCode size={16} /> Migration Plan
+                            </h4>
+                            
+                            {migrationPlan.backupDir && (
+                                <div className="text-sm">
+                                    <span className="text-amber-600 dark:text-amber-400 font-medium">Backup: </span>
+                                    <span className="text-gray-600 dark:text-gray-400">Existing files will be backed up to </span>
+                                    <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 py-0.5 rounded">{migrationPlan.backupDir}</code>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Files to Create</span>
+                                    <ul className="mt-2 space-y-1">
+                                        {migrationPlan.filesToCreate.map(f => (
+                                            <li key={f} className="text-sm text-green-600 dark:text-green-400 flex items-center gap-2">
+                                                <Plus size={14} /> {f}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                                
+                                {migrationPlan.servicesToStop.length > 0 && (
+                                    <div>
+                                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Services to Stop</span>
+                                        <ul className="mt-2 space-y-1">
+                                            {migrationPlan.servicesToStop.map(s => (
+                                                <li key={s} className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
+                                                    <Power size={14} /> {s}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex justify-center py-8">
+                            <RefreshCw className="animate-spin text-blue-500" />
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex justify-end gap-3 mt-8">
+                    <button 
+                        onClick={() => setMigrationModalOpen(false)}
+                        className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={handleMigrate}
+                        disabled={!migrationName || !migrationPlan}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-2"
+                    >
+                        Confirm Migration
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Merge Modal */}
       {mergeModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-6">
+            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-2xl border border-gray-200 dark:border-gray-800 p-6 max-h-[90vh] overflow-y-auto">
                 <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-bold">Merge Services</h3>
                     <button onClick={() => setMergeModalOpen(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
@@ -516,36 +693,72 @@ export default function ServicesPlugin() {
                     </button>
                 </div>
                 
-                <div className="mb-6">
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                        Merging {selectedForMerge.length} services into a single Pod.
-                        This will generate a new Kubernetes YAML file containing all containers.
-                    </p>
-                    
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                New Service Name
-                            </label>
-                            <input
-                                type="text"
-                                value={mergeName}
-                                onChange={(e) => setMergeName(e.target.value)}
-                                placeholder="e.g. my-app-stack"
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
-                                autoFocus
-                            />
-                        </div>
-                        
-                        <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded text-xs font-mono text-gray-600 dark:text-gray-400 max-h-32 overflow-y-auto">
-                            {selectedForMerge.map(s => (
-                                <div key={s}>• {s}</div>
-                            ))}
-                        </div>
+                <div className="space-y-6">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            New Service Name
+                        </label>
+                        <input
+                            type="text"
+                            value={mergeName}
+                            onChange={(e) => updateMergePlan(e.target.value)}
+                            placeholder="e.g. my-app-stack"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                            autoFocus
+                        />
                     </div>
+                    
+                    <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded text-xs font-mono text-gray-600 dark:text-gray-400 max-h-32 overflow-y-auto">
+                        <div className="font-semibold mb-2">Selected Services:</div>
+                        {selectedForMerge.map(s => (
+                            <div key={s}>• {s}</div>
+                        ))}
+                    </div>
+
+                    {migrationPlan && (
+                        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 space-y-4 border border-gray-200 dark:border-gray-700">
+                            <h4 className="font-semibold text-sm text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                                <FileCode size={16} /> Merge Plan
+                            </h4>
+                            
+                            {migrationPlan.backupDir && (
+                                <div className="text-sm">
+                                    <span className="text-amber-600 dark:text-amber-400 font-medium">Backup: </span>
+                                    <span className="text-gray-600 dark:text-gray-400">Existing files will be backed up to </span>
+                                    <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 py-0.5 rounded">{migrationPlan.backupDir}</code>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Files to Create</span>
+                                    <ul className="mt-2 space-y-1">
+                                        {migrationPlan.filesToCreate.map(f => (
+                                            <li key={f} className="text-sm text-green-600 dark:text-green-400 flex items-center gap-2">
+                                                <Plus size={14} /> {f}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                                
+                                {migrationPlan.servicesToStop.length > 0 && (
+                                    <div>
+                                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Services to Stop</span>
+                                        <ul className="mt-2 space-y-1">
+                                            {migrationPlan.servicesToStop.map(s => (
+                                                <li key={s} className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
+                                                    <Power size={14} /> {s}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                <div className="flex justify-end gap-3">
+                <div className="flex justify-end gap-3 mt-8">
                     <button 
                         onClick={() => setMergeModalOpen(false)}
                         className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
@@ -554,7 +767,7 @@ export default function ServicesPlugin() {
                     </button>
                     <button 
                         onClick={handleMerge}
-                        disabled={!mergeName}
+                        disabled={!mergeName || !migrationPlan}
                         className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
                     >
                         Merge & Migrate

@@ -1,12 +1,14 @@
 import { getPodmanPs } from './manager';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import yaml from 'js-yaml';
 
 const execAsync = promisify(exec);
 const SYSTEMD_DIR = path.join(os.homedir(), '.config/containers/systemd');
+const BACKUP_DIR = path.join(SYSTEMD_DIR, 'backups');
 
 export interface DiscoveredService {
     serviceName: string;
@@ -94,9 +96,57 @@ export async function discoverSystemdServices(): Promise<DiscoveredService[]> {
     return results;
 }
 
-import fs from 'fs/promises';
 
-export async function migrateService(service: DiscoveredService) {
+
+export interface MigrationPlan {
+    filesToCreate: string[];
+    filesToBackup: string[];
+    servicesToStop: string[];
+    targetName: string;
+    backupDir: string;
+}
+
+async function createBackup(filePath: string, serviceName: string) {
+    try {
+        await fs.access(filePath);
+    } catch {
+        return; // File doesn't exist, nothing to backup
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupDir = path.join(BACKUP_DIR, `${timestamp}_${serviceName}`);
+    await fs.mkdir(backupDir, { recursive: true });
+    
+    const fileName = path.basename(filePath);
+    await fs.copyFile(filePath, path.join(backupDir, fileName));
+}
+
+export async function getMigrationPlan(service: DiscoveredService, customName?: string): Promise<MigrationPlan> {
+    const cleanName = customName || service.serviceName.replace('.service', '');
+    const targetKubePath = path.join(SYSTEMD_DIR, `${cleanName}.kube`);
+    const targetYamlPath = path.join(SYSTEMD_DIR, `${cleanName}.yml`);
+
+    const filesToCreate = [targetKubePath, targetYamlPath];
+    const filesToBackup: string[] = [];
+    
+    // Check if target files already exist
+    try { await fs.access(targetKubePath); filesToBackup.push(targetKubePath); } catch {}
+    try { await fs.access(targetYamlPath); filesToBackup.push(targetYamlPath); } catch {}
+
+    return {
+        filesToCreate,
+        filesToBackup,
+        servicesToStop: [service.serviceName],
+        targetName: cleanName,
+        backupDir: BACKUP_DIR
+    };
+}
+
+export async function migrateService(service: DiscoveredService, customName?: string, dryRun = false) {
+    if (dryRun) {
+        return getMigrationPlan(service, customName);
+    }
+
     // Ensure directory exists
     try {
         await fs.access(SYSTEMD_DIR);
@@ -104,9 +154,13 @@ export async function migrateService(service: DiscoveredService) {
         await fs.mkdir(SYSTEMD_DIR, { recursive: true });
     }
 
-    const cleanName = service.serviceName.replace('.service', '');
+    const cleanName = customName || service.serviceName.replace('.service', '');
     const targetKubePath = path.join(SYSTEMD_DIR, `${cleanName}.kube`);
     const targetYamlPath = path.join(SYSTEMD_DIR, `${cleanName}.yml`);
+
+    // Perform Backups
+    await createBackup(targetKubePath, cleanName);
+    await createBackup(targetYamlPath, cleanName);
 
     if (service.type === 'kube' && service.sourcePath) {
         // Case 1: Existing .kube file outside managed dir
@@ -186,7 +240,31 @@ WantedBy=default.target
     await execAsync('systemctl --user daemon-reload');
 }
 
-export async function mergeServices(services: DiscoveredService[], newName: string) {
+export async function getMergePlan(services: DiscoveredService[], newName: string): Promise<MigrationPlan> {
+    const targetKubePath = path.join(SYSTEMD_DIR, `${newName}.kube`);
+    const targetYamlPath = path.join(SYSTEMD_DIR, `${newName}.yml`);
+
+    const filesToCreate = [targetKubePath, targetYamlPath];
+    const filesToBackup: string[] = [];
+    
+    // Check if target files already exist
+    try { await fs.access(targetKubePath); filesToBackup.push(targetKubePath); } catch {}
+    try { await fs.access(targetYamlPath); filesToBackup.push(targetYamlPath); } catch {}
+
+    return {
+        filesToCreate,
+        filesToBackup,
+        servicesToStop: services.map(s => s.serviceName),
+        targetName: newName,
+        backupDir: BACKUP_DIR
+    };
+}
+
+export async function mergeServices(services: DiscoveredService[], newName: string, dryRun = false) {
+    if (dryRun) {
+        return getMergePlan(services, newName);
+    }
+
     // Ensure directory exists
     try {
         await fs.access(SYSTEMD_DIR);
@@ -196,6 +274,10 @@ export async function mergeServices(services: DiscoveredService[], newName: stri
 
     const targetKubePath = path.join(SYSTEMD_DIR, `${newName}.kube`);
     const targetYamlPath = path.join(SYSTEMD_DIR, `${newName}.yml`);
+
+    // Perform Backups
+    await createBackup(targetKubePath, newName);
+    await createBackup(targetYamlPath, newName);
 
     // Collect all container IDs
     const containerIds = services.flatMap(s => s.containerIds);

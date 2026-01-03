@@ -5,7 +5,7 @@ import { mergeServices, DiscoveredService } from '@/lib/discovery';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { services, newName } = body as { services: DiscoveredService[], newName: string };
+    const { services, newName, dryRun } = body as { services: DiscoveredService[], newName: string, dryRun?: boolean };
     
     if (!services || services.length < 2) {
         return NextResponse.json({ error: 'At least two services are required for merge' }, { status: 400 });
@@ -15,7 +15,12 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'New service name is required' }, { status: 400 });
     }
 
-    await mergeServices(services, newName);
+    const result = await mergeServices(services, newName, dryRun);
+    
+    if (dryRun) {
+        return NextResponse.json({ plan: result });
+    }
+
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     console.error('Merge failed:', error);
