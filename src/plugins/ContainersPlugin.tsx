@@ -22,11 +22,13 @@ interface Container {
   Labels?: { [key: string]: string };
   NetworkMode?: string;
   IsHostNetwork?: boolean;
+  nodeName?: string;
 }
 
 export default function ContainersPlugin() {
   const router = useRouter();
   const [containers, setContainers] = useState<Container[]>([]);
+  const [filteredContainers, setFilteredContainers] = useState<Container[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedContainer, setSelectedContainer] = useState<Container | null>(null);
   const [showActions, setShowActions] = useState(false);
@@ -34,15 +36,31 @@ export default function ContainersPlugin() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [selectedNode, setSelectedNode] = useState<string>('');
+  const [selectedNodeFilter, setSelectedNodeFilter] = useState<string>('all');
   const { addToast, updateToast } = useToast();
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const query = selectedNode ? `?node=${selectedNode}` : '';
-      const res = await fetch(`/api/containers${query}`);
-      if (res.ok) setContainers(await res.json());
+      const nodeList = await getNodes();
+      setNodes(nodeList);
+
+      const targets = ['', ...nodeList.map(n => n.Name)];
+      const results = await Promise.all(targets.map(async (node) => {
+        try {
+            const query = node ? `?node=${node}` : '';
+            const res = await fetch(`/api/containers${query}`);
+            if (!res.ok) return [];
+            const data = await res.json();
+            return data.map((c: Container) => ({ ...c, nodeName: node || 'Local' }));
+        } catch (e) {
+            console.error(`Failed to fetch containers for node ${node}`, e);
+            return [];
+        }
+      }));
+
+      const allContainers = results.flat();
+      setContainers(allContainers);
     } catch (error) {
       console.error('Failed to fetch containers', error);
       addToast('error', 'Failed to fetch containers');
@@ -52,7 +70,6 @@ export default function ContainersPlugin() {
   };
 
   useEffect(() => {
-    getNodes().then(n => setNodes(n));
     fetchData();
 
     // Setup SSE for real-time updates
@@ -79,15 +96,33 @@ export default function ContainersPlugin() {
   }, []);
 
   useEffect(() => {
-      fetchData();
-  }, [selectedNode]);
+      let filtered = containers;
+      
+      // Filter by Node
+      if (selectedNodeFilter !== 'all') {
+          filtered = filtered.filter(c => c.nodeName === selectedNodeFilter);
+      }
+
+      // Filter by Search
+      if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          filtered = filtered.filter(c => 
+              c.Names.some(n => n.toLowerCase().includes(q)) ||
+              c.Id.toLowerCase().includes(q) ||
+              c.Image.toLowerCase().includes(q) ||
+              (c.nodeName && c.nodeName.toLowerCase().includes(q))
+          );
+      }
+      
+      setFilteredContainers(filtered);
+  }, [containers, selectedNodeFilter, searchQuery]);
 
   const openLogs = (container: Container) => {
-    router.push(`/containers/${container.Id}/logs`);
+    router.push(`/containers/${container.Id}/logs?node=${container.nodeName === 'Local' ? '' : container.nodeName}`);
   };
 
   const openTerminal = (container: Container) => {
-    router.push(`/containers/${container.Id}/terminal`);
+    router.push(`/containers/${container.Id}/terminal?node=${container.nodeName === 'Local' ? '' : container.nodeName}`);
   };
 
   const openActions = (container: Container) => {
@@ -111,7 +146,8 @@ export default function ContainersPlugin() {
     const toastId = addToast('loading', 'Action in progress', `Executing ${action} on container...`, 0);
 
     try {
-        const query = selectedNode ? `?node=${selectedNode}` : '';
+        const nodeParam = selectedContainer.nodeName === 'Local' ? '' : selectedContainer.nodeName;
+        const query = nodeParam ? `?node=${nodeParam}` : '';
         const res = await fetch(`/api/containers/${selectedContainer.Id}/action${query}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -135,14 +171,7 @@ export default function ContainersPlugin() {
     }
   };
 
-  const filteredContainers = containers.filter(c => {
-    const query = searchQuery.toLowerCase();
-    return (
-        c.Names[0].toLowerCase().includes(query) ||
-        c.Image.toLowerCase().includes(query) ||
-        c.Id.toLowerCase().includes(query)
-    );
-  });
+
 
   const getGroupName = (c: Container) => {
     if (c.PodName) return `Pod: ${c.PodName}`;
@@ -187,11 +216,12 @@ export default function ContainersPlugin() {
                 <div className="flex items-center gap-2 mr-2">
                     <Server size={16} className="text-gray-500" />
                     <select 
-                        value={selectedNode} 
-                        onChange={(e) => setSelectedNode(e.target.value)}
+                        value={selectedNodeFilter} 
+                        onChange={(e) => setSelectedNodeFilter(e.target.value)}
                         className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                     >
-                        <option value="">Local (Default)</option>
+                        <option value="all">All Servers</option>
+                        <option value="Local">Local (Default)</option>
                         {nodes.map(node => (
                             <option key={node.Name} value={node.Name}>{node.Name}</option>
                         ))}
@@ -242,7 +272,14 @@ export default function ContainersPlugin() {
                                     <div className="flex items-center gap-3">
                                         <div className={`w-3 h-3 rounded-full ${c.State === 'running' ? 'bg-green-500' : 'bg-gray-500'}`} />
                                         <div>
-                                            <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100">{c.Names[0].replace(/^\//, '')}</h3>
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100">{c.Names[0].replace(/^\//, '')}</h3>
+                                                {c.nodeName && (
+                                                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                                        {c.nodeName}
+                                                    </span>
+                                                )}
+                                            </div>
                                             <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{c.Id.substring(0, 12)}</div>
                                         </div>
                                     </div>

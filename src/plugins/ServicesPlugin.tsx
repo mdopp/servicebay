@@ -19,6 +19,7 @@ interface DiscoveredService {
     sourcePath?: string;
     status: 'managed' | 'unmanaged';
     type: 'kube' | 'container' | 'pod' | 'compose' | 'other';
+    nodeName?: string;
 }
 
 interface Service {
@@ -37,6 +38,7 @@ interface Service {
   labels?: Record<string, string>;
   verifiedDomains?: string[];
   hostNetwork?: boolean;
+  nodeName?: string;
 }
 
 interface MigrationPlan {
@@ -50,13 +52,14 @@ interface MigrationPlan {
 export default function ServicesPlugin() {
   const router = useRouter();
   const [services, setServices] = useState<Service[]>([]);
+  const [filteredServices, setFilteredServices] = useState<Service[]>([]);
   const [discoveredServices, setDiscoveredServices] = useState<DiscoveredService[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [showActions, setShowActions] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [serviceToDelete, setServiceToDelete] = useState<string | null>(null);
+  const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
@@ -66,7 +69,7 @@ export default function ServicesPlugin() {
   const [selectedForMigration, setSelectedForMigration] = useState<DiscoveredService | null>(null);
   const [migrationName, setMigrationName] = useState('');
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [selectedNode, setSelectedNode] = useState<string>('');
+  const [selectedNodeFilter, setSelectedNodeFilter] = useState<string>('all');
   const { addToast, updateToast } = useToast();
 
   // Link Modal State
@@ -78,14 +81,36 @@ export default function ServicesPlugin() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const query = selectedNode ? `?node=${selectedNode}` : '';
-      const [servicesRes, discoveryRes] = await Promise.all([
-        fetch(`/api/services${query}`),
-        fetch(`/api/system/discovery${query}`)
-      ]);
-      
-      if (servicesRes.ok) setServices(await servicesRes.json());
-      if (discoveryRes.ok) setDiscoveredServices(await discoveryRes.json());
+      const nodeList = await getNodes();
+      setNodes(nodeList);
+
+      const targets = ['', ...nodeList.map(n => n.Name)];
+      const results = await Promise.all(targets.map(async (node) => {
+        try {
+            const query = node ? `?node=${node}` : '';
+            const [servicesRes, discoveryRes] = await Promise.all([
+                fetch(`/api/services${query}`),
+                fetch(`/api/system/discovery${query}`)
+            ]);
+            
+            const servicesData = servicesRes.ok ? await servicesRes.json() : [];
+            const discoveryData = discoveryRes.ok ? await discoveryRes.json() : [];
+
+            return {
+                services: servicesData.map((s: Service) => ({ ...s, nodeName: node || 'Local' })),
+                discovery: discoveryData.map((s: DiscoveredService) => ({ ...s, nodeName: node || 'Local' }))
+            };
+        } catch (e) {
+            console.error(`Failed to fetch services for node ${node}`, e);
+            return { services: [], discovery: [] };
+        }
+      }));
+
+      const allServices = results.flatMap(r => r.services);
+      const allDiscovery = results.flatMap(r => r.discovery);
+
+      setServices(allServices);
+      setDiscoveredServices(allDiscovery);
     } catch (error) {
       console.error('Failed to fetch services', error);
       addToast('error', 'Failed to fetch services');
@@ -94,6 +119,27 @@ export default function ServicesPlugin() {
     }
   };
 
+  useEffect(() => {
+      let filtered = services;
+      
+      // Filter by Node
+      if (selectedNodeFilter !== 'all') {
+          filtered = filtered.filter(s => s.nodeName === selectedNodeFilter);
+      }
+
+      // Filter by Search
+      if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          filtered = filtered.filter(s => 
+              s.name.toLowerCase().includes(q) ||
+              (s.description && s.description.toLowerCase().includes(q)) ||
+              (s.nodeName && s.nodeName.toLowerCase().includes(q))
+          );
+      }
+      
+      setFilteredServices(filtered);
+  }, [services, selectedNodeFilter, searchQuery]);
+
   const openMigrationModal = async (service: DiscoveredService) => {
       setSelectedForMigration(service);
       setMigrationName(service.serviceName.replace('.service', ''));
@@ -101,7 +147,7 @@ export default function ServicesPlugin() {
       
       // Fetch Plan
       try {
-          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const query = service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : '';
           const res = await fetch(`/api/system/discovery/migrate${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -120,7 +166,7 @@ export default function ServicesPlugin() {
       if (!selectedForMigration) return;
       
       try {
-          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const query = selectedForMigration.nodeName && selectedForMigration.nodeName !== 'Local' ? `?node=${selectedForMigration.nodeName}` : '';
           const res = await fetch(`/api/system/discovery/migrate${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -143,7 +189,7 @@ export default function ServicesPlugin() {
       if (!selectedForMigration) return;
       
       try {
-          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const query = selectedForMigration.nodeName && selectedForMigration.nodeName !== 'Local' ? `?node=${selectedForMigration.nodeName}` : '';
           const res = await fetch(`/api/system/discovery/migrate${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -171,7 +217,8 @@ export default function ServicesPlugin() {
       const servicesToMerge = discoveredServices.filter(s => selectedForMerge.includes(s.serviceName));
       
       try {
-          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const nodeName = servicesToMerge[0]?.nodeName;
+          const query = nodeName && nodeName !== 'Local' ? `?node=${nodeName}` : '';
           const res = await fetch(`/api/system/discovery/merge${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -196,7 +243,8 @@ export default function ServicesPlugin() {
       const servicesToMerge = discoveredServices.filter(s => selectedForMerge.includes(s.serviceName));
       
       try {
-          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const nodeName = servicesToMerge[0]?.nodeName;
+          const query = nodeName && nodeName !== 'Local' ? `?node=${nodeName}` : '';
           const res = await fetch(`/api/system/discovery/merge${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -258,8 +306,8 @@ export default function ServicesPlugin() {
   }, []);
 
   useEffect(() => {
-      fetchData();
-  }, [selectedNode]);
+      // fetchData(); // No need to fetch on filter change
+  }, [selectedNodeFilter]);
 
   const handleEditLink = (service: Service) => {
     setLinkForm({
@@ -302,8 +350,8 @@ export default function ServicesPlugin() {
     }
   };
 
-  const confirmDelete = (name: string) => {
-    setServiceToDelete(name);
+  const confirmDelete = (service: Service) => {
+    setServiceToDelete(service);
     setDeleteModalOpen(true);
   };
 
@@ -311,13 +359,14 @@ export default function ServicesPlugin() {
     if (!serviceToDelete) return;
     setDeleteModalOpen(false);
     
-    const toastId = addToast('loading', 'Deleting service...', `Removing ${serviceToDelete}`, 0);
+    const toastId = addToast('loading', 'Deleting service...', `Removing ${serviceToDelete.name}`, 0);
 
     try {
-        const query = selectedNode ? `?node=${selectedNode}` : '';
-        const res = await fetch(`/api/services/${serviceToDelete}${query}`, { method: 'DELETE' });
+        const nodeParam = serviceToDelete.nodeName === 'Local' ? '' : serviceToDelete.nodeName;
+        const query = nodeParam ? `?node=${nodeParam}` : '';
+        const res = await fetch(`/api/services/${serviceToDelete.name}${query}`, { method: 'DELETE' });
         if (res.ok) {
-            updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete} has been removed.`);
+            updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete.name} has been removed.`);
             fetchData();
         } else {
             const data = await res.json();
@@ -340,7 +389,8 @@ export default function ServicesPlugin() {
     const toastId = addToast('loading', 'Action in progress', `Executing ${action} on ${selectedService.name}...`, 0);
 
     try {
-        const query = selectedNode ? `?node=${selectedNode}` : '';
+        const nodeParam = selectedService.nodeName === 'Local' ? '' : selectedService.nodeName;
+        const query = nodeParam ? `?node=${nodeParam}` : '';
         const res = await fetch(`/api/services/${selectedService.name}/action${query}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -364,16 +414,14 @@ export default function ServicesPlugin() {
     }
   };
 
-  const filteredServices = services.filter(s => 
-    s.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // filteredServices is already computed in useEffect
 
   return (
     <div className="h-full flex flex-col relative">
       <ConfirmModal 
         isOpen={deleteModalOpen}
         title="Delete Service"
-        message={`Are you sure you want to delete service "${serviceToDelete}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete service "${serviceToDelete?.name}"? This action cannot be undone.`}
         confirmText="Delete"
         isDestructive
         onConfirm={handleDelete}
@@ -388,11 +436,12 @@ export default function ServicesPlugin() {
                 <div className="flex items-center gap-2 mr-2">
                     <Server size={16} className="text-gray-500" />
                     <select 
-                        value={selectedNode} 
-                        onChange={(e) => setSelectedNode(e.target.value)}
+                        value={selectedNodeFilter} 
+                        onChange={(e) => setSelectedNodeFilter(e.target.value)}
                         className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                     >
-                        <option value="">Local (Default)</option>
+                        <option value="all">All Servers</option>
+                        <option value="Local">Local (Default)</option>
                         {nodes.map(node => (
                             <option key={node.Name} value={node.Name}>{node.Name}</option>
                         ))}
@@ -440,6 +489,12 @@ export default function ServicesPlugin() {
                             <div>
                                 <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 flex items-center gap-2">
                                     {service.name}
+                                    {service.nodeName && service.nodeName !== 'Local' && (
+                                        <span className="text-xs font-normal px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 rounded text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                                            <Server size={10} />
+                                            {service.nodeName}
+                                        </span>
+                                    )}
                                     {service.type === 'link' && <span className="text-xs font-normal px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-500">Link</span>}
                                     {service.type === 'gateway' && <span className="text-xs font-normal px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 rounded text-amber-600 dark:text-amber-400">Gateway</span>}
                                     {service.labels && service.labels['podcli.role'] === 'reverse-proxy' && <span className="text-xs font-normal px-2 py-0.5 bg-green-100 dark:bg-green-900/30 rounded text-green-600 dark:text-green-400">Reverse Proxy</span>}
@@ -479,7 +534,7 @@ export default function ServicesPlugin() {
                                     <button onClick={() => handleEditLink(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit Link">
                                         <Edit size={18} />
                                     </button>
-                                    <button onClick={() => confirmDelete(service.name)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
+                                    <button onClick={() => confirmDelete(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
                                         <Trash2 size={18} />
                                     </button>
                                 </>
@@ -880,7 +935,7 @@ export default function ServicesPlugin() {
                     <button 
                         onClick={() => {
                             setShowActions(false);
-                            confirmDelete(selectedService.name);
+                            if (selectedService) confirmDelete(selectedService);
                         }}
                         disabled={actionLoading}
                         className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-red-600 dark:text-red-400"
