@@ -432,8 +432,10 @@ export default function NetworkPlugin() {
   const matchesSearch = useCallback((node: Node, query: string) => {
     if (!query) return true;
     const q = query.toLowerCase();
-    const data = node.data;
-    const raw = data.rawData || {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = node.data as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = (data.rawData || {}) as any;
     
     // Check basic fields
     if (data.label && String(data.label).toLowerCase().includes(q)) return true;

@@ -1,15 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import yaml from 'js-yaml';
+import { getExecutor, Executor } from './executor';
+import { PodmanConnection } from './nodes';
 
-const execAsync = promisify(exec);
-
-const SYSTEMD_DIR = path.join(os.homedir(), '.config/containers/systemd');
+// We assume standard paths for now. In a real remote scenario, we might need to discover these.
+// For SSH connections, we assume the user is the same, so paths are relative to their home.
+// But wait, os.homedir() returns the container's home dir.
+// We need a way to get the remote home dir.
+// For now, let's assume ~/.config/containers/systemd is the standard.
+const SYSTEMD_DIR = '.config/containers/systemd';
 
 export interface ServiceInfo {
   name: string;
@@ -24,35 +26,60 @@ export interface ServiceInfo {
   volumes: { host: string; container: string }[];
   labels: Record<string, string>;
   hostNetwork?: boolean;
+  node?: string; // Added node name
 }
 
-export async function listServices(): Promise<ServiceInfo[]> {
+export async function listServices(connection?: PodmanConnection): Promise<ServiceInfo[]> {
+  const executor = getExecutor(connection);
+  
+  // Resolve home dir on remote if needed, but using relative path from home is safer for SSH
+  // `ls .config/containers/systemd` works if we are in home.
+  // SSH usually lands in home.
+  
   try {
-    await fs.access(SYSTEMD_DIR);
-  } catch {
-    await fs.mkdir(SYSTEMD_DIR, { recursive: true });
+    if (!(await executor.exists(SYSTEMD_DIR))) {
+        await executor.mkdir(SYSTEMD_DIR);
+    }
+  } catch (e) {
+      console.error('Failed to access systemd dir', e);
+      return [];
   }
 
-  const files = await fs.readdir(SYSTEMD_DIR);
-  const kubeFiles = files.filter(f => f.endsWith('.kube'));
+  let files: string[] = [];
+  try {
+      files = await executor.readdir(SYSTEMD_DIR);
+  } catch (e) {
+      console.error('Failed to read systemd dir', e);
+      return [];
+  }
 
+  const kubeFiles = files.filter(f => f.endsWith('.kube'));
   const services: ServiceInfo[] = [];
 
   for (const kubeFile of kubeFiles) {
     const name = kubeFile.replace('.kube', '');
-    const content = await fs.readFile(path.join(SYSTEMD_DIR, kubeFile), 'utf-8');
+    const kubePath = path.join(SYSTEMD_DIR, kubeFile);
+    
+    let content = '';
+    try {
+        content = await executor.readFile(kubePath);
+    } catch (e) {
+        console.error(`Failed to read ${kubePath}`, e);
+        continue;
+    }
     
     // Extract Yaml file name from [Kube] section
     const yamlMatch = content.match(/Yaml=(.+)/);
     const yamlFile = yamlMatch ? yamlMatch[1].trim() : null;
     
-    const kubePath = path.join(SYSTEMD_DIR, kubeFile);
     let yamlPath = null;
     if (yamlFile) {
-        if (path.isAbsolute(yamlFile)) {
+        // If absolute, use it. If relative, join with SYSTEMD_DIR
+        // Note: path.join uses local OS separator. For SSH (Linux), we should force forward slashes.
+        if (yamlFile.startsWith('/')) {
             yamlPath = yamlFile;
         } else {
-            yamlPath = path.join(SYSTEMD_DIR, yamlFile);
+            yamlPath = `${SYSTEMD_DIR}/${yamlFile}`;
         }
     }
 
@@ -65,7 +92,7 @@ export async function listServices(): Promise<ServiceInfo[]> {
     let hostNetwork = false;
 
     try {
-      const { stdout } = await execAsync(`systemctl --user is-active ${name}.service`);
+      const { stdout } = await executor.exec(`systemctl --user is-active ${name}.service`);
       status = stdout.trim();
       active = status === 'active';
     } catch (e) {
@@ -74,10 +101,10 @@ export async function listServices(): Promise<ServiceInfo[]> {
 
     try {
       // Get Description
-      const { stdout: descStdout } = await execAsync(`systemctl --user show -p Description --value ${name}.service`);
+      const { stdout: descStdout } = await executor.exec(`systemctl --user show -p Description --value ${name}.service`);
       description = descStdout.trim();
     } catch (e) {
-      console.warn(`Failed to get description for ${name}`, e);
+      // console.warn(`Failed to get description for ${name}`, e);
     }
 
     // Fallback: If systemd description is empty (e.g. unit not loaded yet), try to parse from .kube file
@@ -90,7 +117,7 @@ export async function listServices(): Promise<ServiceInfo[]> {
 
     if (yamlPath) {
         try {
-            const yamlContent = await fs.readFile(yamlPath, 'utf-8');
+            const yamlContent = await executor.readFile(yamlPath);
             // Handle multi-document YAML files
             const documents = yaml.loadAll(yamlContent) as any[];
             
@@ -172,8 +199,9 @@ export async function listServices(): Promise<ServiceInfo[]> {
   return services;
 }
 
-export async function getServiceFiles(name: string) {
-  const kubePath = path.join(SYSTEMD_DIR, `${name}.kube`);
+export async function getServiceFiles(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  const kubePath = `${SYSTEMD_DIR}/${name}.kube`;
   let kubeContent = '';
   let yamlContent = '';
   let yamlPath = '';
@@ -181,18 +209,18 @@ export async function getServiceFiles(name: string) {
   let servicePath = '';
 
   try {
-    kubeContent = await fs.readFile(kubePath, 'utf-8');
+    kubeContent = await executor.readFile(kubePath);
     const yamlMatch = kubeContent.match(/Yaml=(.+)/);
     if (yamlMatch) {
       const yamlFileName = yamlMatch[1].trim();
-      if (path.isAbsolute(yamlFileName)) {
+      if (yamlFileName.startsWith('/')) {
         yamlPath = yamlFileName;
       } else {
-        yamlPath = path.join(SYSTEMD_DIR, yamlFileName);
+        yamlPath = `${SYSTEMD_DIR}/${yamlFileName}`;
       }
       
       try {
-        yamlContent = await fs.readFile(yamlPath, 'utf-8');
+        yamlContent = await executor.readFile(yamlPath);
       } catch (e) {
         console.error(`Could not read yaml file ${yamlPath}`, e);
       }
@@ -200,10 +228,10 @@ export async function getServiceFiles(name: string) {
 
     // Try to fetch the generated service content
     try {
-        const { stdout } = await execAsync(`systemctl --user cat ${name}.service`);
+        const { stdout } = await executor.exec(`systemctl --user cat ${name}.service`);
         serviceContent = stdout;
 
-        const { stdout: pathOut } = await execAsync(`systemctl --user show -p FragmentPath ${name}.service`);
+        const { stdout: pathOut } = await executor.exec(`systemctl --user show -p FragmentPath ${name}.service`);
         const match = pathOut.match(/FragmentPath=(.+)/);
         if (match) {
             servicePath = match[1].trim();
@@ -221,11 +249,12 @@ export async function getServiceFiles(name: string) {
 
 import { saveSnapshot } from './history';
 
-export async function updateServiceDescription(name: string, description: string) {
-  const kubePath = path.join(SYSTEMD_DIR, `${name}.kube`);
+export async function updateServiceDescription(name: string, description: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  const kubePath = `${SYSTEMD_DIR}/${name}.kube`;
   
   try {
-    let content = await fs.readFile(kubePath, 'utf-8');
+    let content = await executor.readFile(kubePath);
     const lines = content.split('\n');
     let unitIndex = -1;
     let descIndex = -1;
@@ -255,56 +284,62 @@ export async function updateServiceDescription(name: string, description: string
         content = lines.join('\n');
     }
 
-    await fs.writeFile(kubePath, content);
-    await execAsync('systemctl --user daemon-reload');
+    await executor.writeFile(kubePath, content);
+    await executor.exec('systemctl --user daemon-reload');
   } catch (e) {
     throw new Error(`Failed to update description for ${name}: ${e}`);
   }
 }
 
-export async function saveService(name: string, kubeContent: string, yamlContent: string, yamlFileName: string) {
-  const kubePath = path.join(SYSTEMD_DIR, `${name}.kube`);
-  const yamlPath = path.join(SYSTEMD_DIR, yamlFileName);
+export async function saveService(name: string, kubeContent: string, yamlContent: string, yamlFileName: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  const kubePath = `${SYSTEMD_DIR}/${name}.kube`;
+  const yamlPath = `${SYSTEMD_DIR}/${yamlFileName}`;
 
   // Save snapshots of existing files if they exist
-  try {
-    const existingKube = await fs.readFile(kubePath, 'utf-8');
-    await saveSnapshot(path.basename(kubePath), existingKube);
-  } catch (e) { /* ignore if new file */ }
+  // Only for local connection for now
+  if (!connection) {
+    try {
+        const existingKube = await executor.readFile(kubePath);
+        await saveSnapshot(path.basename(kubePath), existingKube);
+    } catch (e) { /* ignore if new file */ }
 
-  try {
-    const existingYaml = await fs.readFile(yamlPath, 'utf-8');
-    await saveSnapshot(path.basename(yamlPath), existingYaml);
-  } catch (e) { /* ignore if new file */ }
+    try {
+        const existingYaml = await executor.readFile(yamlPath);
+        await saveSnapshot(path.basename(yamlPath), existingYaml);
+    } catch (e) { /* ignore if new file */ }
+  }
 
-  await fs.writeFile(kubePath, kubeContent);
-  await fs.writeFile(yamlPath, yamlContent);
+  await executor.writeFile(kubePath, kubeContent);
+  await executor.writeFile(yamlPath, yamlContent);
 
   // Reload systemd
-  await execAsync('systemctl --user daemon-reload');
+  await executor.exec('systemctl --user daemon-reload');
 }
 
-export async function deleteService(name: string) {
-  const { yamlPath } = await getServiceFiles(name);
-  const kubePath = path.join(SYSTEMD_DIR, `${name}.kube`);
+export async function deleteService(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  const { yamlPath } = await getServiceFiles(name, connection);
+  const kubePath = `${SYSTEMD_DIR}/${name}.kube`;
 
   try {
-    await execAsync(`systemctl --user stop ${name}.service`);
+    await executor.exec(`systemctl --user stop ${name}.service`);
   } catch (e) {
     // Ignore if already stopped or not loaded
   }
 
-  await fs.unlink(kubePath);
-  if (yamlPath && (await fs.stat(yamlPath).catch(() => false))) {
-    await fs.unlink(yamlPath);
+  await executor.rm(kubePath);
+  if (yamlPath && (await executor.exists(yamlPath))) {
+    await executor.rm(yamlPath);
   }
 
-  await execAsync('systemctl --user daemon-reload');
+  await executor.exec('systemctl --user daemon-reload');
 }
 
-export async function getServiceLogs(name: string) {
+export async function getServiceLogs(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
   try {
-    const { stdout } = await execAsync(`journalctl --user -u ${name}.service -n 100 --no-pager`);
+    const { stdout } = await executor.exec(`journalctl --user -u ${name}.service -n 100 --no-pager`);
     return stdout;
   } catch (e) {
     console.error('Error fetching service logs:', e);
@@ -312,10 +347,11 @@ export async function getServiceLogs(name: string) {
   }
 }
 
-export async function getPodmanLogs() {
+export async function getPodmanLogs(connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
   try {
     // Fetch general podman logs from journal
-    const { stdout } = await execAsync(`journalctl --user -t podman -n 100 --no-pager`);
+    const { stdout } = await executor.exec(`journalctl --user -t podman -n 100 --no-pager`);
     return stdout;
   } catch (e) {
     console.error('Error fetching podman logs:', e);
@@ -323,9 +359,17 @@ export async function getPodmanLogs() {
   }
 }
 
-export async function getPodmanPs() {
+export async function getPodmanPs(connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
   try {
-    const { stdout } = await execAsync(`podman ps -a --pod --format json`);
+    // If connection is provided, we use podman -c <connection>
+    // BUT, our executor is already wrapping SSH.
+    // If we use SSHExecutor, we are running `ssh user@host 'podman ps ...'`
+    // This is equivalent to `podman -c connection ps ...` but more generic.
+    // However, `podman -c` uses the podman socket, while `ssh podman` uses the CLI on the remote host.
+    // Using the CLI on the remote host is safer because it doesn't require the socket to be exposed or forwarded.
+    
+    const { stdout } = await executor.exec(`podman ps -a --pod --format json`);
     const containers = JSON.parse(stdout);
     // Filter out system containers
      
@@ -340,18 +384,20 @@ export async function getPodmanPs() {
   }
 }
 
-export async function getContainerLogs(containerId: string) {
+export async function getContainerLogs(containerId: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
   try {
-    const { stdout, stderr } = await execAsync(`podman logs --tail 100 ${containerId}`);
+    const { stdout, stderr } = await executor.exec(`podman logs --tail 100 ${containerId}`);
     return stdout + (stderr ? '\n' + stderr : '');
   } catch (e: any) {
     return (e.stdout || '') + (e.stderr ? '\n' + e.stderr : '');
   }
 }
 
-export async function getServiceStatus(name: string) {
+export async function getServiceStatus(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
   try {
-    const { stdout } = await execAsync(`systemctl --user status ${name}.service`);
+    const { stdout } = await executor.exec(`systemctl --user status ${name}.service`);
     return stdout;
   } catch (e: any) {
     // systemctl status returns non-zero exit code if service is not running, but we still want the output
@@ -359,19 +405,15 @@ export async function getServiceStatus(name: string) {
   }
 }
 
-export async function getAllSystemServices() {
+export async function getAllSystemServices(connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
   try {
     // List both user and system services? 
     // Usually 'systemctl list-units' lists system services. 
     // 'systemctl --user list-units' lists user services.
     // Let's provide system services as requested.
-    const { stdout } = await execAsync('systemctl list-units --type=service --all --no-pager --plain --no-legend --output=json');
-    // Note: --output=json is available in newer systemd versions. 
-    // If not available, we might need to parse text.
-    // Let's try text parsing for compatibility if json fails or just use text parsing to be safe.
-    
     // Actually, let's stick to text parsing for broader compatibility
-    const { stdout: textOut } = await execAsync('systemctl list-units --type=service --all --no-pager --plain --no-legend');
+    const { stdout: textOut } = await executor.exec('systemctl list-units --type=service --all --no-pager --plain --no-legend');
     
     return textOut.split('\n')
       .filter(line => line.trim())
@@ -391,13 +433,14 @@ export async function getAllSystemServices() {
   }
 }
 
-export async function updateAndRestartService(name: string) {
-  const { yamlPath } = await getServiceFiles(name);
+export async function updateAndRestartService(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  const { yamlPath } = await getServiceFiles(name, connection);
   const logs: string[] = [];
 
   if (yamlPath) {
     try {
-      const content = await fs.readFile(yamlPath, 'utf-8');
+      const content = await executor.readFile(yamlPath);
       const parsed = yaml.load(content) as any;
       
       // Find images in Pod spec
@@ -417,7 +460,7 @@ export async function updateAndRestartService(name: string) {
       for (const image of images) {
         logs.push(`Pulling image: ${image}`);
         try {
-            await execAsync(`podman pull ${image}`);
+            await executor.exec(`podman pull ${image}`);
             logs.push(`Successfully pulled ${image}`);
         } catch (e: any) {
             logs.push(`Failed to pull ${image}: ${e.message}`);
@@ -433,53 +476,58 @@ export async function updateAndRestartService(name: string) {
   }
 
   logs.push('Reloading systemd daemon...');
-  await execAsync('systemctl --user daemon-reload');
+  await executor.exec('systemctl --user daemon-reload');
 
   logs.push(`Stopping service ${name}...`);
   try {
-    await execAsync(`systemctl --user stop ${name}.service`);
+    await executor.exec(`systemctl --user stop ${name}.service`);
   } catch (e) {}
 
   logs.push(`Starting service ${name}...`);
   try {
-    await execAsync(`systemctl --user start ${name}.service`);
+    await executor.exec(`systemctl --user start ${name}.service`);
   } catch (e: any) {
      logs.push(`Error starting service: ${e.message}`);
   }
 
-  const status = await getServiceStatus(name);
+  const status = await getServiceStatus(name, connection);
   return { logs, status };
 }
 
-export async function startService(name: string) {
-  await execAsync(`systemctl --user start ${name}.service`);
-  return getServiceStatus(name);
+export async function startService(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`systemctl --user start ${name}.service`);
+  return getServiceStatus(name, connection);
 }
 
-export async function stopService(name: string) {
-  await execAsync(`systemctl --user stop ${name}.service`);
-  return getServiceStatus(name);
+export async function stopService(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`systemctl --user stop ${name}.service`);
+  return getServiceStatus(name, connection);
 }
 
-export async function restartService(name: string) {
-  await execAsync(`systemctl --user restart ${name}.service`);
-  return getServiceStatus(name);
+export async function restartService(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`systemctl --user restart ${name}.service`);
+  return getServiceStatus(name, connection);
 }
 
-export async function renameService(oldName: string, newName: string) {
-  const oldKubePath = path.join(SYSTEMD_DIR, `${oldName}.kube`);
-  const newKubePath = path.join(SYSTEMD_DIR, `${newName}.kube`);
+export async function renameService(oldName: string, newName: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  const oldKubePath = `${SYSTEMD_DIR}/${oldName}.kube`;
+  const newKubePath = `${SYSTEMD_DIR}/${newName}.kube`;
   
   // Check if new service already exists
   try {
-    await fs.access(newKubePath);
-    throw new Error(`Service ${newName} already exists`);
+    if (await executor.exists(newKubePath)) {
+        throw new Error(`Service ${newName} already exists`);
+    }
   } catch (e: any) {
-    if (e.code !== 'ENOENT') throw e;
+    // Ignore
   }
 
   // Get old file info
-  const content = await fs.readFile(oldKubePath, 'utf-8');
+  const content = await executor.readFile(oldKubePath);
   const yamlMatch = content.match(/Yaml=(.+)/);
   const oldYamlFile = yamlMatch ? yamlMatch[1].trim() : null;
   
@@ -487,24 +535,27 @@ export async function renameService(oldName: string, newName: string) {
       throw new Error('Could not determine YAML file from .kube file');
   }
 
-  const oldYamlPath = path.isAbsolute(oldYamlFile) 
-      ? oldYamlFile 
-      : path.join(SYSTEMD_DIR, oldYamlFile);
+  let oldYamlPath = '';
+  if (oldYamlFile.startsWith('/')) {
+      oldYamlPath = oldYamlFile;
+  } else {
+      oldYamlPath = `${SYSTEMD_DIR}/${oldYamlFile}`;
+  }
   
   // Determine new YAML path (we rename it to match the new service name)
   const newYamlFile = `${newName}.yml`;
-  const newYamlPath = path.join(SYSTEMD_DIR, newYamlFile);
+  const newYamlPath = `${SYSTEMD_DIR}/${newYamlFile}`;
 
   // 1. Stop and Disable old service
   try {
-      await execAsync(`systemctl --user disable --now ${oldName}.service`);
+      await executor.exec(`systemctl --user disable --now ${oldName}.service`);
   } catch (e) {
       console.warn('Failed to stop old service', e);
   }
 
   // 2. Rename YAML file
   try {
-      await fs.rename(oldYamlPath, newYamlPath);
+      await executor.rename(oldYamlPath, newYamlPath);
   } catch (e) {
       throw new Error(`Failed to rename YAML file: ${e}`);
   }
@@ -515,41 +566,47 @@ export async function renameService(oldName: string, newName: string) {
   // Also update AutoUpdate if present to ensure it's clean
   // (Optional, but good practice to ensure consistency)
 
-  await fs.writeFile(newKubePath, newKubeContent);
-  await fs.unlink(oldKubePath);
+  await executor.writeFile(newKubePath, newKubeContent);
+  await executor.rm(oldKubePath);
 
   // 4. Reload Daemon and Start new service
-  await execAsync('systemctl --user daemon-reload');
+  await executor.exec('systemctl --user daemon-reload');
   try {
-      await execAsync(`systemctl --user enable --now ${newName}.service`);
+      await executor.exec(`systemctl --user enable --now ${newName}.service`);
   } catch (e) {
       throw new Error(`Failed to start new service: ${e}`);
   }
 }
 
-export async function stopContainer(id: string) {
-  await execAsync(`podman stop ${id}`);
+export async function stopContainer(id: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`podman stop ${id}`);
 }
 
-export async function forceStopContainer(id: string) {
-  await execAsync(`podman stop -t 0 ${id}`);
+export async function forceStopContainer(id: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`podman stop -t 0 ${id}`);
 }
 
-export async function restartContainer(id: string) {
-  await execAsync(`podman restart ${id}`);
+export async function restartContainer(id: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`podman restart ${id}`);
 }
 
-export async function forceRestartContainer(id: string) {
-  await execAsync(`podman restart -t 0 ${id}`);
+export async function forceRestartContainer(id: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`podman restart -t 0 ${id}`);
 }
 
-export async function deleteContainer(id: string) {
-  await execAsync(`podman rm -f ${id}`);
+export async function deleteContainer(id: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`podman rm -f ${id}`);
 }
 
-export async function getContainerInspect(id: string) {
+export async function getContainerInspect(id: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
   try {
-    const { stdout } = await execAsync(`podman inspect ${id}`);
+    const { stdout } = await executor.exec(`podman inspect ${id}`);
     const data = JSON.parse(stdout);
     return data[0];
   } catch (e) {
@@ -558,13 +615,14 @@ export async function getContainerInspect(id: string) {
   }
 }
 
-export async function getAllContainersInspect() {
+export async function getAllContainersInspect(connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
   try {
     // Get all container IDs first
-    const { stdout: ids } = await execAsync('podman ps -a -q');
+    const { stdout: ids } = await executor.exec('podman ps -a -q');
     if (!ids.trim()) return [];
     
-    const { stdout } = await execAsync(`podman inspect ${ids.split('\n').join(' ')}`);
+    const { stdout } = await executor.exec(`podman inspect ${ids.split('\n').join(' ')}`);
     return JSON.parse(stdout);
   } catch (e) {
     console.error('Error inspecting all containers:', e);

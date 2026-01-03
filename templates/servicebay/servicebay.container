@@ -1,0 +1,17 @@
+[Unit]
+Description=ServiceBay Container Management Interface
+Documentation=https://github.com/mdopp/podcli
+After=network-online.target
+
+[Container]
+Image=ghcr.io/mdopp/podcli:latest
+ContainerName=servicebay
+AutoUpdate=registry
+PublishPort=3000:3000
+# Persist application data (settings, history, etc.)
+Volume=servicebay-data:/app/data
+# Optional: Mount SSH keys if you want to pre-configure connections
+# Volume=/home/user/.ssh:/root/.ssh:ro
+
+[Install]
+WantedBy=multi-user.target

@@ -5,12 +5,22 @@ import { MonitoringStore } from '@/lib/monitoring/store';
 import { FritzBoxClient } from '@/lib/fritzbox/client';
 import { NginxParser } from '@/lib/nginx/parser';
 import { checkDomains } from '@/lib/network/dns';
+import { listNodes } from '@/lib/nodes';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  const services = await listServices();
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const nodeName = searchParams.get('node');
+  
+  let connection;
+  if (nodeName) {
+      const nodes = await listNodes();
+      connection = nodes.find(n => n.Name === nodeName);
+  }
+
+  const services = await listServices(connection);
   const config = await getConfig();
   const links = config.externalLinks || [];
 
@@ -87,6 +97,14 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const body = await request.json();
+  const { searchParams } = new URL(request.url);
+  const nodeName = searchParams.get('node');
+  
+  let connection;
+  if (nodeName) {
+      const nodes = await listNodes();
+      connection = nodes.find(n => n.Name === nodeName);
+  }
   
   // Handle Link Creation
   if (body.type === 'link') {
@@ -134,6 +152,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
-  await saveService(name, kubeContent, yamlContent, yamlFileName);
+  await saveService(name, kubeContent, yamlContent, yamlFileName, connection);
   return NextResponse.json({ success: true });
 }

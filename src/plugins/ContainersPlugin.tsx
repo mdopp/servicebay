@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw, Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft, Search } from 'lucide-react';
+import { RefreshCw, Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft, Search, Server } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
+import { getNodes } from '@/app/actions/nodes';
+import { PodmanConnection } from '@/lib/nodes';
 
 interface Container {
   Id: string;
@@ -31,12 +33,15 @@ export default function ContainersPlugin() {
   const [actionLoading, setActionLoading] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [selectedNode, setSelectedNode] = useState<string>('');
   const { addToast, updateToast } = useToast();
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/containers');
+      const query = selectedNode ? `?node=${selectedNode}` : '';
+      const res = await fetch(`/api/containers${query}`);
       if (res.ok) setContainers(await res.json());
     } catch (error) {
       console.error('Failed to fetch containers', error);
@@ -47,6 +52,7 @@ export default function ContainersPlugin() {
   };
 
   useEffect(() => {
+    getNodes().then(n => setNodes(n));
     fetchData();
 
     // Setup SSE for real-time updates
@@ -71,6 +77,10 @@ export default function ContainersPlugin() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+      fetchData();
+  }, [selectedNode]);
 
   const openLogs = (container: Container) => {
     router.push(`/containers/${container.Id}/logs`);
@@ -101,7 +111,8 @@ export default function ContainersPlugin() {
     const toastId = addToast('loading', 'Action in progress', `Executing ${action} on container...`, 0);
 
     try {
-        const res = await fetch(`/api/containers/${selectedContainer.Id}/action`, {
+        const query = selectedNode ? `?node=${selectedNode}` : '';
+        const res = await fetch(`/api/containers/${selectedContainer.Id}/action${query}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action })
@@ -172,9 +183,24 @@ export default function ContainersPlugin() {
         showBack={false} 
         helpId="containers"
         actions={
-            <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors shrink-0" title="Refresh">
-                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-            </button>
+            <>
+                <div className="flex items-center gap-2 mr-2">
+                    <Server size={16} className="text-gray-500" />
+                    <select 
+                        value={selectedNode} 
+                        onChange={(e) => setSelectedNode(e.target.value)}
+                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                        <option value="">Local (Default)</option>
+                        {nodes.map(node => (
+                            <option key={node.Name} value={node.Name}>{node.Name}</option>
+                        ))}
+                    </select>
+                </div>
+                <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors shrink-0" title="Refresh">
+                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                </button>
+            </>
         }
       >
         <div className="relative flex-1 max-w-md min-w-[100px]">

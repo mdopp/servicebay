@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, ArrowRight } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, ArrowRight, Server } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
+import { getNodes } from '@/app/actions/nodes';
+import { PodmanConnection } from '@/lib/nodes';
 
 interface DiscoveredService {
     serviceName: string;
@@ -63,6 +65,8 @@ export default function ServicesPlugin() {
   const [migrationModalOpen, setMigrationModalOpen] = useState(false);
   const [selectedForMigration, setSelectedForMigration] = useState<DiscoveredService | null>(null);
   const [migrationName, setMigrationName] = useState('');
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [selectedNode, setSelectedNode] = useState<string>('');
   const { addToast, updateToast } = useToast();
 
   // Link Modal State
@@ -74,9 +78,10 @@ export default function ServicesPlugin() {
   const fetchData = async () => {
     setLoading(true);
     try {
+      const query = selectedNode ? `?node=${selectedNode}` : '';
       const [servicesRes, discoveryRes] = await Promise.all([
-        fetch('/api/services'),
-        fetch('/api/system/discovery')
+        fetch(`/api/services${query}`),
+        fetch(`/api/system/discovery${query}`)
       ]);
       
       if (servicesRes.ok) setServices(await servicesRes.json());
@@ -96,7 +101,8 @@ export default function ServicesPlugin() {
       
       // Fetch Plan
       try {
-          const res = await fetch('/api/system/discovery/migrate', {
+          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const res = await fetch(`/api/system/discovery/migrate${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ service, customName: service.serviceName.replace('.service', ''), dryRun: true })
@@ -114,7 +120,8 @@ export default function ServicesPlugin() {
       if (!selectedForMigration) return;
       
       try {
-          const res = await fetch('/api/system/discovery/migrate', {
+          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const res = await fetch(`/api/system/discovery/migrate${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ service: selectedForMigration, customName: migrationName })
@@ -136,7 +143,8 @@ export default function ServicesPlugin() {
       if (!selectedForMigration) return;
       
       try {
-          const res = await fetch('/api/system/discovery/migrate', {
+          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const res = await fetch(`/api/system/discovery/migrate${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ service: selectedForMigration, customName: name, dryRun: true })
@@ -163,7 +171,8 @@ export default function ServicesPlugin() {
       const servicesToMerge = discoveredServices.filter(s => selectedForMerge.includes(s.serviceName));
       
       try {
-          const res = await fetch('/api/system/discovery/merge', {
+          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const res = await fetch(`/api/system/discovery/merge${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ services: servicesToMerge, newName: name, dryRun: true })
@@ -187,7 +196,8 @@ export default function ServicesPlugin() {
       const servicesToMerge = discoveredServices.filter(s => selectedForMerge.includes(s.serviceName));
       
       try {
-          const res = await fetch('/api/system/discovery/merge', {
+          const query = selectedNode ? `?node=${selectedNode}` : '';
+          const res = await fetch(`/api/system/discovery/merge${query}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ services: servicesToMerge, newName: mergeName })
@@ -219,6 +229,7 @@ export default function ServicesPlugin() {
   };
 
   useEffect(() => {
+    getNodes().then(n => setNodes(n));
     fetchData();
 
     // Setup SSE for real-time updates
@@ -245,6 +256,10 @@ export default function ServicesPlugin() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+      fetchData();
+  }, [selectedNode]);
 
   const handleEditLink = (service: Service) => {
     setLinkForm({
@@ -299,7 +314,8 @@ export default function ServicesPlugin() {
     const toastId = addToast('loading', 'Deleting service...', `Removing ${serviceToDelete}`, 0);
 
     try {
-        const res = await fetch(`/api/services/${serviceToDelete}`, { method: 'DELETE' });
+        const query = selectedNode ? `?node=${selectedNode}` : '';
+        const res = await fetch(`/api/services/${serviceToDelete}${query}`, { method: 'DELETE' });
         if (res.ok) {
             updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete} has been removed.`);
             fetchData();
@@ -324,7 +340,8 @@ export default function ServicesPlugin() {
     const toastId = addToast('loading', 'Action in progress', `Executing ${action} on ${selectedService.name}...`, 0);
 
     try {
-        const res = await fetch(`/api/services/${selectedService.name}/action`, {
+        const query = selectedNode ? `?node=${selectedNode}` : '';
+        const res = await fetch(`/api/services/${selectedService.name}/action${query}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action })
@@ -368,6 +385,19 @@ export default function ServicesPlugin() {
         helpId="services"
         actions={
             <>
+                <div className="flex items-center gap-2 mr-2">
+                    <Server size={16} className="text-gray-500" />
+                    <select 
+                        value={selectedNode} 
+                        onChange={(e) => setSelectedNode(e.target.value)}
+                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                        <option value="">Local (Default)</option>
+                        {nodes.map(node => (
+                            <option key={node.Name} value={node.Name}>{node.Name}</option>
+                        ))}
+                    </select>
+                </div>
                 <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
                     <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                 </button>

@@ -2,17 +2,29 @@ import { NextResponse } from 'next/server';
 import { getServiceFiles, deleteService, saveService, updateServiceDescription } from '@/lib/manager';
 import { getConfig, saveConfig } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
+import { listNodes } from '@/lib/nodes';
 import crypto from 'crypto';
+
+async function getConnection(request: Request) {
+    const { searchParams } = new URL(request.url);
+    const nodeName = searchParams.get('node');
+    if (nodeName) {
+        const nodes = await listNodes();
+        return nodes.find(n => n.Name === nodeName);
+    }
+    return undefined;
+}
 
 export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
   try {
     const { name } = await params;
+    const connection = await getConnection(request);
     
     // Check if it's a link (optional, but GET usually fetches files for editing)
     // If it's a link, we might return link details? 
     // For now, let's assume GET is only for editing container services.
     
-    const files = await getServiceFiles(name);
+    const files = await getServiceFiles(name, connection);
     return NextResponse.json(files);
   } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -21,6 +33,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
+  const connection = await getConnection(request);
 
   // Check if it's a link
   const config = await getConfig();
@@ -42,13 +55,14 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
     }
   }
 
-  await deleteService(name);
+  await deleteService(name, connection);
   return NextResponse.json({ success: true });
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
   const body = await request.json();
+  const connection = await getConnection(request);
 
   // Check if it's a link update
   if (body.type === 'link') {
@@ -113,7 +127,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
   // Handle Description Update for Managed Service
   if (body.description !== undefined && !body.kubeContent) {
       try {
-          await updateServiceDescription(name, body.description);
+          await updateServiceDescription(name, body.description, connection);
           return NextResponse.json({ success: true });
       } catch (e) {
           const message = e instanceof Error ? e.message : 'Unknown error';
@@ -123,6 +137,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
 
   const { kubeContent, yamlContent, yamlFileName } = body;
    
-  await saveService(name, kubeContent, yamlContent, yamlFileName);
+  await saveService(name, kubeContent, yamlContent, yamlFileName, connection);
   return NextResponse.json({ success: true });
 }

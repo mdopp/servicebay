@@ -1,14 +1,11 @@
 import { getPodmanPs } from './manager';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs/promises';
+import { getExecutor, Executor } from './executor';
+import { PodmanConnection } from './nodes';
 import path from 'path';
-import os from 'os';
 import yaml from 'js-yaml';
 
-const execAsync = promisify(exec);
-const SYSTEMD_DIR = path.join(os.homedir(), '.config/containers/systemd');
-const BACKUP_DIR = path.join(SYSTEMD_DIR, 'backups');
+const SYSTEMD_DIR = '.config/containers/systemd';
+const BACKUP_DIR = `${SYSTEMD_DIR}/backups`;
 
 export interface DiscoveredService {
     serviceName: string;
@@ -21,8 +18,9 @@ export interface DiscoveredService {
     type: 'kube' | 'container' | 'pod' | 'compose' | 'other';
 }
 
-export async function discoverSystemdServices(): Promise<DiscoveredService[]> {
-    const containers = await getPodmanPs();
+export async function discoverSystemdServices(connection?: PodmanConnection): Promise<DiscoveredService[]> {
+    const executor = getExecutor(connection);
+    const containers = await getPodmanPs(connection);
     const servicesMap = new Map<string, { names: string[], ids: string[], podId?: string }>();
 
     // Group containers by systemd unit
@@ -52,7 +50,7 @@ export async function discoverSystemdServices(): Promise<DiscoveredService[]> {
         let status: DiscoveredService['status'] = 'unmanaged';
 
         try {
-            const { stdout } = await execAsync(`systemctl --user show -p FragmentPath -p SourcePath ${serviceName}`);
+            const { stdout } = await executor.exec(`systemctl --user show -p FragmentPath -p SourcePath ${serviceName}`);
             const lines = stdout.split('\n');
             for (const line of lines) {
                 if (line.startsWith('FragmentPath=')) unitFile = line.substring(13);
@@ -73,7 +71,11 @@ export async function discoverSystemdServices(): Promise<DiscoveredService[]> {
 
         // Determine Status (Managed by PodCLI?)
         // PodCLI currently manages .kube files in the SYSTEMD_DIR
-        if (type === 'kube' && sourcePath && sourcePath.startsWith(SYSTEMD_DIR)) {
+        // We need to check if sourcePath is within SYSTEMD_DIR
+        // Since paths might be absolute or relative, and we are remote, this is tricky.
+        // But usually SYSTEMD_DIR is ~/.config/containers/systemd
+        
+        if (type === 'kube' && sourcePath && sourcePath.includes('.config/containers/systemd')) {
             status = 'managed';
         }
 
@@ -106,22 +108,23 @@ export interface MigrationPlan {
     backupDir: string;
 }
 
-async function createBackup(filePath: string, serviceName: string) {
-    try {
-        await fs.access(filePath);
-    } catch {
+
+async function createBackup(executor: Executor, filePath: string, serviceName: string) {
+    if (!await executor.exists(filePath)) {
         return; // File doesn't exist, nothing to backup
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupDir = path.join(BACKUP_DIR, `${timestamp}_${serviceName}`);
-    await fs.mkdir(backupDir, { recursive: true });
+    await executor.mkdir(backupDir);
     
     const fileName = path.basename(filePath);
-    await fs.copyFile(filePath, path.join(backupDir, fileName));
+    const content = await executor.readFile(filePath);
+    await executor.writeFile(path.join(backupDir, fileName), content);
 }
 
-export async function getMigrationPlan(service: DiscoveredService, customName?: string): Promise<MigrationPlan> {
+export async function getMigrationPlan(service: DiscoveredService, customName?: string, connection?: PodmanConnection): Promise<MigrationPlan> {
+    const executor = getExecutor(connection);
     const cleanName = customName || service.serviceName.replace('.service', '');
     const targetKubePath = path.join(SYSTEMD_DIR, `${cleanName}.kube`);
     const targetYamlPath = path.join(SYSTEMD_DIR, `${cleanName}.yml`);
@@ -130,8 +133,8 @@ export async function getMigrationPlan(service: DiscoveredService, customName?: 
     const filesToBackup: string[] = [];
     
     // Check if target files already exist
-    try { await fs.access(targetKubePath); filesToBackup.push(targetKubePath); } catch {}
-    try { await fs.access(targetYamlPath); filesToBackup.push(targetYamlPath); } catch {}
+    if (await executor.exists(targetKubePath)) filesToBackup.push(targetKubePath);
+    if (await executor.exists(targetYamlPath)) filesToBackup.push(targetYamlPath);
 
     return {
         filesToCreate,
@@ -142,16 +145,15 @@ export async function getMigrationPlan(service: DiscoveredService, customName?: 
     };
 }
 
-export async function migrateService(service: DiscoveredService, customName?: string, dryRun = false) {
+export async function migrateService(service: DiscoveredService, customName?: string, dryRun = false, connection?: PodmanConnection) {
+    const executor = getExecutor(connection);
     if (dryRun) {
-        return getMigrationPlan(service, customName);
+        return getMigrationPlan(service, customName, connection);
     }
 
     // Ensure directory exists
-    try {
-        await fs.access(SYSTEMD_DIR);
-    } catch {
-        await fs.mkdir(SYSTEMD_DIR, { recursive: true });
+    if (!await executor.exists(SYSTEMD_DIR)) {
+        await executor.mkdir(SYSTEMD_DIR);
     }
 
     const cleanName = customName || service.serviceName.replace('.service', '');
@@ -159,13 +161,13 @@ export async function migrateService(service: DiscoveredService, customName?: st
     const targetYamlPath = path.join(SYSTEMD_DIR, `${cleanName}.yml`);
 
     // Perform Backups
-    await createBackup(targetKubePath, cleanName);
-    await createBackup(targetYamlPath, cleanName);
+    await createBackup(executor, targetKubePath, cleanName);
+    await createBackup(executor, targetYamlPath, cleanName);
 
     if (service.type === 'kube' && service.sourcePath) {
         // Case 1: Existing .kube file outside managed dir
         // We need to read it to find the referenced YAML
-        const content = await fs.readFile(service.sourcePath, 'utf-8');
+        const content = await executor.readFile(service.sourcePath);
         const yamlMatch = content.match(/Yaml=(.+)/);
         
         if (yamlMatch) {
@@ -174,33 +176,34 @@ export async function migrateService(service: DiscoveredService, customName?: st
             const sourceYamlPath = path.isAbsolute(yamlFile) ? yamlFile : path.join(sourceDir, yamlFile);
             
             // Read and modify YAML to ensure Pod name matches Service name
-            const yamlContent = await fs.readFile(sourceYamlPath, 'utf-8');
+            const yamlContent = await executor.readFile(sourceYamlPath);
             try {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const doc = yaml.load(yamlContent) as any;
                 if (doc && doc.metadata) {
                     doc.metadata.name = cleanName;
                     const modifiedYaml = yaml.dump(doc);
-                    await fs.writeFile(targetYamlPath, modifiedYaml);
+                    await executor.writeFile(targetYamlPath, modifiedYaml);
                 } else {
-                    await fs.writeFile(targetYamlPath, yamlContent);
+                    await executor.writeFile(targetYamlPath, yamlContent);
                 }
             } catch (e) {
                 console.warn('Failed to parse/modify source YAML, copying as is', e);
-                await fs.writeFile(targetYamlPath, yamlContent);
+                await executor.writeFile(targetYamlPath, yamlContent);
             }
             
             // Create new .kube file pointing to new YAML
             const newContent = content.replace(/Yaml=.+/, `Yaml=${cleanName}.yml`);
-            await fs.writeFile(targetKubePath, newContent);
+            await executor.writeFile(targetKubePath, newContent);
         } else {
             // Just copy the kube file if no YAML referenced (unlikely for kube type)
-            await fs.copyFile(service.sourcePath, targetKubePath);
+            const content = await executor.readFile(service.sourcePath);
+            await executor.writeFile(targetKubePath, content);
         }
 
     } else if (service.podId) {
         // Case 2: Generate from running Pod
-        const { stdout } = await execAsync(`podman generate kube ${service.podId}`);
+        const { stdout } = await executor.exec(`podman generate kube ${service.podId}`);
         
         // Parse and modify YAML to ensure Pod name matches Service name
         // This is crucial for the Network Map association logic
@@ -211,13 +214,13 @@ export async function migrateService(service: DiscoveredService, customName?: st
                 doc.metadata.name = cleanName;
                 // Also ensure containers have unique names if needed, but Pod name is most important
                 const modifiedYaml = yaml.dump(doc);
-                await fs.writeFile(targetYamlPath, modifiedYaml);
+                await executor.writeFile(targetYamlPath, modifiedYaml);
             } else {
-                await fs.writeFile(targetYamlPath, stdout);
+                await executor.writeFile(targetYamlPath, stdout);
             }
         } catch (e) {
             console.warn('Failed to parse/modify generated YAML, using raw output', e);
-            await fs.writeFile(targetYamlPath, stdout);
+            await executor.writeFile(targetYamlPath, stdout);
         }
 
         const kubeContent = `[Unit]
@@ -231,16 +234,17 @@ AutoUpdate=registry
 [Install]
 WantedBy=default.target
 `;
-        await fs.writeFile(targetKubePath, kubeContent);
+        await executor.writeFile(targetKubePath, kubeContent);
     } else {
         throw new Error('Cannot migrate: No source file and no Pod ID found');
     }
 
     // Reload systemd
-    await execAsync('systemctl --user daemon-reload');
+    await executor.exec('systemctl --user daemon-reload');
 }
 
-export async function getMergePlan(services: DiscoveredService[], newName: string): Promise<MigrationPlan> {
+export async function getMergePlan(services: DiscoveredService[], newName: string, connection?: PodmanConnection): Promise<MigrationPlan> {
+    const executor = getExecutor(connection);
     const targetKubePath = path.join(SYSTEMD_DIR, `${newName}.kube`);
     const targetYamlPath = path.join(SYSTEMD_DIR, `${newName}.yml`);
 
@@ -248,8 +252,8 @@ export async function getMergePlan(services: DiscoveredService[], newName: strin
     const filesToBackup: string[] = [];
     
     // Check if target files already exist
-    try { await fs.access(targetKubePath); filesToBackup.push(targetKubePath); } catch {}
-    try { await fs.access(targetYamlPath); filesToBackup.push(targetYamlPath); } catch {}
+    if (await executor.exists(targetKubePath)) filesToBackup.push(targetKubePath);
+    if (await executor.exists(targetYamlPath)) filesToBackup.push(targetYamlPath);
 
     return {
         filesToCreate,
@@ -260,24 +264,23 @@ export async function getMergePlan(services: DiscoveredService[], newName: strin
     };
 }
 
-export async function mergeServices(services: DiscoveredService[], newName: string, dryRun = false) {
+export async function mergeServices(services: DiscoveredService[], newName: string, dryRun = false, connection?: PodmanConnection) {
+    const executor = getExecutor(connection);
     if (dryRun) {
-        return getMergePlan(services, newName);
+        return getMergePlan(services, newName, connection);
     }
 
     // Ensure directory exists
-    try {
-        await fs.access(SYSTEMD_DIR);
-    } catch {
-        await fs.mkdir(SYSTEMD_DIR, { recursive: true });
+    if (!await executor.exists(SYSTEMD_DIR)) {
+        await executor.mkdir(SYSTEMD_DIR);
     }
 
     const targetKubePath = path.join(SYSTEMD_DIR, `${newName}.kube`);
     const targetYamlPath = path.join(SYSTEMD_DIR, `${newName}.yml`);
 
     // Perform Backups
-    await createBackup(targetKubePath, newName);
-    await createBackup(targetYamlPath, newName);
+    await createBackup(executor, targetKubePath, newName);
+    await createBackup(executor, targetYamlPath, newName);
 
     // Collect all container IDs
     const containerIds = services.flatMap(s => s.containerIds);
@@ -287,7 +290,7 @@ export async function mergeServices(services: DiscoveredService[], newName: stri
     }
 
     // Generate Kube YAML from all containers
-    const { stdout } = await execAsync(`podman generate kube ${containerIds.join(' ')}`);
+    const { stdout } = await executor.exec(`podman generate kube ${containerIds.join(' ')}`);
 
     // Parse and modify YAML to ensure Pod name matches new Service name
     try {
@@ -296,13 +299,13 @@ export async function mergeServices(services: DiscoveredService[], newName: stri
         if (doc && doc.metadata) {
             doc.metadata.name = newName;
             const modifiedYaml = yaml.dump(doc);
-            await fs.writeFile(targetYamlPath, modifiedYaml);
+            await executor.writeFile(targetYamlPath, modifiedYaml);
         } else {
-            await fs.writeFile(targetYamlPath, stdout);
+            await executor.writeFile(targetYamlPath, stdout);
         }
     } catch (e) {
         console.warn('Failed to parse/modify generated YAML, using raw output', e);
-        await fs.writeFile(targetYamlPath, stdout);
+        await executor.writeFile(targetYamlPath, stdout);
     }
 
     // Create .kube file
@@ -317,18 +320,18 @@ AutoUpdate=registry
 [Install]
 WantedBy=default.target
 `;
-    await fs.writeFile(targetKubePath, kubeContent);
+    await executor.writeFile(targetKubePath, kubeContent);
 
     // Stop and Disable old services
     for (const service of services) {
         try {
             console.log(`Stopping old service ${service.serviceName}...`);
-            await execAsync(`systemctl --user disable --now ${service.serviceName}`);
+            await executor.exec(`systemctl --user disable --now ${service.serviceName}`);
         } catch (e) {
             console.warn(`Failed to stop service ${service.serviceName}`, e);
         }
     }
 
     // Reload systemd
-    await execAsync('systemctl --user daemon-reload');
+    await executor.exec('systemctl --user daemon-reload');
 }

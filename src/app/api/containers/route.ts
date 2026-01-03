@@ -1,12 +1,22 @@
 import { NextResponse } from 'next/server';
 import { getPodmanPs, getAllContainersInspect } from '@/lib/manager';
+import { listNodes } from '@/lib/nodes';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const nodeName = searchParams.get('node');
+  
+  let connection;
+  if (nodeName) {
+      const nodes = await listNodes();
+      connection = nodes.find(n => n.Name === nodeName);
+  }
+
   const [containers, inspects] = await Promise.all([
-    getPodmanPs(),
-    getAllContainersInspect()
+    getPodmanPs(connection),
+    getAllContainersInspect(connection)
   ]);
 
   // Create a map of inspect data for quick lookup
