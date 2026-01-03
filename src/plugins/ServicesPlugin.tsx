@@ -84,7 +84,7 @@ export default function ServicesPlugin() {
           
           addToast('success', `Service ${service.serviceName} migrated successfully`);
           fetchData();
-      } catch (error) {
+      } catch (_error) {
           addToast('error', 'Failed to migrate service');
       }
   };

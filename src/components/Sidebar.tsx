@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, RefreshCw, ChevronLeft, Github, Settings, Server, Network } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Server, Network } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 
 export const plugins = [

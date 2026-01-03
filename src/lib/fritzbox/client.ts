@@ -183,7 +183,7 @@ ${argsXml}
         index++;
         // Safety break
         if (index > 100) break;
-      } catch (e) {
+      } catch (_e) {
         // console.warn('Error fetching mapping at index', index, e);
         break;
       }

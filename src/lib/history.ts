@@ -28,7 +28,7 @@ export async function saveSnapshot(filename: string, content: string) {
         return; // Skip saving if identical
       }
     }
-  } catch (e) {
+  } catch (_e) {
     // Ignore errors
   }
   

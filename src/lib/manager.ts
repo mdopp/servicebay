@@ -550,3 +550,17 @@ export async function getContainerInspect(id: string) {
     return null;
   }
 }
+
+export async function getAllContainersInspect() {
+  try {
+    // Get all container IDs first
+    const { stdout: ids } = await execAsync('podman ps -a -q');
+    if (!ids.trim()) return [];
+    
+    const { stdout } = await execAsync(`podman inspect ${ids.split('\n').join(' ')}`);
+    return JSON.parse(stdout);
+  } catch (e) {
+    console.error('Error inspecting all containers:', e);
+    return [];
+  }
+}

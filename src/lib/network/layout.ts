@@ -23,7 +23,7 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
     const layoutedNodes: Node[] = [];
     
     // Flatten the hierarchy back to React Flow nodes
-    const flatten = (node: ElkNode, parentId?: string) => {
+    const flatten = (node: ElkNode, _parentId?: string) => {
       if (node.id !== 'root') {
         const original = nodes.find(n => n.id === node.id);
         if (original) {

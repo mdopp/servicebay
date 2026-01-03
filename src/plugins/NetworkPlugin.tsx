@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   ReactFlow, 
   Background, 
@@ -23,7 +23,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@/lib/network/layout';
 import { NetworkGraph } from '@/lib/network/types';
-import { RefreshCw, X, Trash2, Edit, ExternalLink, Info, Globe } from 'lucide-react';
+import { RefreshCw, X, Trash2, Edit, Info, Globe } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
@@ -31,7 +31,7 @@ import Link from 'next/link';
 
 // Custom Edge Component
 const CustomEdge = ({
-  id,
+  id: _id,
   sourceX,
   sourceY,
   targetX,

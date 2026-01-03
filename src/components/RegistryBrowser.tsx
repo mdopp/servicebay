@@ -95,7 +95,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
            
           setSelected(templates[0]);
       }
-  }, [templates, searchParams]);
+  }, [templates, searchParams, selected]);
 
   useEffect(() => {
     if (selected && selected.type !== 'special') {

@@ -36,7 +36,7 @@ export default function ReverseProxyConfig() {
             
             addToast('success', 'Nginx installed successfully');
             checkStatus();
-        } catch (error) {
+        } catch (_error) {
             addToast('error', 'Failed to install Nginx');
         } finally {
             setInstalling(false);

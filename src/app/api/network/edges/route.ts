@@ -5,7 +5,7 @@ import crypto from 'crypto';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { source, target } = body;
+    const { source, target, port } = body;
 
     if (!source || !target) {
       return NextResponse.json({ error: 'Missing source or target' }, { status: 400 });
@@ -15,7 +15,8 @@ export async function POST(req: Request) {
       id: `manual-${crypto.randomUUID()}`,
       source,
       target,
-      label: 'Manual Link',
+      label: port ? `:${port} (manual)` : 'Manual Link',
+      port: port ? parseInt(port) : undefined,
       created_at: new Date().toISOString()
     };
 

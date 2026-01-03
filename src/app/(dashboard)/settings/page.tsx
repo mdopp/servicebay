@@ -31,7 +31,7 @@ export default function SettingsPage() {
 
   // App Update State
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
-  const [updating, setUpdating] = useState(false);
+  const [updating, _setUpdating] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   

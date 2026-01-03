@@ -29,9 +29,10 @@ The dashboard (`/`) is built using a modular plugin architecture. This allows fo
 1.  **Services**: Manages the core "containered services" (systemd units).
 2.  **Running Containers**: Lists all active Podman containers.
 3.  **Monitoring**: Real-time health checks, history, and notifications.
-4.  **System Info**: Displays CPU, Memory, OS, Network, Disk Usage, and OS Updates.
-5.  **SSH Terminal**: A fully functional web-based terminal using `xterm.js` and `node-pty` over WebSockets.
-6.  **Settings**: Application settings and ServiceBay updates.
+4.  **Network Map**: Visualizes service relationships and health status using an interactive graph (React Flow + ELK).
+5.  **System Info**: Displays CPU, Memory, OS, Network, Disk Usage, and OS Updates.
+6.  **SSH Terminal**: A fully functional web-based terminal using `xterm.js` and `node-pty` over WebSockets.
+7.  **Settings**: Application settings and ServiceBay updates.
 
 ### Server Architecture
 

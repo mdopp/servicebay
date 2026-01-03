@@ -1,14 +1,18 @@
-export type NodeType = 'internet' | 'router' | 'proxy' | 'service' | 'container' | 'group';
+export interface PortMapping {
+  host: number;
+  container: number;
+}
 
 export interface NetworkNode {
   id: string;
-  type: NodeType;
+  type: string; // Relaxed type to allow 'pod', 'link', 'device' etc without strict enum issues during dev
   parentNode?: string;
   extent?: 'parent';
   label: string;
-  subLabel?: string;
-  ip?: string;
-  ports: number[];
+  subLabel?: string | null;
+  hostname?: string | null;
+  ip?: string | null;
+  ports: (number | PortMapping)[];
   status: 'up' | 'down' | 'unknown';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;
