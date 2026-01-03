@@ -373,6 +373,14 @@ export class NetworkService {
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             }).filter((p: any) => p !== 0) || [];
                             
+                            // Check for Host Network
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const inspection = containerInspections.find((i: any) => i.Id.startsWith(targetContainer.Id) || targetContainer.Id.startsWith(i.Id));
+                            let isHostNetwork = false;
+                            if (inspection && inspection.HostConfig && inspection.HostConfig.NetworkMode === 'host') {
+                                isHostNetwork = true;
+                            }
+                            
                             node = {
                                 id: containerId,
                                 type: 'container',
@@ -390,7 +398,8 @@ export class NetworkService {
                                 rawData: {
                                     ...targetContainer,
                                     type: 'container',
-                                    name: containerName
+                                    name: containerName,
+                                    hostNetwork: isHostNetwork
                                 }
                             };
                             nodes.push(node);
@@ -538,6 +547,11 @@ export class NetworkService {
             const inspection = containerInspections.find((i: any) => i.Id.startsWith(containerId) || containerId.startsWith(i.Id));
             const hostname = inspection?.Config?.Hostname || containerId.substring(0, 12);
 
+            let isHostNetwork = false;
+            if (inspection && inspection.HostConfig && inspection.HostConfig.NetworkMode === 'host') {
+                isHostNetwork = true;
+            }
+
             nodes.push({
                 id: containerId,
                 type: 'container',
@@ -557,7 +571,8 @@ export class NetworkService {
                 rawData: {
                     ...container,
                     type: 'container',
-                    name: containerName
+                    name: containerName,
+                    hostNetwork: isHostNetwork
                 }
             });
         }

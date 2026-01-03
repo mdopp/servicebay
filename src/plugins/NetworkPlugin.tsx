@@ -119,18 +119,26 @@ const CustomNode = ({ data }: any) => {
       const common: DetailItem[] = [];
 
       if (data.type === 'container') {
-          return [
+          const items = [
               ...common,
               { label: 'Created', value: raw.Created ? new Date(raw.Created * 1000).toLocaleDateString() : null },
               { label: 'Status', value: raw.Status },
           ];
+          if (raw.hostNetwork) {
+              items.push({ label: 'Network', value: 'Host' });
+          }
+          return items;
       }
       if (data.type === 'service') {
-          return [
+          const items = [
               ...common,
               { label: 'State', value: raw.active ? 'Active' : 'Inactive' },
               { label: 'Load', value: raw.load },
           ];
+          if (raw.hostNetwork) {
+              items.push({ label: 'Network', value: 'Host' });
+          }
+          return items;
       }
       if (data.type === 'link') {
           return [

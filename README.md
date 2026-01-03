@@ -82,6 +82,45 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 - [Architecture & Tech Stack](ARCHITECTURE.md)
 - [Frontend Design Principles](DESIGN_PRINCIPLES.md)
 
+## System Discovery & Data Flow
+
+ServiceBay aggregates data from multiple sources to provide a unified view of your infrastructure.
+
+```mermaid
+graph TD
+    subgraph Sources
+        P[Podman CLI] -->|Containers & Pods| D[Discovery Engine]
+        S[Systemd] -->|Units & Status| D
+        N[Nginx Config] -->|Reverse Proxy Rules| D
+        F[FritzBox] -->|Gateway Status| D
+    end
+
+    subgraph Core
+        D -->|Aggregated State| M[Manager Logic]
+        M -->|Heuristics| G[Network Graph]
+    end
+
+    subgraph Features
+        M -->|List| UI_S[Services UI]
+        M -->|List| UI_C[Containers UI]
+        G -->|Visualization| UI_N[Network Map]
+    end
+
+    subgraph Actions
+        UI_S -->|Migrate/Merge| M
+        M -->|Generate Kube YAML| P
+        M -->|Create Unit Files| S
+    end
+```
+
+### Discovery Logic
+1. **Containers**: Fetched via `podman ps` and enriched with `podman inspect` for network details (Host vs Bridge).
+2. **Services**: Scanned from `~/.config/containers/systemd/` (.kube files) and cross-referenced with active Systemd units.
+3. **Network Map**:
+   - **Nodes**: Created from Containers, Services, and External Devices.
+   - **Edges**: Inferred from Nginx `proxy_pass` rules and Container Port mappings.
+   - **Grouping**: Containers are automatically grouped into Pods or Services based on naming conventions (`service-name` -> `service-name-container`).
+
 ---
 
 > **Note:** This project was completely **vibe-coded**. 🤙

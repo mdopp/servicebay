@@ -23,6 +23,7 @@ export interface ServiceInfo {
   ports: { host?: string; container: string }[];
   volumes: { host: string; container: string }[];
   labels: Record<string, string>;
+  hostNetwork?: boolean;
 }
 
 export async function listServices(): Promise<ServiceInfo[]> {
@@ -61,6 +62,7 @@ export async function listServices(): Promise<ServiceInfo[]> {
     const ports: { host?: string; container: string }[] = [];
     const volumes: { host: string; container: string }[] = [];
     let labels: Record<string, string> = {};
+    let hostNetwork = false;
 
     try {
       const { stdout } = await execAsync(`systemctl --user is-active ${name}.service`);
@@ -101,6 +103,10 @@ export async function listServices(): Promise<ServiceInfo[]> {
                     }
 
                     if (parsed.spec) {
+                        if (parsed.spec.hostNetwork) {
+                            hostNetwork = true;
+                        }
+
                         // Extract Ports
                         if (parsed.spec.containers) {
                             parsed.spec.containers.forEach((container: any) => {
@@ -158,7 +164,8 @@ export async function listServices(): Promise<ServiceInfo[]> {
       description,
       ports,
       volumes,
-      labels
+      labels,
+      hostNetwork
     });
   }
 

@@ -18,6 +18,8 @@ interface Container {
   Ports?: ({ IP?: string; PrivatePort: number; PublicPort?: number; Type: string } | { host_ip?: string; container_port: number; host_port?: number; protocol: string })[];
   Mounts?: (string | { Source: string; Destination: string; Type: string })[];
   Labels?: { [key: string]: string };
+  NetworkMode?: string;
+  IsHostNetwork?: boolean;
 }
 
 export default function ContainersPlugin() {
@@ -250,6 +252,14 @@ export default function ContainersPlugin() {
                                         <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Status</span>
                                         <span>{c.Status}</span>
                                     </div>
+                                    {c.IsHostNetwork && (
+                                        <div className="md:col-span-2">
+                                            <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Network</span>
+                                            <span className="bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 px-2 py-1 rounded text-xs font-medium">
+                                                Host Network
+                                            </span>
+                                        </div>
+                                    )}
                                     {c.Ports && c.Ports.length > 0 && (
                                         <div className="md:col-span-2">
                                             <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Ports</span>

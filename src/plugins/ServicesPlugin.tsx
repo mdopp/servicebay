@@ -12,6 +12,7 @@ import ExternalLinkModal from '@/components/ExternalLinkModal';
 interface DiscoveredService {
     serviceName: string;
     containerNames: string[];
+    containerIds: string[];
     unitFile?: string;
     sourcePath?: string;
     status: 'managed' | 'unmanaged';
@@ -33,6 +34,7 @@ interface Service {
   monitor?: boolean;
   labels?: Record<string, string>;
   verifiedDomains?: string[];
+  hostNetwork?: boolean;
 }
 
 export default function ServicesPlugin() {
@@ -46,6 +48,9 @@ export default function ServicesPlugin() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  const [mergeName, setMergeName] = useState('');
   const { addToast, updateToast } = useToast();
 
   // Link Modal State
@@ -86,6 +91,46 @@ export default function ServicesPlugin() {
           fetchData();
       } catch (_error) {
           addToast('error', 'Failed to migrate service');
+      }
+  };
+
+  const handleMerge = async () => {
+      if (selectedForMerge.length < 2) return;
+      if (!mergeName) {
+          addToast('error', 'Please enter a name for the new service');
+          return;
+      }
+
+      const servicesToMerge = discoveredServices.filter(s => selectedForMerge.includes(s.serviceName));
+      
+      try {
+          const res = await fetch('/api/system/discovery/merge', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ services: servicesToMerge, newName: mergeName })
+          });
+          
+          if (!res.ok) {
+              const data = await res.json();
+              throw new Error(data.error || 'Merge failed');
+          }
+          
+          addToast('success', `Services merged into ${mergeName} successfully`);
+          setMergeModalOpen(false);
+          setSelectedForMerge([]);
+          setMergeName('');
+          fetchData();
+      } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Failed to merge services';
+          addToast('error', message);
+      }
+  };
+
+  const toggleMergeSelection = (serviceName: string) => {
+      if (selectedForMerge.includes(serviceName)) {
+          setSelectedForMerge(selectedForMerge.filter(s => s !== serviceName));
+      } else {
+          setSelectedForMerge([...selectedForMerge, serviceName]);
       }
   };
 
@@ -345,6 +390,14 @@ export default function ServicesPlugin() {
                         
                         {service.type !== 'link' && (
                             <>
+                                {service.hostNetwork && (
+                                    <div className="flex-1 min-w-[250px]">
+                                        <span className="font-semibold block mb-1">Network:</span>
+                                        <span className="bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 px-2 py-1 rounded text-xs font-medium">
+                                            Host Network
+                                        </span>
+                                    </div>
+                                )}
                                 {service.ports.length > 0 && (
                                     <div className="flex-1 min-w-[250px]">
                                         <span className="font-semibold block mb-1">Ports:</span>
@@ -386,19 +439,38 @@ export default function ServicesPlugin() {
         {/* Unmanaged Services Section */}
         {discoveredServices.filter(s => s.status === 'unmanaged').length > 0 && (
             <div className="mt-12 border-t border-gray-200 dark:border-gray-800 pt-8">
-                <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-orange-600 dark:text-orange-400">
-                    <AlertCircle size={20} />
-                    Unmanaged Services ({discoveredServices.filter(s => s.status === 'unmanaged').length})
-                </h2>
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-lg font-semibold flex items-center gap-2 text-orange-600 dark:text-orange-400">
+                        <AlertCircle size={20} />
+                        Unmanaged Services ({discoveredServices.filter(s => s.status === 'unmanaged').length})
+                    </h2>
+                    {selectedForMerge.length > 1 && (
+                        <button 
+                            onClick={() => setMergeModalOpen(true)}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg flex items-center gap-2 transition-colors shadow-sm"
+                        >
+                            <Box size={16} />
+                            Merge Selected ({selectedForMerge.length})
+                        </button>
+                    )}
+                </div>
                 <div className="grid gap-4">
                     {discoveredServices.filter(s => s.status === 'unmanaged').map((service) => (
-                        <div key={service.serviceName} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
+                        <div key={service.serviceName} className={`bg-white dark:bg-gray-900 border rounded-lg p-4 hover:shadow-md transition-all duration-200 ${selectedForMerge.includes(service.serviceName) ? 'border-indigo-500 ring-1 ring-indigo-500' : 'border-gray-200 dark:border-gray-800'}`}>
                             <div className="flex justify-between items-start mb-3">
-                                <div>
-                                    <h3 className="font-bold text-lg break-all">{service.serviceName}</h3>
-                                    <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 mt-1">
-                                        Type: {service.type}
-                                    </span>
+                                <div className="flex items-start gap-3">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={selectedForMerge.includes(service.serviceName)}
+                                        onChange={() => toggleMergeSelection(service.serviceName)}
+                                        className="mt-1.5 w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                                    />
+                                    <div>
+                                        <h3 className="font-bold text-lg break-all">{service.serviceName}</h3>
+                                        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 mt-1">
+                                            Type: {service.type}
+                                        </span>
+                                    </div>
                                 </div>
                                 <button 
                                     onClick={() => handleMigrate(service)}
@@ -408,7 +480,7 @@ export default function ServicesPlugin() {
                                 </button>
                             </div>
 
-                            <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+                            <div className="ml-7 space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
                                 <div className="flex gap-2">
                                     <Box size={16} className="shrink-0 mt-0.5" />
                                     <div className="flex flex-wrap gap-1">
@@ -432,6 +504,65 @@ export default function ServicesPlugin() {
             </div>
         )}
       </div>
+
+      {/* Merge Modal */}
+      {mergeModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-6">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-bold">Merge Services</h3>
+                    <button onClick={() => setMergeModalOpen(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <div className="mb-6">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Merging {selectedForMerge.length} services into a single Pod.
+                        This will generate a new Kubernetes YAML file containing all containers.
+                    </p>
+                    
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                New Service Name
+                            </label>
+                            <input
+                                type="text"
+                                value={mergeName}
+                                onChange={(e) => setMergeName(e.target.value)}
+                                placeholder="e.g. my-app-stack"
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                                autoFocus
+                            />
+                        </div>
+                        
+                        <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded text-xs font-mono text-gray-600 dark:text-gray-400 max-h-32 overflow-y-auto">
+                            {selectedForMerge.map(s => (
+                                <div key={s}>• {s}</div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex justify-end gap-3">
+                    <button 
+                        onClick={() => setMergeModalOpen(false)}
+                        className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={handleMerge}
+                        disabled={!mergeName}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                    >
+                        Merge & Migrate
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* Actions Overlay */}
       {showActions && selectedService && (
