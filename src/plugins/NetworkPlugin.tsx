@@ -757,12 +757,12 @@ export default function NetworkPlugin() {
       {/* Context Menu / Details Panel */}
       {selectedNodeData && (
           <div className="absolute right-4 top-20 w-80 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-10 animate-in slide-in-from-right-5">
-              <div className="flex justify-between items-start mb-4">
-                  <div>
-                      <h3 className="font-bold text-lg">{selectedNodeData.label}</h3>
-                      <div className="text-xs text-gray-500 font-mono">{selectedNodeData.id}</div>
+              <div className="flex justify-between items-start mb-4 gap-2">
+                  <div className="min-w-0 flex-1">
+                      <h3 className="font-bold text-lg truncate" title={selectedNodeData.label}>{selectedNodeData.label}</h3>
+                      <div className="text-xs text-gray-500 font-mono truncate" title={selectedNodeData.id}>{selectedNodeData.id}</div>
                   </div>
-                  <button onClick={() => setSelectedNodeData(null)} className="text-gray-400 hover:text-gray-600">
+                  <button onClick={() => setSelectedNodeData(null)} className="text-gray-400 hover:text-gray-600 shrink-0">
                       <X size={16} />
                   </button>
               </div>
