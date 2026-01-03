@@ -15,8 +15,8 @@ export default function PageHeader({ title, children, showBack = true, helpId }:
   const router = useRouter();
   
   return (
-    <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-      <div className="flex items-center gap-4">
+    <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-4 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+      <div className="flex items-center gap-4 shrink-0">
         {showBack && (
           <button 
             onClick={() => router.back()} 
@@ -29,7 +29,7 @@ export default function PageHeader({ title, children, showBack = true, helpId }:
         <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
         {helpId && <PluginHelp helpId={helpId} />}
       </div>
-      {children && <div className="flex gap-3">{children}</div>}
+      {children && <div className="flex items-center gap-3 w-full md:w-auto md:flex-1 md:justify-end overflow-hidden">{children}</div>}
     </div>
   );
 }
