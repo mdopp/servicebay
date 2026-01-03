@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import { AppConfig } from '@/lib/config';
+import { getNodes, createNode, deleteNode, setNodeAsDefault } from '@/app/actions/nodes';
+import { PodmanConnection } from '@/lib/nodes';
 
 interface AppUpdateStatus {
   hasUpdate: boolean;
@@ -59,7 +61,12 @@ export default function SettingsPage() {
   const [newRegUrl, setNewRegUrl] = useState('');
   const [newRegBranch, setNewRegBranch] = useState('');
 
-
+  // Nodes State
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [newNodeName, setNewNodeName] = useState('');
+  const [newNodeDest, setNewNodeDest] = useState('');
+  const [newNodeIdentity, setNewNodeIdentity] = useState('');
+  const [addingNode, setAddingNode] = useState(false);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -94,7 +101,13 @@ export default function SettingsPage() {
         }
       }
 
-
+      // Fetch nodes
+      try {
+        const nodesList = await getNodes();
+        setNodes(nodesList);
+      } catch (e) {
+        console.error('Failed to fetch nodes', e);
+      }
 
       if (data.notifications?.email) {
         const e = data.notifications.email;
@@ -141,6 +154,45 @@ export default function SettingsPage() {
 
   const handleRemoveRegistry = (name: string) => {
     setRegistries(registries.filter(r => r.name !== name));
+  };
+
+  const handleAddNode = async () => {
+    if (!newNodeName || !newNodeDest) return;
+    setAddingNode(true);
+    try {
+      const res = await createNode(newNodeName, newNodeDest, newNodeIdentity || undefined);
+      if (res.success) {
+        setNodes(await getNodes());
+        setNewNodeName('');
+        setNewNodeDest('');
+        setNewNodeIdentity('');
+        addToast('success', 'Node added');
+      } else {
+        addToast('error', 'Failed to add node');
+      }
+    } finally {
+      setAddingNode(false);
+    }
+  };
+
+  const handleDeleteNode = async (name: string) => {
+    const res = await deleteNode(name);
+    if (res.success) {
+      setNodes(await getNodes());
+      addToast('success', 'Node removed');
+    } else {
+      addToast('error', 'Failed to remove node');
+    }
+  };
+
+  const handleSetDefaultNode = async (name: string) => {
+    const res = await setNodeAsDefault(name);
+    if (res.success) {
+      setNodes(await getNodes());
+      addToast('success', 'Default node updated');
+    } else {
+      addToast('error', 'Failed to set default node');
+    }
   };
 
   const handleCheckUpdate = async () => {
@@ -376,6 +428,106 @@ export default function SettingsPage() {
                 </div>
             </div>
         )}
+
+        {/* System Connections (Nodes) */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
+                <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
+                    <Server size={20} />
+                </div>
+                <div>
+                    <h3 className="font-bold text-gray-900 dark:text-white">System Connections</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Manage remote Podman nodes</p>
+                </div>
+            </div>
+            
+            <div className="p-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                    <div className="md:col-span-3">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
+                        <input 
+                            type="text" 
+                            value={newNodeName}
+                            onChange={e => setNewNodeName(e.target.value)}
+                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="my-node"
+                        />
+                    </div>
+                    <div className="md:col-span-5">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Destination (SSH)</label>
+                        <input 
+                            type="text" 
+                            value={newNodeDest}
+                            onChange={e => setNewNodeDest(e.target.value)}
+                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="ssh://user@host:port"
+                        />
+                    </div>
+                    <div className="md:col-span-3">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Identity File (Optional)</label>
+                        <div className="relative">
+                            <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <input 
+                                type="text" 
+                                value={newNodeIdentity}
+                                onChange={e => setNewNodeIdentity(e.target.value)}
+                                className="w-full pl-9 pr-2 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                placeholder="~/.ssh/id_rsa"
+                            />
+                        </div>
+                    </div>
+                    <div className="md:col-span-1">
+                        <button 
+                            onClick={handleAddNode}
+                            disabled={!newNodeName || !newNodeDest || addingNode}
+                            className="w-full p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center"
+                        >
+                            {addingNode ? <Loader2 className="animate-spin" size={20} /> : <Plus size={20} />}
+                        </button>
+                    </div>
+                </div>
+
+                <div className="space-y-2">
+                    {nodes.map(node => (
+                        <div key={node.Name} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-2 h-2 rounded-full ${node.Default ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} title={node.Default ? 'Default Node' : ''} />
+                                <div>
+                                    <div className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                                        {node.Name}
+                                        {node.Default && <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded uppercase font-bold">Default</span>}
+                                    </div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{node.URI}</div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {!node.Default && (
+                                    <button 
+                                        onClick={() => handleSetDefaultNode(node.Name)}
+                                        className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors"
+                                        title="Set as Default"
+                                    >
+                                        <CheckCircle2 size={16} />
+                                    </button>
+                                )}
+                                <button 
+                                    onClick={() => handleDeleteNode(node.Name)}
+                                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                                    title="Remove Node"
+                                >
+                                    <Trash2 size={16} />
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                    {nodes.length === 0 && (
+                        <div className="text-center py-4 text-gray-500 dark:text-gray-400 text-sm italic">
+                            No remote nodes configured. Podcli is running in local mode.
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
 
         {/* Template Registries */}
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
