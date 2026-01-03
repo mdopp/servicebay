@@ -1,10 +1,13 @@
 import fs from 'fs/promises';
+import { createWriteStream } from 'fs';
 import path from 'path';
 import os from 'os';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import semver from 'semver';
 import { Server } from 'socket.io';
+import { pipeline } from 'stream/promises';
+import { Readable } from 'stream';
 
 declare global {
    
@@ -33,6 +36,58 @@ interface Release {
   html_url: string;
   published_at: string;
   body: string;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+    try {
+        await fs.access(path);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function downloadFile(url: string, dest: string, onProgress?: (percent: number) => void) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+
+    try {
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (!res.ok) throw new Error(`Failed to download: ${res.statusText} (${res.status})`);
+
+        const contentLength = res.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        let loaded = 0;
+
+        if (!res.body) throw new Error('Response body is empty');
+
+        const fileStream = createWriteStream(dest);
+        const reader = res.body.getReader();
+
+        // Create a readable stream from the fetch reader to pipe to file
+        const readable = new Readable({
+            async read() {
+                const { done, value } = await reader.read();
+                if (done) {
+                    this.push(null);
+                } else {
+                    loaded += value.length;
+                    if (total > 0 && onProgress) {
+                        const progress = (loaded / total) * 100;
+                        onProgress(progress);
+                    }
+                    this.push(Buffer.from(value));
+                }
+            }
+        });
+
+        await pipeline(readable, fileStream);
+    } catch (e) {
+        clearTimeout(timeout);
+        throw e;
+    }
 }
 
 export async function getCurrentVersion(): Promise<string> {
@@ -81,95 +136,87 @@ export async function checkForUpdates() {
 }
 
 export async function performUpdate(version: string) {
-  const downloadUrl = `https://github.com/${REPO}/releases/download/${version}/servicebay-linux-x64.tar.gz`;
   const tempDir = path.join(os.tmpdir(), `servicebay-update-${Date.now()}`);
-  const tarPath = path.join(tempDir, 'update.tar.gz');
 
   try {
     emitProgress('init', 0, 'Initializing update...');
     await fs.mkdir(tempDir, { recursive: true });
 
-    // 1. Download
-    console.log(`Downloading update from ${downloadUrl}...`);
-    emitProgress('download', 0, 'Downloading update package...');
+    // 1. Download Update (Code only)
+    const updateUrl = `https://github.com/${REPO}/releases/download/${version}/servicebay-update-linux-x64.tar.gz`;
+    const depsUrl = `https://github.com/${REPO}/releases/download/${version}/servicebay-deps-linux-x64.tar.gz`;
     
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout for initial connection
+    console.log(`Downloading update code from ${updateUrl}...`);
+    emitProgress('download', 0, 'Downloading application code...');
+    
+    await downloadFile(updateUrl, path.join(tempDir, 'update.tar.gz'), (p) => emitProgress('download', Math.round(p/2), `Downloading code... ${Math.round(p)}%`));
 
+    // 2. Extract Code to Temp
+    console.log('Extracting update code...');
+    emitProgress('extract', 0, 'Analyzing update...');
+    await execAsync(`tar xzf "${path.join(tempDir, 'update.tar.gz')}" -C "${tempDir}"`);
+
+    // 3. Smart Dependency Check
+    let needDeps = true;
     try {
-        const res = await fetch(downloadUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-        
-        if (!res.ok) throw new Error(`Failed to download update: ${res.statusText} (${res.status})`);
-        
-        const contentLength = res.headers.get('content-length');
-        const total = contentLength ? parseInt(contentLength, 10) : 0;
-        let loaded = 0;
+        const oldLockPath = path.join(INSTALL_DIR, 'package-lock.json');
+        // The tarball extracts to a 'servicebay' folder
+        const newLockPath = path.join(tempDir, 'servicebay', 'package-lock.json');
 
-        if (res.body) {
-            const reader = res.body.getReader();
-            const chunks = [];
-            
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                
-                chunks.push(value);
-                loaded += value.length;
-                
-                if (total > 0) {
-                    const progress = Math.round((loaded / total) * 100);
-                    // Emit every 5% or so to avoid spamming
-                    if (progress % 5 === 0) {
-                        emitProgress('download', progress, `Downloading... ${progress}%`);
-                    }
-                }
+        if (await fileExists(oldLockPath) && await fileExists(newLockPath)) {
+            const oldLock = JSON.parse(await fs.readFile(oldLockPath, 'utf-8'));
+            const newLock = JSON.parse(await fs.readFile(newLockPath, 'utf-8'));
+
+            // Compare dependencies only, ignoring version/name of the root package
+            // We need to remove the root package info from comparison as version changes on every release
+            if (oldLock.packages && oldLock.packages['']) {
+                delete oldLock.packages[''].version;
+                delete oldLock.packages[''].name;
             }
-            
-            const buffer = Buffer.concat(chunks);
-            await fs.writeFile(tarPath, buffer);
-        } else {
-            // Fallback if no body (shouldn't happen with fetch)
-            const buffer = await res.arrayBuffer();
-            await fs.writeFile(tarPath, Buffer.from(buffer));
+            if (newLock.packages && newLock.packages['']) {
+                delete newLock.packages[''].version;
+                delete newLock.packages[''].name;
+            }
+
+            if (JSON.stringify(oldLock.packages) === JSON.stringify(newLock.packages)) {
+                console.log('Dependencies unchanged. Skipping dependency download.');
+                needDeps = false;
+            } else {
+                console.log('Dependencies changed.');
+            }
         }
     } catch (e) {
-        clearTimeout(timeout);
-        throw e;
+        console.warn('Failed to compare lockfiles, forcing dependency update', e);
     }
-    
-    emitProgress('download', 100, 'Download complete');
 
-    // 2. Extract
-    console.log('Extracting update...');
-    emitProgress('extract', 0, 'Extracting update package...');
-    // We extract to tempDir first
-    await execAsync(`tar xzf "${tarPath}" -C "${tempDir}"`);
-    emitProgress('extract', 100, 'Extraction complete');
-    
-    // The tarball contains a 'servicebay' folder. We need the contents of that folder.
-    const sourceDir = path.join(tempDir, 'servicebay');
+    // 4. Download Dependencies if needed
+    if (needDeps) {
+        console.log(`Downloading dependencies from ${depsUrl}...`);
+        emitProgress('download', 50, 'Downloading dependencies...');
+        await downloadFile(depsUrl, path.join(tempDir, 'deps.tar.gz'), (p) => emitProgress('download', 50 + Math.round(p/2), `Downloading deps... ${Math.round(p)}%`));
+        
+        console.log('Extracting dependencies...');
+        emitProgress('extract', 50, 'Extracting dependencies...');
+        // Remove old node_modules
+        await fs.rm(path.join(INSTALL_DIR, 'node_modules'), { recursive: true, force: true });
+        // Extract new node_modules directly to INSTALL_DIR
+        await execAsync(`tar xzf "${path.join(tempDir, 'deps.tar.gz')}" -C "${INSTALL_DIR}"`);
+    }
 
-    // 3. Install (Overwrite)
-    console.log(`Installing to ${INSTALL_DIR}...`);
+    // 5. Install Code (Overwrite)
+    console.log(`Installing code to ${INSTALL_DIR}...`);
     emitProgress('install', 0, 'Installing update...');
-    // Use rsync or cp to overwrite files. cp -r is simpler but we need to be careful about open files.
-    // Since we are running from INSTALL_DIR, we are overwriting ourself.
-    // Linux allows this (unlink/rename).
     
-    // We use a shell command to copy files.
-    // We exclude config files if we had any in the root that should be preserved, 
-    // but currently config is in ~/.servicebay/config.json which is NOT in the tarball (tarball has code).
-    // So overwriting everything is safe, assuming tarball structure matches.
-    
-    // Use cp -rf with /. to include hidden files (like .next)
+    const sourceDir = path.join(tempDir, 'servicebay');
+    // Copy code files
     await execAsync(`cp -rf "${sourceDir}/." "${INSTALL_DIR}/"`);
+    
     emitProgress('install', 100, 'Installation complete');
 
-    // 4. Cleanup
+    // 6. Cleanup
     await fs.rm(tempDir, { recursive: true, force: true });
 
-    // 5. Restart
+    // 7. Restart
     console.log('Restarting service...');
     emitProgress('restart', 0, 'Restarting service...');
     
