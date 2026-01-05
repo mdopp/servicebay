@@ -58,7 +58,12 @@ COPY --from=builder /app/tsconfig.json ./
 # But node-pty needs to be built for the runtime environment.
 RUN apk add --no-cache python3 make g++ podman
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm install -g tsx
+RUN npm ci --omit=dev && npm install -g tsx && npm install typescript
+
+# Ensure permissions for nextjs user
+RUN chown -R nextjs:nodejs /app
+
+USER nextjs
 
 EXPOSE 3000
 
