@@ -45,6 +45,11 @@ fi
 mkdir -p "$SYSTEMD_DIR"
 mkdir -p "$CONFIG_DIR"
 
+# --- Configuration Prompt ---
+
+read -p "Enter the port to run ServiceBay on [3000]: " INPUT_PORT
+PORT=${INPUT_PORT:-3000}
+
 # --- Create Quadlet ---
 
 log "Creating systemd service..."
@@ -65,6 +70,7 @@ Volume=$HOME/.ssh:/root/.ssh:ro
 Volume=/run/user/$(id -u)/podman/podman.sock:/run/podman/podman.sock
 Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
 Environment=NODE_ENV=production
+Environment=PORT=$PORT
 
 [Install]
 WantedBy=default.target
@@ -77,6 +83,8 @@ systemctl --user daemon-reload
 
 log "Starting ServiceBay..."
 systemctl --user enable --now "$SERVICE_NAME"
+systemctl --user start "$SERVICE_NAME"
+systemctl --user status "$SERVICE_NAME"
 
 success "ServiceBay installed successfully!"
 echo -e "Access it at: http://$(hostname):$PORT"
