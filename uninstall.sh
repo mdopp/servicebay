@@ -73,7 +73,12 @@ systemctl --user daemon-reload
 if [ -d "$CONFIG_DIR" ]; then
     echo ""
     warn "Found configuration/data directory at: $CONFIG_DIR"
-    read -p "Do you want to delete this directory and all data? (y/N) " -n 1 -r
+    if [ -c /dev/tty ]; then
+        read -p "Do you want to delete this directory and all data? (y/N) " -n 1 -r < /dev/tty
+    else
+        # Default to No if non-interactive
+        REPLY="n"
+    fi
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         log "Removing data directory..."
@@ -87,7 +92,11 @@ fi
 # --- Remove Image ---
 
 echo ""
-read -p "Do you want to remove the ServiceBay docker image? (y/N) " -n 1 -r
+if [ -c /dev/tty ]; then
+    read -p "Do you want to remove the ServiceBay docker image? (y/N) " -n 1 -r < /dev/tty
+else
+    REPLY="n"
+fi
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     log "Removing image $IMAGE_NAME..."
