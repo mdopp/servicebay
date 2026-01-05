@@ -33,15 +33,23 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest
-            type=sha
 
-      - name: Build and push Docker image
+      - name: Build and push Prod Base
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile.base
+          target: prod
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:prod
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build and push Dev Base
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.base
+          target: dev
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           labels: ${{ steps.meta.outputs.labels }}

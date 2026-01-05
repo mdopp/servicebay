@@ -1,7 +1,9 @@
-FROM node:20-alpine
+# Base image for Production (Runtime)
+# Contains only what is needed to RUN the app
+FROM node:20-alpine AS prod
+RUN apk add --no-cache libc6-compat podman libstdc++
 
-# Install build dependencies
-# libc6-compat: often needed for native modules
-# python3, make, g++: needed for node-gyp (native module compilation)
-# podman: needed for static page generation and runtime
-RUN apk add --no-cache libc6-compat python3 make g++ podman libstdc++
+# Base image for Development/Build (Extended)
+# Contains compilers needed for npm install (native modules)
+FROM prod AS dev
+RUN apk add --no-cache python3 make g++

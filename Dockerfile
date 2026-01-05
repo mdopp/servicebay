@@ -1,5 +1,5 @@
 # Use our pre-built base image with build tools (python3, make, g++, podman)
-FROM ghcr.io/mdopp/servicebay/base:latest AS base
+FROM ghcr.io/mdopp/servicebay/base:dev AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -34,7 +34,7 @@ RUN npm ci --omit=dev && npm install tsx typescript
 
 # Production image, copy all the files and run next
 # Use clean alpine image for runner to keep size down
-FROM node:20-alpine AS runner
+FROM ghcr.io/mdopp/servicebay/base:prod AS runner
 WORKDIR /app
 
 ENV NODE_ENV production
@@ -44,10 +44,7 @@ ENV PATH="/app/node_modules/.bin:$PATH"
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Install runtime dependencies
-# podman is required by the app
-# libstdc++ is required by node-pty (native module)
-RUN apk add --no-cache podman libstdc++
+# Runtime dependencies (podman, libstdc++) are already in base:prod
 
 COPY --from=builder /app/public ./public
 
