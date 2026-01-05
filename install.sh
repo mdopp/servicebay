@@ -47,7 +47,13 @@ mkdir -p "$CONFIG_DIR"
 
 # --- Configuration Prompt ---
 
-read -p "Enter the port to run ServiceBay on [3000]: " INPUT_PORT
+# When running via curl | bash, stdin is the script itself.
+# We must read from /dev/tty to get user input.
+if [ -c /dev/tty ]; then
+    read -p "Enter the port to run ServiceBay on [3000]: " INPUT_PORT < /dev/tty
+else
+    log "No terminal detected. Using default port 3000."
+fi
 PORT=${INPUT_PORT:-3000}
 
 # --- Create Quadlet ---
