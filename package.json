@@ -67,5 +67,10 @@
     "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.0.16"
+  },
+  "overrides": {
+    "react-highlight-words": {
+      "react": "$react"
+    }
   }
 }

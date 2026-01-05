@@ -1,9 +1,9 @@
-# Use our pre-built base image with build tools (python3, make, g++)
+# Use our pre-built base image with build tools (python3, make, g++, podman)
 FROM ghcr.io/mdopp/servicebay/base:latest AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-# Base image already has libc6-compat python3 make g++
+# Base image already has libc6-compat python3 make g++ podman
 WORKDIR /app
 
 # Install dependencies based on the preferred package manager
@@ -27,7 +27,7 @@ RUN npm run build
 # This stage builds native modules (like node-pty) and installs runtime tools
 FROM base AS prod-deps
 WORKDIR /app
-# Base image already has libc6-compat python3 make g++
+# Base image already has libc6-compat python3 make g++ podman
 COPY package.json package-lock.json* ./
 # Install prod deps (builds native modules) AND tsx/typescript
 RUN npm ci --omit=dev && npm install tsx typescript
