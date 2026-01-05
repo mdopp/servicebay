@@ -9,7 +9,7 @@
     "lint": "eslint",
     "test": "vitest",
     "release": "bash scripts/release.sh",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [
