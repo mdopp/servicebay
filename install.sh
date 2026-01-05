@@ -82,9 +82,13 @@ log "Reloading systemd..."
 systemctl --user daemon-reload
 
 log "Starting ServiceBay..."
-systemctl --user enable --now "$SERVICE_NAME"
+# For Quadlets, we just start the service. Enablement is handled by the [Install] section in the .container file
+# which the generator should handle, but sometimes 'enable' fails on generated units.
+# We try to start it first.
 systemctl --user start "$SERVICE_NAME"
-systemctl --user status "$SERVICE_NAME"
+
+# Try to enable it, but don't fail if it complains about being transient (it might already be enabled by generator)
+systemctl --user enable "$SERVICE_NAME" || true
 
 success "ServiceBay installed successfully!"
 echo -e "Access it at: http://$(hostname):$PORT"
