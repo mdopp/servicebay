@@ -1,9 +1,9 @@
-FROM node:20-alpine AS base
+# Use our pre-built base image with build tools (python3, make, g++)
+FROM ghcr.io/mdopp/servicebay/base:latest AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
-RUN apk add --no-cache libc6-compat python3 make g++
+# Base image already has libc6-compat python3 make g++
 WORKDIR /app
 
 # Install dependencies based on the preferred package manager
@@ -23,15 +23,31 @@ ENV NEXT_TELEMETRY_DISABLED 1
 
 RUN npm run build
 
+# Production dependencies stage
+# This stage builds native modules (like node-pty) and installs runtime tools
+FROM base AS prod-deps
+WORKDIR /app
+# Base image already has libc6-compat python3 make g++
+COPY package.json package-lock.json* ./
+# Install prod deps (builds native modules) AND tsx/typescript
+RUN npm ci --omit=dev && npm install tsx typescript
+
 # Production image, copy all the files and run next
-FROM base AS runner
+# Use clean alpine image for runner to keep size down
+FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
+ENV PATH="/app/node_modules/.bin:$PATH"
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
+
+# Install runtime dependencies
+# podman is required by the app
+# libstdc++ is required by node-pty (native module)
+RUN apk add --no-cache podman libstdc++
 
 COPY --from=builder /app/public ./public
 
@@ -52,13 +68,8 @@ COPY --from=builder /app/server.ts ./
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/tsconfig.json ./
 
-# Install production dependencies for native modules (like node-pty)
-# We need to do this in the runner because standalone build doesn't include native modules correctly sometimes
-# Or we can copy them from deps if we are careful.
-# But node-pty needs to be built for the runtime environment.
-RUN apk add --no-cache python3 make g++ podman
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm install -g tsx && npm install typescript
+# Copy production node_modules (with built native modules)
+COPY --from=prod-deps /app/node_modules ./node_modules
 
 # Ensure permissions for nextjs user
 RUN chown -R nextjs:nodejs /app

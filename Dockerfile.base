@@ -1,0 +1,6 @@
+FROM node:20-alpine
+
+# Install build dependencies
+# libc6-compat: often needed for native modules
+# python3, make, g++: needed for node-gyp (native module compilation)
+RUN apk add --no-cache libc6-compat python3 make g++
