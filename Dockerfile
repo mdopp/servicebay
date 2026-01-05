@@ -47,17 +47,22 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/stacks ./stacks
 
+# Copy custom server and source code
+COPY --from=builder /app/server.ts ./
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/tsconfig.json ./
+
 # Install production dependencies for native modules (like node-pty)
 # We need to do this in the runner because standalone build doesn't include native modules correctly sometimes
 # Or we can copy them from deps if we are careful.
 # But node-pty needs to be built for the runtime environment.
 RUN apk add --no-cache python3 make g++ podman
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm install -g tsx
 
 EXPOSE 3000
 
 ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
-CMD ["node", "server.js"]
+CMD ["tsx", "server.ts"]
