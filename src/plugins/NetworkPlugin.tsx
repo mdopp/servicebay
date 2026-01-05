@@ -23,7 +23,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@/lib/network/layout';
 import { NetworkGraph } from '@/lib/network/types';
-import { RefreshCw, X, Trash2, Edit, Info, Globe, Search } from 'lucide-react';
+import { RefreshCw, X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
@@ -84,6 +84,7 @@ const CustomEdge = ({
 const CustomNode = ({ data }: any) => {
   const isGroup = ['group', 'proxy', 'service', 'pod'].includes(data.type);
   const isGateway = data.rawData?.type === 'gateway';
+  const isMissing = data.rawData?.type === 'missing';
   
   const typeLabels: Record<string, string> = {
       container: 'Container',
@@ -108,7 +109,9 @@ const CustomNode = ({ data }: any) => {
       device: 'border-indigo-400 dark:border-indigo-600 bg-indigo-100 dark:bg-indigo-900/40',
   };
 
-  const nodeColor = typeColors[data.type] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900';
+  const nodeColor = isMissing 
+      ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 border-dashed'
+      : (typeColors[data.type] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type DetailItem = { label: string; value: any; full?: boolean };
@@ -147,11 +150,15 @@ const CustomNode = ({ data }: any) => {
           ];
       }
       if (data.type === 'router') {
-          return [
+          const items = [
               { label: 'Ext IP', value: raw.externalIP },
               { label: 'Int IP', value: raw.internalIP },
               { label: 'Uptime', value: raw.uptime ? `${Math.floor(raw.uptime / 3600)}h` : 'N/A', full: true }
           ];
+          if (data.metadata?.dnsServers && data.metadata.dnsServers.length > 0) {
+              items.push({ label: 'DNS', value: data.metadata.dnsServers.join(', '), full: true });
+          }
+          return items;
       }
       if (data.type === 'device') {
           return [];
@@ -193,6 +200,11 @@ const CustomNode = ({ data }: any) => {
                         <div className={`w-2.5 h-2.5 rounded-full ${data.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
                     )}
                     {data.label}
+                    {data.node && data.node !== 'local' && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                            {data.node}
+                        </span>
+                    )}
                 </div>
 
                 {/* Show Ports for Groups if available */}
@@ -205,10 +217,18 @@ const CustomNode = ({ data }: any) => {
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             const containerPort = isMapping ? (port as any).container : null;
                             
+                            // Determine hostname
+                            let hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+                            if (data.metadata?.nodeHost && data.metadata.nodeHost !== 'localhost') {
+                                hostname = data.metadata.nodeHost;
+                            } else if (data.node && data.node !== 'local' && data.node !== 'Local') {
+                                hostname = data.node;
+                            }
+
                             return (
                                 <div key={idx} className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-1">
                                     <a 
-                                        href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${hostPort}`}
+                                        href={`http://${hostname}:${hostPort}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="hover:text-blue-500 hover:underline"
@@ -231,8 +251,13 @@ const CustomNode = ({ data }: any) => {
       ) : (
         <div className={`w-full h-full rounded-xl border shadow-sm hover:shadow-md transition-all p-4 flex flex-col gap-3 ${nodeColor}`}>
             <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800/50 pb-2">
-                <div className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate pr-2" title={data.label}>
+                <div className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate pr-2 flex items-center gap-2" title={data.label}>
                     {data.label}
+                    {data.node && data.node !== 'local' && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 uppercase tracking-wider font-bold">
+                            {data.node}
+                        </span>
+                    )}
                 </div>
                 {data.status && (
                     <div className={`w-3 h-3 rounded-full shrink-0 ${data.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
@@ -274,12 +299,19 @@ const CustomNode = ({ data }: any) => {
                 {data.metadata?.verifiedDomains && data.metadata.verifiedDomains.length > 0 && (
                     <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
                         <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold block mb-1">Verified Domains</span>
-                        <div className="flex flex-wrap gap-1">
+                        <div className="flex flex-col gap-1">
                             {data.metadata.verifiedDomains.map((domain: string) => (
-                                <div key={domain} className="flex items-center gap-1.5 text-[10px] font-mono text-gray-700 dark:text-gray-300 px-1.5 py-0.5 bg-gray-50 dark:bg-gray-800 rounded border border-gray-100 dark:border-gray-700">
-                                    <div className="w-1 h-1 rounded-full bg-green-500 shrink-0" />
-                                    <span className="truncate max-w-[120px]" title={domain}>{domain}</span>
-                                </div>
+                                <a 
+                                    key={domain} 
+                                    href={domain.startsWith('http') ? domain : `https://${domain}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex items-center gap-2 text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-1 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-100 dark:border-blue-800/30 transition-colors"
+                                >
+                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                                    <span className="truncate" title={domain}>{domain}</span>
+                                </a>
                             ))}
                         </div>
                     </div>
@@ -307,7 +339,15 @@ const CustomNode = ({ data }: any) => {
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             const containerPort = isMapping ? (p as any).container : null;
 
-                            const link = data.metadata?.link;
+                            // Determine hostname
+                            let hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+                            if (data.metadata?.nodeHost && data.metadata.nodeHost !== 'localhost') {
+                                hostname = data.metadata.nodeHost;
+                            } else if (data.node && data.node !== 'local' && data.node !== 'Local') {
+                                hostname = data.node;
+                            }
+
+                            const link = `http://${hostname}:${hostPort}`;
                             const content = (
                                 <span className="text-[11px] font-medium px-2 py-0.5 bg-white dark:bg-black/20 text-blue-600 dark:text-blue-400 rounded border border-blue-100 dark:border-blue-800/30 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors cursor-pointer flex items-center gap-1">
                                     <span>:{hostPort}</span>
@@ -315,26 +355,23 @@ const CustomNode = ({ data }: any) => {
                                 </span>
                             );
 
-                            if (link) {
-                                return (
-                                    <a 
-                                        key={idx} 
-                                        href={link} 
-                                        target="_blank" 
-                                        rel="noopener noreferrer" 
-                                        onClick={(e) => e.stopPropagation()}
-                                        title={`Open ${link}`}
-                                    >
-                                        {content}
-                                    </a>
-                                );
-                            }
-                            return <React.Fragment key={idx}>{content}</React.Fragment>;
+                            return (
+                                <a 
+                                    key={idx} 
+                                    href={link} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    onClick={(e) => e.stopPropagation()}
+                                    title={`Open ${link}`}
+                                >
+                                    {content}
+                                </a>
+                            );
                         })}
                     </div>
                     
                     <span className="text-[10px] font-semibold px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded border border-gray-200 dark:border-gray-700 uppercase tracking-wider ml-2 whitespace-nowrap">
-                        {typeLabels[data.type] || data.type}
+                        {isMissing ? 'Missing Node' : (typeLabels[data.type] || data.type)}
                     </span>
                 </div>
             </div>
@@ -361,6 +398,11 @@ export default function NetworkPlugin() {
   const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const { addToast } = useToast();
+
+  // Monitoring Modal State
+  const [showMonitoringModal, setShowMonitoringModal] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [monitoringData, setMonitoringData] = useState<any>(null);
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -740,6 +782,96 @@ export default function NetworkPlugin() {
 
       </div>
       
+      {/* Monitoring Modal */}
+      {showMonitoringModal && monitoringData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+                <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center gap-3">
+                        <Activity className="text-blue-500" />
+                        <div>
+                            <h3 className="text-lg font-bold">Device Monitoring</h3>
+                            <div className="text-xs text-gray-500">Fritz!Box Gateway</div>
+                        </div>
+                    </div>
+                    <button onClick={() => setShowMonitoringModal(false)} className="text-gray-500 hover:text-gray-700">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {/* Status Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+                            <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">Connection</div>
+                            <div className="flex items-center gap-2">
+                                <div className={`w-2.5 h-2.5 rounded-full ${monitoringData.connected ? 'bg-green-500' : 'bg-red-500'}`} />
+                                <span className="font-bold text-lg">{monitoringData.connected ? 'Connected' : 'Disconnected'}</span>
+                            </div>
+                        </div>
+                        <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+                            <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">External IP</div>
+                            <div className="font-mono text-lg">{monitoringData.externalIP || 'N/A'}</div>
+                        </div>
+                        <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+                            <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">Uptime</div>
+                            <div className="font-mono text-lg">
+                                {monitoringData.uptime ? `${Math.floor(monitoringData.uptime / 3600)}h ${Math.floor((monitoringData.uptime % 3600) / 60)}m` : 'N/A'}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* DNS Info */}
+                    <div className="space-y-2">
+                        <h4 className="font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                            <Globe size={16} />
+                            DNS Configuration
+                        </h4>
+                        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                            {monitoringData.dnsServers && monitoringData.dnsServers.length > 0 ? (
+                                <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                                    {monitoringData.dnsServers.map((dns: string, i: number) => {
+                                        const isInternal = dns.startsWith('192.168.') || dns.startsWith('10.') || dns.startsWith('127.');
+                                        return (
+                                            <div key={i} className="p-3 flex items-center justify-between">
+                                                <div className="flex items-center gap-3">
+                                                    <span className="font-mono text-sm">{dns}</span>
+                                                    {isInternal ? (
+                                                        <span className="px-2 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                                                            Internal (Pi-hole/AdGuard)
+                                                        </span>
+                                                    ) : (
+                                                        <span className="px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                                                            External (ISP/Google)
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {i === 0 && <span className="text-xs text-gray-400 italic">Primary</span>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="p-4 text-sm text-gray-500 italic">No DNS servers detected</div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Device Logs */}
+                    <div className="space-y-2 flex-1 min-h-0 flex flex-col">
+                        <h4 className="font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                            <FileText size={16} />
+                            Device Logs
+                        </h4>
+                        <div className="bg-gray-900 text-gray-300 rounded-lg border border-gray-700 p-4 font-mono text-xs overflow-auto max-h-[400px] whitespace-pre-wrap">
+                            {monitoringData.deviceLog || 'No logs available.'}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Link Modal */}
       <ExternalLinkModal
         isOpen={showLinkModal}
@@ -861,6 +993,38 @@ export default function NetworkPlugin() {
 
                   {/* Actions */}
                   <div className="grid grid-cols-1 gap-2">
+                    {selectedNodeData.type === 'router' && (
+                        <button 
+                            onClick={() => {
+                                setMonitoringData(selectedNodeData.rawData);
+                                setShowMonitoringModal(true);
+                            }}
+                            className="w-full flex items-center justify-center gap-2 p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm font-medium"
+                        >
+                            <Activity size={14} />
+                            Device Monitoring
+                        </button>
+                    )}
+
+                    {selectedNodeData.type === 'device' && (
+                        <button 
+                            onClick={() => {
+                                const url = selectedNodeData.metadata?.verifiedDomains?.[0] || selectedNodeData.metadata?.link || '';
+                                setLinkForm({
+                                    name: selectedNodeData.label || '',
+                                    url: url,
+                                    description: selectedNodeData.metadata?.description || '',
+                                    monitor: true
+                                });
+                                setShowLinkModal(true);
+                            }}
+                            className="w-full flex items-center justify-center gap-2 p-2 bg-cyan-50 text-cyan-600 hover:bg-cyan-100 rounded-lg transition-colors text-sm font-medium"
+                        >
+                            <LinkIcon size={14} />
+                            Create External Link
+                        </button>
+                    )}
+
                     {selectedNodeData.type === 'link' && (
                         <button 
                             onClick={handleEditLink}
