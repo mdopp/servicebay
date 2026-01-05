@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { RefreshCw, Box, ArrowLeft } from 'lucide-react';
 
 interface Container {
@@ -18,6 +18,8 @@ interface Container {
 export default function ContainerLogsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const node = searchParams?.get('node');
   const [container, setContainer] = useState<Container | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [details, setDetails] = useState<any>(null);
@@ -30,7 +32,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
       setLoading(true);
       try {
         // Fetch container info (using list endpoint for now as we don't have single container endpoint)
-        const res = await fetch('/api/containers');
+        const res = await fetch(`/api/containers${node ? `?node=${node}` : ''}`);
         if (res.ok) {
           const containers: Container[] = await res.json();
           const found = containers.find(c => c.Id.startsWith(id) || c.Id === id);
@@ -42,7 +44,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
         }
 
         // Fetch detailed info
-        const detailRes = await fetch(`/api/containers/${id}`);
+        const detailRes = await fetch(`/api/containers/${id}${node ? `?node=${node}` : ''}`);
         if (detailRes.ok) {
             const data = await detailRes.json();
             setDetails(data);
@@ -66,7 +68,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
 
     const streamLogs = async () => {
         try {
-            const response = await fetch(`/api/containers/${container.Id}/logs/stream`, {
+            const response = await fetch(`/api/containers/${container.Id}/logs/stream${node ? `?node=${node}` : ''}`, {
                 signal: abortController.signal
             });
             

@@ -2,15 +2,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import yaml from 'js-yaml';
-import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock } from 'lucide-react';
+import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
 import 'prismjs/components/prism-ini'; // For systemd/kube files (ini-like)
 import 'prismjs/themes/prism-tomorrow.css'; // Dark theme for code
 import HistoryViewer from './HistoryViewer';
+import { getNodes } from '@/app/actions/system';
+import { PodmanConnection } from '@/lib/nodes';
 
 interface ServiceFormProps {
   initialData?: {
@@ -28,6 +30,11 @@ interface ServiceFormProps {
 
 export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nodeParam = searchParams?.get('node');
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [selectedNode, setSelectedNode] = useState(nodeParam || '');
+  
   const [name, setName] = useState(initialData?.name || '');
   const [kubeContent, setKubeContent] = useState(initialData?.kubeContent || '');
   const [yamlContent, setYamlContent] = useState(initialData?.yamlContent || '');
@@ -53,6 +60,10 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
     }
     return true;
   });
+
+  useEffect(() => {
+    getNodes().then(setNodes);
+  }, []);
 
   // Initialize Description from KubeContent
   useEffect(() => {
@@ -228,7 +239,8 @@ WantedBy=default.target`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = isEdit ? `/api/services/${name}` : '/api/services';
+    const query = selectedNode ? `?node=${selectedNode}` : '';
+    const url = isEdit ? `/api/services/${name}${query}` : `/api/services${query}`;
     const method = isEdit ? 'PUT' : 'POST';
 
     await fetch(url, {
@@ -247,7 +259,8 @@ WantedBy=default.target`;
     setIsRenaming(true);
 
     try {
-        const res = await fetch(`/api/services/${name}/rename`, {
+        const query = selectedNode ? `?node=${selectedNode}` : '';
+        const res = await fetch(`/api/services/${name}/rename${query}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ newName: newServiceName }),
@@ -338,6 +351,24 @@ WantedBy=default.target`;
               <Settings className="text-gray-700 dark:text-gray-300" size={24} /> Configuration
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+                <label className="block text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">Target Node</label>
+                <div className="relative">
+                    <select
+                        value={selectedNode}
+                        onChange={(e) => setSelectedNode(e.target.value)}
+                        disabled={isEdit}
+                        className="w-full p-3 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400 appearance-none"
+                    >
+                        <option value="" disabled>Select a node</option>
+                        {nodes.map(n => (
+                            <option key={n.Name} value={n.Name}>{n.Name} ({n.URI})</option>
+                        ))}
+                    </select>
+                    <Server className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={16} />
+                </div>
+            </div>
+
             <div>
                 <label className="block text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">Service Name</label>
                 <input
@@ -600,7 +631,7 @@ WantedBy=default.target`;
             </button>
             <button 
                 type="submit" 
-                disabled={!!yamlError || !name}
+                disabled={!!yamlError || !name || !selectedNode}
                 className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
             Save Service

@@ -10,7 +10,11 @@ const execAsync = promisify(exec);
 
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 const STACKS_PATH = path.join(process.cwd(), 'stacks');
-const REGISTRIES_DIR = path.join(os.homedir(), '.servicebay', 'registries');
+const CONTAINER_CONFIG_DIR = '/app/.servicebay';
+const REGISTRIES_DIR = path.join(
+  process.env.CONTAINER_CONFIG_DIR || (process.env.NODE_ENV === 'production' ? CONTAINER_CONFIG_DIR : path.join(os.homedir(), '.servicebay')), 
+  'registries'
+);
 
 export interface Template {
   name: string;

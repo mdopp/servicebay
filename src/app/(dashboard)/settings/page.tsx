@@ -1,12 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
+import SSHSetupModal from '@/components/SSHSetupModal';
 import { AppConfig } from '@/lib/config';
 import { getNodes, createNode, deleteNode, setNodeAsDefault } from '@/app/actions/nodes';
+import { checkConnection } from '@/app/actions/ssh';
 import { PodmanConnection } from '@/lib/nodes';
 
 interface AppUpdateStatus {
@@ -65,8 +67,12 @@ export default function SettingsPage() {
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [newNodeName, setNewNodeName] = useState('');
   const [newNodeDest, setNewNodeDest] = useState('');
-  const [newNodeIdentity, setNewNodeIdentity] = useState('');
+  const [newNodeIdentity, setNewNodeIdentity] = useState('~/.ssh/id_rsa');
   const [addingNode, setAddingNode] = useState(false);
+
+  // SSH Setup Modal
+  const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
+  const [sshModalDefaults, setSshModalDefaults] = useState({ host: '', port: 22, user: 'root' });
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -157,19 +163,66 @@ export default function SettingsPage() {
   };
 
   const handleAddNode = async () => {
-    if (!newNodeName || !newNodeDest) return;
-    setAddingNode(true);
+    if (!newNodeName || !newNodeDest || !newNodeIdentity) return;
+
+    // Parse URL for pre-check
+    let host = '', port = 22, user = 'root';
     try {
-      const res = await createNode(newNodeName, newNodeDest, newNodeIdentity || undefined);
+        const urlStr = newNodeDest.includes('://') ? newNodeDest : `ssh://${newNodeDest}`;
+        const url = new URL(urlStr);
+        host = url.hostname;
+        port = url.port ? parseInt(url.port) : 22;
+        user = url.username || 'root';
+    } catch {
+        // Ignore parse error
+    }
+
+    setAddingNode(true);
+
+    // Pre-check TCP connection
+    if (host) {
+        const check = await checkConnection(host, port);
+        if (!check.success || !check.isOpen) {
+            addToast('error', 'Connection Failed', `Could not connect to ${host}:${port}. Is the server reachable?`);
+            setAddingNode(false);
+            return;
+        }
+    }
+
+    try {
+      const res = await createNode(newNodeName, newNodeDest, newNodeIdentity);
       if (res.success) {
         setNodes(await getNodes());
         setNewNodeName('');
         setNewNodeDest('');
-        setNewNodeIdentity('');
-        addToast('success', 'Node added');
+        setNewNodeIdentity('~/.ssh/id_rsa');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((res as any).warning) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const warning = (res as any).warning as string;
+            
+            // Check for common SSH issues
+            if (warning.includes('timed out') || warning.includes('Permission denied') || warning.includes('password')) {
+                addToast('warning', 'SSH Connection Failed', 
+                    'The node was added, but we could not connect. It seems password-less SSH is not configured.'
+                );
+                // Pre-fill and open modal
+                if (host) {
+                    setSshModalDefaults({ host, port, user });
+                    setIsSSHModalOpen(true);
+                }
+            } else {
+                addToast('warning', 'Node added with warning', warning);
+            }
+        } else {
+            addToast('success', 'Node added');
+        }
       } else {
-        addToast('error', 'Failed to add node');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        addToast('error', 'Failed to add node', (res as any).error);
       }
+    } catch (e) {
+        addToast('error', 'Failed to add node', String(e));
     } finally {
       setAddingNode(false);
     }
@@ -439,9 +492,33 @@ export default function SettingsPage() {
                     <h3 className="font-bold text-gray-900 dark:text-white">System Connections</h3>
                     <p className="text-xs text-gray-500 dark:text-gray-400">Manage remote Podman nodes</p>
                 </div>
+                <div className="ml-auto">
+                    <button 
+                        onClick={() => setIsSSHModalOpen(true)}
+                        className="text-xs flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                        <Terminal size={14} />
+                        Setup SSH Keys
+                    </button>
+                </div>
             </div>
             
             <div className="p-6 space-y-6">
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 flex gap-3 items-start">
+                    <div className="mt-0.5 text-blue-600 dark:text-blue-400">
+                        <Key size={16} />
+                    </div>
+                    <div className="text-sm text-blue-800 dark:text-blue-200">
+                        <p className="font-medium mb-1">SSH Access Required</p>
+                        <p className="opacity-90 text-xs">
+                            ServiceBay requires password-less SSH access to remote nodes. 
+                            If you haven&apos;t set this up, use the 
+                            <button onClick={() => setIsSSHModalOpen(true)} className="mx-1 underline font-medium hover:text-blue-600">Setup SSH Keys</button> 
+                            tool to copy your public key to the server.
+                        </p>
+                    </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
                     <div className="md:col-span-3">
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
@@ -464,7 +541,7 @@ export default function SettingsPage() {
                         />
                     </div>
                     <div className="md:col-span-3">
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Identity File (Optional)</label>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Identity File</label>
                         <div className="relative">
                             <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input 
@@ -479,7 +556,7 @@ export default function SettingsPage() {
                     <div className="md:col-span-1">
                         <button 
                             onClick={handleAddNode}
-                            disabled={!newNodeName || !newNodeDest || addingNode}
+                            disabled={!newNodeName || !newNodeDest || !newNodeIdentity || addingNode}
                             className="w-full p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center"
                         >
                             {addingNode ? <Loader2 className="animate-spin" size={20} /> : <Plus size={20} />}
@@ -522,7 +599,7 @@ export default function SettingsPage() {
                     ))}
                     {nodes.length === 0 && (
                         <div className="text-center py-4 text-gray-500 dark:text-gray-400 text-sm italic">
-                            No remote nodes configured. Podcli is running in local mode.
+                            No remote nodes configured. ServiceBay is running in local mode.
                         </div>
                     )}
                 </div>
@@ -823,6 +900,14 @@ export default function SettingsPage() {
         confirmText="Update Now"
         onConfirm={confirmAppUpdate}
         onCancel={() => setIsUpdateModalOpen(false)}
+      />
+
+      <SSHSetupModal 
+        isOpen={isSSHModalOpen}
+        onClose={() => setIsSSHModalOpen(false)}
+        initialHost={sshModalDefaults.host}
+        initialPort={sshModalDefaults.port}
+        initialUser={sshModalDefaults.user}
       />
     </div>
   );

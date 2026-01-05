@@ -20,15 +20,14 @@ This project uses a GitHub Actions workflow (`.github/workflows/release.yml`) to
 
 3.  **Wait for Action:**
     The GitHub Action will automatically:
-    - Build the application.
-    - Create a GitHub Release.
-    - Upload the necessary artifacts (`servicebay-linux-x64.tar.gz`, `servicebay-update-linux-x64.tar.gz`, `servicebay-deps-linux-x64.tar.gz`).
+    - Build the Docker image.
+    - Push the image to GitHub Container Registry (`ghcr.io/mdopp/servicebay`).
+    - Create a GitHub Release with `install.sh`.
 
 ## Artifacts Explained
 
--   `servicebay-linux-x64.tar.gz`: Full installation (Code + Node Modules).
--   `servicebay-update-linux-x64.tar.gz`: Application code only (smaller, for updates).
--   `servicebay-deps-linux-x64.tar.gz`: `node_modules` only (for dependency updates).
+-   `install.sh`: The installer script that sets up the ServiceBay container using Podman Quadlet.
+-   **Docker Image**: Hosted on GHCR (`ghcr.io/mdopp/servicebay:latest` and version tags).
 
 ## Troubleshooting
 

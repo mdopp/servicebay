@@ -5,6 +5,8 @@ import { getSystemInfo, getDiskUsage, getSystemUpdates, SystemInfo, DiskInfo } f
 import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
+import { getNodes } from '@/app/actions/nodes';
+import { PodmanConnection } from '@/lib/nodes';
 
 export default function SystemInfoPlugin() {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
@@ -12,6 +14,8 @@ export default function SystemInfoPlugin() {
   const [updates, setUpdates] = useState<{ count: number; list: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [selectedNode, setSelectedNode] = useState<string>('Local');
   const { addToast } = useToast();
 
   const handleCopyCommand = () => {
@@ -25,27 +29,31 @@ export default function SystemInfoPlugin() {
     setLoading(true);
     try {
       const [sys, disk, up] = await Promise.all([
-        getSystemInfo(),
-        getDiskUsage(),
-        getSystemUpdates()
+        getSystemInfo(selectedNode),
+        getDiskUsage(selectedNode),
+        getSystemUpdates(selectedNode)
       ]);
       setSysInfo(sys);
       setDiskInfo(disk);
       setUpdates(up);
     } catch (error) {
       console.error('Failed to fetch system info', error);
+      setSysInfo(null);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
+    getNodes().then(setNodes).catch(console.error);
   }, []);
 
-  if (loading) return <div className="p-8 text-center text-gray-500">Loading system information...</div>;
-  if (!sysInfo) return <div className="p-8 text-center text-red-500">Failed to load system information.</div>;
+  useEffect(() => {
+    fetchData();
+  }, [selectedNode]);
 
+  if (loading) return <div className="p-8 text-center text-gray-500">Loading system information...</div>;
+  
   return (
     <div className="h-full flex flex-col">
       <PageHeader 
@@ -53,19 +61,35 @@ export default function SystemInfoPlugin() {
         showBack={false} 
         helpId="system-info"
         actions={
-            <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
-                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-            </button>
+            <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 mr-2">
+                    <Server size={16} className="text-gray-500" />
+                    <select 
+                        value={selectedNode} 
+                        onChange={(e) => setSelectedNode(e.target.value)}
+                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                        <option value="Local">Local (Default)</option>
+                        {nodes.map(node => (
+                            <option key={node.Name} value={node.Name}>{node.Name}</option>
+                        ))}
+                    </select>
+                </div>
+                <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
+                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                </button>
+            </div>
         }
       />
-
+      
+      {!sysInfo ? (
+          <div className="p-8 text-center text-red-500">Failed to load system information for {selectedNode}.</div>
+      ) : (
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        
-        {/* OS & CPU */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
                 <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-                    <Server size={18} /> Operating System
+                    <Server size={18} /> OS Information
                 </h3>
                 <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
@@ -214,8 +238,8 @@ export default function SystemInfoPlugin() {
                 <div className="text-sm text-gray-500">Checking for updates...</div>
             )}
         </div>
-
       </div>
+      )}
     </div>
   );
 }

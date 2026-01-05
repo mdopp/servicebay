@@ -3,7 +3,7 @@
   "version": "2026.1.43",
   "private": true,
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "fuser -k 3000/tcp || true && tsx server.ts",
     "build": "next build",
     "start": "NODE_ENV=production tsx server.ts",
     "lint": "eslint",

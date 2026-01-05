@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react';
 import { Template } from '@/lib/registry';
 import { fetchTemplateYaml } from '@/app/actions';
-import { Layers, Loader2, AlertCircle, X, Folder } from 'lucide-react';
+import { getNodes } from '@/app/actions/system';
+import { PodmanConnection } from '@/lib/nodes';
+import { Layers, Loader2, AlertCircle, X, Folder, Server } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Mustache from 'mustache';
 
@@ -32,6 +34,12 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   const [variables, setVariables] = useState<Variable[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [selectedNode, setSelectedNode] = useState('');
+
+  useEffect(() => {
+    getNodes().then(setNodes);
+  }, []);
 
   // Initialize items based on type
   useEffect(() => {
@@ -140,7 +148,8 @@ AutoUpdate=registry
 WantedBy=default.target`;
 
         try {
-            const res = await fetch('/api/services', {
+            const query = selectedNode ? `?node=${selectedNode}` : '';
+            const res = await fetch(`/api/services${query}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -214,6 +223,23 @@ WantedBy=default.target`;
 
                 {step === 'configure' && (
                     <div>
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Target Node</label>
+                            <div className="relative">
+                                <select
+                                    value={selectedNode}
+                                    onChange={(e) => setSelectedNode(e.target.value)}
+                                    className="w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500 appearance-none"
+                                >
+                                    <option value="" disabled>Select a node</option>
+                                    {nodes.map(n => (
+                                        <option key={n.Name} value={n.Name}>{n.Name} ({n.URI})</option>
+                                    ))}
+                                </select>
+                                <Server className="absolute right-3 top-2.5 text-gray-400 pointer-events-none" size={16} />
+                            </div>
+                        </div>
+
                         <p className="mb-4 text-gray-600 dark:text-gray-400">Configure variables:</p>
                         {variables.length > 0 ? (
                             <div className="grid gap-4 mb-6">
@@ -288,7 +314,8 @@ WantedBy=default.target`;
                         </button>
                         <button 
                             onClick={handleInstall}
-                            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors"
+                            disabled={!selectedNode}
+                            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Install
                         </button>

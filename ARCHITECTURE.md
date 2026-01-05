@@ -27,7 +27,7 @@ The dashboard (`/`) is built using a modular plugin architecture. This allows fo
 ### Current Plugins
 
 1.  **Services**: Manages the core "containered services" (systemd units).
-2.  **Running Containers**: Lists all active Podman containers.
+2.  **Containers**: Lists all active Podman containers.
 3.  **Monitoring**: Real-time health checks, history, and notifications.
 4.  **Network Map**: Visualizes service relationships and health status using an interactive graph (React Flow + ELK).
 5.  **System Info**: Displays CPU, Memory, OS, Network, Disk Usage, and OS Updates.
@@ -74,7 +74,7 @@ The monitoring system (`src/lib/monitoring/`) provides real-time health checks f
 
 - **Gateway**: `MonitoringGateway` manages the active monitoring loop.
 - **Discovery**: Automatically discovers targets from:
-  - **Podman**: Running containers.
+  - **Podman**: Containers.
   - **Services**: Managed systemd services.
   - **Manual**: User-defined external URLs.
 - **Checks**: Supports HTTP (Status, Body Regex) and TCP (Port Open) checks.
@@ -96,8 +96,11 @@ ServiceBay handles two types of updates:
 
 ### Application Updates
 - **Location**: Settings Plugin.
-- **Source**: GitHub Releases (`mdopp/servicebay`).
-- **Mechanism**: Checks `package.json` version against latest tag. Downloads and installs tarball.
+- **Source**: GitHub Container Registry (`ghcr.io/mdopp/servicebay`).
+- **Mechanism**: 
+  1. Checks for new image tags on GHCR.
+  2. Pulls the new image (`podman pull`).
+  3. Triggers `podman auto-update` to restart the container with the new image.
 
 ### System Updates
 - **Location**: System Info Plugin.
@@ -108,11 +111,17 @@ ServiceBay handles two types of updates:
 ## Installation
 
 The installation is handled by `install.sh`, which:
-1.  Clones the repository or downloads the release tarball.
-2.  Installs dependencies (`npm install`).
-3.  Builds the application (`npm run build`).
-4.  Sets up a user-level systemd service (`servicebay.service`).
-5.  Prompts the user for a port (default: 3000).
+1.  Checks for Podman.
+2.  Creates a Quadlet file (`~/.config/containers/systemd/servicebay.container`).
+3.  Reloads systemd to start the container.
+
+The container is configured with:
+- `AutoUpdate=registry`: Enables automatic updates via Podman.
+- `UserNS=keep-id`: Maps the container user to the host user for SSH key access.
+- Volume Mounts:
+  - `~/.servicebay`: Persistent configuration.
+  - `~/.ssh`: Read-only access to host SSH keys for remote management.
+  - `/run/podman/podman.sock`: Access to host Podman socket (for self-updates).
 
 ## Tech Stack
 

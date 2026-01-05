@@ -735,7 +735,7 @@ export class NetworkService {
     if (nginxContainer) { 
         for (const server of nginxConfig.servers) {
             // Find verified domains for this server block
-            const serverDomains = server.server_name.filter(name => verifiedDomains.includes(name));
+            const serverDomains = server.server_name.filter((name: string) => verifiedDomains.includes(name));
             
             for (const loc of server.locations) {
                 let proxyPass = loc.proxy_pass;
@@ -761,6 +761,8 @@ export class NetworkService {
                         let podId: string | undefined;
                         let podName: string | undefined;
                         let targetContainer = null;
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        let containerWithMapping: any = null;
 
                         // 0. Check if targetHost is a container IP
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -779,7 +781,7 @@ export class NetworkService {
                         } else {
                             // 1. Find the port mapping (HostPort -> ContainerPort)
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const containerWithMapping = containers.find((c: any) => {
+                            containerWithMapping = containers.find((c: any) => {
                                 if (!c.Ports) return false;
                                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                                 return c.Ports.some((p: any) => {
@@ -822,6 +824,37 @@ export class NetworkService {
                             });
                         }
 
+                        // 3. Check for Host Network Containers (if target is local and no container found yet)
+                        if (!targetContainer) {
+                             const isLocalTarget = ['localhost', '127.0.0.1', '::1'].includes(targetHost) || nodeIPs.includes(targetHost);
+                             
+                             if (isLocalTarget) {
+                                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                 const hostNetContainer = containerInspections.find((i: any) => {
+                                     const isHost = i.HostConfig?.NetworkMode === 'host';
+                                     if (!isHost) return false;
+                                     
+                                     // Check Exposed Ports
+                                     if (i.Config?.ExposedPorts) {
+                                         const exposed = Object.keys(i.Config.ExposedPorts);
+                                         return exposed.some(p => parseInt(p.split('/')[0], 10) === targetPort);
+                                     }
+                                     return false;
+                                 });
+
+                                 if (hostNetContainer) {
+                                     // Find the container object in 'containers' list to match format
+                                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                     targetContainer = containers.find((c: any) => c.Id.startsWith(hostNetContainer.Id) || hostNetContainer.Id.startsWith(c.Id));
+                                     if (targetContainer) {
+                                         internalPort = targetPort;
+                                         podId = targetContainer.Pod;
+                                         podName = targetContainer.PodName || targetContainer.Labels?.['io.podman.pod.name'] || targetContainer.Labels?.['io.kubernetes.pod.name'];
+                                     }
+                                 }
+                             }
+                        }
+
                         let targetId = targetContainer ? prefix(targetContainer.Id) : null;
 
                         // Fallback to Pod if no container found but we have a pod
@@ -831,37 +864,42 @@ export class NetworkService {
 
                         // Fallback to Virtual Node if no Container/Pod found
                         if (!targetId && targetHost) {
-                            const isLocal = ['localhost', '127.0.0.1', '::1'].includes(targetHost) || nodeIPs.includes(targetHost);
-                            const type = isLocal ? 'missing' : 'external';
-                            
-                            targetId = prefix(`${type}-${targetHost}-${targetPort}`);
-                            
-                            if (!nodes.find(n => n.id === targetId)) {
-                                nodes.push({
-                                    id: targetId,
-                                    type: 'device',
-                                    label: targetHost,
-                                    subLabel: isLocal ? `Unresolved (${targetPort})` : `External (${targetPort})`,
-                                    ports: [targetPort],
-                                    status: isLocal ? 'down' : 'up',
-                                    node: nodeName,
-                                    metadata: {
-                                        source: 'Nginx Proxy',
-                                        description: isLocal 
-                                            ? `Nginx proxies to ${targetHost}:${targetPort}, but no container was found listening on this port.`
-                                            : `External Service detected via Nginx configuration.`,
-                                        link: `http://${targetHost}:${targetPort}`,
-                                        nodeHost,
-                                        verifiedDomains: [],
-                                        expectedTarget: `Host: ${targetHost}, Port: ${targetPort} (${isLocal ? 'Local' : 'External'})`
-                                    },
-                                    rawData: {
+                            // Special handling for localhost/127.0.0.1: Treat as self-reference (User Request)
+                            if (['localhost', '127.0.0.1', '::1'].includes(targetHost)) {
+                                targetId = nginxId;
+                            } else {
+                                const isLocal = nodeIPs.includes(targetHost);
+                                const type = isLocal ? 'missing' : 'external';
+                                
+                                targetId = prefix(`${type}-${targetHost}-${targetPort}`);
+                                
+                                if (!nodes.find(n => n.id === targetId)) {
+                                    nodes.push({
+                                        id: targetId,
                                         type: 'device',
-                                        name: targetHost,
-                                        ip: targetHost,
-                                        isVirtual: true
-                                    }
-                                });
+                                        label: targetHost,
+                                        subLabel: isLocal ? `Unresolved (${targetPort})` : `External (${targetPort})`,
+                                        ports: [targetPort],
+                                        status: isLocal ? 'down' : 'up',
+                                        node: nodeName,
+                                        metadata: {
+                                            source: 'Nginx Proxy',
+                                            description: isLocal 
+                                                ? `Nginx proxies to ${targetHost}:${targetPort}, but no container was found listening on this port.`
+                                                : `External Service detected via Nginx configuration.`,
+                                            link: `http://${targetHost}:${targetPort}`,
+                                            nodeHost,
+                                            verifiedDomains: [],
+                                            expectedTarget: `Host: ${targetHost}, Port: ${targetPort} (${isLocal ? 'Local' : 'External'})`
+                                        },
+                                        rawData: {
+                                            type: 'device',
+                                            name: targetHost,
+                                            ip: targetHost,
+                                            isVirtual: true
+                                        }
+                                    });
+                                }
                             }
                         }
 
@@ -889,7 +927,7 @@ export class NetworkService {
                             for (const domain of serverDomains) {
                                 // Construct URL: http(s)://domain/path
                                 // Check if ssl is enabled for this server
-                                const isSsl = server.listen.some(l => l.includes('443') || l.includes('ssl'));
+                                const isSsl = server.listen.some((l: string) => l.includes('443') || l.includes('ssl'));
                                 const protocol = isSsl ? 'https' : 'http';
                                 const path = loc.path === '/' ? '' : loc.path;
                                 urlSet.add(`${protocol}://${domain}${path}`);
@@ -975,7 +1013,7 @@ export class NetworkService {
             });
             
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const hostPort = ports.find((p: any) => typeof p === 'object' && p.host)?.host;
+            const hostPort = (ports.find((p: any) => typeof p === 'object' && p.host) as any)?.host;
 
             let ip = null;
             if (container.Networks) {

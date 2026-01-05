@@ -1,4 +1,4 @@
-export type CheckType = 'http' | 'ping' | 'script' | 'podman' | 'service' | 'systemd' | 'fritzbox';
+export type CheckType = 'http' | 'ping' | 'script' | 'podman' | 'service' | 'systemd' | 'fritzbox' | 'node';
 
 export interface CheckConfig {
   id: string;
@@ -8,6 +8,7 @@ export interface CheckConfig {
   interval: number; // in seconds
   enabled: boolean;
   created_at: string;
+  nodeName?: string; // Optional node name for remote execution
   // HTTP specific options
   httpConfig?: {
     expectedStatus?: number;

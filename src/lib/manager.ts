@@ -11,7 +11,15 @@ import { PodmanConnection } from './nodes';
 // But wait, os.homedir() returns the container's home dir.
 // We need a way to get the remote home dir.
 // For now, let's assume ~/.config/containers/systemd is the standard.
-const SYSTEMD_DIR = '.config/containers/systemd';
+// If running in container, this path is relative to /root (or whatever user).
+// But we are not mounting host's systemd dir.
+// So "Local" management is effectively disabled/empty unless we mount it.
+function getSystemdDir(connection?: PodmanConnection) {
+    if (connection) {
+        return '.config/containers/systemd';
+    }
+    return path.join(os.homedir(), '.config/containers/systemd');
+}
 
 export interface ServiceInfo {
   name: string;
@@ -27,114 +35,138 @@ export interface ServiceInfo {
   labels: Record<string, string>;
   hostNetwork?: boolean;
   node?: string; // Added node name
+  id?: string; // Optional ID for mapping display name to service name
 }
 
 export async function listServices(connection?: PodmanConnection): Promise<ServiceInfo[]> {
+  // If no connection is provided, we are in "Local" mode.
+  // But "Local" is disabled for services.
+  if (!connection) {
+      return [];
+  }
+
   const executor = getExecutor(connection);
   
-  // Resolve home dir on remote if needed, but using relative path from home is safer for SSH
-  // `ls .config/containers/systemd` works if we are in home.
-  // SSH usually lands in home.
-  
   try {
-    if (!(await executor.exists(SYSTEMD_DIR))) {
-        await executor.mkdir(SYSTEMD_DIR);
+    const systemdDir = getSystemdDir(connection);
+    if (!(await executor.exists(systemdDir))) {
+        await executor.mkdir(systemdDir);
     }
   } catch (e) {
       console.error('Failed to access systemd dir', e);
       return [];
   }
 
-  let files: string[] = [];
+  const systemdDir = getSystemdDir(connection);
+  // Optimized batch fetch script to reduce SSH round-trips
+  const script = `
+    cd "${systemdDir}" || exit 0
+    for f in *.kube; do
+        [ -e "$f" ] || continue
+        name="\${f%.kube}"
+        echo "---SERVICE_START---"
+        echo "NAME: $name"
+        echo "STATUS: $(systemctl --user is-active "$name.service" 2>/dev/null || echo inactive)"
+        echo "DESCRIPTION: $(systemctl --user show -p Description --value "$name.service" 2>/dev/null)"
+        echo "KUBE_CONTENT_START"
+        cat "$f"
+        echo "KUBE_CONTENT_END"
+        
+        yaml_file=$(grep "^Yaml=" "$f" | head -n1 | cut -d= -f2- | sed 's/^[ \t]*//;s/[ \t]*$//')
+        if [ -n "$yaml_file" ]; then
+            echo "YAML_CONTENT_START"
+            if [[ "$yaml_file" == /* ]]; then
+                cat "$yaml_file" 2>/dev/null
+            else
+                cat "$yaml_file" 2>/dev/null
+            fi
+            echo "YAML_CONTENT_END"
+        fi
+        echo "---SERVICE_END---"
+    done
+  `;
+
+  let stdout = '';
   try {
-      files = await executor.readdir(SYSTEMD_DIR);
+      const res = await executor.exec(script);
+      stdout = res.stdout;
   } catch (e) {
-      console.error('Failed to read systemd dir', e);
+      console.error('Failed to fetch services batch', e);
       return [];
   }
 
-  const kubeFiles = files.filter(f => f.endsWith('.kube'));
   const services: ServiceInfo[] = [];
+  const serviceBlocks = stdout.split('---SERVICE_START---').filter(b => b.trim());
 
-  for (const kubeFile of kubeFiles) {
-    const name = kubeFile.replace('.kube', '');
-    const kubePath = path.join(SYSTEMD_DIR, kubeFile);
-    
-    let content = '';
-    try {
-        content = await executor.readFile(kubePath);
-    } catch (e) {
-        console.error(`Failed to read ${kubePath}`, e);
-        continue;
-    }
-    
-    // Extract Yaml file name from [Kube] section
-    const yamlMatch = content.match(/Yaml=(.+)/);
-    const yamlFile = yamlMatch ? yamlMatch[1].trim() : null;
-    
-    let yamlPath = null;
-    if (yamlFile) {
-        // If absolute, use it. If relative, join with SYSTEMD_DIR
-        // Note: path.join uses local OS separator. For SSH (Linux), we should force forward slashes.
-        if (yamlFile.startsWith('/')) {
-            yamlPath = yamlFile;
-        } else {
-            yamlPath = `${SYSTEMD_DIR}/${yamlFile}`;
-        }
-    }
+  for (const block of serviceBlocks) {
+      const lines = block.split('\n');
+      const nameLine = lines.find(l => l.startsWith('NAME: '));
+      const statusLine = lines.find(l => l.startsWith('STATUS: '));
+      const descLine = lines.find(l => l.startsWith('DESCRIPTION: '));
+      
+      if (!nameLine) continue;
+      
+      const name = nameLine.substring(6).trim();
+      const status = statusLine ? statusLine.substring(8).trim() : 'unknown';
+      let description = descLine ? descLine.substring(13).trim() : '';
+      const active = status === 'active';
 
-    let active = false;
-    let status = 'unknown';
-    let description = '';
-    const ports: { host?: string; container: string }[] = [];
-    const volumes: { host: string; container: string }[] = [];
-    let labels: Record<string, string> = {};
-    let hostNetwork = false;
+      // Extract Kube Content
+      const kubeStart = block.indexOf('KUBE_CONTENT_START');
+      const kubeEnd = block.indexOf('KUBE_CONTENT_END');
+      let content = '';
+      if (kubeStart !== -1 && kubeEnd !== -1) {
+          content = block.substring(kubeStart + 19, kubeEnd).trim();
+      }
 
-    try {
-      const { stdout } = await executor.exec(`systemctl --user is-active ${name}.service`);
-      status = stdout.trim();
-      active = status === 'active';
-    } catch (e) {
-      status = 'inactive';
-    }
+      // Extract Yaml Content
+      const yamlStart = block.indexOf('YAML_CONTENT_START');
+      const yamlEnd = block.indexOf('YAML_CONTENT_END');
+      let yamlContent = '';
+      if (yamlStart !== -1 && yamlEnd !== -1) {
+          yamlContent = block.substring(yamlStart + 19, yamlEnd).trim();
+      }
 
-    try {
-      // Get Description
-      const { stdout: descStdout } = await executor.exec(`systemctl --user show -p Description --value ${name}.service`);
-      description = descStdout.trim();
-    } catch (e) {
-      // console.warn(`Failed to get description for ${name}`, e);
-    }
-
-    // Fallback: If systemd description is empty (e.g. unit not loaded yet), try to parse from .kube file
-    if (!description && content) {
+      // Fallback description from file
+      if (!description && content) {
         const match = content.match(/Description=(.+)/);
         if (match) {
             description = match[1].trim();
         }
-    }
+      }
 
-    if (yamlPath) {
+      const systemdDir = getSystemdDir(connection);
+      const kubePath = path.join(systemdDir, `${name}.kube`);
+      
+      // Extract Yaml file name for reference
+      const yamlMatch = content.match(/Yaml=(.+)/);
+      const yamlFile = yamlMatch ? yamlMatch[1].trim() : null;
+      let yamlPath = null;
+      if (yamlFile) {
+        if (yamlFile.startsWith('/')) {
+            yamlPath = yamlFile;
+        } else {
+            yamlPath = path.join(systemdDir, yamlFile);
+        }
+      }
+
+      const ports: { host?: string; container: string }[] = [];
+      const volumes: { host: string; container: string }[] = [];
+      let labels: Record<string, string> = {};
+      let hostNetwork = false;
+
+      if (yamlContent) {
         try {
-            const yamlContent = await executor.readFile(yamlPath);
-            // Handle multi-document YAML files
             const documents = yaml.loadAll(yamlContent) as any[];
-            
-            // Iterate through all documents to find one with spec.containers
             documents.forEach((parsed) => {
                 if (parsed) {
-                    // Extract Labels
                     if (parsed.metadata && parsed.metadata.labels) {
                         labels = { ...labels, ...parsed.metadata.labels };
                     }
-
                     if (parsed.spec) {
                         if (parsed.spec.hostNetwork) {
                             hostNetwork = true;
                         }
-
-                        // Extract Ports
                         if (parsed.spec.containers) {
                             parsed.spec.containers.forEach((container: any) => {
                                 if (container.ports) {
@@ -148,16 +180,16 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
                                 }
                             });
                         }
-
+                        
                         // Extract Volumes
                         if (parsed.spec.volumes && parsed.spec.containers) {
-                            const volumeMap = new Map<string, string>(); // name -> hostPath
+                            const volumeMap = new Map<string, string>();
                             
                             parsed.spec.volumes.forEach((vol: any) => {
                                 if (vol.hostPath && vol.hostPath.path) {
                                     volumeMap.set(vol.name, vol.hostPath.path);
                                 } else if (vol.persistentVolumeClaim) {
-                                    volumeMap.set(vol.name, `PVC:${vol.persistentVolumeClaim.claimName}`);
+                                    volumeMap.set(vol.name, `PVC:\${vol.persistentVolumeClaim.claimName}`);
                                 }
                             });
 
@@ -176,24 +208,25 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
                 }
             });
         } catch (e) {
-            console.error(`Error parsing YAML for ${name}`, e);
+            console.warn(`Failed to parse YAML for ${name}`, e);
         }
-    }
+      }
 
-    services.push({
-      name,
-      kubeFile,
-      kubePath,
-      yamlFile,
-      yamlPath,
-      active,
-      status,
-      description,
-      ports,
-      volumes,
-      labels,
-      hostNetwork
-    });
+      services.push({
+        name,
+        kubeFile: `${name}.kube`,
+        kubePath,
+        yamlFile,
+        yamlPath,
+        active,
+        status,
+        description,
+        ports,
+        volumes,
+        labels,
+        hostNetwork,
+        node: connection?.Name || 'Local'
+      });
   }
 
   return services;
@@ -201,7 +234,8 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
 
 export async function getServiceFiles(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  const kubePath = `${SYSTEMD_DIR}/${name}.kube`;
+  const systemdDir = getSystemdDir(connection);
+  const kubePath = path.join(systemdDir, `${name}.kube`);
   let kubeContent = '';
   let yamlContent = '';
   let yamlPath = '';
@@ -216,7 +250,7 @@ export async function getServiceFiles(name: string, connection?: PodmanConnectio
       if (yamlFileName.startsWith('/')) {
         yamlPath = yamlFileName;
       } else {
-        yamlPath = `${SYSTEMD_DIR}/${yamlFileName}`;
+        yamlPath = path.join(systemdDir, yamlFileName);
       }
       
       try {
@@ -240,8 +274,9 @@ export async function getServiceFiles(name: string, connection?: PodmanConnectio
         serviceContent = '# Service unit not found or not generated yet.';
     }
 
-  } catch (e) {
-    throw new Error(`Service ${name} not found`);
+  } catch (e: any) {
+    console.error(`Error reading service files for ${name}:`, e);
+    throw new Error(`Service ${name} not found: ${e.message}`);
   }
 
   return { kubeContent, yamlContent, yamlPath, serviceContent, kubePath, servicePath };
@@ -251,7 +286,8 @@ import { saveSnapshot } from './history';
 
 export async function updateServiceDescription(name: string, description: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  const kubePath = `${SYSTEMD_DIR}/${name}.kube`;
+  const systemdDir = getSystemdDir(connection);
+  const kubePath = path.join(systemdDir, `${name}.kube`);
   
   try {
     let content = await executor.readFile(kubePath);
@@ -293,8 +329,9 @@ export async function updateServiceDescription(name: string, description: string
 
 export async function saveService(name: string, kubeContent: string, yamlContent: string, yamlFileName: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  const kubePath = `${SYSTEMD_DIR}/${name}.kube`;
-  const yamlPath = `${SYSTEMD_DIR}/${yamlFileName}`;
+  const systemdDir = getSystemdDir(connection);
+  const kubePath = path.join(systemdDir, `${name}.kube`);
+  const yamlPath = path.join(systemdDir, yamlFileName);
 
   // Save snapshots of existing files if they exist
   // Only for local connection for now
@@ -320,7 +357,8 @@ export async function saveService(name: string, kubeContent: string, yamlContent
 export async function deleteService(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   const { yamlPath } = await getServiceFiles(name, connection);
-  const kubePath = `${SYSTEMD_DIR}/${name}.kube`;
+  const systemdDir = getSystemdDir(connection);
+  const kubePath = path.join(systemdDir, `${name}.kube`);
 
   try {
     await executor.exec(`systemctl --user stop ${name}.service`);
@@ -514,8 +552,9 @@ export async function restartService(name: string, connection?: PodmanConnection
 
 export async function renameService(oldName: string, newName: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  const oldKubePath = `${SYSTEMD_DIR}/${oldName}.kube`;
-  const newKubePath = `${SYSTEMD_DIR}/${newName}.kube`;
+  const systemdDir = getSystemdDir(connection);
+  const oldKubePath = path.join(systemdDir, `${oldName}.kube`);
+  const newKubePath = path.join(systemdDir, `${newName}.kube`);
   
   // Check if new service already exists
   try {
@@ -539,12 +578,12 @@ export async function renameService(oldName: string, newName: string, connection
   if (oldYamlFile.startsWith('/')) {
       oldYamlPath = oldYamlFile;
   } else {
-      oldYamlPath = `${SYSTEMD_DIR}/${oldYamlFile}`;
+      oldYamlPath = path.join(systemdDir, oldYamlFile);
   }
   
   // Determine new YAML path (we rename it to match the new service name)
   const newYamlFile = `${newName}.yml`;
-  const newYamlPath = `${SYSTEMD_DIR}/${newYamlFile}`;
+  const newYamlPath = path.join(systemdDir, newYamlFile);
 
   // 1. Stop and Disable old service
   try {
@@ -616,6 +655,9 @@ export async function getContainerInspect(id: string, connection?: PodmanConnect
 }
 
 export async function getAllContainersInspect(connection?: PodmanConnection) {
+  if (!connection) {
+      return [];
+  }
   const executor = getExecutor(connection);
   try {
     // Get all container IDs first
@@ -628,4 +670,41 @@ export async function getAllContainersInspect(connection?: PodmanConnection) {
     console.error('Error inspecting all containers:', e);
     return [];
   }
+}
+
+export interface VolumeInfo {
+  Name: string;
+  Driver: string;
+  Mountpoint: string;
+  Labels: Record<string, string>;
+  Options: Record<string, string>;
+  Scope: string;
+}
+
+export async function listVolumes(connection?: PodmanConnection): Promise<VolumeInfo[]> {
+  const executor = getExecutor(connection);
+  try {
+    const { stdout } = await executor.exec('podman volume ls --format json');
+    if (!stdout.trim()) return [];
+    return JSON.parse(stdout);
+  } catch (e) {
+    console.error('Error listing volumes:', e);
+    return [];
+  }
+}
+
+export async function createVolume(name: string, options?: Record<string, string>, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  let cmd = `podman volume create ${name}`;
+  if (options) {
+    for (const [key, value] of Object.entries(options)) {
+      cmd += ` --opt ${key}=${value}`;
+    }
+  }
+  await executor.exec(cmd);
+}
+
+export async function removeVolume(name: string, connection?: PodmanConnection) {
+  const executor = getExecutor(connection);
+  await executor.exec(`podman volume rm ${name}`);
 }

@@ -12,7 +12,7 @@ export interface PodmanConnection {
 
 export async function listNodes(): Promise<PodmanConnection[]> {
   try {
-    const { stdout } = await execAsync('podman system connection list --format json');
+    const { stdout } = await execAsync('podman system connection list --format json', { timeout: 5000 });
     if (!stdout.trim()) return [];
     return JSON.parse(stdout);
   } catch (error) {
@@ -26,13 +26,36 @@ export async function addNode(name: string, destination: string, identity?: stri
   if (identity) {
     cmd += ` --identity ${identity}`;
   }
-  await execAsync(cmd);
+  // Set a timeout to prevent hanging if SSH prompts or network is slow
+  await execAsync(cmd, { timeout: 15000 });
+}
+
+export async function verifyNodeConnection(name: string): Promise<{ success: boolean; error?: string }> {
+    try {
+        // Try to fetch info from the node with a strict timeout
+        await execAsync(`podman --connection ${name} info`, { timeout: 5000 });
+        return { success: true };
+    } catch (e) {
+        console.warn(`Connection check failed for node ${name}:`, e);
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        // Clean up the error message to be more user friendly if possible, or just return the raw stderr
+        // execAsync error usually contains stdout and stderr
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const stderr = (e as any).stderr || errorMessage;
+        return { success: false, error: stderr };
+    }
 }
 
 export async function removeNode(name: string): Promise<void> {
-  await execAsync(`podman system connection remove ${name}`);
+  await execAsync(`podman system connection remove ${name}`, { timeout: 5000 });
 }
 
 export async function setDefaultNode(name: string): Promise<void> {
-  await execAsync(`podman system connection default ${name}`);
+  await execAsync(`podman system connection default ${name}`, { timeout: 5000 });
+}
+
+export async function getNodeConnection(name?: string): Promise<PodmanConnection | undefined> {
+  if (!name || name === 'local') return undefined;
+  const nodes = await listNodes();
+  return nodes.find(n => n.Name === name);
 }

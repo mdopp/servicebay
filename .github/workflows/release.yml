@@ -24,74 +24,36 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Next.js app
-        run: npm run build
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Bundle server
-        run: |
-          # Bundle server.ts and local dependencies (src/lib/...) into a single server.js
-          # We keep node_modules external because we copy them later
-          npx esbuild server.ts --bundle --platform=node --target=node20 --outfile=server.js --packages=external
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create release archive
-        run: |
-          # Create a temporary directory for the release
-          mkdir -p release/servicebay
-          
-          # Copy standalone build (explicitly copy .next because * skips hidden files)
-          cp -r .next/standalone/* release/servicebay/
-          cp -r .next/standalone/.next release/servicebay/
-          
-          # Copy static assets (required for standalone)
-          # .next folder should already exist from previous step
-          mkdir -p release/servicebay/.next/static
-          cp -r .next/static/* release/servicebay/.next/static/
-          
-          # Copy public folder
-          cp -r public release/servicebay/
-          
-          # Copy custom server (overwriting standalone server.js)
-          cp server.js release/servicebay/
-          
-          # Copy other files
-          cp package.json release/servicebay/
-          cp package-lock.json release/servicebay/
-          cp next.config.ts release/servicebay/
-          cp -r templates release/servicebay/
-          cp -r stacks release/servicebay/
-          cp install.sh release/servicebay/
-          cp README.md release/servicebay/
-          
-          # Create UPDATE tarball (code only, no node_modules)
-          # We do this before installing dependencies
-          cd release
-          tar -czf ../servicebay-update-linux-x64.tar.gz servicebay
-          cd ..
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
 
-          # Install production dependencies to bundle native modules (node-pty)
-          # This ensures the user doesn't need build tools on their machine.
-          cd release/servicebay
-          # Remove prepare script to avoid husky issues
-          npm pkg delete scripts.prepare
-          # We need typescript to load next.config.ts
-          npm install typescript --save-prod
-          npm ci --omit=dev
-          cd ../..
-          
-          # Create DEPS tarball (node_modules only)
-          tar -czf servicebay-deps-linux-x64.tar.gz -C release/servicebay node_modules
-          
-          # Create tarball (full)
-          tar -czf servicebay-linux-x64.tar.gz -C release servicebay
-          
-          # Verify files
-          ls -lh *.tar.gz
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            servicebay-linux-x64.tar.gz
-            servicebay-update-linux-x64.tar.gz
-            servicebay-deps-linux-x64.tar.gz
+          files: install.sh
           generate_release_notes: true

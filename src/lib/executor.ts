@@ -1,12 +1,15 @@
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
+import { Readable } from 'stream';
+import * as pty from 'node-pty';
 import { PodmanConnection } from './nodes';
 
 const execAsync = promisify(exec);
 
 export interface Executor {
   exec(command: string): Promise<{ stdout: string; stderr: string }>;
+  spawn(command: string, options?: { pty?: boolean; cols?: number; rows?: number }): { stdout: Readable; stderr: Readable; promise: Promise<void> };
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
@@ -19,6 +22,46 @@ export interface Executor {
 export class LocalExecutor implements Executor {
   async exec(command: string) {
     return execAsync(command);
+  }
+
+  spawn(command: string, options: { pty?: boolean; cols?: number; rows?: number } = {}) {
+    if (options.pty) {
+      const ptyProcess = pty.spawn('bash', ['-c', command], {
+        name: 'xterm-color',
+        cols: options.cols || 80,
+        rows: options.rows || 30,
+        cwd: process.env.HOME,
+        env: process.env as Record<string, string>
+      });
+
+      const stream = new Readable({
+        read() {}
+      });
+
+      ptyProcess.onData((data) => {
+        stream.push(data);
+      });
+
+      const promise = new Promise<void>((resolve, reject) => {
+        ptyProcess.onExit(({ exitCode }) => {
+          stream.push(null);
+          if (exitCode === 0) resolve();
+          else reject(new Error(`Command failed with code ${exitCode}`));
+        });
+      });
+
+      return { stdout: stream, stderr: new Readable({ read() { this.push(null); } }), promise };
+    }
+
+    const child = spawn(command, { shell: true });
+    const promise = new Promise<void>((resolve, reject) => {
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Command failed with code ${code}`));
+      });
+      child.on('error', reject);
+    });
+    return { stdout: child.stdout, stderr: child.stderr, promise };
   }
 
   async readFile(filePath: string) {
@@ -83,20 +126,69 @@ export class SSHExecutor implements Executor {
     return execAsync(`${this.sshCommand} '${escapedCommand}'`);
   }
 
+  spawn(command: string, options: { pty?: boolean; cols?: number; rows?: number } = {}) {
+    const escapedCommand = command.replace(/'/g, "'\\''");
+    
+    if (options.pty) {
+        // Use node-pty to run ssh with a TTY.
+        // We add -t to force remote TTY allocation.
+        const fullCommand = this.sshCommand.replace(/^ssh /, 'ssh -t ') + ` '${escapedCommand}'`;
+        
+        const ptyProcess = pty.spawn('bash', ['-c', fullCommand], {
+            name: 'xterm-color',
+            cols: options.cols || 80,
+            rows: options.rows || 30,
+            cwd: process.env.HOME,
+            env: process.env as Record<string, string>
+        });
+
+        const stream = new Readable({
+            read() {}
+        });
+
+        ptyProcess.onData((data) => {
+            stream.push(data);
+        });
+
+        const promise = new Promise<void>((resolve, reject) => {
+            ptyProcess.onExit(({ exitCode }) => {
+                stream.push(null);
+                if (exitCode === 0) resolve();
+                else reject(new Error(`Command failed with code ${exitCode}`));
+            });
+        });
+
+        return { stdout: stream, stderr: new Readable({ read() { this.push(null); } }), promise };
+    }
+
+    const fullCommand = `${this.sshCommand} '${escapedCommand}'`;
+    const child = spawn(fullCommand, { shell: true });
+    
+    const promise = new Promise<void>((resolve, reject) => {
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Command failed with code ${code}`));
+      });
+      child.on('error', reject);
+    });
+    
+    return { stdout: child.stdout, stderr: child.stderr, promise };
+  }
+
   async readFile(filePath: string) {
-    const { stdout } = await this.exec(`cat ${filePath}`);
+    const { stdout } = await this.exec(`cat "${filePath}"`);
     return stdout;
   }
 
   async writeFile(filePath: string, content: string) {
     // Use base64 to avoid escaping issues
     const base64Content = Buffer.from(content).toString('base64');
-    await this.exec(`echo ${base64Content} | base64 -d > ${filePath}`);
+    await this.exec(`echo ${base64Content} | base64 -d > "${filePath}"`);
   }
 
   async exists(filePath: string) {
     try {
-      await this.exec(`test -e ${filePath}`);
+      await this.exec(`test -e "${filePath}"`);
       return true;
     } catch {
       return false;

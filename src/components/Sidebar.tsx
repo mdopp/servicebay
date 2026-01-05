@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Server, Network } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Server, Network, HardDrive } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 
 export const plugins = [
     { id: 'services', name: 'Services', icon: Box, path: '/services' },
     { id: 'containers', name: 'Containers', icon: LayoutDashboard, path: '/containers' },
+    { id: 'volumes', name: 'Volumes', icon: HardDrive, path: '/volumes' },
     { id: 'network', name: 'Network Map', icon: Network, path: '/network' },
     { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
     { id: 'system', name: 'System Info', icon: Server, path: '/system' },

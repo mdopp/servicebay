@@ -1,8 +1,14 @@
 import fs from 'fs/promises';
+import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
 
-const CONFIG_PATH = path.join(os.homedir(), '.servicebay', 'config.json');
+// In container, we map host's .servicebay to /app/data
+// But os.homedir() is /root.
+// So we should check if /app/data exists, otherwise use os.homedir()/.servicebay
+const isContainer = existsSync('/.dockerenv') || (process.env.NODE_ENV === 'production' && existsSync('/app'));
+export const DATA_DIR = process.env.DATA_DIR || (isContainer ? '/app/data' : path.join(os.homedir(), '.servicebay'));
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 export interface ExternalLink {
   id: string;
@@ -24,7 +30,6 @@ export interface RegistriesSettings {
 }
 
 export interface GatewayConfig {
-  enabled: boolean;
   type: 'fritzbox';
   host: string;
   username?: string;
@@ -32,8 +37,10 @@ export interface GatewayConfig {
   ssl?: boolean;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface ReverseProxyConfig {
-  enabled: boolean;
+  // Configuration for the reverse proxy (e.g. global settings)
+  // Currently managed via system/nginx endpoints
 }
 
 export interface AppConfig {

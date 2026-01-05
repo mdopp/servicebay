@@ -1,10 +1,10 @@
 [Unit]
 Description=ServiceBay Container Management Interface
-Documentation=https://github.com/mdopp/podcli
+Documentation=https://github.com/mdopp/servicebay
 After=network-online.target
 
 [Container]
-Image=ghcr.io/mdopp/podcli:latest
+Image=ghcr.io/mdopp/servicebay:latest
 ContainerName=servicebay
 AutoUpdate=registry
 PublishPort=3000:3000

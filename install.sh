@@ -6,10 +6,11 @@
 set -e
 
 # Configuration
-FULL_TAR_URL="https://github.com/mdopp/servicebay/releases/latest/download/servicebay-linux-x64.tar.gz"
-INSTALL_DIR="$HOME/.servicebay"
+IMAGE_NAME="ghcr.io/mdopp/servicebay:latest"
 SERVICE_NAME="servicebay"
-DEFAULT_PORT=3000
+PORT=3000
+SYSTEMD_DIR="$HOME/.config/containers/systemd"
+CONFIG_DIR="$HOME/.servicebay"
 
 # Colors
 GREEN='\033[0;32m'
@@ -34,311 +35,48 @@ log "Starting ServiceBay installation..."
 
 # --- Dependency Checks ---
 
-MISSING_DEPS=0
-
-check_cmd() {
-    if ! command -v "$1" &> /dev/null; then
-        error "$1 is not installed."
-        MISSING_DEPS=1
-    else
-        success "$1 found."
-    fi
-}
-
-log "Checking dependencies..."
-check_cmd "curl"
-check_cmd "tar"
-check_cmd "node"
-check_cmd "npm"
-check_cmd "podman"
-check_cmd "systemctl"
-
-# Optional: Check for axel
-if command -v axel &> /dev/null; then
-    HAS_AXEL=1
-    success "axel found (accelerated downloads)."
-else
-    HAS_AXEL=0
-    log "axel not found. Install 'axel' for faster downloads."
-fi
-
-if [ $MISSING_DEPS -eq 1 ]; then
-    echo ""
-    echo "Please install the missing dependencies and try again."
-    echo "  - curl/tar: Download tools"
-    echo "  - node/npm: Runtime (v18+ recommended)"
-    echo "  - podman: Container engine"
-    echo "  - systemctl: Service manager"
+if ! command -v podman &> /dev/null; then
+    error "Podman is not installed. Please install Podman first."
     exit 1
 fi
 
-# --- Version Check ---
+# --- Setup Directories ---
 
-log "Checking latest version..."
-LATEST_VERSION=$(curl -s https://api.github.com/repos/mdopp/servicebay/releases/latest | node -e "
-    const fs = require('fs');
-    try {
-        const input = fs.readFileSync(0, 'utf-8');
-        const json = JSON.parse(input);
-        console.log(json.tag_name || 'unknown');
-    } catch { console.log('unknown'); }
-")
+mkdir -p "$SYSTEMD_DIR"
+mkdir -p "$CONFIG_DIR"
 
-if [ "$LATEST_VERSION" != "unknown" ]; then
-    log "Target Version: ${GREEN}$LATEST_VERSION${NC}"
-else
-    log "Target Version: ${BLUE}latest${NC}"
-fi
+# --- Create Quadlet ---
 
-# --- Installation Strategy ---
+log "Creating systemd service..."
 
-if [ -d "$INSTALL_DIR" ]; then
-    IS_UPDATE=1
-    log "Found existing installation at $INSTALL_DIR."
-else
-    IS_UPDATE=0
-    log "Starting fresh installation..."
-fi
-
-# Backup Config
-if [ -f "$INSTALL_DIR/config.json" ]; then
-    log "Backing up config.json..."
-    cp "$INSTALL_DIR/config.json" /tmp/servicebay_config_backup.json
-fi
-
-# Determine Install Strategy
-TEMP_DIR=$(mktemp -d)
-
-log "Downloading application..."
-# Use robust curl options: follow redirects, retries, compressed (standard output shows details)
-CURL_OPTS="-L --retry 3 --retry-delay 2 --connect-timeout 15 --compressed --fail"
-
-download_file() {
-    local url="$1"
-    local output="$2"
-    
-    if [ "$HAS_AXEL" -eq 1 ]; then
-        # -n 8: 8 connections, -a: alternate progress, -o: output
-        if axel -n 8 -a -o "$output" "$url"; then
-            return 0
-        fi
-        log "Axel download failed. Falling back to curl..."
-    fi
-    
-    curl $CURL_OPTS "$url" -o "$output"
-}
-
-if ! download_file "$FULL_TAR_URL" "$TEMP_DIR/servicebay.tar.gz"; then
-    error "Failed to download application bundle."
-    exit 1
-fi
-
-# Perform Install
-log "Installing..."
-
-# Create directory if it doesn't exist
-mkdir -p "$INSTALL_DIR"
-
-# Clean old installation (except config) to ensure no artifacts remain
-# We remove node_modules to ensure a clean slate from the full tarball
-rm -rf "$INSTALL_DIR/node_modules"
-
-# Extract Code
-tar xz -f "$TEMP_DIR/servicebay.tar.gz" -C "$INSTALL_DIR" --strip-components=1
-
-# Restore Config
-if [ -f "/tmp/servicebay_config_backup.json" ]; then
-    log "Restoring config.json..."
-    mv /tmp/servicebay_config_backup.json "$INSTALL_DIR/config.json"
-fi
-
-rm -rf "$TEMP_DIR"
-
-# --- Registry Configuration ---
-
-CONFIG_FILE="$INSTALL_DIR/config.json"
-
-# Ensure config exists
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "{}" > "$CONFIG_FILE"
-fi
-
-# Helper to write JSON
-add_registry() {
-    local name="$1"
-    local url="$2"
-    local branch="$3"
-    node -e "
-        const fs = require('fs');
-        try {
-            const c = require('$CONFIG_FILE');
-            if (Array.isArray(c.registries)) {
-                c.registries = { enabled: true, items: c.registries };
-            }
-            c.registries = c.registries || { enabled: true, items: [] };
-            if (!c.registries.items.find(r => r.name === '$name')) {
-                c.registries.items.push({ name: '$name', url: '$url', branch: '$branch' || undefined });
-                fs.writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2));
-            }
-        } catch (e) { console.error(e); }
-    "
-}
-
-if [ -c /dev/tty ]; then
-    echo ""
-    log "--- Template Registries ---"
-    
-    # Check if default registry is configured
-    HAS_DEFAULT=$(node -e "
-        try { 
-            const c = require('$CONFIG_FILE'); 
-            let items = [];
-            if (Array.isArray(c.registries)) items = c.registries;
-            else if (c.registries) items = c.registries.items || [];
-            console.log(items.some(r => r.name === 'default') ? 'yes' : 'no'); 
-        } catch { console.log('no'); }
-    ")
-
-    if [ "$HAS_DEFAULT" == "no" ]; then
-        read -p "Add default template registry (recommended)? [Y/n]: " ADD_DEFAULT < /dev/tty
-        ADD_DEFAULT=${ADD_DEFAULT:-Y}
-        if [[ "$ADD_DEFAULT" =~ ^[Yy]$ ]]; then
-            add_registry "default" "https://github.com/mdopp/servicebay-templates.git" "main"
-            success "Added default registry."
-        fi
-    fi
-
-    while true; do
-        echo ""
-        echo "Current Registries:"
-        node -e "
-            try {
-                const c = require('$CONFIG_FILE');
-                let items = [];
-                if (Array.isArray(c.registries)) items = c.registries;
-                else if (c.registries) items = c.registries.items || [];
-                
-                items.forEach(r => console.log(' - ' + r.name + ' (' + r.url + ')'));
-                if (!items.length) console.log('   (none)');
-            } catch {}
-        "
-        echo ""
-        read -p "Add another registry? [y/N]: " ADD_MORE < /dev/tty
-        ADD_MORE=${ADD_MORE:-N}
-        
-        if [[ ! "$ADD_MORE" =~ ^[Yy]$ ]]; then
-            break
-        fi
-
-        read -p "Registry Name: " REG_NAME < /dev/tty
-        read -p "Git URL: " REG_URL < /dev/tty
-        read -p "Branch (optional): " REG_BRANCH < /dev/tty
-
-        if [ -n "$REG_NAME" ] && [ -n "$REG_URL" ]; then
-            add_registry "$REG_NAME" "$REG_URL" "$REG_BRANCH"
-            success "Added registry '$REG_NAME'."
-        else
-            error "Name and URL are required."
-        fi
-    done
-fi
-
-log "Verifying installation..."
-if [ ! -f "$INSTALL_DIR/server.js" ]; then
-    error "Installation failed: server.js not found."
-    exit 1
-fi
-
-# --- Service Setup ---
-
-SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
-PORT=$DEFAULT_PORT
-
-# Try to detect existing port from service file
-if [ -f "$SERVICE_FILE" ]; then
-    EXISTING_PORT=$(grep "Environment=PORT=" "$SERVICE_FILE" | cut -d= -f3)
-    if [ -n "$EXISTING_PORT" ]; then
-        PORT=$EXISTING_PORT
-    fi
-fi
-
-if [ -f "$SERVICE_FILE" ] && [ "$IS_UPDATE" -eq 1 ]; then
-    log "Service file exists. Restarting..."
-    systemctl --user daemon-reload
-    systemctl --user restart ${SERVICE_NAME}
-else
-    log "Configuring systemd service..."
-    
-    echo ""
-    if [ -c /dev/tty ]; then
-        read -p "Enter desired port [$PORT]: " INPUT_PORT < /dev/tty
-        PORT=${INPUT_PORT:-$PORT}
-    else
-        log "Non-interactive mode detected. Using port $PORT."
-    fi
-
-    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-        error "Invalid port: $PORT. Using default $DEFAULT_PORT."
-        PORT=$DEFAULT_PORT
-    fi
-    
-    mkdir -p ~/.config/systemd/user
-
-    # Get absolute path to node
-    NODE_PATH=$(which node)
-
-    # Generate a random secret for session encryption
-    AUTH_SECRET=$($NODE_PATH -e "console.log(crypto.randomBytes(32).toString('hex'))")
-
-    cat <<EOF > "$SERVICE_FILE"
+cat > "$SYSTEMD_DIR/$SERVICE_NAME.container" <<INNEREOF
 [Unit]
-Description=ServiceBay - Podman Systemd Manager
-After=network.target
+Description=ServiceBay Container Management Interface
+After=network-online.target
 
-[Service]
-Type=simple
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=${NODE_PATH} server.js
-Restart=always
+[Container]
+Image=$IMAGE_NAME
+ContainerName=$SERVICE_NAME
+AutoUpdate=registry
+UserNS=keep-id
+Network=host
+Volume=$CONFIG_DIR:/app/data
+Volume=$HOME/.ssh:/root/.ssh:ro
+Volume=/run/user/$(id -u)/podman/podman.sock:/run/podman/podman.sock
+Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
 Environment=NODE_ENV=production
-Environment=PORT=${PORT}
-Environment=AUTH_SECRET=${AUTH_SECRET}
-# Capture current PATH to ensure node/podman are found
-Environment="PATH=$PATH"
 
 [Install]
 WantedBy=default.target
-EOF
+INNEREOF
 
-    systemctl --user daemon-reload
-    systemctl --user enable --now ${SERVICE_NAME}
-    log "Service started and enabled."
-fi
+# --- Reload and Start ---
 
-# --- Final Output ---
+log "Reloading systemd..."
+systemctl --user daemon-reload
 
-# Get IP address (simple attempt)
-IP_ADDR=$(hostname -I | awk '{print $1}')
-if [ -z "$IP_ADDR" ]; then
-    IP_ADDR="localhost"
-fi
+log "Starting ServiceBay..."
+systemctl --user enable --now "$SERVICE_NAME"
 
-echo ""
-echo -e "${GREEN}==========================================${NC}"
-echo -e "${GREEN}   ServiceBay Installed Successfully!     ${NC}"
-echo -e "${GREEN}==========================================${NC}"
-echo ""
-echo -e "Access the dashboard at:"
-echo -e "  ${BLUE}http://localhost:${PORT}${NC}"
-echo -e "  ${BLUE}http://${IP_ADDR}:${PORT}${NC}"
-echo ""
-echo -e "Manage the service with:"
-echo -e "  systemctl --user status ${SERVICE_NAME}"
-echo -e "  systemctl --user restart ${SERVICE_NAME}"
-echo -e "  systemctl --user stop ${SERVICE_NAME}"
-echo ""
-echo -e "${BLUE}Note for Reverse Proxy users (Nginx/NPM):${NC}"
-echo -e "  You MUST disable proxy buffering for Live Logs to work."
-echo -e "  See README.md for configuration details."
-echo ""
-log "Installation complete."
+success "ServiceBay installed successfully!"
+echo -e "Access it at: http://$(hostname):$PORT"

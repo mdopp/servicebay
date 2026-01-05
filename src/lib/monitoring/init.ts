@@ -18,7 +18,7 @@ export async function initializeDefaultChecks() {
   // 0. Configured Gateway Check
   try {
     const config = await getConfig();
-    if (config.gateway?.enabled && config.gateway.host) {
+    if (config.gateway?.host) {
         if (!exists('ping', config.gateway.host)) {
             console.log(`[Monitoring] Adding Configured Gateway check for ${config.gateway.host}`);
             MonitoringStore.saveCheck({

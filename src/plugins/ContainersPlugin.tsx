@@ -36,7 +36,6 @@ export default function ContainersPlugin() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [selectedNodeFilter, setSelectedNodeFilter] = useState<string>('all');
   const { addToast, updateToast } = useToast();
 
   const fetchData = async () => {
@@ -45,14 +44,14 @@ export default function ContainersPlugin() {
       const nodeList = await getNodes();
       setNodes(nodeList);
 
-      const targets = ['', ...nodeList.map(n => n.Name)];
+      const targets = [...nodeList.map(n => n.Name)];
       const results = await Promise.all(targets.map(async (node) => {
         try {
-            const query = node ? `?node=${node}` : '';
+            const query = `?node=${node}`;
             const res = await fetch(`/api/containers${query}`);
             if (!res.ok) return [];
             const data = await res.json();
-            return data.map((c: Container) => ({ ...c, nodeName: node || 'Local' }));
+            return data.map((c: Container) => ({ ...c, nodeName: node }));
         } catch (e) {
             console.error(`Failed to fetch containers for node ${node}`, e);
             return [];
@@ -98,11 +97,6 @@ export default function ContainersPlugin() {
   useEffect(() => {
       let filtered = containers;
       
-      // Filter by Node
-      if (selectedNodeFilter !== 'all') {
-          filtered = filtered.filter(c => c.nodeName === selectedNodeFilter);
-      }
-
       // Filter by Search
       if (searchQuery) {
           const q = searchQuery.toLowerCase();
@@ -115,7 +109,7 @@ export default function ContainersPlugin() {
       }
       
       setFilteredContainers(filtered);
-  }, [containers, selectedNodeFilter, searchQuery]);
+  }, [containers, searchQuery]);
 
   const openLogs = (container: Container) => {
     router.push(`/containers/${container.Id}/logs?node=${container.nodeName === 'Local' ? '' : container.nodeName}`);
@@ -213,20 +207,6 @@ export default function ContainersPlugin() {
         helpId="containers"
         actions={
             <>
-                <div className="flex items-center gap-2 mr-2">
-                    <Server size={16} className="text-gray-500" />
-                    <select 
-                        value={selectedNodeFilter} 
-                        onChange={(e) => setSelectedNodeFilter(e.target.value)}
-                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                    >
-                        <option value="all">All Servers</option>
-                        <option value="Local">Local (Default)</option>
-                        {nodes.map(node => (
-                            <option key={node.Name} value={node.Name}>{node.Name}</option>
-                        ))}
-                    </select>
-                </div>
                 <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors shrink-0" title="Refresh">
                     <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                 </button>

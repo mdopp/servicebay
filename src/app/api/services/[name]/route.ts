@@ -17,7 +17,8 @@ async function getConnection(request: Request) {
 
 export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
   try {
-    const { name } = await params;
+    const { name: rawName } = await params;
+    const name = decodeURIComponent(rawName);
     const connection = await getConnection(request);
     
     // Check if it's a link (optional, but GET usually fetches files for editing)
@@ -32,7 +33,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ name: string }> }) {
-  const { name } = await params;
+  const { name: rawName } = await params;
+  const name = decodeURIComponent(rawName);
   const connection = await getConnection(request);
 
   // Check if it's a link
@@ -60,7 +62,8 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ name: string }> }) {
-  const { name } = await params;
+  const { name: rawName } = await params;
+  const name = decodeURIComponent(rawName);
   const body = await request.json();
   const connection = await getConnection(request);
 

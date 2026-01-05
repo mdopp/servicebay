@@ -7,7 +7,6 @@ import { Globe, Save } from 'lucide-react';
 export default function GatewayConfig() {
     const { addToast } = useToast();
     const [gatewayForm, setGatewayForm] = useState({
-        enabled: true,
         type: 'fritzbox',
         host: 'fritz.box',
         username: '',
@@ -21,7 +20,6 @@ export default function GatewayConfig() {
             .then(config => {
                 if (config?.gateway) {
                     setGatewayForm({
-                        enabled: true,
                         type: config.gateway.type || 'fritzbox',
                         host: config.gateway.host || 'fritz.box',
                         username: config.gateway.username || '',

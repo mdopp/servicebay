@@ -23,11 +23,22 @@ curl -fsSL "https://raw.githubusercontent.com/mdopp/servicebay/main/install.sh?$
 ```
 
 This will:
-1. Clone the repository to `~/.servicebay`.
-2. Build the application.
-3. Install and start a user-level systemd service (`servicebay.service`).
+1. Create a Quadlet container definition in `~/.config/containers/systemd/servicebay.container`.
+2. Pull the latest Docker image from `ghcr.io/mdopp/servicebay`.
+3. Start the container as a systemd service.
 
 The web interface will be available at [http://localhost:3000](http://localhost:3000).
+
+## Data Persistence & File Structure
+
+ServiceBay is designed to be stateless regarding the application code, but stateful regarding your configuration and data. The installer automatically maps the following host directories to the container to ensure data persists across updates and container recreations:
+
+| Host Path | Container Path | Description |
+|-----------|----------------|-------------|
+| `~/.servicebay` | `/app/data` | **Main Data Directory.** Stores `config.json` (settings), `checks.json` (monitoring), and `results/` (history logs). |
+| `~/.ssh` | `/root/.ssh` | **SSH Keys.** Read-only access to your SSH keys for connecting to remote nodes. |
+
+**Backup Strategy:** To backup your entire ServiceBay setup, simply backup the `~/.servicebay` directory.
 
 ## Reverse Proxy Configuration
 

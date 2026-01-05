@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, ArrowRight, Server } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, FileText, ArrowRight, Server } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
+import ActionProgressModal from '@/components/ActionProgressModal';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 
@@ -15,6 +16,7 @@ interface DiscoveredService {
     serviceName: string;
     containerNames: string[];
     containerIds: string[];
+    podId?: string;
     unitFile?: string;
     sourcePath?: string;
     status: 'managed' | 'unmanaged';
@@ -24,6 +26,7 @@ interface DiscoveredService {
 
 interface Service {
   name: string;
+  id?: string; // Systemd service name or container ID
   active: boolean;
   status: string;
   kubePath: string;
@@ -33,7 +36,6 @@ interface Service {
   type?: 'container' | 'link' | 'gateway';
   url?: string;
   description?: string;
-  id?: string;
   monitor?: boolean;
   labels?: Record<string, string>;
   verifiedDomains?: string[];
@@ -69,14 +71,23 @@ export default function ServicesPlugin() {
   const [selectedForMigration, setSelectedForMigration] = useState<DiscoveredService | null>(null);
   const [migrationName, setMigrationName] = useState('');
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [selectedNodeFilter, setSelectedNodeFilter] = useState<string>('all');
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [hasDiscovered, setHasDiscovered] = useState(false);
+  const [migrating, setMigrating] = useState(false);
   const { addToast, updateToast } = useToast();
+
+  // Action Progress Modal
+  const [actionService, setActionService] = useState<Service | null>(null);
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [currentAction, setCurrentAction] = useState<'start' | 'stop' | 'restart'>('start');
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [isEditingLink, setIsEditingLink] = useState(false);
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '', monitor: false });
+  
+
 
   const fetchData = async () => {
     setLoading(true);
@@ -84,33 +95,36 @@ export default function ServicesPlugin() {
       const nodeList = await getNodes();
       setNodes(nodeList);
 
-      const targets = ['', ...nodeList.map(n => n.Name)];
+      // Add Local Node explicitly if not in list (it might be empty if no remote nodes are added yet)
+      // But getNodes() returns all connections.
+      // Wait, getNodes() returns Podman connections. "Local" is not a connection if we are in container.
+      // We need to fetch "Local" services separately or ensure "Local" is in the targets list if we want to support it.
+      // However, the requirement is "Remote First".
+      // But the API /api/services without ?node= defaults to Local.
+      // And we want to show Gateway/Nginx which are returned by Local API.
+      
+      const targets = ['Local', ...nodeList.map(n => n.Name)];
       const results = await Promise.all(targets.map(async (node) => {
         try {
-            const query = node ? `?node=${node}` : '';
-            const [servicesRes, discoveryRes] = await Promise.all([
-                fetch(`/api/services${query}`),
-                fetch(`/api/system/discovery${query}`)
-            ]);
-            
+            const query = node === 'Local' ? '' : `?node=${node}`;
+            const servicesRes = await fetch(`/api/services${query}`);
             const servicesData = servicesRes.ok ? await servicesRes.json() : [];
-            const discoveryData = discoveryRes.ok ? await discoveryRes.json() : [];
-
-            return {
-                services: servicesData.map((s: Service) => ({ ...s, nodeName: node || 'Local' })),
-                discovery: discoveryData.map((s: DiscoveredService) => ({ ...s, nodeName: node || 'Local' }))
-            };
+            return servicesData.map((s: Service) => ({ ...s, nodeName: node }));
         } catch (e) {
             console.error(`Failed to fetch services for node ${node}`, e);
-            return { services: [], discovery: [] };
+            return [];
         }
       }));
 
-      const allServices = results.flatMap(r => r.services);
-      const allDiscovery = results.flatMap(r => r.discovery);
+      const allServices = results.flatMap(r => r);
+      
+      // Filter out "Reverse Proxy (Not Installed)" if a real "Reverse Proxy" exists
+      const hasRealProxy = allServices.some(s => s.name === 'Reverse Proxy' && s.status !== 'not-installed');
+      const filteredServices = hasRealProxy 
+        ? allServices.filter(s => !(s.name === 'Reverse Proxy' && s.status === 'not-installed'))
+        : allServices;
 
-      setServices(allServices);
-      setDiscoveredServices(allDiscovery);
+      setServices(filteredServices);
     } catch (error) {
       console.error('Failed to fetch services', error);
       addToast('error', 'Failed to fetch services');
@@ -119,14 +133,36 @@ export default function ServicesPlugin() {
     }
   };
 
+  const discoverUnmanaged = async () => {
+    setDiscoveryLoading(true);
+    try {
+      const targets = [...nodes.map(n => n.Name)];
+      const results = await Promise.all(targets.map(async (node) => {
+        try {
+            const query = `?node=${node}`;
+            const discoveryRes = await fetch(`/api/system/discovery${query}`);
+            const discoveryData = discoveryRes.ok ? await discoveryRes.json() : [];
+            return discoveryData.map((s: DiscoveredService) => ({ ...s, nodeName: node }));
+        } catch (e) {
+            console.error(`Failed to discover services for node ${node}`, e);
+            return [];
+        }
+      }));
+
+      const allDiscovery = results.flatMap(r => r);
+      setDiscoveredServices(allDiscovery);
+      setHasDiscovered(true);
+    } catch (error) {
+      console.error('Failed to discover services', error);
+      addToast('error', 'Failed to discover services');
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  };
+
   useEffect(() => {
       let filtered = services;
       
-      // Filter by Node
-      if (selectedNodeFilter !== 'all') {
-          filtered = filtered.filter(s => s.nodeName === selectedNodeFilter);
-      }
-
       // Filter by Search
       if (searchQuery) {
           const q = searchQuery.toLowerCase();
@@ -138,7 +174,7 @@ export default function ServicesPlugin() {
       }
       
       setFilteredServices(filtered);
-  }, [services, selectedNodeFilter, searchQuery]);
+  }, [services, searchQuery]);
 
   const openMigrationModal = async (service: DiscoveredService) => {
       setSelectedForMigration(service);
@@ -164,6 +200,7 @@ export default function ServicesPlugin() {
 
   const handleMigrate = async () => {
       if (!selectedForMigration) return;
+      setMigrating(true);
       
       try {
           const query = selectedForMigration.nodeName && selectedForMigration.nodeName !== 'Local' ? `?node=${selectedForMigration.nodeName}` : '';
@@ -181,6 +218,8 @@ export default function ServicesPlugin() {
           fetchData();
       } catch (_error) {
           addToast('error', 'Failed to migrate service');
+      } finally {
+          setMigrating(false);
       }
   };
 
@@ -277,7 +316,7 @@ export default function ServicesPlugin() {
   };
 
   useEffect(() => {
-    getNodes().then(n => setNodes(n));
+    // Initial fetch (also fetches nodes)
     fetchData();
 
     // Setup SSE for real-time updates
@@ -304,10 +343,6 @@ export default function ServicesPlugin() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-      // fetchData(); // No need to fetch on filter change
-  }, [selectedNodeFilter]);
 
   const handleEditLink = (service: Service) => {
     setLinkForm({
@@ -362,9 +397,10 @@ export default function ServicesPlugin() {
     const toastId = addToast('loading', 'Deleting service...', `Removing ${serviceToDelete.name}`, 0);
 
     try {
+        const serviceName = serviceToDelete.id || serviceToDelete.name;
         const nodeParam = serviceToDelete.nodeName === 'Local' ? '' : serviceToDelete.nodeName;
         const query = nodeParam ? `?node=${nodeParam}` : '';
-        const res = await fetch(`/api/services/${serviceToDelete.name}${query}`, { method: 'DELETE' });
+        const res = await fetch(`/api/services/${serviceName}${query}`, { method: 'DELETE' });
         if (res.ok) {
             updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete.name} has been removed.`);
             fetchData();
@@ -384,14 +420,25 @@ export default function ServicesPlugin() {
 
   const handleAction = async (action: string) => {
     if (!selectedService) return;
+    
+    // Intercept start, stop, restart actions to show progress modal
+    if (action === 'start' || action === 'stop' || action === 'restart') {
+        setActionService(selectedService);
+        setCurrentAction(action);
+        setActionModalOpen(true);
+        setShowActions(false);
+        return;
+    }
+
     setActionLoading(true);
     
     const toastId = addToast('loading', 'Action in progress', `Executing ${action} on ${selectedService.name}...`, 0);
 
     try {
+        const serviceName = selectedService.id || selectedService.name;
         const nodeParam = selectedService.nodeName === 'Local' ? '' : selectedService.nodeName;
         const query = nodeParam ? `?node=${nodeParam}` : '';
-        const res = await fetch(`/api/services/${selectedService.name}/action${query}`, {
+        const res = await fetch(`/api/services/${serviceName}/action${query}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action })
@@ -427,26 +474,27 @@ export default function ServicesPlugin() {
         onConfirm={handleDelete}
         onCancel={() => setDeleteModalOpen(false)}
       />
+
+      {actionService && (
+        <ActionProgressModal
+            isOpen={actionModalOpen}
+            onClose={() => setActionModalOpen(false)}
+            serviceName={actionService.id || actionService.name}
+            nodeName={actionService.nodeName}
+            action={currentAction}
+            onComplete={() => {
+                fetchData();
+                const actionPast = currentAction === 'stop' ? 'stopped' : currentAction === 'start' ? 'started' : 'restarted';
+                addToast('success', `Service ${actionPast} successfully`);
+            }}
+        />
+      )}
       <PageHeader 
         title="Services" 
         showBack={false} 
         helpId="services"
         actions={
             <>
-                <div className="flex items-center gap-2 mr-2">
-                    <Server size={16} className="text-gray-500" />
-                    <select 
-                        value={selectedNodeFilter} 
-                        onChange={(e) => setSelectedNodeFilter(e.target.value)}
-                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                    >
-                        <option value="all">All Servers</option>
-                        <option value="Local">Local (Default)</option>
-                        {nodes.map(node => (
-                            <option key={node.Name} value={node.Name}>{node.Name}</option>
-                        ))}
-                    </select>
-                </div>
                 <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
                     <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
                 </button>
@@ -482,7 +530,7 @@ export default function ServicesPlugin() {
         ) : (
             <div className="grid gap-4">
                 {filteredServices.map((service) => (
-                <div key={service.name} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
+                <div key={`${service.nodeName || 'local'}-${service.name}`} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
                     <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
                         <div className="flex items-center gap-3">
                             <div className={`w-3 h-3 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
@@ -497,7 +545,7 @@ export default function ServicesPlugin() {
                                     )}
                                     {service.type === 'link' && <span className="text-xs font-normal px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-500">Link</span>}
                                     {service.type === 'gateway' && <span className="text-xs font-normal px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 rounded text-amber-600 dark:text-amber-400">Gateway</span>}
-                                    {service.labels && service.labels['podcli.role'] === 'reverse-proxy' && <span className="text-xs font-normal px-2 py-0.5 bg-green-100 dark:bg-green-900/30 rounded text-green-600 dark:text-green-400">Reverse Proxy</span>}
+                                    {service.labels && service.labels['servicebay.role'] === 'reverse-proxy' && <span className="text-xs font-normal px-2 py-0.5 bg-green-100 dark:bg-green-900/30 rounded text-green-600 dark:text-green-400">Reverse Proxy</span>}
                                 </h3>
                                 <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
                                     {service.type === 'link' ? (
@@ -508,9 +556,10 @@ export default function ServicesPlugin() {
                                         <div className="flex flex-col gap-1">
                                             <span>{service.description}</span>
                                             {service.verifiedDomains && service.verifiedDomains.length > 0 && (
-                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                <div className="flex flex-col gap-1 mt-1">
                                                     {service.verifiedDomains.map(d => (
-                                                        <a key={d} href={`https://${d}`} target="_blank" rel="noopener noreferrer" className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded hover:underline">
+                                                        <a key={d} href={d.startsWith('http') ? d : `https://${d}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-2 py-1 rounded hover:underline border border-green-100 dark:border-green-800/30 w-fit">
+                                                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
                                                             {d}
                                                         </a>
                                                     ))}
@@ -540,10 +589,10 @@ export default function ServicesPlugin() {
                                 </>
                             ) : (
                                 <>
-                                    <Link href={`/monitor/${service.name}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Monitor">
+                                    <Link href={`/monitor/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Monitor">
                                         <Activity size={18} />
                                     </Link>
-                                    <Link href={`/edit/${service.name}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit">
+                                    <Link href={`/edit/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit">
                                         <Edit size={18} />
                                     </Link>
                                     <button onClick={() => openActions(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors" title="Actions">
@@ -611,23 +660,49 @@ export default function ServicesPlugin() {
         )}
 
         {/* Unmanaged Services Section */}
-        {discoveredServices.filter(s => s.status === 'unmanaged').length > 0 && (
-            <div className="mt-12 border-t border-gray-200 dark:border-gray-800 pt-8">
-                <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-lg font-semibold flex items-center gap-2 text-orange-600 dark:text-orange-400">
-                        <AlertCircle size={20} />
-                        Unmanaged Services ({discoveredServices.filter(s => s.status === 'unmanaged').length})
-                    </h2>
-                    {selectedForMerge.length > 1 && (
-                        <button 
-                            onClick={openMergeModal}
-                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg flex items-center gap-2 transition-colors shadow-sm"
-                        >
-                            <Box size={16} />
-                            Merge Selected ({selectedForMerge.length})
-                        </button>
-                    )}
+        <div className="mt-12 border-t border-gray-200 dark:border-gray-800 pt-8">
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold flex items-center gap-2 text-orange-600 dark:text-orange-400">
+                    <AlertCircle size={20} />
+                    Unmanaged Services
+                    {hasDiscovered && ` (${discoveredServices.filter(s => s.status === 'unmanaged').length})`}
+                </h2>
+                {selectedForMerge.length > 1 && (
+                    <button 
+                        onClick={openMergeModal}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg flex items-center gap-2 transition-colors shadow-sm"
+                    >
+                        <Box size={16} />
+                        Merge Selected ({selectedForMerge.length})
+                    </button>
+                )}
+            </div>
+
+            {!hasDiscovered ? (
+                <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-8 text-center border border-gray-200 dark:border-gray-800">
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                        Scan your system for running containers that are not yet managed by ServiceBay.
+                    </p>
+                    <button
+                        onClick={discoverUnmanaged}
+                        disabled={discoveryLoading}
+                        className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg inline-flex items-center gap-2 transition-colors disabled:opacity-50"
+                    >
+                        {discoveryLoading ? <RefreshCw className="animate-spin" size={18} /> : <Search size={18} />}
+                        {discoveryLoading ? 'Scanning...' : 'Discover Unmanaged Services'}
+                    </button>
                 </div>
+            ) : discoveredServices.filter(s => s.status === 'unmanaged').length === 0 ? (
+                <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-8 text-center border border-gray-200 dark:border-gray-800">
+                    <p className="text-gray-500 dark:text-gray-400">No unmanaged services found.</p>
+                    <button
+                        onClick={discoverUnmanaged}
+                        className="mt-4 text-sm text-blue-600 hover:underline"
+                    >
+                        Scan Again
+                    </button>
+                </div>
+            ) : (
                 <div className="grid gap-4">
                     {discoveredServices.filter(s => s.status === 'unmanaged').map((service) => (
                         <div key={service.serviceName} className={`bg-white dark:bg-gray-900 border rounded-lg p-4 hover:shadow-md transition-all duration-200 ${selectedForMerge.includes(service.serviceName) ? 'border-indigo-500 ring-1 ring-indigo-500' : 'border-gray-200 dark:border-gray-800'}`}>
@@ -665,18 +740,23 @@ export default function ServicesPlugin() {
                                         ))}
                                     </div>
                                 </div>
-                                {service.sourcePath && (
+                                {service.sourcePath ? (
                                     <div className="flex gap-2 break-all">
                                         <FileCode size={16} className="shrink-0 mt-0.5" />
                                         <span className="font-mono text-xs">{service.sourcePath}</span>
+                                    </div>
+                                ) : service.unitFile && (
+                                    <div className="flex gap-2 break-all">
+                                        <FileCode size={16} className="shrink-0 mt-0.5" />
+                                        <span className="font-mono text-xs">{service.unitFile}</span>
                                     </div>
                                 )}
                             </div>
                         </div>
                     ))}
                 </div>
-            </div>
-        )}
+            )}
+        </div>
       </div>
 
       {/* Migration Modal */}
@@ -705,6 +785,41 @@ export default function ServicesPlugin() {
                             This will be the name of the systemd service and the pod.
                         </p>
                     </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Source
+                        </label>
+                        {selectedForMigration.sourcePath || selectedForMigration.unitFile ? (
+                            <a 
+                                href={`/view?path=${encodeURIComponent(selectedForMigration.sourcePath || selectedForMigration.unitFile || '')}&node=${encodeURIComponent(selectedForMigration.nodeName || 'Local')}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-blue-600 hover:underline flex items-center gap-1 w-fit"
+                            >
+                                <FileText size={14} />
+                                {selectedForMigration.sourcePath || selectedForMigration.unitFile}
+                            </a>
+                        ) : selectedForMigration.podId ? (
+                            <div className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1">
+                                <Box size={14} />
+                                <span>Running Pod (ID: {selectedForMigration.podId.substring(0, 12)})</span>
+                                <span className="text-xs text-gray-500 ml-1">(Source file not found)</span>
+                            </div>
+                        ) : (
+                            <div className="text-sm text-red-600 flex items-center gap-1">
+                                <AlertCircle size={14} />
+                                <span>No source file or running pod found. Cannot migrate.</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <details className="mt-4 text-xs text-gray-400">
+                        <summary className="cursor-pointer hover:text-gray-600">Debug Info</summary>
+                        <pre className="mt-2 p-2 bg-gray-100 dark:bg-gray-900 rounded overflow-auto max-h-32">
+                            {JSON.stringify(selectedForMigration, null, 2)}
+                        </pre>
+                    </details>
 
                     {migrationPlan ? (
                         <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 space-y-4 border border-gray-200 dark:border-gray-700">
@@ -762,10 +877,17 @@ export default function ServicesPlugin() {
                     </button>
                     <button 
                         onClick={handleMigrate}
-                        disabled={!migrationName || !migrationPlan}
+                        disabled={!migrationName || !migrationPlan || (!selectedForMigration.sourcePath && !selectedForMigration.unitFile && !selectedForMigration.podId) || migrating}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-2"
                     >
-                        Confirm Migration
+                        {migrating ? (
+                            <>
+                                <RefreshCw className="animate-spin" size={16} />
+                                Migrating...
+                            </>
+                        ) : (
+                            'Confirm Migration'
+                        )}
                     </button>
                 </div>
             </div>

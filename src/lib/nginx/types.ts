@@ -10,6 +10,7 @@ export interface NginxServerBlock {
   locations: NginxLocation[];
   ssl_certificate?: string;
   ssl_certificate_key?: string;
+  variables?: Record<string, string>;
 }
 
 export interface NginxLocation {
@@ -18,4 +19,5 @@ export interface NginxLocation {
   root?: string;
   index?: string[];
   directives: Record<string, string>; // Other directives like proxy_set_header
+  variables?: Record<string, string>;
 }

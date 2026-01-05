@@ -70,7 +70,7 @@ export default function ReverseProxyConfig() {
                             <div>
                                 <h3 className="font-semibold text-lg">System Status</h3>
                                 <p className="text-gray-500 text-sm">
-                                    {status === 'installed' ? 'Nginx is installed and managed by PodCLI' : 'Nginx is not installed on this system'}
+                                    {status === 'installed' ? 'Nginx is installed and managed by ServiceBay' : 'Nginx is not installed on this system'}
                                 </p>
                             </div>
                         </div>
@@ -80,7 +80,7 @@ export default function ReverseProxyConfig() {
                                 <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Installation Required</h4>
                                 <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
                                     To use the reverse proxy features, Nginx needs to be installed and configured on the host system.
-                                    PodCLI can handle this automatically.
+                                    ServiceBay can handle this automatically.
                                 </p>
                                 <button
                                     onClick={handleInstall}

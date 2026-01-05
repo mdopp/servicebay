@@ -9,6 +9,7 @@ import { getConfig } from './src/lib/config';
 import { checkForUpdates, performUpdate, setUpdaterIO } from './src/lib/updater';
 import scheduler from './src/lib/monitoring/scheduler'; // Initialize monitoring scheduler
 import { initializeDefaultChecks } from './src/lib/monitoring/init';
+import { listNodes } from './src/lib/nodes';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -52,21 +53,95 @@ app.prepare().then(() => {
   });
 
   // Function to spawn a PTY
-  const ensurePty = (id: string) => {
+  const ensurePty = async (id: string) => {
     if (sessions.has(id)) return sessions.get(id)!;
 
     let shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
     let args: string[] = [];
 
     if (id.startsWith('container:')) {
-        const containerId = id.split(':')[1];
+        const parts = id.split(':');
+        // Format: container:NODE:ID or container:ID (legacy/local)
+        let nodeName = 'local';
+        let containerId = '';
+
+        if (parts.length === 3) {
+            nodeName = parts[1];
+            containerId = parts[2];
+        } else {
+            containerId = parts[1];
+        }
+
         if (!containerId) {
             console.error('Invalid container ID');
-            return sessions.get('host')!; // Fallback to host or handle error
+            if (sessions.has('host')) return sessions.get('host')!;
+            throw new Error('Invalid container ID');
         }
-        shell = 'podman';
-        // Try to use bash if available, otherwise sh. Pass TERM env var.
-        args = ['exec', '-it', '-e', 'TERM=xterm-256color', containerId, 'sh', '-c', 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'];
+
+        if (nodeName && nodeName !== 'local') {
+            try {
+                const nodes = await listNodes();
+                const node = nodes.find(n => n.Name === nodeName);
+                if (node) {
+                    const uri = new URL(node.URI);
+                    if (uri.protocol === 'ssh:') {
+                        shell = 'ssh';
+                        args = [];
+                        
+                        if (node.Identity) args.push('-i', node.Identity);
+                        if (uri.port) args.push('-p', uri.port);
+                        
+                        args.push('-o', 'StrictHostKeyChecking=no');
+                        args.push('-o', 'UserKnownHostsFile=/dev/null');
+                        args.push('-t'); // Force PTY allocation
+                        
+                        args.push(`${uri.username}@${uri.hostname}`);
+                        
+                        // Command to run on remote
+                        args.push(`podman exec -it -e TERM=xterm-256color ${containerId} sh -c 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'`);
+                    }
+                }
+            } catch (e) {
+                console.error(`Failed to setup remote container terminal for ${nodeName}:`, e);
+            }
+        } else {
+            shell = 'podman';
+            // Try to use bash if available, otherwise sh. Pass TERM env var.
+            args = ['exec', '-it', '-e', 'TERM=xterm-256color', containerId, 'sh', '-c', 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'];
+        }
+    } else if (id.startsWith('node:')) {
+        const nodeName = id.split(':')[1];
+        try {
+            const nodes = await listNodes();
+            const node = nodes.find(n => n.Name === nodeName);
+            if (node) {
+                // Parse URI: ssh://user@host:port/path
+                const uri = new URL(node.URI);
+                if (uri.protocol === 'ssh:') {
+                    shell = 'ssh';
+                    args = [];
+                    
+                    // Identity file
+                    if (node.Identity) {
+                        args.push('-i', node.Identity);
+                    }
+                    
+                    // Port
+                    if (uri.port) {
+                        args.push('-p', uri.port);
+                    }
+                    
+                    // StrictHostKeyChecking=no to avoid interactive prompts on first connect
+                    args.push('-o', 'StrictHostKeyChecking=no');
+                    args.push('-o', 'UserKnownHostsFile=/dev/null');
+                    
+                    // User and Host
+                    args.push(`${uri.username}@${uri.hostname}`);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to resolve node connection', e);
+        }
     }
     
     console.log(`Spawning PTY: ${shell} ${args.join(' ')}`);
@@ -112,16 +187,21 @@ app.prepare().then(() => {
   };
 
   // Initialize host PTY immediately
-  ensurePty('host');
+  ensurePty('host').catch(console.error);
 
   io.on('connection', (socket) => {
     console.log('Client connected');
     
-    socket.on('join', (id: string) => {
+    socket.on('join', async (id: string) => {
         console.log(`Client joining terminal ${id}`);
         socket.join(id);
-        const session = ensurePty(id);
-        socket.emit('history', session.history);
+        try {
+            const session = await ensurePty(id);
+            socket.emit('history', session.history);
+        } catch (e) {
+            console.error('Failed to join terminal:', e);
+            socket.emit('output', '\r\n\x1b[31m>>> Failed to join terminal session.\x1b[0m\r\n');
+        }
     });
 
     socket.on('input', ({ id, data }: { id: string, data: string }) => {

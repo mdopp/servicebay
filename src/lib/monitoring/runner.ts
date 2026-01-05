@@ -2,12 +2,21 @@ import { CheckConfig, CheckResult } from './types';
 import { MonitoringStore } from './store';
 import { spawn } from 'child_process';
 import vm from 'vm';
+import { getExecutor, Executor } from '../executor';
+import { listNodes, verifyNodeConnection } from '../nodes';
 
 export class CheckRunner {
   static async run(check: CheckConfig): Promise<CheckResult> {
     const start = Date.now();
     let status: 'ok' | 'fail' = 'fail';
     let message = '';
+
+    let connection;
+    if (check.nodeName && check.nodeName !== 'Local') {
+        const nodes = await listNodes();
+        connection = nodes.find(n => n.Name === check.nodeName);
+    }
+    const executor = getExecutor(connection);
 
     try {
       switch (check.type) {
@@ -24,15 +33,19 @@ export class CheckRunner {
           status = 'ok';
           break;
         case 'podman':
-          await this.runPodmanCheck(check.target);
+          await this.runPodmanCheck(check.target, executor);
           status = 'ok';
           break;
         case 'service':
-          await this.runServiceCheck(check.target);
+          await this.runServiceCheck(check.target, executor);
           status = 'ok';
           break;
         case 'systemd':
-          await this.runSystemdCheck(check.target);
+          await this.runSystemdCheck(check.target, executor);
+          status = 'ok';
+          break;
+        case 'node':
+          await this.runNodeCheck(check.target);
           status = 'ok';
           break;
         case 'fritzbox':
@@ -113,82 +126,51 @@ export class CheckRunner {
     });
   }
 
-  private static async runPodmanCheck(containerName: string) {
-    return new Promise<void>((resolve, reject) => {
-      const inspect = spawn('podman', ['inspect', containerName, '--format', '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}']);
-      
-      let output = '';
-      if (inspect.stdout) {
-        inspect.stdout.on('data', d => output += d.toString());
-      }
-      
-      inspect.on('close', (code) => {
-        if (code !== 0) {
-            return reject(new Error(`Container ${containerName} not found or error inspecting`));
-        }
-        
-        const [status, health] = output.trim().split('|');
+  private static async runPodmanCheck(containerName: string, executor: Executor) {
+    try {
+        const { stdout } = await executor.exec(`podman inspect ${containerName} --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'`);
+        const [status, health] = stdout.trim().split('|');
         
         if (status !== 'running') {
-            return reject(new Error(`Container is ${status}`));
+            throw new Error(`Container is ${status}`);
         }
         
         if (health !== 'none' && health !== 'healthy') {
-            return reject(new Error(`Container health is ${health}`));
+            throw new Error(`Container health is ${health}`);
         }
-        
-        resolve();
-      });
-    });
+    } catch (e) {
+        // If the container is not found, podman inspect returns exit code 125 or 1
+        throw new Error(`Container ${containerName} check failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
-  private static async runServiceCheck(serviceName: string) {
+  private static async runServiceCheck(serviceName: string, executor: Executor) {
     // Managed service (user service)
     // If the user didn't provide .service extension, add it
     const unit = serviceName.endsWith('.service') ? serviceName : `${serviceName}.service`;
     
-    return new Promise<void>((resolve, reject) => {
-      const cmd = spawn('systemctl', ['--user', 'is-active', unit]);
-      
-      let output = '';
-      if (cmd.stdout) {
-        cmd.stdout.on('data', d => output += d.toString());
-      }
-      
-      cmd.on('close', () => {
-        const status = output.trim();
-        if (status === 'active') {
-          resolve();
-        } else {
-          reject(new Error(`Service is ${status}`));
+    try {
+        const { stdout } = await executor.exec(`systemctl --user is-active ${unit}`);
+        const status = stdout.trim();
+        if (status !== 'active') {
+            throw new Error(`Service is ${status}`);
         }
-      });
-      
-      cmd.on('error', (err) => reject(err));
-    });
+    } catch (e) {
+        throw new Error(`Service ${unit} check failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
-  private static async runSystemdCheck(unitName: string) {
+  private static async runSystemdCheck(unitName: string, executor: Executor) {
     // System service (system-wide)
-    return new Promise<void>((resolve, reject) => {
-      const cmd = spawn('systemctl', ['is-active', unitName]);
-      
-      let output = '';
-      if (cmd.stdout) {
-        cmd.stdout.on('data', d => output += d.toString());
-      }
-      
-      cmd.on('close', () => {
-        const status = output.trim();
-        if (status === 'active') {
-          resolve();
-        } else {
-          reject(new Error(`System unit is ${status}`));
+    try {
+        const { stdout } = await executor.exec(`systemctl is-active ${unitName}`);
+        const status = stdout.trim();
+        if (status !== 'active') {
+            throw new Error(`System unit is ${status}`);
         }
-      });
-      
-      cmd.on('error', (err) => reject(err));
-    });
+    } catch (e) {
+        throw new Error(`System unit ${unitName} check failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private static async runScriptCheck(script: string) {
@@ -215,6 +197,13 @@ export class CheckRunner {
     } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         throw new Error(`Script failed: ${msg}`);
+    }
+  }
+
+  private static async runNodeCheck(nodeName: string) {
+    const result = await verifyNodeConnection(nodeName);
+    if (!result.success) {
+        throw new Error(`Node connection failed: ${result.error || 'Unknown error'}`);
     }
   }
 

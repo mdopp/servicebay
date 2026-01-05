@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { CheckConfig, CheckResult } from './types';
+import { DATA_DIR } from '../config';
 
-const CONFIG_DIR = path.join(os.homedir(), '.config/servicebay');
+const CONFIG_DIR = DATA_DIR;
 const CHECKS_FILE = path.join(CONFIG_DIR, 'checks.json');
 const RESULTS_DIR = path.join(CONFIG_DIR, 'results');
 

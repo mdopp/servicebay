@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { HistoryEntry } from '@/lib/history';
 import { Loader2, RotateCcw, Clock } from 'lucide-react';
 import * as Diff from 'diff';
@@ -12,6 +13,8 @@ interface HistoryViewerProps {
 }
 
 export default function HistoryViewer({ filename, currentContent, onRestore }: HistoryViewerProps) {
+  const searchParams = useSearchParams();
+  const node = searchParams?.get('node');
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
@@ -19,19 +22,21 @@ export default function HistoryViewer({ filename, currentContent, onRestore }: H
   const [loadingVersion, setLoadingVersion] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/history/${filename}`)
+    const query = node ? `?node=${node}` : '';
+    fetch(`/api/history/${filename}${query}`)
       .then(res => res.json())
       .then(data => {
         setHistory(data);
         setLoading(false);
       });
-  }, [filename]);
+  }, [filename, node]);
 
   const handleSelectVersion = async (timestamp: string) => {
     setSelectedVersion(timestamp);
     setLoadingVersion(true);
     try {
-      const res = await fetch(`/api/history/${filename}?timestamp=${timestamp}`);
+      const query = node ? `&node=${node}` : '';
+      const res = await fetch(`/api/history/${filename}?timestamp=${timestamp}${query}`);
       const content = await res.text();
       setVersionContent(content);
     } finally {

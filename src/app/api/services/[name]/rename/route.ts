@@ -7,7 +7,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  const { name } = await params;
+  const { name: rawName } = await params;
+  const name = decodeURIComponent(rawName);
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node');
   

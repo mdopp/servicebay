@@ -7,6 +7,8 @@ import PageHeader from '@/components/PageHeader';
 import { Autocomplete } from '@/components/Autocomplete';
 import ConfirmModal from '@/components/ConfirmModal';
 import { CheckConfig, CheckType } from '@/lib/monitoring/types';
+import { getNodes } from '@/app/actions/nodes';
+import { PodmanConnection } from '@/lib/nodes';
 
 // Extended type for UI
 interface Check extends CheckConfig {
@@ -44,6 +46,8 @@ export default function MonitoringPlugin() {
   const [timeRange, setTimeRange] = useState<'1h' | '24h' | '3d' | '2w'>('24h');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'fail' | 'unknown'>('all');
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [resourcesLoading, setResourcesLoading] = useState(false);
   const { addToast, updateToast } = useToast();
 
   // Form state
@@ -52,29 +56,20 @@ export default function MonitoringPlugin() {
     type: 'http',
     target: '',
     interval: 60,
-    enabled: true
+    enabled: true,
+    nodeName: ''
   });
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [checksRes, containersRes, servicesRes, systemRes] = await Promise.all([
+      const [checksRes, nodeList] = await Promise.all([
         fetch('/api/monitoring/checks'),
-        fetch('/api/containers'),
-        fetch('/api/services'),
-        fetch('/api/system/services')
+        getNodes()
       ]);
       
       if (checksRes.ok) setChecks(await checksRes.json());
-      if (containersRes.ok) setContainers(await containersRes.json());
-      if (servicesRes.ok) {
-        const services = await servicesRes.json();
-        setManagedServices(services.map((s: { name: string }) => s.name));
-      }
-      if (systemRes.ok) {
-        const system = await systemRes.json();
-        setSystemServices(system.map((s: { unit: string }) => s.unit));
-      }
+      setNodes(nodeList);
     } catch (error) {
       console.error('Failed to fetch data', error);
       addToast('error', 'Failed to fetch monitoring data');
@@ -82,6 +77,44 @@ export default function MonitoringPlugin() {
       setLoading(false);
     }
   }, [addToast]);
+
+  // Fetch resources when node changes in form
+  useEffect(() => {
+    const fetchResources = async () => {
+        if (!isModalOpen || !formData.nodeName) {
+            setContainers([]);
+            setManagedServices([]);
+            setSystemServices([]);
+            return;
+        }
+
+        setResourcesLoading(true);
+        try {
+            const query = `?node=${formData.nodeName}`;
+            const [containersRes, servicesRes, systemRes] = await Promise.all([
+                fetch(`/api/containers${query}`),
+                fetch(`/api/services${query}`),
+                fetch(`/api/system/services${query}`)
+            ]);
+
+            if (containersRes.ok) setContainers(await containersRes.json());
+            if (servicesRes.ok) {
+                const services = await servicesRes.json();
+                setManagedServices(services.map((s: { name: string }) => s.name));
+            }
+            if (systemRes.ok) {
+                const system = await systemRes.json();
+                setSystemServices(system.map((s: { unit: string }) => s.unit));
+            }
+        } catch (e) {
+            console.error('Failed to fetch node resources', e);
+        } finally {
+            setResourcesLoading(false);
+        }
+    };
+
+    fetchResources();
+  }, [isModalOpen, formData.nodeName]);
 
   useEffect(() => {
     fetchData();
@@ -133,6 +166,7 @@ export default function MonitoringPlugin() {
         target: check.target,
         interval: check.interval,
         enabled: check.enabled,
+        nodeName: check.nodeName || '',
         httpConfig: check.httpConfig || { expectedStatus: 200, bodyMatchType: 'contains' }
       });
     } else {
@@ -143,6 +177,7 @@ export default function MonitoringPlugin() {
         target: '',
         interval: 60,
         enabled: true,
+        nodeName: '',
         httpConfig: { expectedStatus: 200, bodyMatchType: 'contains' }
       });
     }
@@ -725,13 +760,58 @@ export default function MonitoringPlugin() {
                   <option value="podman">Podman Container</option>
                   <option value="service">Managed Service</option>
                   <option value="systemd">System Service</option>
+                  <option value="node">Remote Node Connection</option>
                   <option value="script">Custom Script (JS)</option>
                   <option value="fritzbox">Fritz!Box Internet</option>
                 </select>
+                
+                {/* Type Hint */}
+                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-2 rounded border border-gray-200 dark:border-gray-700">
+                    {formData.type === 'http' && (
+                        <p>Checks an HTTP/HTTPS endpoint. Verifies the status code (default 200) and optionally the response body. Fails if the request times out or returns an unexpected status.</p>
+                    )}
+                    {formData.type === 'ping' && (
+                        <p>Sends ICMP Echo Requests (ping) to the target host. Verifies network reachability. Fails if the host is unreachable or packet loss occurs.</p>
+                    )}
+                    {formData.type === 'podman' && (
+                        <p>Inspects a specific Podman container. Verifies that the container state is &apos;running&apos; and (if configured) the health check status is &apos;healthy&apos;. Fails if the container is stopped or unhealthy.</p>
+                    )}
+                    {formData.type === 'service' && (
+                        <p>Checks a systemd user service (managed by ServiceBay). Verifies that the unit is &apos;active&apos;. Fails if the service is inactive, failed, or not found.</p>
+                    )}
+                    {formData.type === 'systemd' && (
+                        <p>Checks a system-wide systemd unit (e.g., sshd, docker). Verifies that the unit is &apos;active&apos;. Fails if the unit is inactive or failed.</p>
+                    )}
+                    {formData.type === 'node' && (
+                        <p>Verifies the connection to a remote Podman node. Checks SSH connectivity and the Podman socket availability. Fails if the node is unreachable or Podman is not responding.</p>
+                    )}
+                    {formData.type === 'script' && (
+                        <p>Executes a custom JavaScript snippet in a sandboxed environment. Use <code>fetch()</code> for custom logic. Throw an error to fail the check.</p>
+                    )}
+                    {formData.type === 'fritzbox' && (
+                        <p>Queries a Fritz!Box router via UPnP (TR-064) to check internet connectivity status. Fails if the router reports &apos;Disconnected&apos; or is unreachable.</p>
+                    )}
+                </div>
               </div>
+              {formData.type !== 'node' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Node</label>
+                <select 
+                  value={formData.nodeName || ''}
+                  onChange={e => setFormData({...formData, nodeName: e.target.value})}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                >
+                  <option value="">Local (ServiceBay Host)</option>
+                  {nodes.map(node => (
+                    <option key={node.Name} value={node.Name}>{node.Name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Select the node where this check should run.</p>
+              </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
+                    {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : formData.type === 'node' ? 'Node Name' : 'Target'}
                 </label>
                 {formData.type === 'script' ? (
                     <textarea
@@ -741,24 +821,34 @@ export default function MonitoringPlugin() {
                         placeholder="if (1 !== 1) throw new Error('Math broken')"
                     />
                 ) : formData.type === 'podman' ? (
-                    <select
-                        value={formData.target}
-                        onChange={e => setFormData({...formData, target: e.target.value})}
-                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                    >
-                        <option value="">Select a container...</option>
-                        {containers.map((c) => (
-                            <option key={c.Id} value={c.Names[0]}>
-                                {c.Names[0]} ({c.Image})
-                            </option>
-                        ))}
-                    </select>
+                    <div className="relative">
+                        <select
+                            value={formData.target}
+                            onChange={e => setFormData({...formData, target: e.target.value})}
+                            disabled={resourcesLoading}
+                            className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${resourcesLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            <option value="">{resourcesLoading ? 'Loading containers...' : 'Select a container...'}</option>
+                            {!resourcesLoading && containers.map((c) => (
+                                <option key={c.Id} value={c.Names[0]}>
+                                    {c.Names[0]} ({c.Image})
+                                </option>
+                            ))}
+                        </select>
+                        {resourcesLoading && (
+                            <div className="absolute right-8 top-2.5">
+                                <div className="animate-spin h-5 w-5 border-2 border-blue-500 rounded-full border-t-transparent"></div>
+                            </div>
+                        )}
+                    </div>
                 ) : formData.type === 'service' ? (
                     <Autocomplete
                         options={managedServices}
                         value={formData.target || ''}
                         onChange={val => setFormData({...formData, target: val})}
                         placeholder="Select a managed service..."
+                        loading={resourcesLoading}
+                        disabled={resourcesLoading}
                     />
                 ) : formData.type === 'systemd' ? (
                     <Autocomplete
@@ -766,7 +856,22 @@ export default function MonitoringPlugin() {
                         value={formData.target || ''}
                         onChange={val => setFormData({...formData, target: val})}
                         placeholder="Search system services..."
+                        loading={resourcesLoading}
+                        disabled={resourcesLoading}
                     />
+                ) : formData.type === 'node' ? (
+                    <select
+                        value={formData.target}
+                        onChange={e => setFormData({...formData, target: e.target.value})}
+                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                        <option value="">Select a node...</option>
+                        {nodes.map((n) => (
+                            <option key={n.Name} value={n.Name}>
+                                {n.Name} ({n.URI})
+                            </option>
+                        ))}
+                    </select>
                 ) : (
                     <input 
                       type="text" 
@@ -784,9 +889,8 @@ export default function MonitoringPlugin() {
 
               {formData.type === 'fritzbox' && (
                 <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 text-sm text-blue-800 dark:text-blue-200">
-                    <p className="font-medium mb-1">Fritz!Box Configuration</p>
-                    <p>This check uses the TR-064 protocol (Port 49000) to query the internet connection status.</p>
-                    <p className="mt-2 text-xs opacity-80">Note: Ensure &quot;Status information over UPnP&quot; is enabled in your Fritz!Box settings (Home Network &gt; Network &gt; Network Settings).</p>
+                    <p className="font-medium mb-1">Configuration Note</p>
+                    <p className="text-xs opacity-80">Ensure &quot;Status information over UPnP&quot; is enabled in your Fritz!Box settings (Home Network &gt; Network &gt; Network Settings).</p>
                 </div>
               )}
 

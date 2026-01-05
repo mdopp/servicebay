@@ -1,9 +1,13 @@
 
 import { NextResponse } from 'next/server';
 import { mergeServices, DiscoveredService } from '@/lib/discovery';
+import { listNodes } from '@/lib/nodes';
 
 export async function POST(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const nodeName = searchParams.get('node');
+
     const body = await request.json();
     const { services, newName, dryRun } = body as { services: DiscoveredService[], newName: string, dryRun?: boolean };
     
@@ -15,7 +19,16 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'New service name is required' }, { status: 400 });
     }
 
-    const result = await mergeServices(services, newName, dryRun);
+    let connection;
+    if (nodeName && nodeName !== 'local') {
+        const nodes = await listNodes();
+        connection = nodes.find(n => n.Name === nodeName);
+        if (!connection) {
+            return NextResponse.json({ error: `Node ${nodeName} not found` }, { status: 404 });
+        }
+    }
+
+    const result = await mergeServices(services, newName, dryRun, connection);
     
     if (dryRun) {
         return NextResponse.json({ plan: result });

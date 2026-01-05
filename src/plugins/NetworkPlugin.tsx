@@ -178,11 +178,17 @@ const CustomNode = ({ data }: any) => {
       );
   }
 
+  // Dynamic Handle Positions
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const targetPos = (data as any).targetHandlePosition || Position.Left;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sourcePos = (data as any).sourceHandlePosition || Position.Right;
+
   return (
     <div className={`w-full ${isGroup ? 'h-full' : 'min-w-[320px] h-auto'}`}>
       {/* Handles for connecting */}
-      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-blue-400" />
-      <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-blue-400" />
+      <Handle type="target" position={targetPos} className="!w-3 !h-3 !bg-blue-400" />
+      <Handle type="source" position={sourcePos} className="!w-3 !h-3 !bg-blue-400" />
       
       {isGroup ? (
          <div className={`w-full h-full rounded-xl border-2 flex flex-col justify-between p-2 transition-all bg-transparent ${

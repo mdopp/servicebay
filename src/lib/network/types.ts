@@ -18,6 +18,7 @@ export interface NetworkNode {
   metadata?: Record<string, any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   rawData?: any;
+  node?: string;
 }
 
 export interface NetworkEdge {

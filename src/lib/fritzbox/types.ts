@@ -15,4 +15,6 @@ export interface FritzBoxStatus {
   internalIP?: string;
   uptime: number;
   portMappings: PortMapping[];
+  dnsServers?: string[];
+  deviceLog?: string;
 }

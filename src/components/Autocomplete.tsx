@@ -6,6 +6,8 @@ interface AutocompleteProps {
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
+  loading?: boolean;
 }
 
 export const Autocomplete: React.FC<AutocompleteProps> = ({
@@ -13,7 +15,9 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
   value,
   onChange,
   placeholder,
-  className
+  className,
+  disabled,
+  loading
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState('');
@@ -46,19 +50,27 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
 
   return (
     <div ref={wrapperRef} className={`relative ${className}`}>
-      <input
-        type="text"
-        className="w-full p-2 border rounded bg-gray-50 dark:bg-gray-700 dark:border-gray-600"
-        placeholder={placeholder}
-        value={filter}
-        onChange={(e) => {
-          setFilter(e.target.value);
-          onChange(e.target.value);
-          setIsOpen(true);
-        }}
-        onFocus={() => setIsOpen(true)}
-      />
-      {isOpen && filteredOptions.length > 0 && (
+      <div className="relative">
+        <input
+          type="text"
+          className={`w-full p-2 border rounded bg-gray-50 dark:bg-gray-700 dark:border-gray-600 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          placeholder={loading ? 'Loading...' : placeholder}
+          value={filter}
+          disabled={disabled || loading}
+          onChange={(e) => {
+            setFilter(e.target.value);
+            onChange(e.target.value);
+            setIsOpen(true);
+          }}
+          onFocus={() => !disabled && !loading && setIsOpen(true)}
+        />
+        {loading && (
+          <div className="absolute right-2 top-2.5">
+            <div className="animate-spin h-5 w-5 border-2 border-blue-500 rounded-full border-t-transparent"></div>
+          </div>
+        )}
+      </div>
+      {isOpen && !disabled && !loading && filteredOptions.length > 0 && (
         <ul className="absolute z-10 w-full mt-1 max-h-60 overflow-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg">
           {filteredOptions.map((option, index) => (
             <li

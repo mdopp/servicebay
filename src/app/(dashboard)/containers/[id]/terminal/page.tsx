@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Terminal as TerminalIcon, ArrowLeft, Eraser, RefreshCw } from 'lucide-react';
 import type { TerminalRef } from '@/components/Terminal';
@@ -19,6 +19,9 @@ interface Container {
 export default function ContainerTerminalPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nodeName = searchParams?.get('node') || 'local';
+  
   const [container, setContainer] = useState<Container | null>(null);
   const [loading, setLoading] = useState(true);
   const terminalRef = useRef<TerminalRef>(null);
@@ -27,7 +30,8 @@ export default function ContainerTerminalPage({ params }: { params: Promise<{ id
     const fetchContainer = async () => {
       setLoading(true);
       try {
-        const res = await fetch('/api/containers');
+        const query = nodeName !== 'local' ? `?node=${nodeName}` : '';
+        const res = await fetch(`/api/containers${query}`);
         if (res.ok) {
           const containers: Container[] = await res.json();
           const found = containers.find(c => c.Id.startsWith(id) || c.Id === id);
@@ -45,7 +49,7 @@ export default function ContainerTerminalPage({ params }: { params: Promise<{ id
     };
 
     fetchContainer();
-  }, [id]);
+  }, [id, nodeName]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-screen text-gray-500 bg-gray-900">Loading...</div>;
@@ -88,7 +92,7 @@ export default function ContainerTerminalPage({ params }: { params: Promise<{ id
         <div className="flex-1 overflow-hidden bg-gray-900">
             <Terminal 
                 ref={terminalRef}
-                id={`container:${container.Id}`} 
+                id={`container:${nodeName}:${container.Id}`} 
                 showControls={false} 
             />
         </div>

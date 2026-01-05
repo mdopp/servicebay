@@ -7,3 +7,4 @@ Overview of the host system resources.
 - **Resources**: CPU, Memory, and Disk usage.
 - **OS Info**: Kernel version, uptime, and hostname.
 - **Network**: Interface statistics and IP addresses.
+- **Multi-Server**: View statistics for Local and configured remote nodes.
