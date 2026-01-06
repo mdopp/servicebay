@@ -56,6 +56,31 @@ else
 fi
 PORT=${INPUT_PORT:-3000}
 
+# --- Authentication Setup ---
+
+AUTH_FILE="$CONFIG_DIR/auth.env"
+if [ -f "$AUTH_FILE" ]; then
+    log "Existing authentication configuration found."
+else
+    log "Generating new administrative password..."
+    # Generate a random password using openssl or fallback to date/random
+    if command -v openssl &> /dev/null; then
+        ADMIN_PASS=$(openssl rand -base64 12)
+    else
+        ADMIN_PASS="admin-$(date +%s)"
+    fi
+    
+    cat > "$AUTH_FILE" <<EOF
+SERVICEBAY_USERNAME=admin
+SERVICEBAY_PASSWORD=$ADMIN_PASS
+EOF
+    chmod 600 "$AUTH_FILE"
+    log "Created new credentials in $AUTH_FILE"
+fi
+
+# Read password for display
+source "$AUTH_FILE"
+
 # --- Create Quadlet ---
 
 log "Creating systemd service..."
@@ -77,10 +102,12 @@ Volume=/run/user/$(id -u)/podman/podman.sock:/run/podman/podman.sock
 Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
 Environment=NODE_ENV=production
 Environment=PORT=$PORT
+EnvironmentFile=$AUTH_FILE
 
 [Install]
 WantedBy=default.target
 INNEREOF
+
 
 # --- Reload and Start ---
 
@@ -98,3 +125,5 @@ systemctl --user enable "$SERVICE_NAME" || true
 
 success "ServiceBay installed successfully!"
 echo -e "Access it at: http://$(hostname):$PORT"
+echo -e "Login with username: ${BLUE}$SERVICEBAY_USERNAME${NC} and password: ${BLUE}$SERVICEBAY_PASSWORD${NC}"
+

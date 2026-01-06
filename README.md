@@ -27,9 +27,12 @@ This will:
 2. Pull the latest Docker image from `ghcr.io/mdopp/servicebay`.
 3. Start the container as a systemd service.
 
+The installer will generate a random administrative password and display it at the end of the installation.
+
 The web interface will be available at [http://localhost:3000](http://localhost:3000).
 
 ## Data Persistence & File Structure
+
 
 ServiceBay is designed to be stateless regarding the application code, but stateful regarding your configuration and data. The installer automatically maps the following host directories to the container to ensure data persists across updates and container recreations:
 

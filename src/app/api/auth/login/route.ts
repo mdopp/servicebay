@@ -12,6 +12,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Username and password required' }, { status: 400 });
     }
 
+    // AUTH MODE 1: Container / Environment Variable Auth
+    // If SERVICEBAY_PASSWORD is set, we use this strictly and ignore system users.
+    const envPassword = process.env.SERVICEBAY_PASSWORD;
+    const envUsername = process.env.SERVICEBAY_USERNAME || 'admin';
+
+    if (envPassword) {
+      if (username === envUsername && password === envPassword) {
+         await login(username);
+         return NextResponse.json({ success: true });
+      } else {
+         return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+      }
+    }
+
+    // AUTH MODE 2: System User Auth (Local Installation)
+    // Fallback for when running on bare metal without explicit password config
     const currentUser = os.userInfo().username;
 
     // Security: Only allow login as the user running the service
