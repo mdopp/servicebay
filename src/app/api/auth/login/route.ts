@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { login } from '@/lib/auth';
+import { getConfig } from '@/lib/config';
 import os from 'os';
 import * as pty from 'node-pty';
 
@@ -12,13 +13,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Username and password required' }, { status: 400 });
     }
 
-    // AUTH MODE 1: Container / Environment Variable Auth
-    // If SERVICEBAY_PASSWORD is set, we use this strictly and ignore system users.
-    const envPassword = process.env.SERVICEBAY_PASSWORD;
-    const envUsername = process.env.SERVICEBAY_USERNAME || 'admin';
+    // AUTH MODE 1: Container / Persistent Config
+    // If auth is configured in config.json (shared volume), use it.
+    const config = await getConfig();
+    const configPassword = config.auth?.password || process.env.SERVICEBAY_PASSWORD;
+    const configUsername = config.auth?.username || process.env.SERVICEBAY_USERNAME || 'admin';
 
-    if (envPassword) {
-      if (username === envUsername && password === envPassword) {
+    if (configPassword) {
+      if (username === configUsername && password === configPassword) {
          await login(username);
          return NextResponse.json({ success: true });
       } else {

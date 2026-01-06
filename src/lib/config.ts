@@ -65,6 +65,10 @@ export interface AppConfig {
       to: string[];
     };
   };
+  auth?: {
+    username?: string;
+    password?: string;
+  };
 }
 
 const DEFAULT_CONFIG: AppConfig = {

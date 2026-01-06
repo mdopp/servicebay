@@ -58,28 +58,63 @@ PORT=${INPUT_PORT:-3000}
 
 # --- Authentication Setup ---
 
-AUTH_FILE="$CONFIG_DIR/auth.env"
-if [ -f "$AUTH_FILE" ]; then
-    log "Existing authentication configuration found."
-else
-    log "Generating new administrative password..."
-    # Generate a random password using openssl or fallback to date/random
+# We use the config.json in the data directory to store credentials safely
+# This avoids environment variable leakage via 'podman inspect'
+CONFIG_FILE="$CONFIG_DIR/config.json"
+HAS_AUTH=false
+ADMIN_USER="admin"
+
+if [ -f "$CONFIG_FILE" ]; then
+    # Check if auth is already defined in json using grep (simple check)
+    if grep -q '"auth"' "$CONFIG_FILE"; then
+        log "Existing authentication configuration found in config.json."
+        HAS_AUTH=true
+        # Try to extract user/pass for display (best effort with grep/sed as jq might not be present)
+        # Note: This is fragile but sufficient for the installer output
+        ADMIN_USER=$(grep -o '"username": *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
+        ADMIN_PASS="******** (hidden)" 
+    fi
+fi
+
+if [ "$HAS_AUTH" = false ]; then
+    log "Generating new administrative configuration..."
+    
+    # Generate a random password
     if command -v openssl &> /dev/null; then
         ADMIN_PASS=$(openssl rand -base64 12)
     else
         ADMIN_PASS="admin-$(date +%s)"
     fi
     
-    cat > "$AUTH_FILE" <<EOF
-SERVICEBAY_USERNAME=admin
-SERVICEBAY_PASSWORD=$ADMIN_PASS
+    # We need to construct or merge the json. 
+    # Since we can't assume 'jq' is installed, we'll do a basic write if file doesn't exist,
+    # or rely on the user to configure it if the file exists but has no auth.
+    
+    # But usually this is a fresh install or re-install where we want to ensure access.
+    # If config.json exists but no auth, we append it? No, JSON editing with bash is hard.
+    # We will write a NEW config if it doesn't exist.
+    
+    if [ ! -f "$CONFIG_FILE" ]; then
+        cat > "$CONFIG_FILE" <<EOF
+{
+  "auth": {
+    "username": "admin",
+    "password": "$ADMIN_PASS"
+  }
+}
 EOF
-    chmod 600 "$AUTH_FILE"
-    log "Created new credentials in $AUTH_FILE"
+        log "Created new configuration at $CONFIG_FILE"
+    else
+        # Config exists but no auth. We can't safely edit JSON without jq.
+        # Fallback to creating a separate auth.json that the app could merge?
+        # Or just warn the user.
+        # Let's try to overwrite if it's minimal, otherwise instruction.
+        log "WARNING: config.json exists but no 'auth' section found."
+        log "Please manually add the following to $CONFIG_FILE:"
+        echo '  "auth": { "username": "admin", "password": "YOUR_PASSWORD" }'
+        ADMIN_PASS="<CHECK_CONFIG_FILE>"
+    fi
 fi
-
-# Read password for display
-source "$AUTH_FILE"
 
 # --- Create Quadlet ---
 
@@ -102,11 +137,11 @@ Volume=/run/user/$(id -u)/podman/podman.sock:/run/podman/podman.sock
 Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
 Environment=NODE_ENV=production
 Environment=PORT=$PORT
-EnvironmentFile=$AUTH_FILE
 
 [Install]
 WantedBy=default.target
 INNEREOF
+
 
 
 # --- Reload and Start ---
@@ -125,5 +160,6 @@ systemctl --user enable "$SERVICE_NAME" || true
 
 success "ServiceBay installed successfully!"
 echo -e "Access it at: http://$(hostname):$PORT"
-echo -e "Login with username: ${BLUE}$SERVICEBAY_USERNAME${NC} and password: ${BLUE}$SERVICEBAY_PASSWORD${NC}"
+echo -e "Login with username: ${BLUE}$ADMIN_USER${NC} and password: ${BLUE}$ADMIN_PASS${NC}"
+
 
