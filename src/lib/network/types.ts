@@ -31,6 +31,8 @@ export interface NetworkEdge {
   port: number;
   state: 'active' | 'inactive'; // For visualization (e.g. animated line)
   isManual?: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  style?: any;
 }
 
 export interface NetworkGraph {

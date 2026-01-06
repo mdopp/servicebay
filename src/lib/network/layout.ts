@@ -92,11 +92,13 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
             width: node.measured?.width ?? calculateNodeWidth(node),
             height: node.measured?.height ?? calculateNodeHeight(node),
             layoutOptions: isGroup ? { 
-                'elk.padding': '[top=80,left=30,bottom=30,right=30]',
+                'elk.padding': '[top=80,left=50,bottom=50,right=50]',
                 'elk.direction': 'RIGHT', // Horizontal layout for contents (Containers side-by-side)
                 'elk.algorithm': 'layered', 
                 'elk.resize': 'true',
-                'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP'
+                'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+                'elk.spacing.nodeNode': '80', 
+                'elk.layered.spacing.nodeNodeBetweenLayers': '120',
             } : undefined,
             labels: [{ text: (node.data.label as string) || '' }],
             children: []
@@ -141,7 +143,7 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
 }
 
 function calculateNodeHeight(node: Node): number | undefined {
-    if (node.type === 'group') return undefined;
+    if (node.data.type === 'group') return undefined;
     if (node.data.type === 'internet') return 150;
     
     // Base Header (Title + Status + Padding)
@@ -157,18 +159,18 @@ function calculateNodeHeight(node: Node): number | undefined {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raw = (data.rawData as any) || {};
     
-    if (node.type === 'container') {
+    if (node.data.type === 'container') {
         // Created, Status (1 row) + Network (optional)
         detailRows = 1;
         if (raw.hostNetwork) detailRows += 1;
-    } else if (node.type === 'service') {
+    } else if (node.data.type === 'service') {
         // State, Load (1 row) + Network (optional)
         detailRows = 1;
         if (raw.hostNetwork) detailRows += 1;
-    } else if (node.type === 'link') {
+    } else if (node.data.type === 'link') {
         // URL (Full width -> 1 row)
         detailRows = 1;
-    } else if (node.type === 'router') {
+    } else if (node.data.type === 'router') {
         // Ext IP, Int IP (1 row) + Uptime (1 row) + DNS (optional 1 row)
         detailRows = 2;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -192,7 +194,7 @@ function calculateNodeHeight(node: Node): number | undefined {
 
     // Description (line-clamp-2 -> max ~36px)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if ((data.metadata as any)?.description && node.type !== 'link') height += 40;
+    if ((data.metadata as any)?.description && node.data.type !== 'link') height += 40;
     
     // Footer (Ports)
     const ports = (data.ports as string[]) || [];
@@ -211,10 +213,10 @@ function calculateNodeHeight(node: Node): number | undefined {
 }
 
 function calculateNodeWidth(node: Node): number {
-    if (node.type === 'group') return 340; 
+    if (node.data.type === 'group') return 440; 
     if (node.data.type === 'internet') return 150;
 
-    let width = 340; // Base width
+    let width = 440; // Base width Increased for 3 ports in a row
     const data = node.data || {};
 
     // Check for long strings that might expand the card

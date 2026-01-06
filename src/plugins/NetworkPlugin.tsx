@@ -23,7 +23,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@/lib/network/layout';
 import { NetworkGraph } from '@/lib/network/types';
-import { RefreshCw, X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon } from 'lucide-react';
+import { RefreshCw, X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, ChevronRight, LayoutGrid, Radio } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
@@ -81,10 +81,23 @@ const CustomEdge = ({
 
 // Custom Node Component
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const CustomNode = ({ data }: any) => {
-  const isGroup = ['group', 'proxy', 'pod'].includes(data.type);
+const CustomNode = ({ id, data }: { id: string, data: any }) => {
+  const isGroup = data.type === 'group';
+  // Services, Pods, Proxies can also behave as groups (can be expanded/collapsed)
+  const isExpandable = ['group', 'service', 'pod', 'proxy'].includes(data.type);
+  const isCollapsed = data.collapsed;
+  const onToggle = data.onToggle as ((id: string) => void) | undefined;
+  
+  // Decide whether to render as the "Opened Group Frame" or the "Node Card"
+  const renderAsExpandedGroup = isExpandable && !isCollapsed;
+
+  const summary = data.summary || {};
+  
   const isGateway = data.rawData?.type === 'gateway';
   const isMissing = data.rawData?.type === 'missing';
+  
+  // Determine effective type: if group, try to use rawData.type (service, pod, proxy) to get correct label/color
+  const effectiveType = (data.type === 'group' && data.rawData?.type) ? data.rawData.type : data.type;
   
   const typeLabels: Record<string, string> = {
       container: 'Container',
@@ -111,22 +124,38 @@ const CustomNode = ({ data }: any) => {
 
   const nodeColor = isMissing 
       ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 border-dashed'
-      : (typeColors[data.type] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900');
+      : (typeColors[effectiveType] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900');
+
+  // Pre-calculate effective ports to use in IP extraction if data.ports is empty
+  // (e.g. Pod Nodes which inherit ports from children)
+  const effectivePorts = (data.ports && data.ports.length > 0) 
+      ? data.ports 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      : (summary.portMap?.map((p: any) => p) || []);
 
   // Helper to extract IP info from ports
   const extractIpInfo = () => {
-    // Rely on rawData if available for consistency, or fallback to data.ports
-    // But data.ports is already parsed/enriched by backend.
+    // Rely on rawData if available for consistency, or fallback to effectivePorts
     
-    if (!data.ports || data.ports.length === 0) return { globalIp: null, portMap: [] };
+    if (!effectivePorts || effectivePorts.length === 0) return { globalIp: null, portMap: [] };
     
-    // Fallback IP (Node IP)
-    const fallbackIp = (data.metadata?.nodeIPs && data.metadata.nodeIPs.length > 0) 
-        ? data.metadata.nodeIPs[0] 
-        : '0.0.0.0';
+    // Fallback IP (Node IP or Link Targets)
+    let fallbackIp = '0.0.0.0';
+    
+    // Special handling for Router: Prefer subLabel (Internal IP) over NodeIP if valid
+    if (data.type === 'router' && data.subLabel && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(data.subLabel)) {
+        fallbackIp = data.subLabel;
+    } else if (data.metadata?.nodeIPs && data.metadata.nodeIPs.length > 0) {
+        fallbackIp = data.metadata.nodeIPs[0];
+    } else if (data.type === 'link' && data.rawData?.ip_targets && data.rawData.ip_targets.length > 0) {
+         // Try to parse IP from the first target (IP:PORT)
+         const target = data.rawData.ip_targets[0];
+         const parts = target.split(':');
+         if (parts.length >= 1) fallbackIp = parts[0];
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const parsedPorts = data.ports.map((p: any) => {
+    const parsedPorts = effectivePorts.map((p: any) => {
         const isObj = typeof p === 'object';
         let ip = isObj ? p.host_ip : null;
         
@@ -137,9 +166,11 @@ const CustomNode = ({ data }: any) => {
             ip = fallbackIp;
         }
 
+        // Handle case where p is from summary.portMap (already parsed object) 
+        // vs data.ports (might satisfy PortMapping interface or be raw number)
         return {
-            host: isObj ? p.host : p,
-            container: isObj ? p.container : null,
+            host: isObj ? (p.host || p.host_port) : p,
+            container: isObj ? (p.container || p.container_port) : null,
             ip: ip
         };
     });
@@ -154,6 +185,14 @@ const CustomNode = ({ data }: any) => {
 
   const { globalIp, portMap } = extractIpInfo();
 
+  // Merge Verified Domains from Summary if available (for collapsed groups)
+  const effectiveDomains = [
+     ...(data.metadata?.verifiedDomains || []),
+     ...(summary.verifiedDomains || [])
+  ];
+  // Deduplicate
+  const uniqueDomains = Array.from(new Set(effectiveDomains));
+ 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type DetailItem = { label: string; value: any; full?: boolean };
 
@@ -162,7 +201,7 @@ const CustomNode = ({ data }: any) => {
       const raw = data.rawData || {};
       const common: DetailItem[] = [];
 
-      if (data.type === 'container') {
+      if (effectiveType === 'container') {
           const items = [
               ...common,
               { label: 'Created', value: raw.Created ? new Date(raw.Created * 1000).toLocaleDateString() : null },
@@ -173,7 +212,7 @@ const CustomNode = ({ data }: any) => {
           }
           return items;
       }
-      if (data.type === 'service') {
+      if (effectiveType === 'service') {
           const items = [
               ...common,
               { label: 'State', value: raw.active ? 'Active' : 'Inactive' },
@@ -184,13 +223,13 @@ const CustomNode = ({ data }: any) => {
           }
           return items;
       }
-      if (data.type === 'link') {
+      if (effectiveType === 'link') {
           return [
               ...common,
               { label: 'URL', value: raw.url, full: true },
           ];
       }
-      if (data.type === 'router') {
+      if (effectiveType === 'router') {
           const items = [
               { label: 'Ext IP', value: raw.externalIP },
               { label: 'Int IP', value: raw.internalIP },
@@ -201,7 +240,7 @@ const CustomNode = ({ data }: any) => {
           }
           return items;
       }
-      if (data.type === 'device') {
+      if (effectiveType === 'device') {
           return [];
       }
       return common;
@@ -226,27 +265,50 @@ const CustomNode = ({ data }: any) => {
   const sourcePos = (data as any).sourceHandlePosition || Position.Right;
 
   return (
-    <div className={`w-full ${isGroup ? 'h-full' : 'min-w-[320px] h-auto'}`}>
+    <div className={`w-full ${(isGroup || renderAsExpandedGroup) ? 'h-full' : 'min-w-[320px] h-auto'}`}>
       {/* Handles for connecting */}
       <Handle type="target" position={targetPos} className="!w-3 !h-3 !bg-blue-400" />
       <Handle type="source" position={sourcePos} className="!w-3 !h-3 !bg-blue-400" />
       
-      {isGroup ? (
-         <div className={`w-full h-full rounded-xl border-2 flex flex-col justify-between p-2 transition-all bg-transparent ${
-            isGateway 
-                ? 'border-emerald-200 dark:border-emerald-800' 
-                : 'border-gray-300 dark:border-gray-700'
-        }`}>
-            <div className="flex justify-between items-start w-full">
-                <div className={`self-start px-3 py-1.5 rounded-md text-sm font-bold uppercase tracking-wider border shadow-sm flex items-center gap-2 ${
+      {renderAsExpandedGroup ? (
+          /* Render as "Expanded Group Frame" */
+         <div className={`w-full h-full rounded-xl border-2 flex flex-col justify-between p-2 pl-2 transition-all group-border ${
+             // Explicit Group Stylings to ensure visibility
+             effectiveType === 'service' ? 'border-purple-400/50 dark:border-purple-500/50 bg-purple-50/50 dark:bg-purple-900/10' :
+             effectiveType === 'pod' ? 'border-pink-400/50 dark:border-pink-500/50 bg-pink-50/50 dark:bg-pink-900/10' :
+             effectiveType === 'proxy' ? 'border-emerald-400/50 dark:border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-900/10' :
+             'border-gray-300 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/10'
+         }`}>
+            <div className="flex justify-between items-start w-full pointer-events-none">
+                <div className={`self-start px-3 py-1.5 rounded-md text-sm font-bold uppercase tracking-wider border shadow-sm flex items-center gap-2 pointer-events-auto ${
                     isGateway 
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900 dark:text-emerald-300 dark:border-emerald-800' 
-                        : 'bg-white text-gray-600 border-gray-200 dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700'
+                        : (effectiveType !== 'group' && typeColors[effectiveType] 
+                            ? typeColors[effectiveType].replace('bg-', 'bg-opacity-20 bg-').replace('border-', 'border-opacity-50 border-') 
+                            : 'bg-white text-gray-600 border-gray-200 dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700')
+                } ${
+                    // Ensure text color is set for specific types if not already
+                     effectiveType === 'service' ? 'text-purple-700 dark:text-purple-300' :
+                     effectiveType === 'pod' ? 'text-pink-700 dark:text-pink-300' :
+                     effectiveType === 'proxy' ? 'text-emerald-700 dark:text-emerald-300' : ''
                 }`}>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
+                        className="mr-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded p-0.5 text-gray-500"
+                        title="Collapse Group"
+                    >
+                        <LayoutGrid size={14} /> 
+                    </button>
                     {data.status && (
                         <div className={`w-2.5 h-2.5 rounded-full ${data.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
                     )}
                     {data.label}
+                    {/* Visual Tag for Pod/Service */}
+                    {(effectiveType === 'service' || effectiveType === 'pod') && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-white/50 dark:bg-black/20 border border-black/10 dark:border-white/10 uppercase tracking-wider font-extrabold opacity-80">
+                            {effectiveType === 'service' ? 'Service' : 'Pod'}
+                        </span>
+                    )}
                     {data.node && data.node !== 'local' && (
                         <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
                             {data.node}
@@ -254,8 +316,8 @@ const CustomNode = ({ data }: any) => {
                     )}
                 </div>
 
-                {/* Show Ports for Groups if available */}
-                {portMap.length > 0 && (
+                {/* Show Ports for Groups if available (Hide for Services/Pods as requested) */}
+                {portMap.length > 0 && !['service', 'pod'].includes(effectiveType) && (
                     <div className="flex flex-col gap-1 items-end">
                         {globalIp && (
                              <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 mb-0.5 self-end" title="Host IP">
@@ -299,15 +361,29 @@ const CustomNode = ({ data }: any) => {
                 )}
             </div>
         </div>
-      ) : (
+     ) : (
+        /* Render as "Standard Node" (Card) - used for Leaf Nodes AND Collapsed Groups */
         <div className={`w-full h-full rounded-xl border shadow-sm hover:shadow-md transition-all p-4 flex flex-col gap-3 ${nodeColor}`}>
             <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800/50 pb-2">
                 <div className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate pr-2 flex items-center gap-2" title={data.label}>
+                    {/* Add Expand Button if Expandable & Collapsed */}
+                    {isExpandable && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
+                            className="hover:bg-gray-100 dark:hover:bg-gray-700 rounded p-1 text-gray-500 transition-colors"
+                            title="Expand Group"
+                        >
+                            <ChevronDown size={16} className="-rotate-90" />
+                        </button>
+                    )}
+                    
                     {data.label}
-                    {data.node && data.node !== 'local' && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 uppercase tracking-wider font-bold">
-                            {data.node}
-                        </span>
+                    
+                    {/* Host IP moved to Header */}
+                    {globalIp && (
+                         <div className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 ml-1" title="Host IP">
+                            {globalIp}
+                         </div>
                     )}
                 </div>
                 {data.status && (
@@ -316,11 +392,18 @@ const CustomNode = ({ data }: any) => {
             </div>
             
             <div className="flex-1 flex flex-col gap-2 min-h-0">
-                {data.subLabel && (
-                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-white/50 dark:bg-black/20 px-2 py-1 rounded break-all" title={data.subLabel}>
-                        {data.subLabel}
-                    </div>
-                )}
+                <div className="flex gap-2">
+                  {data.subLabel && !['router', 'service', 'pod', 'proxy'].includes(effectiveType) && (
+                      <div className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-white/50 dark:bg-black/20 px-2 py-1 rounded break-all" title={data.subLabel}>
+                          {data.subLabel}
+                      </div>
+                  )}
+                  {data.metadata?.pod && (
+                     <div className="text-xs text-pink-600 dark:text-pink-400 font-mono bg-pink-50 dark:bg-pink-900/20 border border-pink-200 dark:border-pink-800/30 px-2 py-1 rounded break-all flex items-center gap-1">
+                        <span className="opacity-50 text-[10px]">POD:</span> {data.metadata.pod}
+                     </div>
+                  )}
+                </div>
 
                 {/* Dynamic Details Grid */}
                 {details.length > 0 && (
@@ -347,11 +430,11 @@ const CustomNode = ({ data }: any) => {
                 )}
 
                 {/* Verified Domains List */}
-                {data.metadata?.verifiedDomains && data.metadata.verifiedDomains.length > 0 && (
+                {uniqueDomains.length > 0 && (
                     <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
                         <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold block mb-1">Verified Domains</span>
                         <div className="flex flex-col gap-1">
-                            {data.metadata.verifiedDomains.map((domain: string) => (
+                            {uniqueDomains.map((domain: string) => (
                                 <a 
                                     key={domain} 
                                     href={domain.startsWith('http') ? domain : `https://${domain}`}
@@ -383,11 +466,6 @@ const CustomNode = ({ data }: any) => {
                 
                 <div className="mt-auto pt-3 flex items-center justify-between border-t border-gray-100 dark:border-gray-800/50">
                     <div className="flex flex-wrap gap-1.5 items-center">
-                        {globalIp && (
-                             <div className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 mr-1" title="Host IP">
-                                {globalIp}
-                             </div>
-                        )}
                         {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                         {portMap && portMap.map((p: any, idx: number) => {
                             // Determine hostname for link
@@ -428,9 +506,17 @@ const CustomNode = ({ data }: any) => {
                         })}
                     </div>
                     
-                    <span className="text-[10px] font-semibold px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded border border-gray-200 dark:border-gray-700 uppercase tracking-wider ml-2 whitespace-nowrap">
-                        {isMissing ? 'Missing Node' : (typeLabels[data.type] || data.type)}
-                    </span>
+                    <div className="flex flex-col items-end gap-1 ml-auto">
+                        {data.node && data.node !== 'local' && (!data.parentNode || data.type === 'link') && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 uppercase tracking-wider font-bold">
+                                {data.node}
+                            </span>
+                        )}
+                        
+                        <span className="text-[10px] font-semibold px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded border border-gray-200 dark:border-gray-700 uppercase tracking-wider whitespace-nowrap">
+                            {isMissing ? 'Missing Node' : (typeLabels[effectiveType] || effectiveType)}
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -455,6 +541,8 @@ export default function NetworkPlugin() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const rawGraphData = React.useRef<{ nodes: Node[], edges: Edge[] } | null>(null);
   const { addToast } = useToast();
 
   // Monitoring Modal State
@@ -592,6 +680,96 @@ export default function NetworkPlugin() {
       setNodes((nds) => applyFilter(nds, searchQuery));
   }, [searchQuery, applyFilter, setNodes]);
 
+  const processAndLayout = useCallback(async (nodes: Node[], edges: Edge[], collapsed: Set<string>, search: string) => {
+    // 1. Prepare Nodes (Aggregation & toggles)
+     
+    const processedNodes = nodes.map(node => {
+        if (['group', 'service', 'pod', 'proxy'].includes(node.data.type)) {
+             const isCollapsed = collapsed.has(node.id);
+             
+             // Aggregate Summary
+             const children = nodes.filter(n => n.parentId === node.id);
+             let status = 'up';
+             if (children.some(c => c.data.status === 'down')) status = 'down';
+             
+             const verifiedDomains = Array.from(new Set(children.flatMap(c => c.data.metadata?.verifiedDomains || []) as string[]));
+             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             const portMap = children.flatMap(c => (c.data.ports as any[]) || []).map(p => typeof p === 'object' ? p : { host: p, container: p });
+             
+             return {
+                 ...node,
+                 data: {
+                     ...node.data,
+                     collapsed: isCollapsed,
+                     summary: {
+                         status,
+                         verifiedDomains,
+                         portMap
+                     },
+                     onToggle: (id: string) => {
+                         setCollapsedGroups(prev => {
+                             const next = new Set(prev);
+                             if (next.has(id)) next.delete(id);
+                             else next.add(id);
+                             return next;
+                         });
+                     }
+                 },
+                 // When collapsed, we remove dimensions to let ELK recalculate for the smaller node
+                 style: isCollapsed ? { ...node.style, width: undefined, height: undefined } : node.style 
+             };
+        }
+        return node;
+    });
+
+    // 2. Filter hidden nodes
+    // Filter out any node whose parent is collapsed
+    const visibleNodes = processedNodes.filter(n => !n.parentId || !collapsed.has(n.parentId));
+    const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
+
+    // 3. Process Edges (Redirect edges from hidden children to their collapsed parent)
+    const edgeSignatures = new Set<string>();
+    const visibleEdges: Edge[] = [];
+
+    // Helper to find the visible representative for a node (itself or its parent)
+    const getVisibleId = (id: string): string | null => {
+        if (visibleNodeIds.has(id)) return id;
+        const node = nodes.find(n => n.id === id);
+        if (node && node.parentId && visibleNodeIds.has(node.parentId)) {
+            return node.parentId;
+        }
+        return null;
+    };
+
+    edges.forEach(e => {
+        const source = getVisibleId(e.source);
+        const target = getVisibleId(e.target);
+
+        // If either end is not resolvable to a visible node, skip
+        if (!source || !target) return;
+
+        // Skip self-loops (edges completely inside a collapsed group)
+        if (source === target) return;
+
+        // Deduplicate edges (e.g. multiple children connecting to same target)
+        const signature = `${source}->${target}`;
+        if (edgeSignatures.has(signature)) return;
+        edgeSignatures.add(signature);
+
+        visibleEdges.push({
+            ...e,
+            id: `e-${source}-${target}`, // Generate new stable ID for the layout
+            source,
+            target
+        });
+    });
+    
+    // 4. Layout
+    const layouted = await getLayoutedElements(visibleNodes, visibleEdges);
+    setNodes(applyFilter(layouted.nodes, search));
+    setEdges(layouted.edges);
+  }, [setNodes, setEdges, applyFilter]);
+
   const fetchGraph = useCallback(async () => {
     setLoading(true);
     try {
@@ -601,7 +779,7 @@ export default function NetworkPlugin() {
 
       // Transform to React Flow format
       const flowNodes: Node[] = data.nodes.map(n => {
-        const isGroup = ['group', 'proxy', 'service', 'pod'].includes(n.type);
+        const isGroup = n.type === 'group';
         
         return {
             id: n.id,
@@ -636,6 +814,7 @@ export default function NetworkPlugin() {
         markerEnd: {
             type: MarkerType.ArrowClosed,
         },
+        style: e.style,
         data: {
             isManual: e.isManual,
             state: e.state
@@ -643,17 +822,33 @@ export default function NetworkPlugin() {
         animated: e.state === 'active'
       }));
 
-      // Apply Layout
-      const layouted = await getLayoutedElements(flowNodes, flowEdges);
+      // Initialize collapsed state if first load
+      let currentCollapsed = collapsedGroups;
+      if (!rawGraphData.current) {
+          // Default: Collapse all services/pods/proxies to "node" view
+          const groups = flowNodes
+                .filter(n => ['group', 'service', 'pod', 'proxy'].includes(n.data.type as string))
+                .map(n => n.id);
+          currentCollapsed = new Set(groups);
+          setCollapsedGroups(currentCollapsed);
+      }
+
+      rawGraphData.current = { nodes: flowNodes, edges: flowEdges };
+      await processAndLayout(flowNodes, flowEdges, currentCollapsed, searchQuery);
       
-      setNodes(applyFilter(layouted.nodes, searchQueryRef.current));
-      setEdges(layouted.edges);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [setNodes, setEdges, applyFilter]);
+  }, [collapsedGroups, processAndLayout, searchQuery]);
+
+  // Effect to re-layout when collapse state changes (and not fetching)
+  useEffect(() => {
+      if (rawGraphData.current && !loading) {
+          processAndLayout(rawGraphData.current.nodes, rawGraphData.current.edges, collapsedGroups, searchQuery);
+      }
+  }, [collapsedGroups, processAndLayout, searchQuery, loading]);
 
   useEffect(() => {
     fetchGraph();

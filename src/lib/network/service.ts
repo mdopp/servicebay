@@ -689,18 +689,20 @@ export class NetworkService {
     }
 
     // 1. Nginx Node (Per Server)
-    const nginxId = prefix('nginx');
+    const nginxId = prefix('group-nginx'); // Combined Group & Node
+    // const nginxGroupId = prefix('group-nginx'); // Removed
     
     // Only add Nginx node if we found the container or it's expected
     if (nginxContainer || proxyService) {
+        // Create Nginx Proxy Node (Group)
         nodes.push({
             id: nginxId,
             type: 'proxy',
-            label: 'Nginx',
+            label: proxyServiceName,
             subLabel: nodeName === 'local' ? `Reverse Proxy (${nodeIPs[0] || 'localhost'})` : `Proxy (${nodeName} - ${nodeIPs[0] || '?'})`,
             ports: [80, 443],
             status: 'up',
-            node: nodeName, // Track which server this belongs to
+            node: nodeName,
             metadata: {
                 source: 'Nginx Config',
                 link: null,
@@ -768,7 +770,7 @@ export class NetworkService {
             }
         }
 
-        const serviceId = prefix(`service-${service.name}`);
+        const serviceGroupId = prefix(`group-service-${service.name}`);
 
         // Prepare ports for service node
         let servicePorts: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -796,10 +798,10 @@ export class NetworkService {
             }).filter(p => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true));
         }
 
-
+        // Create Service Node (Merged Group & Node)
         nodes.push({
-            id: serviceId,
-            type: 'service',
+            id: serviceGroupId,
+            type: 'service', // Managed Service is a Service Node (acting as Group)
             label: service.name,
             subLabel: nodeName === 'local' ? `Managed Service (${nodeIPs[0] || 'localhost'})` : `Service (${nodeName} - ${nodeIPs[0] || '?'})`,
             ports: servicePorts,
@@ -1244,66 +1246,95 @@ export class NetworkService {
         }
     }
 
-    // 6. Link Services to Containers (Hierarchy)
-    for (const node of nodes) {
-        if (node.type === 'container' && node.rawData && node.node === nodeName) {
-            const container = node.rawData;
-            
-            // Pod
-            const podName = container.PodName || container.Labels?.['io.podman.pod.name'] || container.Labels?.['io.kubernetes.pod.name'];
-            let podId: string | null = null;
+    // 6. Link Services to Containers (Redesigned Hierarchy)
+    // Scenario 1: Service Group [ Service -> Pod -> Container ]
+    // Scenario 2: Pod Group [ Pod -> Container ]
+    // Scenario 3: Container (Standalone)
 
-            if (podName) {
-                podId = prefix(`pod-${podName}`);
-                if (!nodes.find(n => n.id === podId)) {
-                    nodes.push({
-                        id: podId,
-                        type: 'pod',
-                        label: podName,
-                        subLabel: 'Pod',
-                        ports: [],
-                        status: 'up',
-                        node: nodeName,
-                        metadata: { source: 'Podman Pod' },
-                        rawData: { type: 'pod', name: podName }
-                    });
-                }
-                
-                node.parentNode = podId;
-                node.extent = 'parent';
-                if (node.metadata) node.metadata.source = 'Podman Pod';
-            }
+    const createDottedEdge = (source: string, target: string): NetworkEdge => ({
+        id: `dotted-${source}-${target}`,
+        source,
+        target,
+        protocol: 'tcp',
+        port: 0,
+        state: 'active',
+        style: { strokeDasharray: '5,5', opacity: 0.5 },
+        isManual: false
+    });
 
-            // Service
-            const containerName = (container.Names && container.Names.length > 0) 
+    // We iterate a copy of container nodes to avoid modification issues during loop,
+    // though we are modifying 'nodes' array (pushing groups/pods), so basic for-of is safe if filter creates new array.
+    const containerNodes = nodes.filter(n => n.type === 'container' && n.node === nodeName);
+
+    for (const node of containerNodes) {
+        if (!node.rawData) continue;
+        const container = node.rawData;
+        
+        const podName = container.PodName || container.Labels?.['io.podman.pod.name'] || container.Labels?.['io.kubernetes.pod.name'];
+        const containerName = (container.Names && container.Names.length > 0) 
                 ? container.Names[0].replace(/^\//, '') 
                 : (container.Id ? container.Id.substring(0, 12) : (container.name || 'unknown'));
-            
-            const parentService = services.find(s => {
-                if (podName && (s.name === podName || podName.includes(s.name))) return true;
-                if (containerName.startsWith(s.name + '-')) return true;
-                if (containerName === s.name) return true;
-                return false;
-            });
 
-            if (parentService) {
-                const isProxyService = parentService.name === 'nginx' || parentService.name === 'nginx-web' || (parentService.labels && parentService.labels['servicebay.role'] === 'reverse-proxy');
-                const serviceId = isProxyService ? nginxId : prefix(`service-${parentService.name}`);
-                
-                if (podId) {
-                    const podNode = nodes.find(n => n.id === podId);
-                    if (podNode) {
-                        podNode.parentNode = serviceId;
-                        podNode.extent = 'parent';
-                        if (podNode.metadata) podNode.metadata.source = 'Managed Service';
-                    }
-                    if (node.metadata) node.metadata.source = 'Managed Service (Pod)';
-                } else {
-                    node.parentNode = serviceId;
-                    node.extent = 'parent';
-                    if (node.metadata) node.metadata.source = 'Managed Service';
-                }
+        // Identify Parent Service
+        const parentService = services.find(s => {
+            if (podName && (s.name === podName || podName.includes(s.name))) return true;
+            if (containerName.startsWith(s.name + '-')) return true;
+            if (containerName === s.name) return true;
+            return false;
+        });
+
+        // Resolve Service IDs
+        let serviceGroupId: string | null = null;
+
+        if (parentService) {
+            const isProxyService = parentService.name === 'nginx' || parentService.name === 'nginx-web' || (parentService.labels && parentService.labels['servicebay.role'] === 'reverse-proxy');
+            // If proxy, parent is the Nginx Group/Node (nginxId)
+            // If service, parent is the Service Group/Node
+            serviceGroupId = isProxyService ? nginxId : prefix(`group-service-${parentService.name}`);
+        }
+
+        // Add Pod info to metadata
+        if (podName) {
+            if (!node.metadata) node.metadata = {};
+            node.metadata.pod = podName;
+        }
+
+        // Handle Placement (Hierarchy)
+        // Scenario 1: Managed Service (with or without Pod)
+        if (serviceGroupId) {
+            node.parentNode = serviceGroupId;
+            node.extent = 'parent';
+            if (node.metadata) node.metadata.source = 'Managed Service';
+            
+            // Note: Container is visually inside the Service Node. No explicit edge needed.
+        } else if (podName) {
+            // Scenario 2: Standalone Pod Group
+            const podGroupId = prefix(`group-pod-${podName}`);
+            
+            // Create Group if not exists
+            if (!nodes.find(n => n.id === podGroupId)) {
+                nodes.push({
+                    id: podGroupId,
+                    type: 'pod', // Pod is a Node
+                    label: podName, // Pod Group Label
+                    subLabel: 'Pod Group',
+                    ports: [],
+                    status: 'up',
+                    node: nodeName,
+                    metadata: { source: 'Podman' },
+                    rawData: { type: 'pod' }
+                });
             }
+
+            node.parentNode = podGroupId;
+            node.extent = 'parent';
+             if (node.metadata) node.metadata.source = 'Podman Pod';
+             // No internal edges for Pod Group
+        } else {
+            // Scenario 3: Standalone Container
+            // No parent
+            node.parentNode = undefined;
+            node.extent = undefined;
         }
     }
 
