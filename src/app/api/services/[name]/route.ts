@@ -81,7 +81,9 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
           ...oldLink,
           name: newName,
           url: body.url || oldLink.url,
-          description: body.description || oldLink.description
+          description: body.description || oldLink.description,
+          monitor: body.monitor !== undefined ? body.monitor : oldLink.monitor,
+          ip_targets: body.ip_targets !== undefined ? body.ip_targets : oldLink.ip_targets
         };
         
         await saveConfig(config);
@@ -122,9 +124,40 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
         }
 
         return NextResponse.json({ success: true });
+      } else {
+        // Link does not exist, create it (Promote Virtual Node to External Link)
+        if (!config.externalLinks) config.externalLinks = [];
+        
+        config.externalLinks.push({
+            id: crypto.randomUUID(),
+            name: name,
+            url: body.url,
+            description: body.description || '',
+            monitor: body.monitor || false,
+            ip_targets: body.ip_targets || []
+        });
+        
+        await saveConfig(config);
+
+        // Add monitor if requested
+        if (body.monitor) {
+             MonitoringStore.saveCheck({
+                 id: crypto.randomUUID(),
+                 name: `Link: ${name}`,
+                 type: 'http',
+                 target: body.url,
+                 interval: 60,
+                 enabled: true,
+                 created_at: new Date().toISOString(),
+                 httpConfig: { expectedStatus: 200 }
+             });
+        }
+        
+        return NextResponse.json({ success: true });
       }
     }
-    return NextResponse.json({ error: 'Link not found' }, { status: 404 });
+    // If config.externalLinks was undefined but we created it above, we returned.
+    // If type was link but somehow failed logic? No, the else block handles it.
   }
 
   // Handle Description Update for Managed Service

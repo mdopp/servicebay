@@ -16,15 +16,28 @@ const Terminal = dynamic(() => import('@/components/Terminal'), {
 export default function TerminalPlugin() {
   const terminalRef = useRef<TerminalRef>(null);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [selectedNode, setSelectedNode] = useState<string>('host');
+  const [selectedNode, setSelectedNode] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'host';
+    const saved = localStorage.getItem('podcli-selected-node');
+    if (saved) {
+        if (saved === 'Local') return 'host';
+        return `node:${saved}`;
+    }
+    return 'host';
+  });
 
   useEffect(() => {
-      getNodes().then(setNodes).catch(console.error);
+     // No-op for restoration now, handled in initializer
+     getNodes().then(setNodes).catch(console.error);
   }, []);
 
   const handleNodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSelectedNode(e.target.value);
-      // Give the state a moment to update before reconnecting (though key change might force remount)
+      const newVal = e.target.value;
+      setSelectedNode(newVal);
+      
+      // Save selection
+      const rawName = newVal === 'host' ? 'Local' : newVal.replace(/^node:/, '');
+      localStorage.setItem('podcli-selected-node', rawName);
   };
 
   return (

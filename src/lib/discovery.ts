@@ -233,16 +233,9 @@ export async function migrateService(service: DiscoveredService, customName?: st
     await createBackup(executor, targetKubePath, cleanName, connection);
     await createBackup(executor, targetYamlPath, cleanName, connection);
 
-    // Stop old service if it exists and is different from the new one
-    // This prevents conflicts and "ghost" services
-    if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
-        try {
-            console.log(`Stopping old service ${service.serviceName}...`);
-            await executor.exec(`systemctl --user disable --now ${service.serviceName}`);
-        } catch (e) {
-            console.warn(`Failed to stop old service ${service.serviceName}`, e);
-        }
-    }
+    // Note: We delay stopping the old service until AFTER we generate the kube/yaml files.
+    // This is critical because `podman generate kube` needs the container to exist (and preferably be running),
+    // and stopping the service might remove the container or make it inaccessible.
 
     if (service.type === 'kube' && service.sourcePath) {
         // Case 1: Existing .kube file outside managed dir
@@ -305,10 +298,30 @@ export async function migrateService(service: DiscoveredService, customName?: st
             // Create new .kube file pointing to new YAML
             const newContent = content.replace(/Yaml=.+/, `Yaml=${cleanName}.yml`);
             await executor.writeFile(targetKubePath, newContent);
+
+            // Now that we have copied the configuration, we can safely stop the old service
+            if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
+                try {
+                    console.log(`Stopping old service ${service.serviceName}...`);
+                    await executor.exec(`systemctl --user disable --now ${service.serviceName}`);
+                } catch (e) {
+                    console.warn(`Failed to stop old service ${service.serviceName}`, e);
+                }
+            }
         } else {
             // Just copy the kube file if no YAML referenced (unlikely for kube type)
             const content = await executor.readFile(service.sourcePath);
             await executor.writeFile(targetKubePath, content);
+
+            // Now that we have copied the configuration, we can safely stop the old service
+            if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
+                try {
+                    console.log(`Stopping old service ${service.serviceName}...`);
+                    await executor.exec(`systemctl --user disable --now ${service.serviceName}`);
+                } catch (e) {
+                    console.warn(`Failed to stop old service ${service.serviceName}`, e);
+                }
+            }
         }
 
     } else if (service.podId || service.containerIds.length > 0) {
@@ -402,6 +415,16 @@ export async function migrateService(service: DiscoveredService, customName?: st
         } catch (e) {
             console.warn('Failed to parse/modify generated YAML, using raw output', e);
             await executor.writeFile(targetYamlPath, stdout);
+        }
+
+        // Now that we have generated and written the configuration, we can safely stop the old service
+        if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
+            try {
+                console.log(`Stopping old service ${service.serviceName}...`);
+                await executor.exec(`systemctl --user disable --now ${service.serviceName}`);
+            } catch (e) {
+                console.warn(`Failed to stop old service ${service.serviceName}`, e);
+            }
         }
 
         const kubeContent = `[Unit]

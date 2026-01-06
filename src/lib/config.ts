@@ -16,6 +16,7 @@ export interface ExternalLink {
   url: string;
   description?: string;
   monitor?: boolean;
+  ip_targets?: string[]; // e.g. ["192.168.1.10:8123", "10.0.0.5:80"]
 }
 
 export interface RegistryConfig {

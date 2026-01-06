@@ -55,6 +55,7 @@ export async function GET(request: Request) {
         description: link.description,
         id: link.id,
         monitor: link.monitor,
+        ip_targets: link.ip_targets,
         labels: {}
     };
   });
@@ -183,18 +184,28 @@ export async function POST(request: Request) {
   
   // Handle Link Creation
   if (body.type === 'link') {
-    const { name, url, description, monitor } = body;
+    const { name, url, description, monitor, ip_targets } = body;
     if (!name || !url) {
         return NextResponse.json({ error: 'Name and URL required' }, { status: 400 });
     }
 
     const config = await getConfig();
+    
+    // Parse IP Targets if provided (comma string or array)
+    let parsedTargets: string[] = [];
+    if (Array.isArray(ip_targets)) {
+        parsedTargets = ip_targets;
+    } else if (typeof ip_targets === 'string') {
+        parsedTargets = ip_targets.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
     const newLink: ExternalLink = {
         id: crypto.randomUUID(),
         name,
         url,
         description,
-        monitor
+        monitor,
+        ip_targets: parsedTargets
     };
 
     const links = config.externalLinks || [];

@@ -53,8 +53,19 @@ app.prepare().then(() => {
   });
 
   // Function to spawn a PTY
-  const ensurePty = async (id: string) => {
-    if (sessions.has(id)) return sessions.get(id)!;
+  const ensurePty = async (id: string, cols: number = 80, rows: number = 30) => {
+    if (sessions.has(id)) {
+        const session = sessions.get(id)!;
+        // Resize existing session if dimensions differ and are valid
+        if (cols > 0 && rows > 0) {
+            try {
+                session.process.resize(cols, rows);
+            } catch (e) {
+                console.error(`Error resizing existing session ${id}:`, e);
+            }
+        }
+        return session;
+    }
 
     let shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
     let args: string[] = [];
@@ -148,8 +159,8 @@ app.prepare().then(() => {
 
     const ptyProcess = pty.spawn(shell, args, {
       name: 'xterm-256color',
-      cols: 80,
-      rows: 30,
+      cols: cols || 80,
+      rows: rows || 30,
       cwd: process.env.HOME,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       env: { ...process.env, TERM: 'xterm-256color' } as any
@@ -192,11 +203,23 @@ app.prepare().then(() => {
   io.on('connection', (socket) => {
     console.log('Client connected');
     
-    socket.on('join', async (id: string) => {
-        console.log(`Client joining terminal ${id}`);
+    socket.on('join', async (payload: string | { id: string, cols?: number, rows?: number }) => {
+        let id: string;
+        let cols = 80;
+        let rows = 30;
+
+        if (typeof payload === 'string') {
+            id = payload;
+        } else {
+            id = payload.id;
+            cols = payload.cols || 80;
+            rows = payload.rows || 30;
+        }
+        
+        console.log(`Client joining terminal ${id} with dims ${cols}x${rows}`);
         socket.join(id);
         try {
-            const session = await ensurePty(id);
+            const session = await ensurePty(id, cols, rows);
             socket.emit('history', session.history);
         } catch (e) {
             console.error('Failed to join terminal:', e);

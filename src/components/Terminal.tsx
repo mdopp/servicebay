@@ -86,8 +86,9 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
                 term.open(terminalRef.current);
                 try {
                   fitAddon.fit();
-                  // Join the specific terminal session
-                  socket.emit('join', id);
+                  // Join the specific terminal session with initial dimensions
+                  socket.emit('join', { id, cols: term.cols, rows: term.rows });
+                  // Also emit resize just in case, though the join payload handles it
                   socket.emit('resize', { id, cols: term.cols, rows: term.rows });
                 } catch (e) {
                   console.error('Failed to fit terminal:', e);
@@ -104,7 +105,7 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
     socket.on('connect', () => {
         // Re-join on reconnect
         if (termRef.current) {
-            socket.emit('join', id);
+            socket.emit('join', { id, cols: termRef.current.cols, rows: termRef.current.rows });
         }
     });
 

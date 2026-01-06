@@ -82,7 +82,7 @@ const CustomEdge = ({
 // Custom Node Component
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const CustomNode = ({ data }: any) => {
-  const isGroup = ['group', 'proxy', 'service', 'pod'].includes(data.type);
+  const isGroup = ['group', 'proxy', 'pod'].includes(data.type);
   const isGateway = data.rawData?.type === 'gateway';
   const isMissing = data.rawData?.type === 'missing';
   
@@ -112,6 +112,47 @@ const CustomNode = ({ data }: any) => {
   const nodeColor = isMissing 
       ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 border-dashed'
       : (typeColors[data.type] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900');
+
+  // Helper to extract IP info from ports
+  const extractIpInfo = () => {
+    // Rely on rawData if available for consistency, or fallback to data.ports
+    // But data.ports is already parsed/enriched by backend.
+    
+    if (!data.ports || data.ports.length === 0) return { globalIp: null, portMap: [] };
+    
+    // Fallback IP (Node IP)
+    const fallbackIp = (data.metadata?.nodeIPs && data.metadata.nodeIPs.length > 0) 
+        ? data.metadata.nodeIPs[0] 
+        : '0.0.0.0';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parsedPorts = data.ports.map((p: any) => {
+        const isObj = typeof p === 'object';
+        let ip = isObj ? p.host_ip : null;
+        
+        // Normalize IP: If missing, empty, or 0.0.0.0, use the Node IP (fallbackIp)
+        // This ensures containers (empty IP) and services (0.0.0.0) look the same
+        // and show the actual reachable IP of the node.
+        if (!ip || ip === '0.0.0.0' || ip === '') {
+            ip = fallbackIp;
+        }
+
+        return {
+            host: isObj ? p.host : p,
+            container: isObj ? p.container : null,
+            ip: ip
+        };
+    });
+
+    const uniqueIps = Array.from(new Set(parsedPorts.map((p: { ip: string | null }) => p.ip).filter(Boolean))) as string[];
+    // If exactly one unique IP is found across all ports, show it globally. 
+    // Otherwise (0 or >1), show IPs on tags individually.
+    const globalIp = uniqueIps.length === 1 ? uniqueIps[0] : null;
+
+    return { globalIp, portMap: parsedPorts };
+  };
+
+  const { globalIp, portMap } = extractIpInfo();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type DetailItem = { label: string; value: any; full?: boolean };
@@ -214,37 +255,41 @@ const CustomNode = ({ data }: any) => {
                 </div>
 
                 {/* Show Ports for Groups if available */}
-                {data.ports && data.ports.length > 0 && (
+                {portMap.length > 0 && (
                     <div className="flex flex-col gap-1 items-end">
-                        {data.ports.map((port: number | { host: number, container: number }, idx: number) => {
-                            const isMapping = typeof port === 'object';
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const hostPort = isMapping ? (port as any).host : port;
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const containerPort = isMapping ? (port as any).container : null;
-                            
+                        {globalIp && (
+                             <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 mb-0.5 self-end" title="Host IP">
+                                {globalIp}
+                             </div>
+                        )}
+                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                        {portMap.map((p: any, idx: number) => {
                             // Determine hostname
                             let hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-                            if (data.metadata?.nodeHost && data.metadata.nodeHost !== 'localhost') {
+                            if (p.ip) {
+                                hostname = p.ip;
+                            } else if (data.metadata?.nodeHost && data.metadata.nodeHost !== 'localhost') {
                                 hostname = data.metadata.nodeHost;
                             } else if (data.node && data.node !== 'local' && data.node !== 'Local') {
                                 hostname = data.node;
                             }
 
+                            const showIpInTag = !globalIp && p.ip;
+
                             return (
                                 <div key={idx} className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-1">
                                     <a 
-                                        href={`http://${hostname}:${hostPort}`}
+                                        href={`http://${hostname}:${p.host}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="hover:text-blue-500 hover:underline"
                                         onClick={(e) => e.stopPropagation()}
                                     >
-                                        :{hostPort}
+                                        {showIpInTag ? `${p.ip}:${p.host}` : `:${p.host}`}
                                     </a>
-                                    {containerPort && (
+                                    {p.container && (
                                         <span className="text-gray-400 dark:text-gray-500">
-                                            (to :{containerPort})
+                                            (to :{p.container})
                                         </span>
                                     )}
                                 </div>
@@ -337,27 +382,34 @@ const CustomNode = ({ data }: any) => {
                 )}
                 
                 <div className="mt-auto pt-3 flex items-center justify-between border-t border-gray-100 dark:border-gray-800/50">
-                    <div className="flex flex-wrap gap-1.5">
-                        {data.ports && data.ports.map((p: string | number | { host: number, container: number }, idx: number) => {
-                            const isMapping = typeof p === 'object';
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const hostPort = isMapping ? (p as any).host : p;
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const containerPort = isMapping ? (p as any).container : null;
-
-                            // Determine hostname
-                            let hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-                            if (data.metadata?.nodeHost && data.metadata.nodeHost !== 'localhost') {
-                                hostname = data.metadata.nodeHost;
-                            } else if (data.node && data.node !== 'local' && data.node !== 'Local') {
-                                hostname = data.node;
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                        {globalIp && (
+                             <div className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 mr-1" title="Host IP">
+                                {globalIp}
+                             </div>
+                        )}
+                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                        {portMap && portMap.map((p: any, idx: number) => {
+                            // Determine hostname for link
+                            let hostname = p.ip; // Start with the resolved IP
+                            
+                            // If IP is 0.0.0.0 or localhost, try to be smarter for the link 
+                            // (though visual label uses p.ip which is now normalized)
+                            if (hostname === '0.0.0.0' || hostname === '127.0.0.1' || hostname === 'localhost') {
+                                 if (data.metadata?.nodeHost && data.metadata.nodeHost !== 'localhost') {
+                                    hostname = data.metadata.nodeHost;
+                                } else if (data.node && data.node !== 'local' && data.node !== 'Local') {
+                                    hostname = data.node;
+                                }
                             }
 
-                            const link = `http://${hostname}:${hostPort}`;
+                            const showIpInTag = !globalIp && p.ip;
+                            const link = `http://${hostname}:${p.host}`;
+
                             const content = (
                                 <span className="text-[11px] font-medium px-2 py-0.5 bg-white dark:bg-black/20 text-blue-600 dark:text-blue-400 rounded border border-blue-100 dark:border-blue-800/30 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors cursor-pointer flex items-center gap-1">
-                                    <span>:{hostPort}</span>
-                                    {containerPort && <span className="text-gray-400 dark:text-gray-500 opacity-75">(to :{containerPort})</span>}
+                                    <span>{showIpInTag ? `${p.ip}:${p.host}` : `:${p.host}`}</span>
+                                    {p.container && <span className="text-gray-400 dark:text-gray-500 opacity-75">(to :{p.container})</span>}
                                 </span>
                             );
 
@@ -609,13 +661,14 @@ export default function NetworkPlugin() {
 
   const handleEditLink = () => {
       if (!selectedNodeData) return;
-      const { name, url, description, monitor } = selectedNodeData.rawData;
+      const { name, url, description, monitor, ip_targets } = selectedNodeData.rawData;
       
       setLinkForm({
           name: name,
           url: url || '',
           description: description || '',
-          monitor: monitor || false
+          monitor: monitor || false,
+          ip_targets: Array.isArray(ip_targets) ? ip_targets.join(', ') : ''
       });
       setShowLinkModal(true);
   };
@@ -627,6 +680,10 @@ export default function NetworkPlugin() {
     }
 
     try {
+        const ipTargets = linkForm.ip_targets 
+            ? linkForm.ip_targets.split(',').map(s => s.trim()).filter(Boolean) 
+            : [];
+
         const res = await fetch(`/api/services/${encodeURIComponent(linkForm.name)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -634,6 +691,7 @@ export default function NetworkPlugin() {
                 url: linkForm.url,
                 description: linkForm.description,
                 monitor: linkForm.monitor,
+                ip_targets: ipTargets,
                 type: 'link'
             })
         });
@@ -651,7 +709,8 @@ export default function NetworkPlugin() {
                      ...selectedNodeData.rawData,
                      url: linkForm.url,
                      description: linkForm.description,
-                     monitor: linkForm.monitor
+                     monitor: linkForm.monitor,
+                     ip_targets: ipTargets
                  }
              });
         }

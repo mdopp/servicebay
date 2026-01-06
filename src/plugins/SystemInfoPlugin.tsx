@@ -45,6 +45,10 @@ export default function SystemInfoPlugin() {
   };
 
   useEffect(() => {
+    const saved = localStorage.getItem('podcli-selected-node');
+    if (saved) {
+        setSelectedNode(saved);
+    }
     getNodes().then(setNodes).catch(console.error);
   }, []);
 
@@ -66,7 +70,11 @@ export default function SystemInfoPlugin() {
                     <Server size={16} className="text-gray-500" />
                     <select 
                         value={selectedNode} 
-                        onChange={(e) => setSelectedNode(e.target.value)}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedNode(val);
+                            localStorage.setItem('podcli-selected-node', val);
+                        }}
                         className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                     >
                         <option value="Local">Local (Default)</option>

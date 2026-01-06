@@ -11,6 +11,14 @@ export interface OnboardingStatus {
   hasGateway: boolean;
   hasSshKey: boolean;
   hasExternalLinks: boolean;
+  features: {
+    gateway: boolean;
+    ssh: boolean;
+    updates: boolean;
+    registries: boolean;
+    email: boolean;
+    auth: boolean;
+  }
 }
 
 export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
@@ -51,7 +59,15 @@ export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
     needsSetup,
     hasGateway,
     hasSshKey,
-    hasExternalLinks
+    hasExternalLinks,
+    features: {
+        gateway: !!config.gateway,
+        ssh: hasSshKey,
+        updates: config.autoUpdate.enabled,
+        registries: config.registries?.enabled ?? false,
+        email: config.notifications?.email?.enabled ?? false,
+        auth: !!config.auth?.password
+    }
   };
 }
 
@@ -83,6 +99,60 @@ export async function saveGatewayConfig(host: string, username?: string, passwor
     };
     await saveConfig(config);
     return { success: true };
+}
+
+export async function saveAutoUpdateConfig(enabled: boolean) {
+    const config = await getConfig();
+    config.autoUpdate = {
+        ...config.autoUpdate,
+        enabled,
+        channel: 'stable'
+    };
+    await saveConfig(config);
+}
+
+export async function saveRegistriesConfig(enabled: boolean) {
+    const config = await getConfig();
+    // Default registries if enabling
+    const defaultRegistry = {
+        name: 'ServiceBay Templates',
+        url: 'https://github.com/mdopp/servicebay-templates'
+    };
+    
+    if (enabled && (!config.registries?.items || config.registries.items.length === 0)) {
+        config.registries = {
+            enabled: true,
+            items: [defaultRegistry]
+        };
+    } else {
+        config.registries = {
+            enabled,
+            items: config.registries?.items || []
+        };
+    }
+    await saveConfig(config);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function saveEmailConfig(emailConfig: any) {
+    const config = await getConfig();
+  
+    if (!config.notifications) {
+        config.notifications = {};
+    }
+  
+    config.notifications.email = {
+        enabled: true, // If saving config, assume enabled
+        host: emailConfig.host,
+        port: parseInt(emailConfig.port),
+        secure: emailConfig.secure,
+        user: emailConfig.user,
+        pass: emailConfig.pass,
+        from: emailConfig.from,
+        to: emailConfig.recipients.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+    };
+  
+    await saveConfig(config);
 }
 
 export async function skipOnboarding() {

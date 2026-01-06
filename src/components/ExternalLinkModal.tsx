@@ -6,6 +6,7 @@ interface LinkForm {
     url: string;
     description: string;
     monitor: boolean;
+    ip_targets?: string;
 }
 
 interface ExternalLinkModalProps {
@@ -71,6 +72,17 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
                         <label htmlFor="monitor" className="text-sm text-gray-700 dark:text-gray-300">
                             Monitor this service (HTTP Check)
                         </label>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target IPs/Ports (Optional)</label>
+                        <input 
+                            type="text" 
+                            value={form.ip_targets || ''}
+                            onChange={e => setForm({...form, ip_targets: e.target.value})}
+                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="e.g. 192.168.1.10:8123, 10.0.0.5:80 (comma separated)"
+                        />
+                        <span className="text-xs text-gray-500">Allows Nginx Reverse Proxy to detect edges to this external service.</span>
                     </div>
                 </div>
                 <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
