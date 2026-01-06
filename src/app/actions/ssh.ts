@@ -19,3 +19,28 @@ export async function installSSHKey(host: string, port: number, user: string, pa
         return { success: false, logs: [String(e)] };
     }
 }
+
+export async function generateLocalKey() {
+    try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const os = await import('os');
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+
+        const sshDir = path.join(os.homedir(), '.ssh');
+        const keyPath = path.join(sshDir, 'id_rsa');
+
+        if (fs.existsSync(keyPath)) {
+            return { success: true, message: 'Key already exists' };
+        }
+
+        if (!fs.existsSync(sshDir)) fs.mkdirSync(sshDir, { mode: 0o700 });
+        
+        await execAsync(`ssh-keygen -t rsa -b 4096 -f "${keyPath}" -N ""`);
+        return { success: true, message: 'Key generated' };
+    } catch (e) {
+        return { success: false, error: String(e) };
+    }
+}

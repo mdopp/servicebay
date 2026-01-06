@@ -69,6 +69,7 @@ export interface AppConfig {
     username?: string;
     password?: string;
   };
+  setupCompleted?: boolean;
 }
 
 const DEFAULT_CONFIG: AppConfig = {
