@@ -1,3 +1,5 @@
+STOP: Read carefully, and use Serena for reads and code understanding.
+
 # ServiceBay Copilot Instructions
 
 You are an expert developer working on **ServiceBay**, a web-based management interface for Podman containers using **Quadlet** (systemd integration).
@@ -24,28 +26,31 @@ You are an expert developer working on **ServiceBay**, a web-based management in
 4.  **Containerized Infrastructure:** ServiceBay itself runs as a container. Nginx (Reverse Proxy) is also deployed as a container (`nginx-web`), not a host package.
 
 ## Coding Guidelines
-- **Performance:**
-    - **Batch SSH Commands:** Remote operations are high-latency. Combine multiple shell commands into a single script execution when possible (see `src/lib/manager.ts`).
-    - **Parallel Fetching:** Use `Promise.all` for independent data fetches in API routes.
-- **UI/UX:**
-    - Support **Dark Mode** for all components using Tailwind's `dark:` modifiers.
-    - Use `lucide-react` for icons.
-    - Use the `useToast` hook for user notifications/errors.
-- **Type Safety:**
-    - Strictly type all interfaces, especially for API responses and Service configurations.
-    - Avoid `any` wherever possible.
+
+**Note:** Specific guidelines for Frontend, Backend, and Releases are located in `.github/instructions/*.md`.
+
+### Testing
+-   **API:** Implement basic endpoint tests (e.g., using `curl` or a test script) to verify critical API paths return 200 OK.
+-   **Type Safety:** Strictly type all interfaces. Fix linting errors before committing.
 
 ## Specific Implementation Details
-- **Services:** A "Service" in this context is usually a Podman Quadlet (systemd service).
-- **Templates:** We use YAML templates stored in `templates/` or external registries.
-- **Nginx:** The reverse proxy is a Podman pod named `nginx-web`. Do not suggest installing `nginx` via `apt`/`yum`.
-- **Gateway/Links:** "Internet Gateway" (FRITZ!Box) and "External Links" configurations are only valid for the **Local** node.
+-   **Services:** A "Service" is a Podman Quadlet (systemd service).
+-   **Templates:** YAML templates stored in `templates/`.
+-   **Nginx:** Managed as a Podman pod (`nginx-web`). No host `nginx` package.
+-   **Gateway/Links:** Only valid for the **Local** node.
 
 ## File Structure
 - `src/app`: Next.js App Router pages and API routes.
 - `src/lib`: Backend logic (Podman manager, SSH executor, config).
 - `src/components`: React client components.
 - `templates`: Built-in service templates.
+
+## Migrated Context (from README/ARCHITECTURE)
+-   **Plugin Architecture:** Dashboard features are modular (see `src/plugins/`).
+-   **Server:** Custom `server.ts` handles WebSockets (Socket.IO) + Next.js.
+-   **Client Data:** `CacheProvider` handles deduplication and stale-while-revalidate fetching.
+-   **Monitoring:** `MonitoringGateway` handles discovery and polling.
+-   **Reverse Proxy:** Requires WebSocket support and `proxy_buffering off` for SSE.
 
 When suggesting changes, always verify if the change affects remote node compatibility or requires a systemd daemon reload.
 
