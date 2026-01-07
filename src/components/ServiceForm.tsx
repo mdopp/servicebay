@@ -537,67 +537,31 @@ WantedBy=default.target`;
                     className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'history' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
                     onClick={() => setActiveTab('history')}
                 >
-
-                    {/* Volume Helper Toolbar */}
-                    {availableVolumes.length > 0 && (
-                        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-md flex flex-wrap items-center gap-4">
-                            <span className="text-xs font-bold text-blue-800 dark:text-blue-300 flex items-center gap-2">
-                                <Database size={14} /> Available Volumes:
-                            </span>
-                            <div className="flex flex-wrap gap-2">
-                                {availableVolumes.filter((v: any) => !v.Anonymous).map(vol => (
-                                    <div key={vol.Name} className="group relative inline-flex">
-                                        <div className="px-2 py-1 bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-700 rounded text-xs text-blue-700 dark:text-blue-300 font-mono flex items-center gap-2">
-                                            {vol.Name}
-                                            <div className="flex gap-1 ml-1 pl-1 border-l border-gray-200 dark:border-gray-700 opacity-50 group-hover:opacity-100 transition-opacity">
-                                                <button 
-                                                    type="button"
-                                                    onClick={() => insertAtCursor(`  - name: ${vol.Name}\n    persistentVolumeClaim:\n      claimName: ${vol.Name}`)}
-                                                    className="hover:text-blue-900 dark:hover:text-blue-100"
-                                                    title="Copy Volume Definition (spec.volumes)"
-                                                >
-                                                    <Plus size={12} />
-                                                </button>
-                                                <button 
-                                                    type="button"
-                                                    onClick={() => insertAtCursor(`  - name: ${vol.Name}\n    mountPath: /data`)}
-                                                    className="hover:text-blue-900 dark:hover:text-blue-100"
-                                                    title="Copy Mount (volumeMounts)"
-                                                >
-                                                    <Copy size={12} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                            <span className="text-[10px] text-blue-600/70 dark:text-blue-400/70 ml-auto">
-                                Click (+): Copy Definition | Click (Cp): Copy Mount
-                            </span>
-                        </div>
-                    )}
-
                     <Clock size={16} /> History
                 </button>
             )}
         </div>
 
-        <div className="p-6">
+        <div className="p-0">
             {activeTab === 'yaml' && (
-                <>
-                    {initialData?.yamlPath && (
-                        <div className="mb-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700 break-all">
-                        {initialData.yamlPath}
-                        </div>
-                    )}
-                    <p className="text-base text-gray-700 dark:text-gray-300 mb-4">
-                        Paste your Kubernetes YAML here. We will automatically extract the service name and generate the configuration.
-                    </p>
-                    <div className="border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden bg-[#2d2d2d] dark:bg-black relative group">
-                        <div className="absolute top-2 right-4 z-10 text-xs text-gray-400 font-mono bg-black/30 px-2 py-1 rounded pointer-events-none">
-                            Line: {cursorLine}
-                        </div>
-                        <Editor
+                <div className="flex flex-col lg:flex-row h-[700px]">
+                    <div className="flex-1 flex flex-col p-6 min-w-0">
+                        {initialData?.yamlPath && (
+                            <div className="mb-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700 break-all">
+                            {initialData.yamlPath}
+                            </div>
+                        )}
+                        <p className="text-base text-gray-700 dark:text-gray-300 mb-4">
+                            Paste your Kubernetes YAML here. We will automatically extract the service name and generate the configuration.
+                        </p>
+                        
+                        <div className="flex-1 border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden bg-[#2d2d2d] dark:bg-black relative group">
+                            <div className="absolute top-2 right-4 z-10 text-xs text-gray-400 font-mono bg-black/30 px-2 py-1 rounded pointer-events-none">
+                                Line: {cursorLine}
+                            </div>
+                            <div className="h-full overflow-hidden">
+                                <Editor
+
                         value={yamlContent}
                         onValueChange={handleYamlChange}
                         highlight={code => Prism.highlight(code, Prism.languages.yaml, 'yaml')}
@@ -605,8 +569,8 @@ WantedBy=default.target`;
                         style={{
                             fontFamily: '"Fira code", "Fira Mono", monospace',
                             fontSize: 14,
-                            minHeight: '500px',
-                            color: '#f8f8f2', // Light text for dark theme
+                            minHeight: '100%',
+                            color: '#f8f8f2',
                         }}
                         textareaClassName="focus:outline-none"
                         placeholder="apiVersion: v1&#10;kind: Pod&#10;metadata:&#10;  name: my-service..."
@@ -614,10 +578,54 @@ WantedBy=default.target`;
                         onClick={updateCursorPosition}
                         onKeyUp={updateCursorPosition}
                         />
+                            </div>
+                        </div>
                     </div>
-                </>
-            )}
 
+                    {/* Available Volumes Sidebar */}
+                    {availableVolumes.length > 0 && (
+                        <div className="w-full lg:w-72 bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col">
+                            <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-100/50 dark:bg-gray-800/50">
+                                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                                    <Database size={14} className="text-blue-500" /> 
+                                    Available Volumes
+                                </h3>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Click (+) to insert definition, (Cp) to insert mount.
+                                </p>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-4 space-y-2 max-h-[700px]">
+                                {availableVolumes.filter((v: any) => !v.Anonymous).map(vol => (
+                                    <div key={vol.Name} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 shadow-sm hover:border-blue-300 dark:hover:border-blue-700 transition-colors group">
+                                        <div className="font-mono text-xs font-medium text-blue-700 dark:text-blue-300 mb-1 truncate" title={vol.Name}>
+                                            {vol.Name}
+                                        </div>
+                                        <div className="flex gap-2 mt-2">
+                                            <button 
+                                                type="button"
+                                                onClick={() => insertAtCursor(`  - name: ${vol.Name}\n    persistentVolumeClaim:\n      claimName: ${vol.Name}`)}
+                                                className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded text-xs transition-colors border border-blue-100 dark:border-blue-800"
+                                                title="Copy Volume Definition (spec.volumes)"
+                                            >
+                                                <Plus size={12} /> Def
+                                            </button>
+                                            <button 
+                                                type="button"
+                                                onClick={() => insertAtCursor(`        - name: ${vol.Name}\n          mountPath: /data`)}
+                                                className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded text-xs transition-colors border border-gray-200 dark:border-gray-700"
+                                                title="Copy Mount (volumeMounts)"
+                                            >
+                                                <Copy size={12} /> Mount
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+            
             {activeTab === 'kube' && (
                 <>
                     {initialData?.kubePath && (
