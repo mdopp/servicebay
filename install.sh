@@ -162,4 +162,8 @@ success "ServiceBay installed successfully!"
 echo -e "Access it at: http://$(hostname):$PORT"
 echo -e "Login with username: ${BLUE}$ADMIN_USER${NC} and password: ${BLUE}$ADMIN_PASS${NC}"
 
+if [[ "$ADMIN_PASS" == *"hidden"* ]]; then
+  echo -e "To view the password, run: ${BLUE}grep -A 3 \"auth\" $CONFIG_FILE${NC}"
+fi
+
 
