@@ -10,7 +10,12 @@ permissions:
   packages: write
 
 jobs:
+  build-base:
+    uses: ./.github/workflows/build-base.yml
+    secrets: inherit
+
   build:
+    needs: build-base
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

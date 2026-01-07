@@ -2,6 +2,7 @@ name: Build Base Image
 
 on:
   workflow_dispatch:
+  workflow_call:
   push:
     paths:
       - 'Dockerfile.base'
