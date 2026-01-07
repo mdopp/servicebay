@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, FileText, ArrowRight, Server } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { useNetworkGraph, useServicesList, Service } from '@/hooks/useSharedData';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, FileText, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -9,8 +10,6 @@ import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import ActionProgressModal from '@/components/ActionProgressModal';
-import { getNodes } from '@/app/actions/nodes';
-import { PodmanConnection } from '@/lib/nodes';
 
 interface DiscoveredService {
     serviceName: string;
@@ -24,31 +23,6 @@ interface DiscoveredService {
     nodeName?: string;
 }
 
-interface Service {
-  name: string;
-  id?: string; // Systemd service name or container ID
-  active: boolean;
-  status: string;
-  kubePath: string;
-  yamlPath: string | null;
-  ports: { host?: string; container: string }[];
-  volumes: { host: string; container: string }[];
-  type?: 'container' | 'link' | 'gateway';
-  url?: string;
-  description?: string;
-  monitor?: boolean;
-  labels?: Record<string, string>;
-  verifiedDomains?: string[];
-  hostNetwork?: boolean;
-  nodeName?: string;
-  // Gateway/Router specific
-  uptime?: number;
-  externalIP?: string;
-  internalIP?: string;
-  dnsServers?: string[];
-  load?: string;
-}
-
 interface MigrationPlan {
     filesToCreate: string[];
     filesToBackup: string[];
@@ -59,10 +33,10 @@ interface MigrationPlan {
 
 export default function ServicesPlugin() {
   const router = useRouter();
-  const [services, setServices] = useState<Service[]>([]);
+  // removed services, filteredServices state
   const [filteredServices, setFilteredServices] = useState<Service[]>([]);
   const [discoveredServices, setDiscoveredServices] = useState<DiscoveredService[]>([]);
-  const [loading, setLoading] = useState(true);
+  // removed loading
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [showActions, setShowActions] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -76,12 +50,11 @@ export default function ServicesPlugin() {
   const [migrationModalOpen, setMigrationModalOpen] = useState(false);
   const [selectedForMigration, setSelectedForMigration] = useState<DiscoveredService | null>(null);
   const [migrationName, setMigrationName] = useState('');
-  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  // removed nodes
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [hasDiscovered, setHasDiscovered] = useState(false);
   const [migrating, setMigrating] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const isFetchingRef = useRef(false);
+  // removed refreshing, isFetchingRef
   const { addToast, updateToast } = useToast();
 
   // Action Progress Modal
@@ -95,176 +68,89 @@ export default function ServicesPlugin() {
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [linkForm, setLinkForm] = useState<{ name: string; url: string; description: string; monitor: boolean; ip_targets?: string }>({ name: '', url: '', description: '', monitor: false, ip_targets: '' });
   
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const enrichServices = async (currentServices: Service[], graphPromise: Promise<any>) => {
-      const toastId = addToast('loading', 'Analyzing Network', 'Gathering extended service info...', 0);
-      try {
-          const graphData = await graphPromise;
-          
-          if (!graphData || !graphData.nodes) {
-              updateToast(toastId, 'warning', 'Analysis Incomplete', 'No network data returned');
-              return;
-          }
-          
-          const nodeMap = new Map();
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          graphData.nodes.forEach((n: any) => {
-               if (n.data?.name) nodeMap.set(n.data.name, n);
-               if (n.label) nodeMap.set(n.label, n);
-               nodeMap.set(n.id, n);
-          });
-          
-          const enriched = currentServices.map(s => ({ ...s }));
-          
-          enriched.forEach(s => {
-              if (s.type === 'gateway' && s.id === 'gateway') {
-                  const gatewayNode = nodeMap.get('router');
-                  if (gatewayNode) {
-                       if (gatewayNode.metadata?.verifiedDomains) {
-                           s.verifiedDomains = gatewayNode.metadata.verifiedDomains;
-                       }
-                       const raw = gatewayNode.rawData || {};
-                       const meta = gatewayNode.metadata || {};
-                       
-                       if (raw.externalIP) s.externalIP = raw.externalIP;
-                       else if (meta.internalIP) s.externalIP = meta.internalIP;
-                       
-                       if (raw.uptime) s.uptime = raw.uptime;
-                       if (raw.dnsServers) s.dnsServers = raw.dnsServers;
-                       if (meta.internalIP) s.internalIP = meta.internalIP; 
+  const { data: servicesData, loading: servicesLoading, validating: servicesValidating, refresh: refreshServices } = useServicesList();
+  const { data: graphData, loading: graphLoading, validating: graphValidating, refresh: refreshGraph } = useNetworkGraph();
+  
+  const nodes = servicesData?.nodes || [];
+  
+  const services = useMemo(() => {
+      const allServices = servicesData?.services || [];
+      if (!graphData?.nodes) return allServices;
 
-                       if (s.externalIP) {
-                           s.description = `Online: ${s.externalIP}`;
-                       }
-                  }
-                  return;
-              }
+      const nodeMap = new Map();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      graphData.nodes.forEach((n: any) => {
+          if (n.data?.name) nodeMap.set(n.data.name, n);
+          if (n.label) nodeMap.set(n.label, n);
+          nodeMap.set(n.id, n);
+      });
 
-              let node = nodeMap.get(s.name);
-              if (!node) {
-                  const baseName = s.name.replace(/\.(container|kube|service|pod)$/, '');
-                  node = nodeMap.get(baseName);
-              }
-              
-              if (node) {
-                  // Debug mapping
-                  // if (s.name === 'adguard') console.log('Found adguard node:', node.ports);
+      return allServices.map(s => {
+            const copy = { ...s };
+            
+            if (copy.type === 'gateway' && copy.id === 'gateway') {
+                const gatewayNode = nodeMap.get('router');
+                if (gatewayNode) {
+                    if (gatewayNode.metadata?.verifiedDomains) {
+                        copy.verifiedDomains = gatewayNode.metadata.verifiedDomains;
+                    }
+                    const raw = gatewayNode.rawData || {};
+                    const meta = gatewayNode.metadata || {};
+                    
+                    if (raw.externalIP) copy.externalIP = raw.externalIP;
+                    else if (meta.internalIP) copy.externalIP = meta.internalIP;
+                    
+                    if (raw.uptime) copy.uptime = raw.uptime;
+                    if (raw.dnsServers) copy.dnsServers = raw.dnsServers;
+                    if (meta.internalIP) copy.internalIP = meta.internalIP; 
 
-                  if (node.metadata?.verifiedDomains) {
-                      s.verifiedDomains = node.metadata.verifiedDomains;
-                  }
-                  
-                  // Update ports from graph analysis (e.g. dynamic host ports)
-                  if (node.ports && node.ports.length > 0) {
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      s.ports = node.ports.map((p: any) => {
-                          if (typeof p === 'number') return { host: String(p), container: String(p) };
-                          // Check for both property styles (host/container vs host_port/container_port)
-                          const host = p.host || p.host_port;
-                          const container = p.container || p.container_port || host;
-                          
-                          return { 
-                              host: host ? String(host) : undefined, 
-                              container: String(container || 0)
-                          };
-                      });
-                  }
+                    if (copy.externalIP) {
+                        copy.description = `Online: ${copy.externalIP}`;
+                    }
+                }
+                return copy;
+            }
 
-                  // Sync Status from Graph
-                  if (node.status) {
-                      s.active = node.status === 'up';
-                      s.status = node.status === 'up' ? 'active' : 'inactive';
-                  }
-              }
-          });
-          
-          setServices(enriched);
-          updateToast(toastId, 'success', 'Network Analyzed', 'Service details updated');
-      } catch (e) {
-          console.warn('Graph enrichment failed', e);
-          updateToast(toastId, 'error', 'Analysis Error', 'Failed to process network data');
-      }
-  };
+            let node = nodeMap.get(copy.name);
+            if (!node) {
+                const baseName = copy.name.replace(/\.(container|kube|service|pod)$/, '');
+                node = nodeMap.get(baseName);
+            }
+            
+            if (node) {
+                if (node.metadata?.verifiedDomains) {
+                    copy.verifiedDomains = node.metadata.verifiedDomains;
+                }
+                
+                if (node.ports && node.ports.length > 0) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    copy.ports = node.ports.map((p: any) => {
+                        if (typeof p === 'number') return { host: String(p), container: String(p) };
+                        const host = p.host || p.host_port;
+                        const container = p.container || p.container_port || host;
+                        return { 
+                            host: host ? String(host) : undefined, 
+                            container: String(container || 0)
+                        };
+                    });
+                }
 
-  const fetchData = async () => {
-    // Prevent double-fetch
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
-
-    const initialLoad = services.length === 0;
-
-    // Only set loading on first load to allow background updates
-    if (initialLoad) setLoading(true);
-    setRefreshing(true);
-    
-    // Start graph fetch in parallel with service fetch
-    const graphPromise = fetch('/api/network/graph')
-        .then(res => res.ok ? res.json() : null)
-        .catch(e => {
-            console.warn('Background graph fetch failed', e);
-            return null;
-        });
-
-    // Start toast outside try to ensure availability for error handler
-    // Only show "Refreshing Services" on initial load. Background updates use "Analyzing Network".
-    const toastId = initialLoad ? addToast('loading', 'Refreshing Services', 'Initializing...', 0) : '';
-
-    try {
-      let filteredServices = services;
-
-      // Only fetch full service list on initial load
-      if (initialLoad) {
-          const nodeList = await getNodes();
-          setNodes(nodeList);
-          
-          const targets = ['Local', ...nodeList.map(n => n.Name)];
-          const pending = new Set(targets);
-          
-          // Notify start
-          if (toastId) updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
-
-          const fetchNode = async (node: string) => {
-            try {
-                const query = node === 'Local' ? '' : `?node=${node}`;
-                const servicesRes = await fetch(`/api/services${query}`);
-                const servicesData = servicesRes.ok ? await servicesRes.json() : [];
-                return servicesData.map((s: Service) => ({ ...s, nodeName: node }));
-            } catch (e) {
-                console.error(`Failed to fetch services for node ${node}`, e);
-                return [];
-            } finally {
-                pending.delete(node);
-                if (pending.size > 0 && isFetchingRef.current && toastId) {
-                    updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
+                if (node.status) {
+                    copy.active = node.status === 'up';
+                    copy.status = node.status === 'up' ? 'active' : 'inactive';
                 }
             }
-          };
+            return copy;
+      });
+  }, [servicesData, graphData]);
 
-          const results = await Promise.all(targets.map(fetchNode));
-          
-          if (toastId) updateToast(toastId, 'success', 'Services Updated', 'All nodes refreshed');
+  const loading = servicesLoading || (graphLoading && !servicesData);
+  const validating = servicesValidating || graphValidating;
+  const refreshing = validating && !loading;
 
-          const allServices = results.flatMap(r => r);
-          
-          // Filter out "Reverse Proxy (Not Installed)" if a real "Reverse Proxy" exists
-          const hasRealProxy = allServices.some(s => s.name === 'Reverse Proxy' && s.status !== 'not-installed');
-          filteredServices = hasRealProxy 
-            ? allServices.filter(s => !(s.name === 'Reverse Proxy' && s.status === 'not-installed'))
-            : allServices;
-
-          setServices(filteredServices);
-      }
-      
-      // Enrich in background - passing the promise we started earlier
-      enrichServices(filteredServices, graphPromise);
-    } catch (error) {
-      console.error('Failed to fetch services', error);
-      if (toastId) updateToast(toastId, 'error', 'Failed to fetch services', error instanceof Error ? error.message : undefined);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-      isFetchingRef.current = false;
-    }
+  const fetchData = () => {
+      refreshServices(false);
+      refreshGraph(false);
   };
 
   const discoverUnmanaged = async () => {
@@ -296,6 +182,7 @@ export default function ServicesPlugin() {
 
   useEffect(() => {
       let filtered = services;
+
       
       // Filter by Search
       if (searchQuery) {
@@ -350,7 +237,7 @@ export default function ServicesPlugin() {
           setMigrationModalOpen(false);
           setMigrationPlan(null);
           fetchData();
-      } catch (_error) {
+      } catch {
           addToast('error', 'Failed to migrate service');
       } finally {
           setMigrating(false);
@@ -450,9 +337,6 @@ export default function ServicesPlugin() {
   };
 
   useEffect(() => {
-    // Initial fetch (also fetches nodes)
-    fetchData();
-
     // Setup SSE for real-time updates
     const eventSource = new EventSource('/api/stream');
     

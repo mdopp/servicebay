@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { Trash2, Plus, HardDrive, RefreshCw, X } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { useCache } from '@/providers/CacheProvider';
 import PluginHelp from './PluginHelp';
 
 interface Volume {
@@ -18,10 +19,7 @@ interface Volume {
 }
 
 export default function VolumeList() {
-  const [volumes, setVolumes] = useState<Volume[]>([]);
   const [showAnonymous, setShowAnonymous] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newVolName, setNewVolName] = useState('');
   const [newVolPath, setNewVolPath] = useState('');
@@ -34,38 +32,23 @@ export default function VolumeList() {
   // const node = searchParams?.get('node'); 
   const node = null; // Force fetch all
    
-  const fetchVolumes = async () => {
-    if (volumes.length === 0) setLoading(true);
-    setRefreshing(true);
-    
-    // Start toast if not initial load
-    let toastId: string | null = null;
-    if (volumes.length > 0) {
-       toastId = addToast('loading', 'Refreshing Volumes', 'Fetching latest data...', 0);
-    }
+  const volumesFetcher = useCallback(async () => {
+       const toastId = addToast('loading', 'Refreshing Volumes', 'Fetching latest volumes...', 0);
+       try {
+          const res = await fetch(`/api/volumes`); 
+          if (!res.ok) throw new Error('Failed to fetch volumes');
+          const data = await res.json();
+          updateToast(toastId, 'success', 'Volumes Updated', 'Data refreshed');
+          return data;
+       } catch (e: unknown) {
+          updateToast(toastId, 'error', 'Refresh Failed', e instanceof Error ? e.message : String(e));
+          throw e;
+       }
+  }, [addToast, updateToast]);
 
-    try {
-      // Calling without node param fetches all nodes
-      const res = await fetch(`/api/volumes`); 
-      if (!res.ok) throw new Error('Failed to fetch volumes');
-      const data = await res.json();
-      setVolumes(data);
-      
-      if (toastId) updateToast(toastId, 'success', 'Volumes Updated', 'Volume list refreshed');
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to load volumes';
-      if (toastId) updateToast(toastId, 'error', 'Refresh Failed', msg);
-      else addToast('error', msg);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchVolumes(); // Only once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Remove dependency on node, as we always want ALL volumes on this page
+  const { data: volumesData, loading, validating, refresh } = useCache<Volume[]>('volumes', volumesFetcher);
+  const volumes = volumesData || [];
+  const refreshing = validating && !loading; // Show refresh spinner if validating in background
 
   const handleDelete = async (name: string, volumeNode?: string) => {
     if (!confirm(`Are you sure you want to delete volume ${name}?`)) return;
@@ -78,7 +61,7 @@ export default function VolumeList() {
         throw new Error(err.error || 'Failed to delete');
       }
       addToast('success', 'Volume deleted');
-      fetchVolumes();
+      refresh();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       addToast('error', e.message);
@@ -117,7 +100,7 @@ export default function VolumeList() {
         setIsCreateOpen(false);
         setNewVolName('');
         setNewVolPath('');
-        fetchVolumes();
+        refresh();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
         addToast('error', e.message);
@@ -145,7 +128,7 @@ export default function VolumeList() {
                 </label>
                 <PluginHelp helpId="volumes" />
                 <button 
-                    onClick={fetchVolumes} 
+                    onClick={() => refresh(true)} 
                     disabled={refreshing}
                     className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
                     title="Refresh"

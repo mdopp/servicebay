@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/providers/ToastProvider";
+import { CacheProvider } from "@/providers/CacheProvider";
 import os from 'os';
 
 export const dynamic = 'force-dynamic';
@@ -32,7 +33,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ToastProvider>
-          {children}
+          <CacheProvider>
+            {children}
+          </CacheProvider>
         </ToastProvider>
       </body>
     </html>

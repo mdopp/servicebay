@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw, Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft, Search, Server } from 'lucide-react';
+import { useCache } from '@/providers/CacheProvider';
+import { RefreshCw, Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft, Search } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
@@ -27,34 +28,19 @@ interface Container {
 
 export default function ContainersPlugin() {
   const router = useRouter();
-  const [containers, setContainers] = useState<Container[]>([]);
   const [filteredContainers, setFilteredContainers] = useState<Container[]>([]);
-  const [loading, setLoading] = useState(true);
   const [selectedContainer, setSelectedContainer] = useState<Container | null>(null);
   const [showActions, setShowActions] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const isFetchingRef = useRef(false);
   const { addToast, updateToast } = useToast();
 
-  const fetchData = async () => {
-    // Prevent double-fetch
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
-
-    // Only set loading for initial fetch or if we have no data
-    if (containers.length === 0) setLoading(true);
-    setRefreshing(true);
-    
-    // Start toast before try block to have the ID available for catch
+  const containersFetcher = useCallback(async () => {
     const toastId = addToast('loading', 'Refreshing Containers', 'Initializing...', 0);
     
     try {
       const nodeList = await getNodes();
-      setNodes(nodeList);
 
       const targets = ['Local', ...nodeList.map(n => n.Name)];
       const pending = new Set(targets);
@@ -74,31 +60,29 @@ export default function ContainersPlugin() {
             return [];
         } finally {
             pending.delete(node);
-            if (pending.size > 0 && isFetchingRef.current) {
+            if (pending.size > 0) {
                 updateToast(toastId, 'loading', 'Refreshing Containers', `Pending: ${Array.from(pending).join(', ')}`);
             }
         }
       };
 
       const results = await Promise.all(targets.map(fetchNode));
-
       const allContainers = results.flat();
-      setContainers(allContainers);
       
       updateToast(toastId, 'success', 'Containers Updated', 'All nodes refreshed');
+      return { nodes: nodeList, containers: allContainers };
     } catch (error) {
       console.error('Failed to fetch containers', error);
       updateToast(toastId, 'error', 'Failed to fetch containers', error instanceof Error ? error.message : undefined);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-      isFetchingRef.current = false;
+      throw error;
     }
-  };
+  }, [addToast, updateToast]);
+
+  const { data, loading, validating, refresh } = useCache<{nodes: PodmanConnection[], containers: Container[]}>('containers-full', containersFetcher);
+  const containers = useMemo(() => data?.containers || [], [data]);
+  const refreshing = validating && !loading;
 
   useEffect(() => {
-    fetchData();
-
     // Setup SSE for real-time updates
     const eventSource = new EventSource('/api/stream');
     
@@ -108,7 +92,7 @@ export default function ContainersPlugin() {
         if (data.type === 'container') {
            // Refresh data on container change
            setTimeout(() => {
-               fetchData();
+               refresh();
            }, 500);
         }
       } catch (e) {
@@ -183,7 +167,7 @@ export default function ContainersPlugin() {
             setShowActions(false);
             updateToast(toastId, 'success', 'Action initiated', `${action} command sent to container`);
             // Wait a bit for the action to take effect
-            setTimeout(fetchData, 1000);
+            setTimeout(() => refresh(), 1000);
         }
     } catch (e) {
         console.error('Action failed', e);
@@ -236,7 +220,7 @@ export default function ContainersPlugin() {
         actions={
             <>
                 <button 
-                  onClick={fetchData} 
+                  onClick={() => refresh(true)} 
                   disabled={refreshing}
                   className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors shrink-0" title="Refresh"
                 >

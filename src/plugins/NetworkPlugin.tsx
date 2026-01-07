@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNetworkGraph } from '@/hooks/useSharedData';
 import { 
   ReactFlow, 
   Background, 
@@ -22,8 +23,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@/lib/network/layout';
-import { NetworkGraph } from '@/lib/network/types';
-import { RefreshCw, X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, ChevronRight, LayoutGrid, Radio } from 'lucide-react';
+import { RefreshCw, X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
@@ -551,8 +551,6 @@ const edgeTypes = {
 export default function NetworkPlugin() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
@@ -560,7 +558,6 @@ export default function NetworkPlugin() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const rawGraphData = React.useRef<{ nodes: Node[], edges: Edge[] } | null>(null);
   const activeToastRef = React.useRef<string | null>(null);
-  const isFetchingRef = React.useRef(false);
   const { addToast, updateToast } = useToast();
 
   // Monitoring Modal State
@@ -792,25 +789,13 @@ export default function NetworkPlugin() {
     setEdges(layouted.edges);
   }, [setNodes, setEdges, applyFilter]);
 
-  const fetchGraph = useCallback(async () => {
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+  const { data: rawData, loading, validating, refresh } = useNetworkGraph();
+  const refreshing = validating && !loading;
 
-    // Only set loading true if we have no data yet. Use background loading otherwise.
-    if (!rawGraphData.current) setLoading(true);
-    setRefreshing(true);
-    const toastId = addToast('loading', 'Refreshing Network', 'Fetching latest graph data...', 0);
-    activeToastRef.current = toastId;
-
-    try {
-      const res = await fetch('/api/network/graph');
-      if (!res.ok) throw new Error('Failed to fetch graph');
-      const data: NetworkGraph = await res.json();
+  const graphData = useMemo(() => {
+      if (!rawData) return null;
       
-      updateToast(toastId, 'success', 'Network Updated', 'Graph data refreshed');
-
-      // Transform to React Flow format
-      const flowNodes: Node[] = data.nodes.map(n => {
+      const flowNodes: Node[] = rawData.nodes.map(n => {
         const isGroup = n.type === 'group';
         
         return {
@@ -837,7 +822,7 @@ export default function NetworkPlugin() {
         };
       });
 
-      const flowEdges: Edge[] = data.edges.map(e => ({
+      const flowEdges: Edge[] = rawData.edges.map(e => ({
         id: e.id,
         source: e.source,
         target: e.target,
@@ -852,39 +837,28 @@ export default function NetworkPlugin() {
             state: e.state
         },
         animated: e.state === 'active'
-      }));
-
-      // Initialize collapsed state if first load
-      let currentCollapsed = collapsedGroups;
-      if (!rawGraphData.current) {
-          // Default: Collapse all services/pods/proxies to "node" view
-          const groups = flowNodes
-                .filter(n => ['group', 'service', 'pod', 'proxy'].includes(n.data.type as string))
-                .map(n => n.id);
-          currentCollapsed = new Set(groups);
-          setCollapsedGroups(currentCollapsed);
-      }
-
-      rawGraphData.current = { nodes: flowNodes, edges: flowEdges };
-      await processAndLayout(flowNodes, flowEdges, currentCollapsed, searchQuery);
+    }));
       
-    } catch (e) {
-      console.error(e);
-      updateToast(toastId, 'error', 'Refresh Failed', e instanceof Error ? e.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-      activeToastRef.current = null;
-      isFetchingRef.current = false;
-    }
-  }, [collapsedGroups, processAndLayout, searchQuery, addToast, updateToast]);
+      return { nodes: flowNodes, edges: flowEdges };
+  }, [rawData]);
 
-  // Effect to re-layout when collapse state changes (and not fetching)
+  const fetchGraph = () => refresh(true);
+
   useEffect(() => {
-      if (rawGraphData.current && !loading) {
-          processAndLayout(rawGraphData.current.nodes, rawGraphData.current.edges, collapsedGroups, searchQuery);
-      }
-  }, [collapsedGroups, processAndLayout, searchQuery, loading]);
+     if (graphData) {
+        let currentCollapsed = collapsedGroups;
+        if (!rawGraphData.current && graphData.nodes.length > 0) {
+              const groups = graphData.nodes
+                    .filter(n => ['group', 'service', 'pod', 'proxy'].includes(n.data.type as string))
+                    .map(n => n.id);
+              currentCollapsed = new Set(groups);
+              setCollapsedGroups(currentCollapsed);
+        }
+        
+        rawGraphData.current = graphData;
+        processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery);
+     }
+  }, [graphData, processAndLayout, collapsedGroups, searchQuery]);
 
   useEffect(() => {
     // Setup SSE for progress updates
@@ -905,10 +879,6 @@ export default function NetworkPlugin() {
       eventSource.close();
     };
   }, [updateToast]);
-
-  useEffect(() => {
-    fetchGraph();
-  }, [fetchGraph]);
 
   const handleEditLink = () => {
       if (!selectedNodeData) return;

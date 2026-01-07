@@ -1,23 +1,25 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getSystemInfo, getDiskUsage, getSystemUpdates, SystemInfo, DiskInfo } from '@/app/actions/system';
 import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { useCache } from '@/providers/CacheProvider';
 import PageHeader from '@/components/PageHeader';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 
+interface CombinedSystemInfo {
+    sysInfo: SystemInfo;
+    diskInfo: DiskInfo[];
+    updates: { count: number; list: string[] };
+}
+
 export default function SystemInfoPlugin() {
-  const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
-  const [diskInfo, setDiskInfo] = useState<DiskInfo[]>([]);
-  const [updates, setUpdates] = useState<{ count: number; list: string[] } | null>(null);
-  const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [selectedNode, setSelectedNode] = useState<string>('Local');
-  const fetchingNodeRef = useRef<string | null>(null);
-  const { addToast } = useToast();
+  const { addToast, updateToast } = useToast();
 
   const handleCopyCommand = () => {
     navigator.clipboard.writeText('sudo apt update && sudo apt upgrade -y');
@@ -26,42 +28,43 @@ export default function SystemInfoPlugin() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const fetchData = async () => {
-    if (fetchingNodeRef.current === selectedNode) return;
-    fetchingNodeRef.current = selectedNode;
+  const systemFetcher = useCallback(async () => {
+    const toastId = addToast('loading', 'Refreshing System Info', `Fetching info for ${selectedNode}...`, 0);
     
-    setLoading(true);
     try {
       const [sys, disk, up] = await Promise.all([
         getSystemInfo(selectedNode),
         getDiskUsage(selectedNode),
         getSystemUpdates(selectedNode)
       ]);
-      setSysInfo(sys);
-      setDiskInfo(disk);
-      setUpdates(up);
+      
+      updateToast(toastId, 'success', 'System Info Updated', `${selectedNode} refreshed`);
+      
+      return {
+          sysInfo: sys,
+          diskInfo: disk,
+          updates: up
+      };
     } catch (error) {
       console.error('Failed to fetch system info', error);
-      setSysInfo(null);
-    } finally {
-      if (fetchingNodeRef.current === selectedNode) {
-        fetchingNodeRef.current = null;
-      }
-      setLoading(false);
+      updateToast(toastId, 'error', 'Refresh Failed', error instanceof Error ? error.message : String(error));
+      throw error;
     }
-  };
+  }, [selectedNode, addToast, updateToast]);
+
+  const { data, loading, validating, refresh } = useCache<CombinedSystemInfo>(`system-info-${selectedNode}`, systemFetcher, [selectedNode]);
+  const sysInfo = data?.sysInfo || null;
+  const diskInfo = data?.diskInfo || [];
+  const updates = data?.updates || null;
 
   useEffect(() => {
     const saved = localStorage.getItem('podcli-selected-node');
     if (saved) {
+        // eslint-disable-next-line
         setSelectedNode(saved);
     }
     getNodes().then(setNodes).catch(console.error);
   }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [selectedNode]);
 
   if (loading) return <div className="p-8 text-center text-gray-500">Loading system information...</div>;
   
@@ -90,8 +93,8 @@ export default function SystemInfoPlugin() {
                         ))}
                     </select>
                 </div>
-                <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
-                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                <button onClick={() => refresh(true)} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
+                    <RefreshCw size={18} className={(loading || validating) ? 'animate-spin' : ''} />
                 </button>
             </div>
         }
