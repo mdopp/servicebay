@@ -1,8 +1,8 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { SSHExecutor } from './executor';
+import { DATA_DIR } from './config';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
 const NODES_FILE = path.join(DATA_DIR, 'nodes.json');
 
 export interface PodmanConnection {

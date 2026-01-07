@@ -67,7 +67,7 @@ export default function SettingsPage() {
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [newNodeName, setNewNodeName] = useState('');
   const [newNodeDest, setNewNodeDest] = useState('');
-  const [newNodeIdentity, setNewNodeIdentity] = useState('~/.ssh/id_rsa');
+  const [newNodeIdentity, setNewNodeIdentity] = useState('/app/data/ssh/id_rsa');
   const [addingNode, setAddingNode] = useState(false);
 
   // SSH Setup Modal
@@ -195,7 +195,7 @@ export default function SettingsPage() {
         setNodes(await getNodes());
         setNewNodeName('');
         setNewNodeDest('');
-        setNewNodeIdentity('~/.ssh/id_rsa');
+        setNewNodeIdentity('/app/data/ssh/id_rsa');
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if ((res as any).warning) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -549,7 +549,7 @@ export default function SettingsPage() {
                                 value={newNodeIdentity}
                                 onChange={e => setNewNodeIdentity(e.target.value)}
                                 className="w-full pl-9 pr-2 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                                placeholder="~/.ssh/id_rsa"
+                                placeholder="/app/data/ssh/id_rsa"
                             />
                         </div>
                     </div>

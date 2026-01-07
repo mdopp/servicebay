@@ -116,6 +116,54 @@ EOF
     fi
 fi
 
+# --- Configure SSH Access ---
+# We want the container to be able to SSH into the host to manage it as a "remote" (though local) node.
+# This is useful because accessing the host via SSH allows full shell access which the podman socket alone doesn't provide?
+# Actually, the podman socket is mounted, so we can control containers. 
+# But for "Host" node features (like system info, apt updates), we might need SSH or nsenter.
+# Currently ServiceBay supports SSH nodes.
+# To allow SSH from container -> host:
+# 1. Generate a key pair in CONFIG_DIR/ssh (mounted to /app/data/ssh)
+# 2. Add public key to host's authorized_keys
+
+SSH_DIR="$CONFIG_DIR/ssh"
+mkdir -p "$SSH_DIR"
+
+if [ ! -f "$SSH_DIR/id_rsa" ]; then
+    log "Generating SSH keys for ServiceBay host access..."
+    ssh-keygen -t rsa -b 4096 -f "$SSH_DIR/id_rsa" -N "" -C "servicebay@localhost"
+fi
+
+# Add to authorized_keys
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+touch "$HOME/.ssh/authorized_keys"
+chmod 600 "$HOME/.ssh/authorized_keys"
+
+PUB_KEY=$(cat "$SSH_DIR/id_rsa.pub")
+if ! grep -q "$PUB_KEY" "$HOME/.ssh/authorized_keys"; then
+    log "Adding ServiceBay key to authorized_keys..."
+    echo "$PUB_KEY" >> "$HOME/.ssh/authorized_keys"
+fi
+
+# Create nodes.json if not exists
+NODES_FILE="$CONFIG_DIR/nodes.json"
+if [ ! -f "$NODES_FILE" ]; then
+    log "Configuring Host node..."
+    # We use 'localhost' because network=host
+    CURRENT_USER=$(whoami)
+    cat > "$NODES_FILE" <<NODESEOF
+[
+  {
+    "Name": "Host",
+    "URI": "ssh://$CURRENT_USER@localhost:22",
+    "Identity": "/app/data/ssh/id_rsa",
+    "Default": false
+  }
+]
+NODESEOF
+fi
+
 # --- Create Quadlet ---
 
 log "Creating systemd service..."

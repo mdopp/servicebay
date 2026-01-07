@@ -1,6 +1,6 @@
 'use server';
 
-import { getConfig, saveConfig } from '@/lib/config';
+import { getConfig, saveConfig, SSH_DIR } from '@/lib/config';
 import { FritzBoxClient } from '@/lib/fritzbox/client';
 import fs from 'fs/promises';
 import path from 'path';
@@ -25,8 +25,8 @@ export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
   const config = await getConfig();
   
   // Check SSH Key
-  // In container, ~/.ssh is mounted. 
-  const sshDir = path.join(os.homedir(), '.ssh');
+  // We use SSH_DIR which points to persistent volume or host mount
+  const sshDir = SSH_DIR;
   let hasSshKey = false;
   try {
     await fs.access(path.join(sshDir, 'id_rsa'));

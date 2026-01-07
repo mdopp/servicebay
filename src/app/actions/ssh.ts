@@ -1,6 +1,7 @@
 'use server';
 
 import { checkTcpConnection, setupSSHKey } from '@/lib/ssh';
+import { SSH_DIR } from '@/lib/config';
 
 export async function checkConnection(host: string, port: number) {
     try {
@@ -29,14 +30,14 @@ export async function generateLocalKey() {
         const { promisify } = await import('util');
         const execAsync = promisify(exec);
 
-        const sshDir = path.join(os.homedir(), '.ssh');
+        const sshDir = SSH_DIR;
         const keyPath = path.join(sshDir, 'id_rsa');
 
         if (fs.existsSync(keyPath)) {
             return { success: true, message: 'Key already exists' };
         }
 
-        if (!fs.existsSync(sshDir)) fs.mkdirSync(sshDir, { mode: 0o700 });
+        if (!fs.existsSync(sshDir)) fs.mkdirSync(sshDir, { recursive: true, mode: 0o700 });
         
         await execAsync(`ssh-keygen -t rsa -b 4096 -f "${keyPath}" -N ""`);
         return { success: true, message: 'Key generated' };

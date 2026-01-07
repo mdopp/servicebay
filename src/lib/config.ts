@@ -8,6 +8,7 @@ import os from 'os';
 // So we should check if /app/data exists, otherwise use os.homedir()/.servicebay
 const isContainer = existsSync('/.dockerenv') || (process.env.NODE_ENV === 'production' && existsSync('/app'));
 export const DATA_DIR = process.env.DATA_DIR || (isContainer ? '/app/data' : path.join(os.homedir(), '.servicebay'));
+export const SSH_DIR = path.join(DATA_DIR, 'ssh');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 export interface ExternalLink {

@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { SSH_DIR } from './config';
 
 const execAsync = promisify(exec);
 
@@ -32,16 +33,17 @@ export async function setupSSHKey(host: string, port: number, user: string, pass
   const logs: string[] = [];
   
   // Ensure we have a public key
-  const sshDir = path.join(os.homedir(), '.ssh');
+  const sshDir = SSH_DIR;
   const pubKeyPath = path.join(sshDir, 'id_rsa.pub');
+  const privKeyPath = path.join(sshDir, 'id_rsa');
   
   if (!fs.existsSync(pubKeyPath)) {
-    logs.push('No SSH key found. Generating one...');
-    if (!fs.existsSync(sshDir)) fs.mkdirSync(sshDir, { mode: 0o700 });
+    logs.push(`No SSH key found at ${pubKeyPath}. Generating one...`);
+    if (!fs.existsSync(sshDir)) fs.mkdirSync(sshDir, { recursive: true, mode: 0o700 });
     
     try {
         // Generate key if missing (non-interactive)
-        await execAsync(`ssh-keygen -t rsa -b 4096 -f "${path.join(sshDir, 'id_rsa')}" -N ""`);
+        await execAsync(`ssh-keygen -t rsa -b 4096 -f "${privKeyPath}" -N ""`);
         logs.push('SSH key generated.');
     } catch (e) {
         logs.push(`Failed to generate SSH key: ${e}`);
@@ -52,7 +54,8 @@ export async function setupSSHKey(host: string, port: number, user: string, pass
   return new Promise((resolve) => {
     const cmd = 'ssh-copy-id';
     // Pass StrictHostKeyChecking=no to avoid the yes/no prompt for known_hosts
-    const args = ['-p', String(port), '-o', 'StrictHostKeyChecking=no', `${user}@${host}`];
+    // Explicitly use the generated identity file (-i)
+    const args = ['-i', pubKeyPath, '-p', String(port), '-o', 'StrictHostKeyChecking=no', `${user}@${host}`];
     
     logs.push(`Running: ${cmd} ${args.join(' ')}`);
 
