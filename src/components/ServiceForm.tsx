@@ -584,7 +584,7 @@ WantedBy=default.target`;
 
                     {/* Available Volumes Sidebar */}
                     {availableVolumes.length > 0 && (
-                        <div className="w-full lg:w-72 bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col">
+                        <div className="w-full lg:w-72 hidden lg:flex bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex-col">
                             <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-100/50 dark:bg-gray-800/50">
                                 <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
                                     <Database size={14} className="text-blue-500" /> 
@@ -712,6 +712,45 @@ WantedBy=default.target`;
             Save Service
             </button>
         </div>
+
+        {/* Mobile Volume Helper */}
+        {activeTab === 'yaml' && availableVolumes.length > 0 && (
+             <div className="lg:hidden bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md overflow-hidden">
+                  <div className="p-3 bg-gray-100/50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800">
+                      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                           <Database size={14} className="text-blue-500" /> 
+                           Available Volumes
+                      </h3>
+                  </div>
+                  <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                       {availableVolumes.filter((v: any) => !v.Anonymous).map(vol => (
+                                    <div key={vol.Name} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 shadow-sm flex items-center justify-between gap-3">
+                                        <div className="font-mono text-xs font-medium text-blue-700 dark:text-blue-300 truncate min-w-0" title={vol.Name}>
+                                            {vol.Name}
+                                        </div>
+                                        <div className="flex gap-2 shrink-0">
+                                            <button 
+                                                type="button"
+                                                onClick={() => insertAtCursor(`  - name: ${vol.Name}\n    persistentVolumeClaim:\n      claimName: ${vol.Name}`)}
+                                                className="px-2 py-1 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded text-xs border border-blue-100 dark:border-blue-800"
+                                                title="Copy Def"
+                                            >
+                                                Def
+                                            </button>
+                                            <button 
+                                                type="button"
+                                                onClick={() => insertAtCursor(`        - name: ${vol.Name}\n          mountPath: /data`)}
+                                                className="px-2 py-1 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded text-xs border border-gray-200 dark:border-gray-700"
+                                                title="Copy Mount"
+                                            >
+                                                Mnt
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                  </div>
+             </div>
+        )}
 
         {yamlError && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-200 rounded-md shadow-sm flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
