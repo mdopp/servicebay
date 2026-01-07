@@ -67,7 +67,22 @@ export default function ContainersPlugin() {
       };
 
       const results = await Promise.all(targets.map(fetchNode));
-      const allContainers = results.flat();
+      const rawContainers = results.flat();
+      
+      // Deduplicate: If the same container ID appears from multiple sources,
+      // prefer the one from a specific named node (Remote) over 'Local'.
+      // This handles the case where the local machine is also configured as a remote node.
+      const containerMap = new Map<string, Container>();
+      for (const c of rawContainers) {
+          const existing = containerMap.get(c.Id);
+          if (!existing) {
+              containerMap.set(c.Id, c);
+          } else if (existing.nodeName === 'Local' && c.nodeName !== 'Local') {
+              // Replace 'Local' version with named node version
+              containerMap.set(c.Id, c);
+          }
+      }
+      const allContainers = Array.from(containerMap.values());
       
       updateToast(toastId, 'success', 'Containers Updated', 'All nodes refreshed');
       return { nodes: nodeList, containers: allContainers };
