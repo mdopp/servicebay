@@ -1,6 +1,6 @@
 {
   "name": "servicebay",
-  "version": "2026.1.51",
+  "version": "2026.1.52",
   "private": true,
   "scripts": {
     "dev": "fuser -k 3000/tcp || true && tsx server.ts",
