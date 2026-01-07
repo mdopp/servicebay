@@ -112,6 +112,29 @@ export async function GET(request: Request) {
       });
   }
 
+  // Check if ServiceBay is present (Self-Management)
+  const sbIndex = services.findIndex(s => s.name === 'servicebay' || s.name === 'ServiceBay');
+
+  if (sbIndex === -1 && isLocal) {
+       // Inject ServiceBay (Self)
+       services.push({
+          name: 'ServiceBay',
+          id: 'servicebay',
+          active: true,
+          status: 'running',
+          kubeFile: '',
+          kubePath: '',
+          yamlFile: null,
+          yamlPath: null,
+          description: 'ServiceBay Management Interface (Self)',
+          ports: [],
+          volumes: [],
+          labels: { 'servicebay.protected': 'true' },
+          type: 'container',
+          node: 'Local' 
+      });
+  }
+
   const mappedServices = services.map(s => ({ ...s, type: 'container' }));
 
   return NextResponse.json([...mappedLinks, ...gatewayService, ...mappedServices]);

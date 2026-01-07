@@ -621,9 +621,14 @@ export default function ServicesPlugin() {
                                 {/* Actions */}
                                 <div className="flex items-center gap-1 shrink-0 ml-auto bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
                                     {service.type === 'gateway' ? (
-                                        <Link href="/registry?selected=gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Gateway">
-                                            <Edit size={16} />
-                                        </Link>
+                                        <>
+                                            <Link href="/monitor/gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors" title="Monitor Gateway">
+                                                <Activity size={16} />
+                                            </Link>
+                                            <Link href="/registry?selected=gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Gateway">
+                                                <Edit size={16} />
+                                            </Link>
+                                        </>
                                     ) : service.type === 'link' ? (
                                         <>
                                             <button onClick={() => handleEditLink(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Link">
