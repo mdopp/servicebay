@@ -130,7 +130,6 @@ export async function GET(request: Request) {
           ports: [],
           volumes: [],
           labels: { 'servicebay.protected': 'true' },
-          type: 'container',
           node: 'Local' 
       });
   }
