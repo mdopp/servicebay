@@ -124,12 +124,17 @@ export class NetworkService {
     const targets: { name: string, connection?: PodmanConnection }[] = [];
 
     if (targetNode) {
-         const connection = connections.find(c => c.Name === targetNode);
-         if (connection) {
-             targets.push({ name: connection.Name, connection });
+         if (targetNode === 'Local') {
+             targets.push({ name: 'Local', connection: undefined });
+         } else {
+             const connection = connections.find(c => c.Name === targetNode);
+             if (connection) {
+                 targets.push({ name: connection.Name, connection });
+             }
          }
     } else {
-        // Global view: Only configured nodes
+        // Global view: Local + Configured Nodes
+        targets.push({ name: 'Local', connection: undefined });
         for (const conn of connections) {
             targets.push({ name: conn.Name, connection: conn });
         }
