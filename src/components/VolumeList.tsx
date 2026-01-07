@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Trash2, Plus, HardDrive, RefreshCw, X } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { useSearchParams } from 'next/navigation';
+import PluginHelp from './PluginHelp';
 
 interface Volume {
   Name: string;
@@ -12,6 +12,8 @@ interface Volume {
   Labels: Record<string, string>;
   Options: Record<string, string>;
   Scope: string;
+  Node?: string;
+  UsedBy: { id: string; name: string }[];
 }
 
 export default function VolumeList() {
@@ -24,9 +26,11 @@ export default function VolumeList() {
   const [creating, setCreating] = useState(false);
   
   const { addToast, updateToast } = useToast();
-  const searchParams = useSearchParams();
-  const node = searchParams?.get('node');
-
+  // We ignore searchParams node for displaying ALL volumes, unless specifically filtering.
+  // Actually, let's just fetch all by default.
+  // const searchParams = useSearchParams();
+  // const node = searchParams?.get('node'); 
+  const node = null; // Force fetch all
    
   const fetchVolumes = async () => {
     if (volumes.length === 0) setLoading(true);
@@ -39,7 +43,8 @@ export default function VolumeList() {
     }
 
     try {
-      const res = await fetch(`/api/volumes${node ? `?node=${node}` : ''}`);
+      // Calling without node param fetches all nodes
+      const res = await fetch(`/api/volumes`); 
       if (!res.ok) throw new Error('Failed to fetch volumes');
       const data = await res.json();
       setVolumes(data);
@@ -56,14 +61,16 @@ export default function VolumeList() {
   };
 
   useEffect(() => {
-    fetchVolumes();
+    fetchVolumes(); // Only once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node]);
+  }, []); // Remove dependency on node, as we always want ALL volumes on this page
 
-  const handleDelete = async (name: string) => {
+  const handleDelete = async (name: string, volumeNode?: string) => {
     if (!confirm(`Are you sure you want to delete volume ${name}?`)) return;
     try {
-      const res = await fetch(`/api/volumes/${name}${node ? `?node=${node}` : ''}`, { method: 'DELETE' });
+      // Must pass node to delete correct volume
+      const query = volumeNode ? `?node=${volumeNode}` : '';
+      const res = await fetch(`/api/volumes/${name}${query}`, { method: 'DELETE' });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'Failed to delete');
@@ -118,41 +125,44 @@ export default function VolumeList() {
   };
 
   return (
-    <div className="space-y-4 p-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold flex items-center gap-2 text-gray-800 dark:text-gray-100">
-          <HardDrive className="w-6 h-6" />
-          Volumes
-        </h2>
-        <div className="flex gap-2">
-            <button 
-                onClick={() => setIsCreateOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
-            >
-                <Plus size={20} />
-                <span>Create Volume</span>
-            </button>
-            <button 
-                onClick={fetchVolumes} 
-                disabled={refreshing}
-                className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md text-gray-600 dark:text-gray-300"
-                title="Refresh"
-            >
-                <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
-            </button>
-        </div>
+    <div className="flex flex-col h-full bg-white dark:bg-gray-900">
+        <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center shrink-0">
+            <h2 className="text-2xl font-bold flex items-center gap-2 text-gray-900 dark:text-gray-100">
+                <HardDrive className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                Volumes
+            </h2>
+            <div className="flex items-center gap-3">
+                <PluginHelp helpId="volumes" />
+                <button 
+                    onClick={fetchVolumes} 
+                    disabled={refreshing}
+                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
+                    title="Refresh"
+                >
+                    <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
+                </button>
+                <button 
+                    onClick={() => setIsCreateOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors font-medium shadow-sm"
+                >
+                    <Plus size={18} />
+                    <span>Create</span>
+                </button>
+            </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center p-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-        </div>
-      ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden border border-gray-200 dark:border-gray-700">
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex-1 overflow-y-auto p-6">
+        {loading ? (
+            <div className="flex justify-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+        ) : (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <table className="w-full text-left">
+                <thead className="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700">
               <tr>
                 <th className="p-4 text-sm font-semibold text-gray-600 dark:text-gray-300">Name</th>
+                <th className="p-4 text-sm font-semibold text-gray-600 dark:text-gray-300">Used By</th>
                 <th className="p-4 text-sm font-semibold text-gray-600 dark:text-gray-300">Driver</th>
                 <th className="p-4 text-sm font-semibold text-gray-600 dark:text-gray-300">Mountpoint</th>
                 <th className="p-4 text-sm font-semibold text-gray-600 dark:text-gray-300">Actions</th>
@@ -160,16 +170,39 @@ export default function VolumeList() {
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
               {volumes.map(vol => (
-                <tr key={vol.Name} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                  <td className="p-4 font-medium text-gray-900 dark:text-gray-100">{vol.Name}</td>
+                <tr key={`${vol.Node}-${vol.Name}`} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                  <td className="p-4">
+                      <div className="flex flex-col">
+                        <span className="font-medium text-gray-900 dark:text-gray-100">{vol.Name}</span>
+                        {vol.Node && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 w-fit mt-0.5 border border-blue-200 dark:border-blue-800">
+                                {vol.Node}
+                            </span>
+                        )}
+                      </div>
+                  </td>
+                  <td className="p-4">
+                    {vol.UsedBy && vol.UsedBy.length > 0 ? (
+                        <div className="flex flex-col gap-1">
+                            {vol.UsedBy.map(c => (
+                                <span key={c.id} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-600" title={`ID: ${c.id}`}>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></span>
+                                    {c.name}
+                                </span>
+                            ))}
+                        </div>
+                    ) : (
+                        <span className="text-xs text-gray-400 italic">Unused</span>
+                    )}
+                  </td>
                   <td className="p-4 text-sm text-gray-500 dark:text-gray-400">{vol.Driver}</td>
                   <td className="p-4 text-sm font-mono text-gray-500 dark:text-gray-400 truncate max-w-xs" title={vol.Mountpoint}>
                     {vol.Mountpoint}
                   </td>
                   <td className="p-4">
                     <button 
-                        onClick={() => handleDelete(vol.Name)}
-                        className="text-red-500 hover:text-red-700 dark:hover:text-red-400 transition-colors"
+                        onClick={() => handleDelete(vol.Name, vol.Node)}
+                        className="text-red-500 hover:text-red-700 dark:hover:text-red-400 transition-colors p-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
                         title="Delete Volume"
                     >
                         <Trash2 size={18} />
@@ -185,7 +218,8 @@ export default function VolumeList() {
             </tbody>
           </table>
         </div>
-      )}
+        )}
+      </div>
 
       {isCreateOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

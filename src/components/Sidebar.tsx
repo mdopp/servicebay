@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Server, Network, HardDrive } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 
@@ -18,6 +18,8 @@ export const plugins = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const node = searchParams?.get('node');
   const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -59,7 +61,7 @@ export default function Sidebar() {
                 return (
                     <button
                         key={p.id}
-                        onClick={() => router.push(p.path)}
+                        onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
                         className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${
                             isActive 
                             ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm' 

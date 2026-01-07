@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import yaml from 'js-yaml';
-import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server } from 'lucide-react';
+import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Database, Plus, Copy } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
@@ -45,6 +45,9 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
   const [cursorLine, setCursorLine] = useState(1);
   const [extractedPorts, setExtractedPorts] = useState<{ host?: string; container: string }[]>([]);
   const [extractedVolumes, setExtractedVolumes] = useState<{ host: string; container: string }[]>([]);
+
+  // Volume Helpers
+  const [availableVolumes, setAvailableVolumes] = useState<any[]>([]); // { Name, Driver... }
   
   // Rename Modal State
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -64,6 +67,18 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
   useEffect(() => {
     getNodes().then(setNodes);
   }, []);
+
+  // Fetch volumes when node changes
+  useEffect(() => {
+    if (selectedNode) {
+        fetch(`/api/volumes?node=${selectedNode}`)
+            .then(res => res.json())
+            .then(data => setAvailableVolumes(Array.isArray(data) ? data : []))
+            .catch(e => console.error('Failed to fetch volumes:', e));
+    } else {
+        setAvailableVolumes([]);
+    }
+  }, [selectedNode]);
 
   // Initialize Description from KubeContent
   useEffect(() => {
@@ -142,6 +157,18 @@ WantedBy=default.target`;
     }
     setExtractedPorts(ports);
     setExtractedVolumes(volumes);
+  };
+
+  const insertAtCursor = (text: string) => {
+    // Simple append if cursor tracking is hard, or we can try to use the last cursor position
+    // Since 'cursorLine' updates on click/keyup, we can try to insert there.
+    // However, react-simple-code-editor doesn't expose a clean way to insert at cursor programmatically easily without ref refs.
+    // We will append to the end for safety, or copy to clipboard.
+    // Let's copy to clipboard as primary action.
+    navigator.clipboard.writeText(text);
+    // Also try to update content if possible
+    // For now, let's just use clipboard to avoid messing up the file
+    alert('Snippet copied to clipboard! Paste it in the editor.');
   };
 
   const handleYamlChange = (content: string) => {
@@ -510,6 +537,46 @@ WantedBy=default.target`;
                     className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'history' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
                     onClick={() => setActiveTab('history')}
                 >
+
+                    {/* Volume Helper Toolbar */}
+                    {availableVolumes.length > 0 && (
+                        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-md flex flex-wrap items-center gap-4">
+                            <span className="text-xs font-bold text-blue-800 dark:text-blue-300 flex items-center gap-2">
+                                <Database size={14} /> Available Volumes:
+                            </span>
+                            <div className="flex flex-wrap gap-2">
+                                {availableVolumes.map(vol => (
+                                    <div key={vol.Name} className="group relative inline-flex">
+                                        <div className="px-2 py-1 bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-700 rounded text-xs text-blue-700 dark:text-blue-300 font-mono flex items-center gap-2">
+                                            {vol.Name}
+                                            <div className="flex gap-1 ml-1 pl-1 border-l border-gray-200 dark:border-gray-700 opacity-50 group-hover:opacity-100 transition-opacity">
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => insertAtCursor(`  - name: ${vol.Name}\n    persistentVolumeClaim:\n      claimName: ${vol.Name}`)}
+                                                    className="hover:text-blue-900 dark:hover:text-blue-100"
+                                                    title="Copy Volume Definition (spec.volumes)"
+                                                >
+                                                    <Plus size={12} />
+                                                </button>
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => insertAtCursor(`  - name: ${vol.Name}\n    mountPath: /data`)}
+                                                    className="hover:text-blue-900 dark:hover:text-blue-100"
+                                                    title="Copy Mount (volumeMounts)"
+                                                >
+                                                    <Copy size={12} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <span className="text-[10px] text-blue-600/70 dark:text-blue-400/70 ml-auto">
+                                Click (+): Copy Definition | Click (Cp): Copy Mount
+                            </span>
+                        </div>
+                    )}
+
                     <Clock size={16} /> History
                 </button>
             )}

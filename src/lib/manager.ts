@@ -891,14 +891,61 @@ export interface VolumeInfo {
   Labels: Record<string, string>;
   Options: Record<string, string>;
   Scope: string;
+  Node?: string; // Tag for the node
+  UsedBy: { id: string; name: string }[];
 }
 
 export async function listVolumes(connection?: PodmanConnection): Promise<VolumeInfo[]> {
   const executor = getExecutor(connection);
   try {
-    const { stdout } = await executor.exec('podman volume ls --format json');
-    if (!stdout.trim()) return [];
-    return JSON.parse(stdout);
+    const [volumesRes, containers] = await Promise.all([
+        executor.exec('podman volume ls --format json'),
+        getPodmanPs(connection)
+    ]);
+
+    if (!volumesRes.stdout.trim()) return [];
+    
+    // Parse Volumes
+    const volumes: VolumeInfo[] = JSON.parse(volumesRes.stdout);
+    
+    // Map usage
+    const usageMap = new Map<string, { id: string; name: string }[]>();
+    
+    // Helper to add usage
+    const addUsage = (volName: string, containerId: string, containerName: string) => {
+        const current = usageMap.get(volName) || [];
+        // Avoid duplicates if multiple mounts from same container
+        if (!current.some(c => c.id === containerId)) {
+            current.push({ id: containerId.substring(0, 12), name: containerName });
+        }
+        usageMap.set(volName, current);
+    };
+
+    containers.forEach((container: any) => {
+        const name = container.Names && container.Names.length > 0 ? container.Names[0] : container.Id.substring(0, 12);
+        
+        if (container.Mounts) {
+            container.Mounts.forEach((mount: any) => {
+                // Type 'volume' has a Name. 'bind' has Source.
+                if (mount.Type === 'volume' && mount.Name) {
+                    addUsage(mount.Name, container.Id, name);
+                } 
+                // Sometimes named volumes might appear differently, but 'Name' is standard for docker/podman volumes
+            });
+        }
+    });
+
+    // Enrich volumes
+    volumes.forEach((v) => {
+        v.UsedBy = usageMap.get(v.Name) || [];
+        
+        // Add Node Name to volume info if connection is present
+        if (connection) {
+            v.Node = connection.Name;
+        }
+    });
+
+    return volumes;
   } catch (e) {
     console.error('Error listing volumes:', e);
     return [];
