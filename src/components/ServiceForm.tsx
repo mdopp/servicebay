@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import yaml from 'js-yaml';
-import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Database, Plus, Copy } from 'lucide-react';
+import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Database, Plus, Copy, Clipboard } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
@@ -13,6 +13,7 @@ import 'prismjs/themes/prism-tomorrow.css'; // Dark theme for code
 import HistoryViewer from './HistoryViewer';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
+import { useToast } from '@/providers/ToastProvider';
 
 interface ServiceFormProps {
   initialData?: {
@@ -32,6 +33,7 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nodeParam = searchParams?.get('node');
+  const { addToast } = useToast();
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [selectedNode, setSelectedNode] = useState(nodeParam || '');
   
@@ -168,7 +170,12 @@ WantedBy=default.target`;
     navigator.clipboard.writeText(text);
     // Also try to update content if possible
     // For now, let's just use clipboard to avoid messing up the file
-    alert('Snippet copied to clipboard! Paste it in the editor.');
+    addToast('success', 'Snippet copied!', 'Paste it in the editor using Ctrl+V');
+  };
+
+  const handleCopyYaml = () => {
+    navigator.clipboard.writeText(yamlContent);
+    addToast('success', 'Copied!', 'Full YAML content copied to clipboard');
   };
 
   const handleYamlChange = (content: string) => {
@@ -556,10 +563,20 @@ WantedBy=default.target`;
                         </p>
                         
                         <div className="flex-1 border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden bg-[#2d2d2d] dark:bg-black relative group">
-                            <div className="absolute top-2 right-4 z-10 text-xs text-gray-400 font-mono bg-black/30 px-2 py-1 rounded pointer-events-none">
-                                Line: {cursorLine}
+                            <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
+                                <button 
+                                    onClick={handleCopyYaml}
+                                    type="button"
+                                    className="p-1.5 bg-gray-700/50 hover:bg-gray-700 text-gray-300 hover:text-white rounded backdrop-blur-sm transition-colors"
+                                    title="Copy All"
+                                >
+                                    <Clipboard size={14} />
+                                </button>
+                                <div className="text-xs text-gray-400 font-mono bg-black/30 px-2 py-1 rounded pointer-events-none">
+                                    Line: {cursorLine}
+                                </div>
                             </div>
-                            <div className="h-full overflow-hidden">
+                            <div className="h-full overflow-auto custom-scrollbar">
                                 <Editor
 
                         value={yamlContent}
