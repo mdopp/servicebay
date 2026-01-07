@@ -61,26 +61,41 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
   // Optimized batch fetch script to reduce SSH round-trips
   const script = `
     cd "${systemdDir}" || exit 0
-    for f in *.kube; do
+    # Loop over both .kube and .container files
+    for f in *.kube *.container; do
         [ -e "$f" ] || continue
-        name="\${f%.kube}"
+        
+        # Determine Name and Type based on extension
+        if [[ "$f" == *.kube ]]; then
+            name="\${f%.kube}"
+            type="kube"
+        else
+            name="\${f%.container}"
+            type="container"
+        fi
+
         echo "---SERVICE_START---"
         echo "NAME: $name"
+        echo "TYPE: $type"
+        echo "FILE: $f"
         echo "STATUS: $(systemctl --user is-active "$name.service" 2>/dev/null || echo inactive)"
         echo "DESCRIPTION: $(systemctl --user show -p Description --value "$name.service" 2>/dev/null)"
-        echo "KUBE_CONTENT_START"
+        echo "CONTENT_START"
         cat "$f"
-        echo "KUBE_CONTENT_END"
+        echo "CONTENT_END"
         
-        yaml_file=$(grep "^Yaml=" "$f" | head -n1 | cut -d= -f2- | sed 's/^[ \t]*//;s/[ \t]*$//')
-        if [ -n "$yaml_file" ]; then
-            echo "YAML_CONTENT_START"
-            if [[ "$yaml_file" == /* ]]; then
-                cat "$yaml_file" 2>/dev/null
-            else
-                cat "$yaml_file" 2>/dev/null
+        # Only parse Yaml for Kube types
+        if [[ "$type" == "kube" ]]; then
+            yaml_file=$(grep "^Yaml=" "$f" | head -n1 | cut -d= -f2- | sed 's/^[ \t]*//;s/[ \t]*$//')
+            if [ -n "$yaml_file" ]; then
+                echo "YAML_CONTENT_START"
+                if [[ "$yaml_file" == /* ]]; then
+                    cat "$yaml_file" 2>/dev/null
+                else
+                    cat "$yaml_file" 2>/dev/null
+                fi
+                echo "YAML_CONTENT_END"
             fi
-            echo "YAML_CONTENT_END"
         fi
         echo "---SERVICE_END---"
     done
@@ -101,25 +116,30 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
   for (const block of serviceBlocks) {
       const lines = block.split('\n');
       const nameLine = lines.find(l => l.startsWith('NAME: '));
+      const typeLine = lines.find(l => l.startsWith('TYPE: '));
+      const fileLine = lines.find(l => l.startsWith('FILE: '));
       const statusLine = lines.find(l => l.startsWith('STATUS: '));
       const descLine = lines.find(l => l.startsWith('DESCRIPTION: '));
       
       if (!nameLine) continue;
       
       const name = nameLine.substring(6).trim();
+       
+      const type = typeLine ? typeLine.substring(6).trim() : 'kube';
+      const fileName = fileLine ? fileLine.substring(6).trim() : `${name}.kube`;
       const status = statusLine ? statusLine.substring(8).trim() : 'unknown';
       let description = descLine ? descLine.substring(13).trim() : '';
       const active = status === 'active';
 
-      // Extract Kube Content
-      const kubeStart = block.indexOf('KUBE_CONTENT_START');
-      const kubeEnd = block.indexOf('KUBE_CONTENT_END');
+      // Extract Content (Kube or Container)
+      const contentStart = block.indexOf('CONTENT_START');
+      const contentEnd = block.indexOf('CONTENT_END');
       let content = '';
-      if (kubeStart !== -1 && kubeEnd !== -1) {
-          content = block.substring(kubeStart + 19, kubeEnd).trim();
+      if (contentStart !== -1 && contentEnd !== -1) {
+          content = block.substring(contentStart + 13, contentEnd).trim();
       }
 
-      // Extract Yaml Content
+      // Extract Yaml Content (Kube only)
       const yamlStart = block.indexOf('YAML_CONTENT_START');
       const yamlEnd = block.indexOf('YAML_CONTENT_END');
       let yamlContent = '';
@@ -136,7 +156,8 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
       }
 
       const systemdDir = getSystemdDir(connection);
-      const kubePath = path.join(systemdDir, `${name}.kube`);
+      // Map 'kubePath' to the actual source file (legacy naming)
+      const kubePath = path.join(systemdDir, fileName);
       
       // Extract Yaml file name for reference
       const yamlMatch = content.match(/Yaml=(.+)/);
