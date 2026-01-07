@@ -14,10 +14,12 @@ interface Volume {
   Scope: string;
   Node?: string;
   UsedBy: { id: string; name: string }[];
+  Anonymous?: boolean;
 }
 
 export default function VolumeList() {
   const [volumes, setVolumes] = useState<Volume[]>([]);
+  const [showAnonymous, setShowAnonymous] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -132,6 +134,15 @@ export default function VolumeList() {
                 Volumes
             </h2>
             <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer select-none">
+                    <input 
+                        type="checkbox" 
+                        checked={showAnonymous} 
+                        onChange={e => setShowAnonymous(e.target.checked)}
+                        className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 bg-gray-50 dark:bg-gray-800"
+                    />
+                    Show System
+                </label>
                 <PluginHelp helpId="volumes" />
                 <button 
                     onClick={fetchVolumes} 
@@ -169,7 +180,7 @@ export default function VolumeList() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-              {volumes.map(vol => (
+              {volumes.filter(vol => showAnonymous || !vol.Anonymous).map(vol => (
                 <tr key={`${vol.Node}-${vol.Name}`} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                   <td className="p-4">
                       <div className="flex flex-col">

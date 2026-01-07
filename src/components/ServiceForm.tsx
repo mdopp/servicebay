@@ -545,7 +545,7 @@ WantedBy=default.target`;
                                 <Database size={14} /> Available Volumes:
                             </span>
                             <div className="flex flex-wrap gap-2">
-                                {availableVolumes.map(vol => (
+                                {availableVolumes.filter((v: any) => !v.Anonymous).map(vol => (
                                     <div key={vol.Name} className="group relative inline-flex">
                                         <div className="px-2 py-1 bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-700 rounded text-xs text-blue-700 dark:text-blue-300 font-mono flex items-center gap-2">
                                             {vol.Name}

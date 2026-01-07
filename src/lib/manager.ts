@@ -893,6 +893,7 @@ export interface VolumeInfo {
   Scope: string;
   Node?: string; // Tag for the node
   UsedBy: { id: string; name: string }[];
+  Anonymous?: boolean;
 }
 
 export async function listVolumes(connection?: PodmanConnection): Promise<VolumeInfo[]> {
@@ -942,6 +943,13 @@ export async function listVolumes(connection?: PodmanConnection): Promise<Volume
         // Add Node Name to volume info if connection is present
         if (connection) {
             v.Node = connection.Name;
+        }
+
+        // Detect anonymous volumes (64 char hex string)
+        if (/^[0-9a-f]{64}$/.test(v.Name)) {
+            v.Anonymous = true;
+        } else {
+            v.Anonymous = false;
         }
     });
 
