@@ -117,7 +117,8 @@ export class SSHExecutor implements Executor {
       cmd += ` -p ${port}`;
     }
     
-    this.sshCommand = `${cmd} ${user}@${host}`;
+    const destination = user ? `${user}@${host}` : host;
+    this.sshCommand = `${cmd} ${destination}`;
   }
 
   async exec(command: string) {
