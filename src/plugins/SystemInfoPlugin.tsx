@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getSystemInfo, getDiskUsage, getSystemUpdates, SystemInfo, DiskInfo } from '@/app/actions/system';
 import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
@@ -16,6 +16,7 @@ export default function SystemInfoPlugin() {
   const [copied, setCopied] = useState(false);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [selectedNode, setSelectedNode] = useState<string>('Local');
+  const fetchingNodeRef = useRef<string | null>(null);
   const { addToast } = useToast();
 
   const handleCopyCommand = () => {
@@ -26,6 +27,9 @@ export default function SystemInfoPlugin() {
   };
 
   const fetchData = async () => {
+    if (fetchingNodeRef.current === selectedNode) return;
+    fetchingNodeRef.current = selectedNode;
+    
     setLoading(true);
     try {
       const [sys, disk, up] = await Promise.all([
@@ -40,6 +44,9 @@ export default function SystemInfoPlugin() {
       console.error('Failed to fetch system info', error);
       setSysInfo(null);
     } finally {
+      if (fetchingNodeRef.current === selectedNode) {
+        fetchingNodeRef.current = null;
+      }
       setLoading(false);
     }
   };

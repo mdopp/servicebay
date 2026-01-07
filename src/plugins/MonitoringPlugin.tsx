@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Activity, Plus, RefreshCw, CheckCircle, XCircle, AlertTriangle, Play, Edit, Trash2, X, History, Search } from 'lucide-react';
 import { useToast, ToastType } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
@@ -48,6 +48,7 @@ export default function MonitoringPlugin() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'fail' | 'unknown'>('all');
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
+  const isFetchingRef = useRef(false);
   const { addToast, updateToast } = useToast();
 
   // Form state
@@ -61,6 +62,8 @@ export default function MonitoringPlugin() {
   });
 
   const fetchData = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     setLoading(true);
     try {
       const [checksRes, nodeList] = await Promise.all([
@@ -75,6 +78,7 @@ export default function MonitoringPlugin() {
       addToast('error', 'Failed to fetch monitoring data');
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   }, [addToast]);
 

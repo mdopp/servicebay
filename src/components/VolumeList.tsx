@@ -17,26 +17,41 @@ interface Volume {
 export default function VolumeList() {
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newVolName, setNewVolName] = useState('');
   const [newVolPath, setNewVolPath] = useState('');
   const [creating, setCreating] = useState(false);
   
-  const { addToast } = useToast();
+  const { addToast, updateToast } = useToast();
   const searchParams = useSearchParams();
   const node = searchParams?.get('node');
 
+   
   const fetchVolumes = async () => {
-    setLoading(true);
+    if (volumes.length === 0) setLoading(true);
+    setRefreshing(true);
+    
+    // Start toast if not initial load
+    let toastId: string | null = null;
+    if (volumes.length > 0) {
+       toastId = addToast('loading', 'Refreshing Volumes', 'Fetching latest data...', 0);
+    }
+
     try {
       const res = await fetch(`/api/volumes${node ? `?node=${node}` : ''}`);
       if (!res.ok) throw new Error('Failed to fetch volumes');
       const data = await res.json();
       setVolumes(data);
-    } catch (_e) {
-      addToast('error', 'Failed to load volumes');
+      
+      if (toastId) updateToast(toastId, 'success', 'Volumes Updated', 'Volume list refreshed');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to load volumes';
+      if (toastId) updateToast(toastId, 'error', 'Refresh Failed', msg);
+      else addToast('error', msg);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -117,8 +132,13 @@ export default function VolumeList() {
                 <Plus size={20} />
                 <span>Create Volume</span>
             </button>
-            <button onClick={fetchVolumes} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md text-gray-600 dark:text-gray-300">
-                <RefreshCw size={20} />
+            <button 
+                onClick={fetchVolumes} 
+                disabled={refreshing}
+                className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md text-gray-600 dark:text-gray-300"
+                title="Refresh"
+            >
+                <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
             </button>
         </div>
       </div>

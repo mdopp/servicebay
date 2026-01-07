@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, FileText, ArrowRight, Server } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -41,6 +41,12 @@ interface Service {
   verifiedDomains?: string[];
   hostNetwork?: boolean;
   nodeName?: string;
+  // Gateway/Router specific
+  uptime?: number;
+  externalIP?: string;
+  internalIP?: string;
+  dnsServers?: string[];
+  load?: string;
 }
 
 interface MigrationPlan {
@@ -74,6 +80,8 @@ export default function ServicesPlugin() {
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [hasDiscovered, setHasDiscovered] = useState(false);
   const [migrating, setMigrating] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const isFetchingRef = useRef(false);
   const { addToast, updateToast } = useToast();
 
   // Action Progress Modal
@@ -89,22 +97,30 @@ export default function ServicesPlugin() {
   
 
 
+   
   const fetchData = async () => {
-    setLoading(true);
+    // Prevent double-fetch
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    // Only set loading on first load to allow background updates
+    if (services.length === 0) setLoading(true);
+    setRefreshing(true);
+    
+    // Start toast outside try to ensure availability for error handler
+    const toastId = addToast('loading', 'Refreshing Services', 'Initializing...', 0);
+
     try {
       const nodeList = await getNodes();
       setNodes(nodeList);
-
-      // Add Local Node explicitly if not in list (it might be empty if no remote nodes are added yet)
-      // But getNodes() returns all connections.
-      // Wait, getNodes() returns Podman connections. "Local" is not a connection if we are in container.
-      // We need to fetch "Local" services separately or ensure "Local" is in the targets list if we want to support it.
-      // However, the requirement is "Remote First".
-      // But the API /api/services without ?node= defaults to Local.
-      // And we want to show Gateway/Nginx which are returned by Local API.
       
       const targets = ['Local', ...nodeList.map(n => n.Name)];
-      const results = await Promise.all(targets.map(async (node) => {
+      const pending = new Set(targets);
+      
+      // Notify start
+      updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
+
+      const fetchNode = async (node: string) => {
         try {
             const query = node === 'Local' ? '' : `?node=${node}`;
             const servicesRes = await fetch(`/api/services${query}`);
@@ -113,8 +129,17 @@ export default function ServicesPlugin() {
         } catch (e) {
             console.error(`Failed to fetch services for node ${node}`, e);
             return [];
+        } finally {
+            pending.delete(node);
+            if (pending.size > 0 && isFetchingRef.current) {
+                updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
+            }
         }
-      }));
+      };
+
+      const results = await Promise.all(targets.map(fetchNode));
+      
+      updateToast(toastId, 'success', 'Services Updated', 'All nodes refreshed');
 
       const allServices = results.flatMap(r => r);
       
@@ -127,9 +152,11 @@ export default function ServicesPlugin() {
       setServices(filteredServices);
     } catch (error) {
       console.error('Failed to fetch services', error);
-      addToast('error', 'Failed to fetch services');
+      updateToast(toastId, 'error', 'Failed to fetch services', error instanceof Error ? error.message : undefined);
     } finally {
       setLoading(false);
+      setRefreshing(false);
+      isFetchingRef.current = false;
     }
   };
 
@@ -496,7 +523,7 @@ export default function ServicesPlugin() {
         actions={
             <>
                 <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
-                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                    <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
                 </button>
                 <button 
                     onClick={() => router.push('/registry')}
@@ -528,134 +555,215 @@ export default function ServicesPlugin() {
                 {services.length > 0 ? 'No services match your search.' : 'No services found. Create one to get started.'}
             </div>
         ) : (
-            <div className="grid gap-4">
-                {filteredServices.map((service) => (
-                <div key={`${service.nodeName || 'local'}-${service.name}`} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200">
-                    <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className={`w-3 h-3 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
-                            <div>
-                                <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                                    {service.name}
-                                    {service.nodeName && service.nodeName !== 'Local' && (
-                                        <span className="text-xs font-normal px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 rounded text-blue-600 dark:text-blue-400 flex items-center gap-1">
-                                            <Server size={10} />
-                                            {service.nodeName}
-                                        </span>
+            <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6 auto-rows-fr">
+                {filteredServices.map((service) => {
+                    // Pre-calculate deduped ports similar to Network Plugin
+                    const dedupedPorts = (() => {
+                        const uniquePortsMap = new Map<string, any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+                        service.ports.forEach(p => {
+                            const key = `${p.host || '_'}:${p.container}`;
+                            if (!uniquePortsMap.has(key)) {
+                                uniquePortsMap.set(key, p);
+                            }
+                        });
+                        return Array.from(uniquePortsMap.values());
+                    })();
+
+                    return (
+                        <div key={`${service.nodeName || 'local'}-${service.name}`} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden flex flex-col h-full min-w-0">
+                            {/* Header Row */}
+                            <div className="flex items-start gap-4 justify-between mb-4">
+                                <div className="flex items-start gap-3 flex-1 min-w-0">
+                                    {/* Status Dot */}
+                                    <div className={`mt-1.5 w-3 h-3 shrink-0 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
+                                    
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                                            <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate" title={service.name}>
+                                                {service.name}
+                                            </h3>
+                                            
+                                            {/* Badges */}
+                                            {service.nodeName && service.nodeName !== 'Local' && (
+                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 rounded">
+                                                    {service.nodeName}
+                                                </span>
+                                            )}
+                                            {service.type === 'link' && (
+                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800 rounded">
+                                                    External Link
+                                                </span>
+                                            )}
+                                            {service.type === 'gateway' && (
+                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 rounded">
+                                                    Gateway
+                                                </span>
+                                            )}
+                                            {service.labels && service.labels['servicebay.role'] === 'reverse-proxy' && (
+                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 rounded">
+                                                    Reverse Proxy
+                                                </span>
+                                            )}
+                                            
+                                            {/* IP Badge */}
+                                            {service.externalIP && (
+                                                 <span className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-1.5 py-0.5 rounded">
+                                                    IP: {service.externalIP}
+                                                 </span>
+                                            )}
+                                             {service.type === 'link' && service.url && (
+                                                 <span className="text-[10px] font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 truncate max-w-[200px]">
+                                                    {service.url}
+                                                 </span>
+                                            )}
+                                        </div>
+                                        
+                                        {/* Description */}
+                                        {service.description && (
+                                            <div className="text-sm text-gray-500 dark:text-gray-400 italic line-clamp-1" title={service.description}>
+                                                {service.description}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                
+                                {/* Actions */}
+                                <div className="flex items-center gap-1 shrink-0 ml-auto bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
+                                    {service.type === 'gateway' ? (
+                                        <Link href="/registry?selected=gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Gateway">
+                                            <Edit size={16} />
+                                        </Link>
+                                    ) : service.type === 'link' ? (
+                                        <>
+                                            <button onClick={() => handleEditLink(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Link">
+                                                <Edit size={16} />
+                                            </button>
+                                            <button onClick={() => confirmDelete(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors" title="Delete">
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Link href={`/monitor/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors" title="Monitor">
+                                                <Activity size={16} />
+                                            </Link>
+                                            <Link href={`/edit/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit">
+                                                <Edit size={16} />
+                                            </Link>
+                                            <button onClick={() => openActions(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/30 rounded transition-colors" title="Actions">
+                                                <MoreVertical size={16} />
+                                            </button>
+                                        </>
                                     )}
-                                    {service.type === 'link' && <span className="text-xs font-normal px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-500">Link</span>}
-                                    {service.type === 'gateway' && <span className="text-xs font-normal px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 rounded text-amber-600 dark:text-amber-400">Gateway</span>}
-                                    {service.labels && service.labels['servicebay.role'] === 'reverse-proxy' && <span className="text-xs font-normal px-2 py-0.5 bg-green-100 dark:bg-green-900/30 rounded text-green-600 dark:text-green-400">Reverse Proxy</span>}
-                                </h3>
-                                <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                                    {service.type === 'link' ? (
-                                        <a href={service.url} target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-blue-600 transition-colors">
+                                </div>
+                            </div>
+                            
+                            {/* Compact Details Grid */}
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-4 bg-gray-50/50 dark:bg-gray-800/20 rounded-md p-3 border border-gray-100 dark:border-gray-800/50 flex-1">
+                                {service.type === 'gateway' ? (
+                                    <>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Ext IP</span>
+                                            <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.externalIP || 'N/A'}</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Int IP</span>
+                                            <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.internalIP || 'N/A'}</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Uptime</span>
+                                            <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.uptime ? `${Math.floor(service.uptime / 3600)}h` : 'N/A'}</span>
+                                        </div>
+                                        {service.dnsServers && (
+                                            <div className="flex flex-col col-span-2">
+                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">DNS Servers</span>
+                                                <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.dnsServers.join(', ')}</span>
+                                            </div>
+                                        )}
+                                    </>
+                                ) : service.type === 'link' ? (
+                                    <div className="col-span-full">
+                                        <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold block">Target URL</span>
+                                         <a href={service.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
                                             {service.url}
                                         </a>
-                                    ) : service.type === 'gateway' ? (
-                                        <div className="flex flex-col gap-1">
-                                            <span>{service.description}</span>
-                                            {service.verifiedDomains && service.verifiedDomains.length > 0 && (
-                                                <div className="flex flex-col gap-1 mt-1">
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">State</span>
+                                            <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{service.active ? 'Active' : 'Inactive'}</span>
+                                        </div>
+                                        {service.verifiedDomains && service.verifiedDomains.length > 0 && (
+                                            <div className="flex flex-col col-span-2">
+                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Domains</span>
+                                                <div className="flex flex-wrap gap-1 mt-0.5">
                                                     {service.verifiedDomains.map(d => (
-                                                        <a key={d} href={d.startsWith('http') ? d : `https://${d}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-2 py-1 rounded hover:underline border border-green-100 dark:border-green-800/30 w-fit">
-                                                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                                                        <a 
+                                                            key={d} 
+                                                            href={d.startsWith('http') ? d : `https://${d}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded hover:underline"
+                                                        >
                                                             {d}
                                                         </a>
                                                     ))}
                                                 </div>
-                                            )}
+                                            </div>
+                                        )}
+                                        {service.load && (
+                                            <div className="flex flex-col">
+                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Load</span>
+                                                <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.load}</span>
+                                            </div>
+                                        )}
+                                        {service.hostNetwork && (
+                                            <div className="flex flex-col">
+                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Network</span>
+                                                <span className="text-sm font-medium text-purple-600 dark:text-purple-400">Host Mode</span>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Footer: Tags Row */}
+                            <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100 dark:border-gray-800/50 mt-auto">
+                                {/* Ports */}
+                                {dedupedPorts.length > 0 && (
+                                    <div className="flex gap-2 items-center text-sm">
+                                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Ports:</span>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {dedupedPorts.map((p, i) => (
+                                                <a 
+                                                    key={i} 
+                                                    href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${p.host}`}
+                                                    target="_blank" 
+                                                    rel="noopener noreferrer"
+                                                    className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-xs font-mono border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                                                    title={p.container ? `Maps to container port ${p.container}` : 'Host Port'}
+                                                >
+                                                    :{p.host}
+                                                </a>
+                                            ))}
                                         </div>
-                                    ) : (
-                                        service.status
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div className="flex items-center gap-2">
-                            {service.type === 'gateway' ? (
-                                <Link href="/registry?selected=gateway" className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit Gateway">
-                                    <Edit size={18} />
-                                </Link>
-                            ) : service.type === 'link' ? (
-                                <>
-                                    <button onClick={() => handleEditLink(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit Link">
-                                        <Edit size={18} />
-                                    </button>
-                                    <button onClick={() => confirmDelete(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" title="Delete">
-                                        <Trash2 size={18} />
-                                    </button>
-                                </>
-                            ) : (
-                                <>
-                                    <Link href={`/monitor/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="Monitor">
-                                        <Activity size={18} />
-                                    </Link>
-                                    <Link href={`/edit/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors" title="Edit">
-                                        <Edit size={18} />
-                                    </Link>
-                                    <button onClick={() => openActions(service)} className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors" title="Actions">
-                                        <MoreVertical size={18} />
-                                    </button>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                    
-                    {/* Details */}
-                    <div className="mt-4 flex flex-wrap gap-4 text-sm text-gray-600 dark:text-gray-400">
-                        {service.description && (
-                            <div className="w-full text-gray-500 italic">
-                                {service.description}
-                            </div>
-                        )}
-                        
-                        {service.type !== 'link' && (
-                            <>
-                                {service.hostNetwork && (
-                                    <div className="flex-1 min-w-[250px]">
-                                        <span className="font-semibold block mb-1">Network:</span>
-                                        <span className="bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 px-2 py-1 rounded text-xs font-medium">
-                                            Host Network
+                                    </div>
+                                )}
+
+                                {/* Volumes (Collapsed/Minimal) */}
+                                {service.volumes && service.volumes.length > 0 && (
+                                    <div className="flex gap-2 items-center text-sm ml-auto">
+                                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Volumes:</span>
+                                        <span className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700" title={service.volumes.map(v => `${v.host} -> ${v.container}`).join('\n')}>
+                                            {service.volumes.length} mapped
                                         </span>
                                     </div>
                                 )}
-                                {service.ports.length > 0 && (
-                                    <div className="flex-1 min-w-[250px]">
-                                        <span className="font-semibold block mb-1">Ports:</span>
-                                        <div className="flex flex-wrap gap-1">
-                                            {service.ports.map((p, i) => (
-                                                <span key={i} className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono">
-                                                    {p.host ? (
-                                                        <a href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${p.host}`} target="_blank" rel="noopener noreferrer" className="hover:underline text-blue-600 dark:text-blue-400">
-                                                            {p.host}:{p.container}
-                                                        </a>
-                                                    ) : (
-                                                        p.container
-                                                    )}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                {service.volumes.length > 0 && (
-                                    <div className="flex-1 min-w-[250px]">
-                                        <span className="font-semibold block mb-1">Volumes:</span>
-                                        <div className="flex flex-col gap-1">
-                                            {service.volumes.map((v, i) => (
-                                                <span key={i} className="truncate text-xs font-mono" title={`${v.host} -> ${v.container}`}>
-                                                    {v.host} → {v.container}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                            </>
-                        )}
-                    </div>
-                </div>
-                ))}
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
         )}
 

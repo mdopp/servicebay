@@ -12,6 +12,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { spawn } from 'child_process';
 import { Executor } from '../executor';
+import watcher from '../watcher';
 
 interface NginxCacheEntry {
     hash: string;
@@ -133,15 +134,25 @@ export class NetworkService {
     const allVerifiedDomains = new Set<string>();
 
     for (const target of targets) {
+        // Report progress via SSE
+        watcher.emit('change', { 
+            type: 'network-scan-progress', 
+            message: `Scanning node: ${target.name}`,
+            node: target.name 
+        });
+
         try {
             console.log(`[NetworkService] Fetching graph for node: ${target.name}`);
             const nodeGraph = await this.getNodeGraph(target.name, target.connection, config, fbStatus);
             
             // Collect verified domains from Nginx nodes
             nodeGraph.nodes.forEach(n => {
-                if (n.type === 'proxy' && n.metadata?.verifiedDomains) {
-                     
-                    (n.metadata.verifiedDomains as string[]).forEach(d => allVerifiedDomains.add(d));
+                if (n.type === 'proxy') {
+                     // Prefer full list (allVerifiedDomains) if available, otherwise filtered list
+                     const domains = (n.metadata?.allVerifiedDomains || n.metadata?.verifiedDomains) as string[] | undefined;
+                     if (domains) {
+                        domains.forEach(d => allVerifiedDomains.add(d));
+                     }
                 }
             });
 
@@ -480,6 +491,8 @@ export class NetworkService {
     const executor = getExecutor(connection);
     
     // Parallelize data gathering
+    watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Gathering container info...`, node: nodeName });
+    
     const [nodeIPsResult, enrichedResult, services] = await Promise.all([
         // 1. Hostname IPs
         (async () => {
@@ -567,7 +580,9 @@ export class NetworkService {
     });
     
     // Find the Reverse Proxy Service
-    const proxyService = services.find(s => 
+    watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Analyzing services...`, node: nodeName });
+    
+    const proxyService = services.find(s =>  
         s.labels['servicebay.role'] === 'reverse-proxy' || 
         s.name === 'nginx-web' || 
         s.name === 'nginx'
@@ -575,6 +590,8 @@ export class NetworkService {
     const proxyServiceName = proxyService?.name || 'nginx-web';
 
     // Nginx Config (Only relevant if Nginx is running on this node)
+    watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Checking Nginx config...`, node: nodeName });
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const nginxContainer = containers.find((c: any) => {
         // 1. Check for explicit role label (Best)
@@ -667,6 +684,8 @@ export class NetworkService {
             // console.log(`[NetworkService] Parsed Nginx config for ${nodeName}: ${nginxConfig.servers.length} servers found`);
             // nginxConfig.servers.forEach(s => console.log(`  - Server: ${s.server_name.join(', ')} (Listen: ${s.listen.join(', ')})`));
 
+            watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Verifying domains Nginx...`, node: nodeName });
+
             const domainStatuses = await checkDomains(nginxConfig, fbStatus, nodeIPs);
             verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
             // console.log(`[NetworkService] Verified domains for ${nodeName}: ${verifiedDomains.join(', ')}`);
@@ -719,6 +738,7 @@ export class NetworkService {
     }
 
     // 2. Managed Services
+    watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Processing services & ports...`, node: nodeName });
     for (const service of services) {
         const isProxy = service === proxyService;
 
@@ -1085,6 +1105,31 @@ export class NetworkService {
                 node.metadata.verifiedDomains = linkedUrls;
             }
         }
+    }
+
+    // 4.6 Filter Nginx Proxy Node Verified Domains
+    // We only want to show domains that are naturally handled by Nginx itself (e.g. static sites)
+    // and NOT domains that are proxied to other containers/services, to avoid duplication.
+    const nginxNode = nodes.find(n => n.id === nginxId);
+    if (nginxNode && nginxNode.metadata && nginxNode.metadata.verifiedDomains) {
+        // Store full list of domains for Router/Gateway
+        nginxNode.metadata.allVerifiedDomains = [...(nginxNode.metadata.verifiedDomains as string[])];
+
+        const domainsMappedToOthers = new Set<string>();
+        for (const [targetId, urls] of containerUrlMapping.entries()) {
+            if (targetId === nginxId) continue; // Don't exclude domains explicitly mapped to Nginx
+            for (const url of urls) {
+                try {
+                    const u = new URL(url);
+                    domainsMappedToOthers.add(u.hostname);
+                } catch (e) {
+                    // Ignore invalid URLs
+                }
+            }
+        }
+        
+        nginxNode.metadata.verifiedDomains = (nginxNode.metadata.verifiedDomains as string[])
+            .filter(d => !domainsMappedToOthers.has(d));
     }
 
     // 5. Containers

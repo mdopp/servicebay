@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { fetchTemplates, syncAllRegistries } from '@/app/actions';
 import { Template } from '@/lib/registry';
 import RegistryBrowser from '@/components/RegistryBrowser';
@@ -11,14 +11,18 @@ export default function RegistryPlugin() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const isFetchingRef = useRef(false);
 
   const loadData = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     setLoading(true);
     try {
       const data = await fetchTemplates();
       setTemplates(data);
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   };
 

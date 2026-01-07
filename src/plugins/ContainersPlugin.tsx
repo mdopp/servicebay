@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { RefreshCw, Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft, Search, Server } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -36,18 +36,35 @@ export default function ContainersPlugin() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const isFetchingRef = useRef(false);
   const { addToast, updateToast } = useToast();
 
   const fetchData = async () => {
-    setLoading(true);
+    // Prevent double-fetch
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    // Only set loading for initial fetch or if we have no data
+    if (containers.length === 0) setLoading(true);
+    setRefreshing(true);
+    
+    // Start toast before try block to have the ID available for catch
+    const toastId = addToast('loading', 'Refreshing Containers', 'Initializing...', 0);
+    
     try {
       const nodeList = await getNodes();
       setNodes(nodeList);
 
-      const targets = [...nodeList.map(n => n.Name)];
-      const results = await Promise.all(targets.map(async (node) => {
+      const targets = ['Local', ...nodeList.map(n => n.Name)];
+      const pending = new Set(targets);
+      
+      // Update with initial pending list
+      updateToast(toastId, 'loading', 'Refreshing Containers', `Pending: ${Array.from(pending).join(', ')}`);
+
+      const fetchNode = async (node: string) => {
         try {
-            const query = `?node=${node}`;
+            const query = node === 'Local' ? '' : `?node=${node}`;
             const res = await fetch(`/api/containers${query}`);
             if (!res.ok) return [];
             const data = await res.json();
@@ -55,16 +72,27 @@ export default function ContainersPlugin() {
         } catch (e) {
             console.error(`Failed to fetch containers for node ${node}`, e);
             return [];
+        } finally {
+            pending.delete(node);
+            if (pending.size > 0 && isFetchingRef.current) {
+                updateToast(toastId, 'loading', 'Refreshing Containers', `Pending: ${Array.from(pending).join(', ')}`);
+            }
         }
-      }));
+      };
+
+      const results = await Promise.all(targets.map(fetchNode));
 
       const allContainers = results.flat();
       setContainers(allContainers);
+      
+      updateToast(toastId, 'success', 'Containers Updated', 'All nodes refreshed');
     } catch (error) {
       console.error('Failed to fetch containers', error);
-      addToast('error', 'Failed to fetch containers');
+      updateToast(toastId, 'error', 'Failed to fetch containers', error instanceof Error ? error.message : undefined);
     } finally {
       setLoading(false);
+      setRefreshing(false);
+      isFetchingRef.current = false;
     }
   };
 
@@ -207,8 +235,12 @@ export default function ContainersPlugin() {
         helpId="containers"
         actions={
             <>
-                <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors shrink-0" title="Refresh">
-                    <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                <button 
+                  onClick={fetchData} 
+                  disabled={refreshing}
+                  className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors shrink-0" title="Refresh"
+                >
+                    <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
                 </button>
             </>
         }

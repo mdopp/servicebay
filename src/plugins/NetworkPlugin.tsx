@@ -175,12 +175,27 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
         };
     });
 
-    const uniqueIps = Array.from(new Set(parsedPorts.map((p: { ip: string | null }) => p.ip).filter(Boolean))) as string[];
+    // Deduplicate ports based on IP and Host Port
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const uniquePortsMap = new Map<string, any>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    parsedPorts.forEach((p: any) => {
+        const key = `${p.ip || '_'}:${p.host}`;
+        // Keep the first one, or maybe prefer one with container info?
+        // Usually first is fine.
+        if (!uniquePortsMap.has(key)) {
+            uniquePortsMap.set(key, p);
+        }
+    });
+    
+    const dedupedPorts = Array.from(uniquePortsMap.values());
+
+    const uniqueIps = Array.from(new Set(dedupedPorts.map((p: { ip: string | null }) => p.ip).filter(Boolean))) as string[];
     // If exactly one unique IP is found across all ports, show it globally. 
     // Otherwise (0 or >1), show IPs on tags individually.
     const globalIp = uniqueIps.length === 1 ? uniqueIps[0] : null;
 
-    return { globalIp, portMap: parsedPorts };
+    return { globalIp, portMap: dedupedPorts };
   };
 
   const { globalIp, portMap } = extractIpInfo();
@@ -316,8 +331,8 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
                     )}
                 </div>
 
-                {/* Show Ports for Groups if available (Hide for Services/Pods as requested) */}
-                {portMap.length > 0 && !['service', 'pod'].includes(effectiveType) && (
+                {/* Show Ports for Groups if available (Hide for Services/Pods/Proxies as requested) */}
+                {portMap.length > 0 && !['service', 'pod', 'proxy'].includes(effectiveType) && (
                     <div className="flex flex-col gap-1 items-end">
                         {globalIp && (
                              <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 mb-0.5 self-end" title="Host IP">
@@ -537,13 +552,16 @@ export default function NetworkPlugin() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const rawGraphData = React.useRef<{ nodes: Node[], edges: Edge[] } | null>(null);
-  const { addToast } = useToast();
+  const activeToastRef = React.useRef<string | null>(null);
+  const isFetchingRef = React.useRef(false);
+  const { addToast, updateToast } = useToast();
 
   // Monitoring Modal State
   const [showMonitoringModal, setShowMonitoringModal] = useState(false);
@@ -771,11 +789,21 @@ export default function NetworkPlugin() {
   }, [setNodes, setEdges, applyFilter]);
 
   const fetchGraph = useCallback(async () => {
-    setLoading(true);
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    // Only set loading true if we have no data yet. Use background loading otherwise.
+    if (!rawGraphData.current) setLoading(true);
+    setRefreshing(true);
+    const toastId = addToast('loading', 'Refreshing Network', 'Fetching latest graph data...', 0);
+    activeToastRef.current = toastId;
+
     try {
       const res = await fetch('/api/network/graph');
       if (!res.ok) throw new Error('Failed to fetch graph');
       const data: NetworkGraph = await res.json();
+      
+      updateToast(toastId, 'success', 'Network Updated', 'Graph data refreshed');
 
       // Transform to React Flow format
       const flowNodes: Node[] = data.nodes.map(n => {
@@ -838,10 +866,14 @@ export default function NetworkPlugin() {
       
     } catch (e) {
       console.error(e);
+      updateToast(toastId, 'error', 'Refresh Failed', e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setLoading(false);
+      setRefreshing(false);
+      activeToastRef.current = null;
+      isFetchingRef.current = false;
     }
-  }, [collapsedGroups, processAndLayout, searchQuery]);
+  }, [collapsedGroups, processAndLayout, searchQuery, addToast, updateToast]);
 
   // Effect to re-layout when collapse state changes (and not fetching)
   useEffect(() => {
@@ -849,6 +881,26 @@ export default function NetworkPlugin() {
           processAndLayout(rawGraphData.current.nodes, rawGraphData.current.edges, collapsedGroups, searchQuery);
       }
   }, [collapsedGroups, processAndLayout, searchQuery, loading]);
+
+  useEffect(() => {
+    // Setup SSE for progress updates
+    const eventSource = new EventSource('/api/stream');
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'network-scan-progress' && activeToastRef.current) {
+           updateToast(activeToastRef.current, 'loading', 'Refreshing Network', data.message);
+        }
+      } catch (e) {
+        console.error('Error parsing SSE message', e);
+      }
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [updateToast]);
 
   useEffect(() => {
     fetchGraph();
@@ -941,10 +993,10 @@ export default function NetworkPlugin() {
         actions={
             <button 
                 onClick={fetchGraph}
-                disabled={loading}
+                disabled={refreshing}
                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
             >
-                <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+                <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
             </button>
         }
       >
