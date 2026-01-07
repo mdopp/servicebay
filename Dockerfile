@@ -71,10 +71,10 @@ COPY --from=builder /app/tsconfig.json ./
 # Copy production node_modules (with built native modules)
 COPY --from=prod-deps /app/node_modules ./node_modules
 
-# Ensure permissions for nextjs user
-RUN chown -R nextjs:nodejs /app
-
-USER nextjs
+# We run as root inside the container to ensure access to mapped volumes (ssh keys, docker socket)
+# When using UserNS=keep-id in Podman (standard for Quadlets), 'root' tracks to the host user.
+# RUN chown -R nextjs:nodejs /app
+# USER nextjs
 
 EXPOSE 3000
 
