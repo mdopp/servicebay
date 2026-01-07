@@ -93,66 +93,173 @@ export default function ServicesPlugin() {
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [isEditingLink, setIsEditingLink] = useState(false);
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
-  const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '', monitor: false });
+  const [linkForm, setLinkForm] = useState<{ name: string; url: string; description: string; monitor: boolean; ip_targets?: string }>({ name: '', url: '', description: '', monitor: false, ip_targets: '' });
   
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const enrichServices = async (currentServices: Service[], graphPromise: Promise<any>) => {
+      const toastId = addToast('loading', 'Analyzing Network', 'Gathering extended service info...', 0);
+      try {
+          const graphData = await graphPromise;
+          
+          if (!graphData || !graphData.nodes) {
+              updateToast(toastId, 'warning', 'Analysis Incomplete', 'No network data returned');
+              return;
+          }
+          
+          const nodeMap = new Map();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          graphData.nodes.forEach((n: any) => {
+               if (n.data?.name) nodeMap.set(n.data.name, n);
+               if (n.label) nodeMap.set(n.label, n);
+               nodeMap.set(n.id, n);
+          });
+          
+          const enriched = currentServices.map(s => ({ ...s }));
+          
+          enriched.forEach(s => {
+              if (s.type === 'gateway' && s.id === 'gateway') {
+                  const gatewayNode = nodeMap.get('router');
+                  if (gatewayNode) {
+                       if (gatewayNode.metadata?.verifiedDomains) {
+                           s.verifiedDomains = gatewayNode.metadata.verifiedDomains;
+                       }
+                       const raw = gatewayNode.rawData || {};
+                       const meta = gatewayNode.metadata || {};
+                       
+                       if (raw.externalIP) s.externalIP = raw.externalIP;
+                       else if (meta.internalIP) s.externalIP = meta.internalIP;
+                       
+                       if (raw.uptime) s.uptime = raw.uptime;
+                       if (raw.dnsServers) s.dnsServers = raw.dnsServers;
+                       if (meta.internalIP) s.internalIP = meta.internalIP; 
 
+                       if (s.externalIP) {
+                           s.description = `Online: ${s.externalIP}`;
+                       }
+                  }
+                  return;
+              }
 
-   
+              let node = nodeMap.get(s.name);
+              if (!node) {
+                  const baseName = s.name.replace(/\.(container|kube|service|pod)$/, '');
+                  node = nodeMap.get(baseName);
+              }
+              
+              if (node) {
+                  // Debug mapping
+                  // if (s.name === 'adguard') console.log('Found adguard node:', node.ports);
+
+                  if (node.metadata?.verifiedDomains) {
+                      s.verifiedDomains = node.metadata.verifiedDomains;
+                  }
+                  
+                  // Update ports from graph analysis (e.g. dynamic host ports)
+                  if (node.ports && node.ports.length > 0) {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      s.ports = node.ports.map((p: any) => {
+                          if (typeof p === 'number') return { host: String(p), container: String(p) };
+                          // Check for both property styles (host/container vs host_port/container_port)
+                          const host = p.host || p.host_port;
+                          const container = p.container || p.container_port || host;
+                          
+                          return { 
+                              host: host ? String(host) : undefined, 
+                              container: String(container || 0)
+                          };
+                      });
+                  }
+
+                  // Sync Status from Graph
+                  if (node.status) {
+                      s.active = node.status === 'up';
+                      s.status = node.status === 'up' ? 'active' : 'inactive';
+                  }
+              }
+          });
+          
+          setServices(enriched);
+          updateToast(toastId, 'success', 'Network Analyzed', 'Service details updated');
+      } catch (e) {
+          console.warn('Graph enrichment failed', e);
+          updateToast(toastId, 'error', 'Analysis Error', 'Failed to process network data');
+      }
+  };
+
   const fetchData = async () => {
     // Prevent double-fetch
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
 
+    const initialLoad = services.length === 0;
+
     // Only set loading on first load to allow background updates
-    if (services.length === 0) setLoading(true);
+    if (initialLoad) setLoading(true);
     setRefreshing(true);
     
+    // Start graph fetch in parallel with service fetch
+    const graphPromise = fetch('/api/network/graph')
+        .then(res => res.ok ? res.json() : null)
+        .catch(e => {
+            console.warn('Background graph fetch failed', e);
+            return null;
+        });
+
     // Start toast outside try to ensure availability for error handler
-    const toastId = addToast('loading', 'Refreshing Services', 'Initializing...', 0);
+    // Only show "Refreshing Services" on initial load. Background updates use "Analyzing Network".
+    const toastId = initialLoad ? addToast('loading', 'Refreshing Services', 'Initializing...', 0) : '';
 
     try {
-      const nodeList = await getNodes();
-      setNodes(nodeList);
-      
-      const targets = ['Local', ...nodeList.map(n => n.Name)];
-      const pending = new Set(targets);
-      
-      // Notify start
-      updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
+      let filteredServices = services;
 
-      const fetchNode = async (node: string) => {
-        try {
-            const query = node === 'Local' ? '' : `?node=${node}`;
-            const servicesRes = await fetch(`/api/services${query}`);
-            const servicesData = servicesRes.ok ? await servicesRes.json() : [];
-            return servicesData.map((s: Service) => ({ ...s, nodeName: node }));
-        } catch (e) {
-            console.error(`Failed to fetch services for node ${node}`, e);
-            return [];
-        } finally {
-            pending.delete(node);
-            if (pending.size > 0 && isFetchingRef.current) {
-                updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
+      // Only fetch full service list on initial load
+      if (initialLoad) {
+          const nodeList = await getNodes();
+          setNodes(nodeList);
+          
+          const targets = ['Local', ...nodeList.map(n => n.Name)];
+          const pending = new Set(targets);
+          
+          // Notify start
+          if (toastId) updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
+
+          const fetchNode = async (node: string) => {
+            try {
+                const query = node === 'Local' ? '' : `?node=${node}`;
+                const servicesRes = await fetch(`/api/services${query}`);
+                const servicesData = servicesRes.ok ? await servicesRes.json() : [];
+                return servicesData.map((s: Service) => ({ ...s, nodeName: node }));
+            } catch (e) {
+                console.error(`Failed to fetch services for node ${node}`, e);
+                return [];
+            } finally {
+                pending.delete(node);
+                if (pending.size > 0 && isFetchingRef.current && toastId) {
+                    updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
+                }
             }
-        }
-      };
+          };
 
-      const results = await Promise.all(targets.map(fetchNode));
+          const results = await Promise.all(targets.map(fetchNode));
+          
+          if (toastId) updateToast(toastId, 'success', 'Services Updated', 'All nodes refreshed');
+
+          const allServices = results.flatMap(r => r);
+          
+          // Filter out "Reverse Proxy (Not Installed)" if a real "Reverse Proxy" exists
+          const hasRealProxy = allServices.some(s => s.name === 'Reverse Proxy' && s.status !== 'not-installed');
+          filteredServices = hasRealProxy 
+            ? allServices.filter(s => !(s.name === 'Reverse Proxy' && s.status === 'not-installed'))
+            : allServices;
+
+          setServices(filteredServices);
+      }
       
-      updateToast(toastId, 'success', 'Services Updated', 'All nodes refreshed');
-
-      const allServices = results.flatMap(r => r);
-      
-      // Filter out "Reverse Proxy (Not Installed)" if a real "Reverse Proxy" exists
-      const hasRealProxy = allServices.some(s => s.name === 'Reverse Proxy' && s.status !== 'not-installed');
-      const filteredServices = hasRealProxy 
-        ? allServices.filter(s => !(s.name === 'Reverse Proxy' && s.status === 'not-installed'))
-        : allServices;
-
-      setServices(filteredServices);
+      // Enrich in background - passing the promise we started earlier
+      enrichServices(filteredServices, graphPromise);
     } catch (error) {
       console.error('Failed to fetch services', error);
-      updateToast(toastId, 'error', 'Failed to fetch services', error instanceof Error ? error.message : undefined);
+      if (toastId) updateToast(toastId, 'error', 'Failed to fetch services', error instanceof Error ? error.message : undefined);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -606,24 +713,14 @@ export default function ServicesPlugin() {
                                             )}
                                             
                                             {/* IP Badge */}
-                                            {service.externalIP && (
+                                            {service.externalIP && service.type !== 'gateway' && (
                                                  <span className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-1.5 py-0.5 rounded">
                                                     IP: {service.externalIP}
                                                  </span>
                                             )}
-                                             {service.type === 'link' && service.url && (
-                                                 <span className="text-[10px] font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 truncate max-w-[200px]">
-                                                    {service.url}
-                                                 </span>
-                                            )}
                                         </div>
                                         
-                                        {/* Description */}
-                                        {service.description && (
-                                            <div className="text-sm text-gray-500 dark:text-gray-400 italic line-clamp-1" title={service.description}>
-                                                {service.description}
-                                            </div>
-                                        )}
+                                        {/* Description removed as requested */}
                                     </div>
                                 </div>
                                 
@@ -690,10 +787,7 @@ export default function ServicesPlugin() {
                                     </div>
                                 ) : (
                                     <>
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">State</span>
-                                            <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{service.active ? 'Active' : 'Inactive'}</span>
-                                        </div>
+                                        {/* State removed as requested */}
                                         {service.verifiedDomains && service.verifiedDomains.length > 0 && (
                                             <div className="flex flex-col col-span-2">
                                                 <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Domains</span>
@@ -718,12 +812,7 @@ export default function ServicesPlugin() {
                                                 <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.load}</span>
                                             </div>
                                         )}
-                                        {service.hostNetwork && (
-                                            <div className="flex flex-col">
-                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Network</span>
-                                                <span className="text-sm font-medium text-purple-600 dark:text-purple-400">Host Mode</span>
-                                            </div>
-                                        )}
+                                        {/* Host Mode indicator removed as requested */}
                                     </>
                                 )}
                             </div>
@@ -756,7 +845,7 @@ export default function ServicesPlugin() {
                                     <div className="flex gap-2 items-center text-sm ml-auto">
                                         <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Volumes:</span>
                                         <span className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700" title={service.volumes.map(v => `${v.host} -> ${v.container}`).join('\n')}>
-                                            {service.volumes.length} mapped
+                                            {service.volumes.length}
                                         </span>
                                     </div>
                                 )}

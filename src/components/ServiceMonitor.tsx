@@ -198,7 +198,17 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
                                     {networkData.ports && networkData.ports.length > 0 && (
                                         <div className="flex justify-between border-b border-gray-800 pb-2">
                                             <span className="text-gray-500">Ports</span>
-                                            <span className="font-mono text-gray-300">{networkData.ports.join(', ')}</span>
+                                            <span className="font-mono text-gray-300">
+                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                                {networkData.ports.map((p: any) => {
+                                                    if (typeof p === 'object') {
+                                                        const h = p.host || p.host_port;
+                                                        const c = p.container || p.container_port;
+                                                        return h && c && h !== c ? `${h}:${c}` : (h || c);
+                                                    }
+                                                    return p;
+                                                }).join(', ')}
+                                            </span>
                                         </div>
                                     )}
                                 </div>

@@ -1,7 +1,7 @@
 import { NetworkGraph, NetworkNode, NetworkEdge } from './types';
 import { FritzBoxClient } from '../fritzbox/client';
 import { NginxParser } from '../nginx/parser';
-import { getPodmanPs, listServices, getAllContainersInspect, getHostPortsForPids, getEnrichedContainers } from '../manager';
+import { getEnrichedContainers, listServices } from '../manager';
 import { listNodes, PodmanConnection } from '../nodes';
 import { getExecutor } from '../executor';
 import { getConfig } from '../config';
@@ -1097,40 +1097,6 @@ export class NetworkService {
         }
     }
 
-    // 4.5 Update Virtual Nodes with Verified Domains
-    for (const node of nodes) {
-        if (node.type === 'device' && node.rawData?.isVirtual) {
-            const linkedUrls = Array.from(containerUrlMapping.get(node.id) || []);
-            if (linkedUrls.length > 0 && node.metadata) {
-                node.metadata.verifiedDomains = linkedUrls;
-            }
-        }
-    }
-
-    // 4.6 Filter Nginx Proxy Node Verified Domains
-    // We only want to show domains that are naturally handled by Nginx itself (e.g. static sites)
-    // and NOT domains that are proxied to other containers/services, to avoid duplication.
-    const nginxNode = nodes.find(n => n.id === nginxId);
-    if (nginxNode && nginxNode.metadata && nginxNode.metadata.verifiedDomains) {
-        // Store full list of domains for Router/Gateway
-        nginxNode.metadata.allVerifiedDomains = [...(nginxNode.metadata.verifiedDomains as string[])];
-
-        const domainsMappedToOthers = new Set<string>();
-        for (const [targetId, urls] of containerUrlMapping.entries()) {
-            if (targetId === nginxId) continue; // Don't exclude domains explicitly mapped to Nginx
-            for (const url of urls) {
-                try {
-                    const u = new URL(url);
-                    domainsMappedToOthers.add(u.hostname);
-                } catch (e) {
-                    // Ignore invalid URLs
-                }
-            }
-        }
-        
-        nginxNode.metadata.verifiedDomains = (nginxNode.metadata.verifiedDomains as string[])
-            .filter(d => !domainsMappedToOthers.has(d));
-    }
 
     // 5. Containers
     for (const container of containers) {
@@ -1296,17 +1262,6 @@ export class NetworkService {
     // Scenario 2: Pod Group [ Pod -> Container ]
     // Scenario 3: Container (Standalone)
 
-    const createDottedEdge = (source: string, target: string): NetworkEdge => ({
-        id: `dotted-${source}-${target}`,
-        source,
-        target,
-        protocol: 'tcp',
-        port: 0,
-        state: 'active',
-        style: { strokeDasharray: '5,5', opacity: 0.5 },
-        isManual: false
-    });
-
     // We iterate a copy of container nodes to avoid modification issues during loop,
     // though we are modifying 'nodes' array (pushing groups/pods), so basic for-of is safe if filter creates new array.
     const containerNodes = nodes.filter(n => n.type === 'container' && n.node === nodeName);
@@ -1381,6 +1336,82 @@ export class NetworkService {
             node.parentNode = undefined;
             node.extent = undefined;
         }
+    }
+
+
+    // 6.5 Update All Nodes with Verified Domains (Virtual, Container, and Service Groups)
+    // Run this loop multiple times (or better, process from leaves up) to ensure propagation
+    // For now, simple child lookup is enough as we only have depth 1 (Service -> Container) or depth 2 (Service -> Pod -> Container)
+    
+    // First, map container IDs to verified domains (already done via containerUrlMapping)
+    
+    // Second, propagate to Service Groups (which are parents of containers)
+    // We need to iterate over all nodes because Service Groups might be created before or after containers in the array
+    
+    for (const node of nodes) {
+        if (!node.metadata) node.metadata = {};
+        
+        // 1. Direct mapping (Virtual or Container Nodes)
+        const directUrls = containerUrlMapping.get(node.id);
+        const linkedUrls = new Set(directUrls || []);
+        
+        // 2. Child aggregation (Service Nodes containing Containers)
+        // Find children of this node
+        const children = nodes.filter(n => n.parentNode === node.id);
+        
+        children.forEach(child => {
+             // 2a. Direct Child (Container)
+             const childUrls = containerUrlMapping.get(child.id);
+             if (childUrls) childUrls.forEach(u => linkedUrls.add(u));
+             
+             // 2b. Grandchild (Pod -> Container), only if this node is a Service Group parent of a Pod Group
+             // (Though currently structure is flattened: Service Group -> Container, or Pod Group -> Container)
+             // But if a container is in a pod, does it have parentNode=PodGroup?
+             // Logic above: 
+             // if (serviceGroupId) node.parentNode = serviceGroupId;
+             // else if (podName) node.parentNode = podGroupId;
+             
+             // So Service Group -> Container is direct.
+             // Pod Group -> Container is direct.
+             
+             // Note: If a service manages a pod, do we interpret it correctly?
+             // The code sets parentNode = serviceGroupId if service exists. So Pod Group is ignored/not used as parent?
+             // Yes: "Container is visually inside the Service Node."
+             
+             // If child also has metadata.verifiedDomains (e.g. set by container logic above), use that too
+             if (child.metadata?.verifiedDomains) {
+                 (child.metadata.verifiedDomains as string[]).forEach(d => linkedUrls.add(d));
+             }
+        });
+
+        if (linkedUrls.size > 0) {
+            node.metadata.verifiedDomains = Array.from(linkedUrls);
+        }
+    }
+
+    // 6.6 Filter Nginx Proxy Node Verified Domains
+    // We only want to show domains that are naturally handled by Nginx itself (e.g. static sites)
+    // and NOT domains that are proxied to other containers/services, to avoid duplication.
+    const nginxNode = nodes.find(n => n.id === nginxId);
+    if (nginxNode && nginxNode.metadata && nginxNode.metadata.verifiedDomains) {
+        // Store full list of domains for Router/Gateway
+        nginxNode.metadata.allVerifiedDomains = [...(nginxNode.metadata.verifiedDomains as string[])];
+
+        const domainsMappedToOthers = new Set<string>();
+        for (const [targetId, urls] of containerUrlMapping.entries()) {
+            if (targetId === nginxId) continue; // Don't exclude domains explicitly mapped to Nginx
+            for (const url of urls) {
+                try {
+                    const u = new URL(url);
+                    domainsMappedToOthers.add(u.hostname);
+                } catch {
+                    // Ignore invalid URLs
+                }
+            }
+        }
+        
+        nginxNode.metadata.verifiedDomains = (nginxNode.metadata.verifiedDomains as string[])
+            .filter(d => !domainsMappedToOthers.has(d));
     }
 
     // 7. Post-Processing: Merge duplicate edges (same source/target)

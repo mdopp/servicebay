@@ -570,7 +570,7 @@ export default function NetworkPlugin() {
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
-  const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '', monitor: false });
+  const [linkForm, setLinkForm] = useState<{ name: string; url: string; description: string; monitor: boolean; ip_targets?: string }>({ name: '', url: '', description: '', monitor: false, ip_targets: '' });
 
   // Connection Modal State
   const [showConnectionModal, setShowConnectionModal] = useState(false);
@@ -702,17 +702,21 @@ export default function NetworkPlugin() {
     // 1. Prepare Nodes (Aggregation & toggles)
      
     const processedNodes = nodes.map(node => {
-        if (['group', 'service', 'pod', 'proxy'].includes(node.data.type)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (['group', 'service', 'pod', 'proxy'].includes((node.data as any).type)) {
              const isCollapsed = collapsed.has(node.id);
              
              // Aggregate Summary
+              
              const children = nodes.filter(n => n.parentId === node.id);
              let status = 'up';
-             if (children.some(c => c.data.status === 'down')) status = 'down';
-             
-             const verifiedDomains = Array.from(new Set(children.flatMap(c => c.data.metadata?.verifiedDomains || []) as string[]));
              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-             const portMap = children.flatMap(c => (c.data.ports as any[]) || []).map(p => typeof p === 'object' ? p : { host: p, container: p });
+             if (children.some(c => (c.data as any).status === 'down')) status = 'down';
+             
+             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             const verifiedDomains = Array.from(new Set(children.flatMap(c => (c.data as any).metadata?.verifiedDomains || []) as string[]));
+             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             const portMap = children.flatMap(c => (c.data as any).ports || []).map(p => typeof p === 'object' ? p : { host: p, container: p });
              
              return {
                  ...node,
@@ -1401,7 +1405,17 @@ export default function NetworkPlugin() {
                           {selectedNodeData.ports && selectedNodeData.ports.length > 0 && (
                               <div className="flex justify-between">
                                   <span className="text-gray-500">Ports</span>
-                                  <span className="font-mono">{selectedNodeData.ports.join(', ')}</span>
+                                  <span className="font-mono">
+                                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                    {selectedNodeData.ports.map((p: any) => {
+                                        if (typeof p === 'object') {
+                                            const h = p.host || p.host_port;
+                                            const c = p.container || p.container_port;
+                                            return h && c && h !== c ? `${h}:${c}` : (h || c);
+                                        }
+                                        return p;
+                                    }).join(', ')}
+                                  </span>
                               </div>
                           )}
                           {selectedNodeData.rawData?.MacAddress && (

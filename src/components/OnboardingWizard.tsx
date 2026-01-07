@@ -108,7 +108,7 @@ export default function OnboardingWizard() {
   const handleSkip = async () => {
     await skipOnboarding();
     setIsOpen(false);
-    addToast({ title: 'Setup Skipped', message: 'You can configure settings later in the System menu.', type: 'info' });
+    addToast('info', 'Setup Skipped', 'You can configure settings later in the System menu.');
   };
 
   const saveAndNext = async (action: () => Promise<void>) => {
@@ -118,7 +118,7 @@ export default function OnboardingWizard() {
         handleNext(); // Move to next step if save success
     } catch {
         // Toast handled in action usually, or generic error here
-        addToast({ title: 'Error', message: 'Failed to save settings', type: 'error' });
+        addToast('error', 'Error', 'Failed to save settings');
     } finally {
         setLoading(false);
     }
@@ -129,14 +129,14 @@ export default function OnboardingWizard() {
     await skipOnboarding(); // Mark as complete
     setIsOpen(false);
     router.refresh();
-    addToast({ title: 'Setup Complete', message: 'Welcome to ServiceBay!', type: 'success' });
+    addToast('success', 'Setup Complete', 'Welcome to ServiceBay!');
   };
   
   // -- Specific Save Handlers --
 
   const handleSaveGateway = () => saveAndNext(async () => {
      await saveGatewayConfig(gwHost, gwUser, gwPass);
-     addToast({ title: 'Gateway Saved', type: 'success' });
+     addToast('success', 'Gateway Saved');
   });
 
   const handleFinishSSH = () => {
@@ -146,17 +146,17 @@ export default function OnboardingWizard() {
 
   const handleSaveUpdates = () => saveAndNext(async () => {
       await saveAutoUpdateConfig(true);
-      addToast({ title: 'Updates Enabled', type: 'success' });
+      addToast('success', 'Updates Enabled');
   });
 
   const handleSaveRegistries = () => saveAndNext(async () => {
       await saveRegistriesConfig(true);
-      addToast({ title: 'Registries Configured', type: 'success' });
+      addToast('success', 'Registries Configured');
   });
 
   const handleSaveEmail = () => saveAndNext(async () => {
       await saveEmailConfig(emailConfig);
-      addToast({ title: 'Email Configured', type: 'success' });
+      addToast('success', 'Email Configured');
   });
 
   const handleGenerateKey = async () => {
@@ -164,13 +164,13 @@ export default function OnboardingWizard() {
     try {
         const res = await generateLocalKey();
         if (res.success) {
-            addToast({ title: 'Success', message: 'SSH Key generated.', type: 'success' });
+            addToast('success', 'Success', 'SSH Key generated.');
             setStatus(prev => prev ? ({ ...prev, hasSshKey: true }) : null);
         } else {
-             addToast({ title: 'Error', message: res.error || 'Failed to generate key', type: 'error' });
+             addToast('error', 'Error', res.error || 'Failed to generate key');
         }
     } catch {
-        addToast({ title: 'Error', message: 'Failed call', type: 'error' });
+        addToast('error', 'Error', 'Failed call');
     } finally {
         setLoading(false);
     }
@@ -206,7 +206,7 @@ export default function OnboardingWizard() {
                         {/* FEATURE TOGGLES */}
                         <Toggle 
                             checked={selection.gateway} 
-                            onChange={v => setSelection(s => ({...s, gateway: v}))}
+                            onChange={(v: boolean) => setSelection(s => ({...s, gateway: v}))}
                             icon={Network} 
                             color="text-purple-500"
                             title="Internet Gateway" 
@@ -214,7 +214,7 @@ export default function OnboardingWizard() {
                         />
                         <Toggle 
                             checked={selection.ssh} 
-                            onChange={v => setSelection(s => ({...s, ssh: v}))}
+                            onChange={(v: boolean) => setSelection(s => ({...s, ssh: v}))}
                             icon={Key} 
                             color="text-amber-500"
                             title="Remote Access" 
@@ -222,7 +222,7 @@ export default function OnboardingWizard() {
                         />
                         <Toggle 
                             checked={selection.updates} 
-                            onChange={v => setSelection(s => ({...s, updates: v}))}
+                            onChange={(v: boolean) => setSelection(s => ({...s, updates: v}))}
                             icon={RefreshCw} 
                             color="text-green-500"
                             title="Auto Updates" 
@@ -230,7 +230,7 @@ export default function OnboardingWizard() {
                         />
                          <Toggle 
                             checked={selection.registries} 
-                            onChange={v => setSelection(s => ({...s, registries: v}))}
+                            onChange={(v: boolean) => setSelection(s => ({...s, registries: v}))}
                             icon={Box} 
                             color="text-blue-500"
                             title="Templates" 
@@ -238,7 +238,7 @@ export default function OnboardingWizard() {
                         />
                         <Toggle 
                             checked={selection.email} 
-                            onChange={v => setSelection(s => ({...s, email: v}))}
+                            onChange={(v: boolean) => setSelection(s => ({...s, email: v}))}
                             icon={Mail} 
                             color="text-red-500"
                             title="Notifications" 
@@ -315,15 +315,15 @@ export default function OnboardingWizard() {
                     <p className="text-sm text-gray-500">Configure SMTP settings for alerts.</p>
                      <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-3">
-                             <Input label="SMTP Host" value={emailConfig.host} onChange={v => setEmailConfig(c => ({...c, host: v}))} placeholder="smtp.gmail.com" />
-                             <Input label="Port" value={String(emailConfig.port)} onChange={v => setEmailConfig(c => ({...c, port: parseInt(v) || 587}))} placeholder="587" />
+                             <Input label="SMTP Host" value={emailConfig.host} onChange={(v: string) => setEmailConfig(c => ({...c, host: v}))} placeholder="smtp.gmail.com" />
+                             <Input label="Port" value={String(emailConfig.port)} onChange={(v: string) => setEmailConfig(c => ({...c, port: parseInt(v) || 587}))} placeholder="587" />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
-                             <Input label="Username" value={emailConfig.user} onChange={v => setEmailConfig(c => ({...c, user: v}))} placeholder="user@example.com" />
-                             <Input label="Password" type="password" value={emailConfig.pass} onChange={v => setEmailConfig(c => ({...c, pass: v}))} />
+                             <Input label="Username" value={emailConfig.user} onChange={(v: string) => setEmailConfig(c => ({...c, user: v}))} placeholder="user@example.com" />
+                             <Input label="Password" type="password" value={emailConfig.pass} onChange={(v: string) => setEmailConfig(c => ({...c, pass: v}))} />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
-                             <Input label="From Address" value={emailConfig.from} onChange={v => setEmailConfig(c => ({...c, from: v}))} placeholder="servicebay@example.com" />
+                             <Input label="From Address" value={emailConfig.from} onChange={(v: string) => setEmailConfig(c => ({...c, from: v}))} placeholder="servicebay@example.com" />
                              <div className="flex items-end pb-2">
                                 <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
                                     <input type="checkbox" checked={emailConfig.secure} onChange={e => setEmailConfig(c => ({...c, secure: e.target.checked}))} className="rounded border-gray-300" />
@@ -331,7 +331,7 @@ export default function OnboardingWizard() {
                                 </label>
                              </div>
                         </div>
-                        <Input label="Recipients (comma separated)" value={emailConfig.recipients} onChange={v => setEmailConfig(c => ({...c, recipients: v}))} placeholder="admin@example.com" />
+                        <Input label="Recipients (comma separated)" value={emailConfig.recipients} onChange={(v: string) => setEmailConfig(c => ({...c, recipients: v}))} placeholder="admin@example.com" />
                      </div>
                 </div>
             )}
