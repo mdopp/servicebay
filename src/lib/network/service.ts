@@ -124,23 +124,14 @@ export class NetworkService {
     const targets: { name: string, connection?: PodmanConnection }[] = [];
 
     if (targetNode) {
-        if (targetNode === 'Local') {
-             targets.push({ name: 'Local', connection: undefined });
-        } else {
-             const connection = connections.find(c => c.Name === targetNode);
-             if (connection) {
-                 targets.push({ name: connection.Name, connection });
-             }
-        }
+         const connection = connections.find(c => c.Name === targetNode);
+         if (connection) {
+             targets.push({ name: connection.Name, connection });
+         }
     } else {
-        // Global view: Local + All Remotes
-        // Use 'Local' capitalized to match other parts of the system
-        targets.push({ name: 'Local', connection: undefined });
+        // Global view: Only configured nodes
         for (const conn of connections) {
-            // Avoid adding "Local" twice if it happens to be configured
-            if (conn.Name !== 'Local') {
-               targets.push({ name: conn.Name, connection: conn });
-            }
+            targets.push({ name: conn.Name, connection: conn });
         }
     }
     
