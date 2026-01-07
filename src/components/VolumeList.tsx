@@ -38,7 +38,7 @@ export default function VolumeList() {
           const res = await fetch(`/api/volumes`); 
           if (!res.ok) throw new Error('Failed to fetch volumes');
           const data = await res.json();
-          updateToast(toastId, 'success', 'Volumes Updated', 'Data refreshed');
+          updateToast(toastId, 'success', 'Volumes Updated', 'Data refreshed', 500);
           return data;
        } catch (e: unknown) {
           updateToast(toastId, 'error', 'Refresh Failed', e instanceof Error ? e.message : String(e));

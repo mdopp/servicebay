@@ -43,7 +43,7 @@ export default function SystemInfoPlugin() {
         getSystemUpdates(selectedNode)
       ]);
       
-      updateToast(toastId, 'success', 'System Info Updated', `${selectedNode} refreshed`);
+      updateToast(toastId, 'success', 'System Info Updated', `${selectedNode} refreshed`, 500);
       
       return {
           sysInfo: sys,

@@ -42,15 +42,23 @@ export default function ContainersPlugin() {
     try {
       const nodeList = await getNodes();
 
-      const targets = ['Local', ...nodeList.map(n => n.Name)];
+      // Only fetch from configured nodes. 
+      // Implicit 'Local' fetching is disabled to prevent duplicates if the local machine is also added as a node.
+      const targets = nodeList.map(n => n.Name);
       const pending = new Set(targets);
+      
+      if (targets.length === 0) {
+          updateToast(toastId, 'success', 'Containers Updated', 'No nodes configured', 500);
+          return { nodes: nodeList, containers: [] };
+      }
       
       // Update with initial pending list
       updateToast(toastId, 'loading', 'Refreshing Containers', `Pending: ${Array.from(pending).join(', ')}`);
 
       const fetchNode = async (node: string) => {
         try {
-            const query = node === 'Local' ? '' : `?node=${node}`;
+            // Using ?node=Local allows explicit local fetching if a node is named "Local"
+            const query = (node === 'Local') ? '' : `?node=${node}`;
             const res = await fetch(`/api/containers${query}`);
             if (!res.ok) return [];
             const data = await res.json();
@@ -67,24 +75,9 @@ export default function ContainersPlugin() {
       };
 
       const results = await Promise.all(targets.map(fetchNode));
-      const rawContainers = results.flat();
+      const allContainers = results.flat();
       
-      // Deduplicate: If the same container ID appears from multiple sources,
-      // prefer the one from a specific named node (Remote) over 'Local'.
-      // This handles the case where the local machine is also configured as a remote node.
-      const containerMap = new Map<string, Container>();
-      for (const c of rawContainers) {
-          const existing = containerMap.get(c.Id);
-          if (!existing) {
-              containerMap.set(c.Id, c);
-          } else if (existing.nodeName === 'Local' && c.nodeName !== 'Local') {
-              // Replace 'Local' version with named node version
-              containerMap.set(c.Id, c);
-          }
-      }
-      const allContainers = Array.from(containerMap.values());
-      
-      updateToast(toastId, 'success', 'Containers Updated', 'All nodes refreshed');
+      updateToast(toastId, 'success', 'Containers Updated', 'All nodes refreshed', 500);
       return { nodes: nodeList, containers: allContainers };
     } catch (error) {
       console.error('Failed to fetch containers', error);

@@ -47,7 +47,7 @@ export function useNetworkGraph() {
             const res = await fetch('/api/network/graph');
             if (!res.ok) throw new Error('Failed to fetch graph');
             const data = await res.json() as NetworkGraph;
-            updateToast(toastId, 'success', 'Network Updated', 'Graph data refreshed');
+            updateToast(toastId, 'success', 'Network Updated', 'Graph data refreshed', 500);
             return data;
         } catch (e) {
             updateToast(toastId, 'error', 'Refresh Failed', String(e));
@@ -87,7 +87,7 @@ export function useServicesList() {
             const pending = new Set(targets);
             
             if (targets.length === 0) {
-                 updateToast(toastId, 'success', 'Services Updated', 'No nodes configured');
+                 updateToast(toastId, 'success', 'Services Updated', 'No nodes configured', 500);
                  return { services: [], nodes: nodeList };
             }
             
@@ -122,7 +122,7 @@ export function useServicesList() {
                 allServices = allServices.filter(s => !(s.name === 'Reverse Proxy' && s.status === 'not-installed'));
             }
 
-            updateToast(toastId, 'success', 'Services Updated', 'All nodes refreshed');
+            updateToast(toastId, 'success', 'Services Updated', 'All nodes refreshed', 500);
             return { services: allServices, nodes: nodeList };
         } catch (e) {
             updateToast(toastId, 'error', 'Failed to fetch services', String(e));
