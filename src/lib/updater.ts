@@ -1,8 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import semver from 'semver';
 import { Server } from 'socket.io';
 
@@ -24,7 +23,6 @@ function emitProgress(step: string, progress: number, message: string) {
   }
 }
 
-const execAsync = promisify(exec);
 const REPO = 'mdopp/servicebay';
 
 interface Release {
@@ -79,6 +77,29 @@ export async function checkForUpdates() {
   };
 }
 
+function spawnCommand(command: string, args: string[]) {
+  return new Promise<void>((resolve, reject) => {
+    const proc = spawn(command, args);
+    
+    proc.stdout.on('data', (data) => {
+      const msg = data.toString().trim();
+      if (msg) console.log(`[${command}]: ${msg}`);
+    });
+    
+    proc.stderr.on('data', (data) => {
+      const msg = data.toString().trim();
+      if (msg) console.error(`[${command}]: ${msg}`);
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} failed with code ${code}`));
+    });
+
+    proc.on('error', (err) => reject(err));
+  });
+}
+
 export async function performUpdate(version: string) {
   try {
     emitProgress('init', 0, 'Initializing update...');
@@ -87,14 +108,8 @@ export async function performUpdate(version: string) {
     console.log(`Pulling new image for version ${version}...`);
     emitProgress('download', 0, 'Pulling new image...');
     
-    // We use podman auto-update --dry-run first to see if it detects the update?
-    // Or just pull explicitly?
-    // Since we are in a container, we can try to pull the image.
-    // But we don't know the exact image name unless we hardcode it or read it from env.
-    // Assuming ghcr.io/mdopp/servicebay:latest
-    
-    // We don't strictly need to pull manually if we use auto-update, but it gives better feedback.
-    await execAsync('podman pull ghcr.io/mdopp/servicebay:latest');
+    // We use spawn instead of exec to stream output and avoid buffer buffer overflows/hangs
+    await spawnCommand('podman', ['pull', 'ghcr.io/mdopp/servicebay:latest']);
     emitProgress('download', 100, 'Image pulled successfully');
 
     // 2. Restart

@@ -81,13 +81,17 @@ export class NetworkService {
     const paths = ['/etc/nginx'];
     if (includeData) paths.push('/data/nginx');
     
-    const tarCmd = `podman exec ${containerId} tar -czf - ${paths.join(' ')} --exclude /data/logs 2>/dev/null`;
+    // Remove 2>/dev/null to capture stderr
+    const tarCmd = `podman exec ${containerId} tar -czf - ${paths.join(' ')} --exclude /data/logs`;
     
     try {
-        const { stdout: remoteStream, promise: remotePromise } = executor.spawn(tarCmd);
+        const { stdout: remoteStream, stderr: remoteStderr, promise: remotePromise } = executor.spawn(tarCmd);
         
+        let remoteErrOutput = '';
+        remoteStderr.on('data', chunk => remoteErrOutput += chunk.toString());
+
         // Handle remote promise to avoid unhandled rejection
-        remotePromise.catch(e => console.debug(`[NetworkService] Remote tar exited with: ${e}`));
+        remotePromise.catch(e => console.warn(`[NetworkService] Remote tar exited with: ${e}. Stderr: ${remoteErrOutput}`));
 
         // Local tar extract
         const localTar = spawn('tar', ['-xzf', '-', '-C', tmpDir]);
@@ -505,12 +509,14 @@ export class NetworkService {
     const [nodeIPsResult, enrichedResult, services] = await Promise.all([
         // 1. Hostname IPs
         (async () => {
-            try {
+             // Optimize for local node
+             if (nodeName.toLowerCase() === 'local') return this.getLocalIPs();
+             
+             try {
                 const { stdout } = await executor.exec('hostname -I');
                 return stdout.trim().split(' ').filter(ip => ip.length > 0);
             } catch (e) {
                 console.warn(`[NetworkService] Failed to get IPs for ${nodeName}`, e);
-                if (nodeName === 'local') return this.getLocalIPs();
                 return [];
             }
         })(),
