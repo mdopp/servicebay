@@ -142,9 +142,9 @@ export class SSHExecutor implements Executor {
         }
 
         if (hint) {
-            error.message += hint;
+            err.message += hint;
         }
-        throw error;
+        throw err;
     }
   }
 
