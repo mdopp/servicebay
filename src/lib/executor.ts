@@ -124,7 +124,28 @@ export class SSHExecutor implements Executor {
   async exec(command: string) {
     // Escape single quotes in command
     const escapedCommand = command.replace(/'/g, "'\\''");
-    return execAsync(`${this.sshCommand} '${escapedCommand}'`);
+    try {
+        return await execAsync(`${this.sshCommand} '${escapedCommand}'`);
+    } catch (error: unknown) {
+        // Enhance error message with troubleshooting hints
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const err = error as any;
+        const stderr = err.stderr || err.message || '';
+        
+        let hint = '';
+        if (stderr.includes('Permission denied')) {
+            hint = ` (Hint: Check SSH key permissions. The private key must be readable by the container user (chmod 600). Identity File: ${this.connection.Identity})`;
+        } else if (stderr.includes('Could not resolve hostname')) {
+            hint = ` (Hint: The hostname could not be resolved. Check DNS or /etc/hosts.)`;
+        } else if (stderr.includes('Connection refused') || stderr.includes('Connection timed out')) {
+            hint = ` (Hint: Check if the SSH service is running on the target and the port is correct.)`;
+        }
+
+        if (hint) {
+            error.message += hint;
+        }
+        throw error;
+    }
   }
 
   spawn(command: string, options: { pty?: boolean; cols?: number; rows?: number } = {}) {

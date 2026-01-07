@@ -132,6 +132,10 @@ mkdir -p "$SSH_DIR"
 if [ ! -f "$SSH_DIR/id_rsa" ]; then
     log "Generating SSH keys for ServiceBay host access..."
     ssh-keygen -t rsa -b 4096 -f "$SSH_DIR/id_rsa" -N "" -C "servicebay@localhost"
+    # Ensure generated keys are readable by current user (install script user)
+    # The container with UserNS=keep-id will run as the same mapped user
+    chmod 600 "$SSH_DIR/id_rsa"
+    chmod 644 "$SSH_DIR/id_rsa.pub"
 fi
 
 # Add to authorized_keys
@@ -150,13 +154,30 @@ fi
 NODES_FILE="$CONFIG_DIR/nodes.json"
 if [ ! -f "$NODES_FILE" ]; then
     log "Configuring Host node..."
-    # We use 'localhost' because network=host
+    
+    # Try to detect IP
+    DETECTED_IP="localhost"
+    if command -v hostname &> /dev/null; then
+         # Try hostname -I (linux) then ip addr
+         DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+         if [ -z "$DETECTED_IP" ]; then
+             DETECTED_IP=$(ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)
+         fi
+    fi
+    [ -z "$DETECTED_IP" ] && DETECTED_IP="localhost"
+    
+    echo ""
+    log "ServiceBay communicates with this host via SSH."
+    echo -e "Enter the IP address or hostname for the 'Host' node (Default: ${BLUE}$DETECTED_IP${NC}):"
+    read -r USER_IP
+    HOST_ADDRESS=${USER_IP:-$DETECTED_IP}
+    
     CURRENT_USER=$(whoami)
     cat > "$NODES_FILE" <<NODESEOF
 [
   {
     "Name": "Host",
-    "URI": "ssh://$CURRENT_USER@localhost:22",
+    "URI": "ssh://$CURRENT_USER@$HOST_ADDRESS:22",
     "Identity": "/app/data/ssh/id_rsa",
     "Default": false
   }
