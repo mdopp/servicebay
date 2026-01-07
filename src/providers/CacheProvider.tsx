@@ -16,6 +16,12 @@ interface CacheContextType {
 
 const CacheContext = createContext<CacheContextType | undefined>(undefined);
 
+/**
+ * CacheProvider
+ * 
+ * A simple global cache context to share data between components and plugins.
+ * Supports Stale-While-Revalidate pattern via the useCache hook.
+ */
 export function CacheProvider({ children }: { children: ReactNode }) {
     const [cache, setCacheState] = useState<Record<string, CacheEntry>>({});
 
@@ -45,6 +51,16 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     );
 }
 
+/**
+ * useCache Hook
+ * 
+ * Fetches data asynchronously while returning cached data immediately if available.
+ * 
+ * @param key Unique key for the cache entry (e.g., 'services-list', 'node-1-stats')
+ * @param fetcher Async function that returns the data
+ * @param deps Dependencies array for the fetcher (triggers re-fetch if changed)
+ * @returns Object containing data, loading/validating states, error, and refresh function
+ */
 export function useCache<T>(key: string, fetcher: () => Promise<T>, deps: unknown[] = []) {
     const context = useContext(CacheContext);
     if (!context) throw new Error('useCache must be used within CacheProvider');

@@ -11,6 +11,16 @@ import PageHeader from '@/components/PageHeader';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import ActionProgressModal from '@/components/ActionProgressModal';
 
+/**
+ * ServicesPlugin
+ * 
+ * The main dashboard plugin for managing systemd/Quadlet services.
+ * Features:
+ * - List services from all nodes
+ * - Start/Stop/Restart control
+ * - "Migrate Unmanaged" wizard for converting raw pods to Quadlet
+ * - External Link and Gateway management
+ */
 interface DiscoveredService {
     serviceName: string;
     containerNames: string[];

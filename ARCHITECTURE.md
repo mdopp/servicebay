@@ -68,6 +68,28 @@ graph TD
     Page -->|Imports| PluginRegistry[src/plugins/index.tsx]
 ```
 
+## Client Data Management
+
+ServiceBay uses a custom caching layer (`src/providers/CacheProvider.tsx`) to manage client-side state efficiently.
+
+### CacheProvider
+- **Concept**: A global context that stores data key-value pairs (`key` -> `{ data, timestamp }`).
+- **Hook**: `useCache<T>(key, fetcher, deps)`
+  - **Stale-While-Revalidate**: Returns cached data immediately while fetching new data in the background.
+  - **Deduplication**: Multiple components requesting the same key get the same data state.
+  - **Validation**: Provides `validating` (background update) vs `loading` (no data) states.
+
+### Shared Hooks (`useSharedData.ts`)
+Common data sources like "Services List" and "Network Graph" are wrapped in specific hooks:
+- `useServicesList()`: Aggregates services from all nodes (Local + Remote).
+- `useNetworkGraph()`: Provides the raw graph data for visualization.
+
+### User Feedback (Toast Notifications)
+Data operations follow a strict notification pattern using `ToastProvider`:
+1.  **Start**: `addToast('loading', ...)` (indefinite duration).
+2.  **Success/Error**: `updateToast(id, ...)` to resolve the notification.
+This ensures the user always knows when data is being refreshed, even if the UI doesn't blank out.
+
 ## Monitoring System
 
 The monitoring system (`src/lib/monitoring/`) provides real-time health checks for services.

@@ -30,6 +30,14 @@ export interface Service {
   load?: string;
 }
 
+/**
+ * Hook to access the shared Network Graph data.
+ * This data is used by the NetworkMap plugin to visualize connections.
+ * 
+ * Features:
+ * - Caches result in 'network-graph-raw'
+ * - Shows global toast notification on refresh
+ */
 export function useNetworkGraph() {
     const { addToast, updateToast } = useToast();
 
@@ -50,6 +58,15 @@ export function useNetworkGraph() {
     return useCache<NetworkGraph>('network-graph-raw', fetcher);
 }
 
+/**
+ * Hook to access the unified Service List from all nodes.
+ * 
+ * Features:
+ * - Aggregates services from Local and all configured Remote nodes
+ * - Updates toast notification with detailed progress (e.g., "Pending: Node1, Node2")
+ * - Caches result in 'services-list-raw'
+ * - Filters out duplicate "Reverse Proxy" entries if a real one is found
+ */
 export function useServicesList() {
     const { addToast, updateToast } = useToast();
 

@@ -15,6 +15,11 @@ interface CombinedSystemInfo {
     updates: { count: number; list: string[] };
 }
 
+/**
+ * SystemInfoPlugin
+ * Displays system resources (CPU, RAM, Disk), Network interfaces, and pending OS updates.
+ * Supports switching between Local and Remote nodes.
+ */
 export default function SystemInfoPlugin() {
   const [copied, setCopied] = useState(false);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
