@@ -55,6 +55,7 @@ export function useNetworkGraph() {
         }
     }, [addToast, updateToast]);
 
+    // Use default revalidation (always refresh graph on mount to get latest status)
     return useCache<NetworkGraph>('network-graph-raw', fetcher);
 }
 
@@ -66,6 +67,7 @@ export function useNetworkGraph() {
  * - Updates toast notification with detailed progress (e.g., "Pending: Node1, Node2")
  * - Caches result in 'services-list-raw'
  * - Filters out duplicate "Reverse Proxy" entries if a real one is found
+ * - SKIP REVALIDATION ON MOUNT if cache exists (relies on Network Graph updates for status)
  */
 export function useServicesList() {
     const { addToast, updateToast } = useToast();
@@ -78,14 +80,22 @@ export function useServicesList() {
             
             // Start processing Local immediately/in-parallel if possible, or just wait for list
             const nodeList = await nodeListPromise;
-            const targets = ['Local', ...nodeList.map(n => n.Name)];
+            
+            // Only fetch from configured nodes.
+            // Implicit 'Local' fetching is disabled to prevent duplicates.
+            const targets = nodeList.map(n => n.Name);
             const pending = new Set(targets);
+            
+            if (targets.length === 0) {
+                 updateToast(toastId, 'success', 'Services Updated', 'No nodes configured');
+                 return { services: [], nodes: nodeList };
+            }
             
             updateToast(toastId, 'loading', 'Refreshing Services', `Pending: ${Array.from(pending).join(', ')}`);
 
             const fetchNode = async (node: string) => {
                 try {
-                    const query = node === 'Local' ? '' : `?node=${node}`;
+                    const query = (node === 'Local') ? '' : `?node=${node}`;
                     const servicesRes = await fetch(`/api/services${query}`);
                     
                     if (!servicesRes.ok) return [];
@@ -120,5 +130,5 @@ export function useServicesList() {
         }
     }, [addToast, updateToast]);
 
-    return useCache<{ services: Service[], nodes: PodmanConnection[] }>('services-list', fetcher);
+    return useCache<{ services: Service[]; nodes: PodmanConnection[] }>('services-list-raw', fetcher, [], { revalidateOnMount: false });
 }

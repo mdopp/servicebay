@@ -59,9 +59,11 @@ export function CacheProvider({ children }: { children: ReactNode }) {
  * @param key Unique key for the cache entry (e.g., 'services-list', 'node-1-stats')
  * @param fetcher Async function that returns the data
  * @param deps Dependencies array for the fetcher (triggers re-fetch if changed)
+ * @param options Configuration options
  * @returns Object containing data, loading/validating states, error, and refresh function
  */
-export function useCache<T>(key: string, fetcher: () => Promise<T>, deps: unknown[] = []) {
+export function useCache<T>(key: string, fetcher: () => Promise<T>, deps: unknown[] = [], options: { revalidateOnMount?: boolean } = {}) {
+    const { revalidateOnMount = true } = options;
     const context = useContext(CacheContext);
     if (!context) throw new Error('useCache must be used within CacheProvider');
 
@@ -99,9 +101,12 @@ export function useCache<T>(key: string, fetcher: () => Promise<T>, deps: unknow
     }, [key, setCache]); // fetcherRef is stable
 
     useEffect(() => {
-        refresh(false);
+        const hasData = !!getCache<T>(key);
+        if (!hasData || revalidateOnMount) {
+            refresh(false);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [refresh, key, ...deps]);
+    }, [refresh, key, revalidateOnMount, ...deps]);
 
     return { data, loading, validating, error, refresh, setData };
 }
