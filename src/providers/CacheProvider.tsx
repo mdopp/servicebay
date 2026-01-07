@@ -24,6 +24,11 @@ const CacheContext = createContext<CacheContextType | undefined>(undefined);
  */
 export function CacheProvider({ children }: { children: ReactNode }) {
     const [cache, setCacheState] = useState<Record<string, CacheEntry>>({});
+    const cacheRef = useRef(cache);
+
+    useEffect(() => {
+        cacheRef.current = cache;
+    }, [cache]);
 
     const setCache = useCallback(<T,>(key: string, data: T) => {
         setCacheState(prev => ({
@@ -32,9 +37,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         }));
     }, []);
 
+    // Stable getCache that reads from ref
     const getCache = useCallback(<T,>(key: string): T | null => {
-        return cache[key]?.data as T || null;
-    }, [cache]);
+        return cacheRef.current[key]?.data as T || null;
+    }, []);
 
     const invalidateCache = useCallback((key: string) => {
          setCacheState(prev => {
@@ -105,6 +111,8 @@ export function useCache<T>(key: string, fetcher: () => Promise<T>, deps: unknow
         if (!hasData || revalidateOnMount) {
             refresh(false);
         }
+        // fetcherRef and getCache are stable. key and revalidateOnMount are primitives/stable.
+        // deps handles user dependencies.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [refresh, key, revalidateOnMount, ...deps]);
 
