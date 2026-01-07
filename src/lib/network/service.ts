@@ -112,23 +112,36 @@ export class NetworkService {
     }
   }
 
-  async getGraph(): Promise<NetworkGraph> {
+  async getGraph(targetNode?: string): Promise<NetworkGraph> {
     // 1. Get Global Infrastructure (Internet, Router, External Links) - ONLY ONCE
     const { nodes: globalNodes, edges: globalEdges, config, fbStatus } = await this.getGlobalInfrastructure();
     
     const allNodes: NetworkNode[] = [...globalNodes];
     const allEdges: NetworkEdge[] = [...globalEdges];
 
-    // 2. Iterate over ALL nodes (Local + Remote)
+    // 2. Iterate over Nodes
     const connections = await listNodes();
-    
-    // Add Local Node
-    const targets: { name: string, connection?: PodmanConnection }[] = [
-        { name: 'local', connection: undefined }
-    ];
-    
-    for (const conn of connections) {
-        targets.push({ name: conn.Name, connection: conn });
+    const targets: { name: string, connection?: PodmanConnection }[] = [];
+
+    if (targetNode) {
+        if (targetNode === 'Local') {
+             targets.push({ name: 'Local', connection: undefined });
+        } else {
+             const connection = connections.find(c => c.Name === targetNode);
+             if (connection) {
+                 targets.push({ name: connection.Name, connection });
+             }
+        }
+    } else {
+        // Global view: Local + All Remotes
+        // Use 'Local' capitalized to match other parts of the system
+        targets.push({ name: 'Local', connection: undefined });
+        for (const conn of connections) {
+            // Avoid adding "Local" twice if it happens to be configured
+            if (conn.Name !== 'Local') {
+               targets.push({ name: conn.Name, connection: conn });
+            }
+        }
     }
     
     const allVerifiedDomains = new Set<string>();
