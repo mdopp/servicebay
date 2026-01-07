@@ -6,9 +6,18 @@ import { FritzBoxClient } from '@/lib/fritzbox/client';
 import { NginxParser } from '@/lib/nginx/parser';
 import { checkDomains } from '@/lib/network/dns';
 import { listNodes } from '@/lib/nodes';
+import { getExecutor } from '@/lib/executor';
+import { NetworkService } from '@/lib/network/service';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
+    return Promise.race([
+        promise,
+        new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
+    ]);
+};
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -18,7 +27,12 @@ export async function GET(request: Request) {
   // Start fetching config immediately
   const configPromise = getConfig();
 
-  // Start fetching services immediately (resolving connection first if needed)
+  // If nodeName matches recent cache in NetworkService, we might utilize it?
+  // But NetworkService caches strictly by buildGraph() call.
+  // Instead, let's just make listServices the source of truth for basic data,
+  // and try to fetch enriched data from NetworkService logic if possible, or
+  // stick with our light enrichment.
+
   const servicesPromise = (async () => {
     let connection;
     if (nodeName && nodeName !== 'Local') {
@@ -28,9 +42,25 @@ export async function GET(request: Request) {
     return listServices(connection);
   })();
 
-  // Wait for config to determine if we need gateway info
-  const config = await configPromise;
+  // Use NetworkService to build graph for this node to get enriched data
+  // This reuses the EXACT logic from the map visualization.
+  const graphPromise = (async () => {
+      try {
+          // Use a shorter timeout since we have main content via listServices
+          // But NetworkService might be slow.
+          return withTimeout(NetworkService.buildGraph(), 5000, null);
+      } catch (e) {
+          console.warn('Failed to fetch graph for services enrichment', e);
+          return null;
+      }
+  })();
+
+  // Wait for everything to finish
+  const [services, configResolved, graphData] = await Promise.all([servicesPromise, configPromise, graphPromise]);
   
+  // Use resolved config
+  const config = configResolved;
+
   // Only fetch links and gateway if we are on the local node
   const links = isLocal ? (config.externalLinks || []) : [];
 
@@ -60,64 +90,27 @@ export async function GET(request: Request) {
     };
   });
 
-  // Fetch Gateway Info & Domains (in parallel with services)
-  const gatewayPromise = (async () => {
-      if (!isLocal) return [];
 
-      let gatewayDescription = `Fritz!Box at ${config.gateway?.host || 'unknown'}`;
-      let verifiedDomains: string[] = [];
+  // Gateway Info from Config + Graph Data (if available)
+  const gatewayService = [];
+  if (isLocal) {
+       let gatewayDescription = `Fritz!Box at ${config.gateway?.host || 'unknown'}`;
+       let verifiedDomains: string[] = [];
+       // If graph has gateway node, use its data
+       if (graphData) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const gatewayNode = graphData.nodes.find((n: any) => n.id.includes('group-router'));
+            if (gatewayNode && gatewayNode.metadata?.verifiedDomains) {
+                verifiedDomains = gatewayNode.metadata.verifiedDomains;
+                if (gatewayNode.data?.externalIP) {
+                    gatewayDescription = `Online: ${gatewayNode.data.externalIP}`;
+                }
+            }
+       }
 
-      if (config.gateway?.type === 'fritzbox') {
-          try {
-              const fbClient = new FritzBoxClient({
-                  host: config.gateway.host,
-                  username: config.gateway.username,
-                  password: config.gateway.password
-              });
-
-              // Run FritzBox status and Nginx parsing in parallel
-              const [status, nginxConfig] = await Promise.all([
-                  fbClient.getStatus(),
-                  (async () => {
-                      try {
-                          // Find Nginx container
-                          const containers = await getPodmanPs();
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                          const nginxContainer = containers.find((c: any) => 
-                              c.Names && c.Names.some((n: string) => n.includes('nginx-web') || n.includes('nginx'))
-                          );
-                          
-                          if (nginxContainer) {
-                              const parser = new NginxParser('/etc/nginx', nginxContainer.Id);
-                              return parser.parse();
-                          }
-                          
-                          return { servers: [] };
-                      } catch (e) {
-                          console.warn('Failed to parse Nginx config', e);
-                          return { servers: [] };
-                      }
-                  })()
-              ]);
-
-              if (status.externalIP) {
-                  gatewayDescription = `Online: ${status.externalIP}`;
-                  
-                  // Check Domains
-                  // For local node, we can also check against local IPs if needed, but usually gateway check implies external access
-                  // However, if we want consistency with NetworkService, we should probably include local IPs too?
-                  // But here we are specifically checking "Internet Gateway" status.
-                  // Let's stick to external IP for now, or maybe add local IPs if we want to support split DNS here too.
-                  // Given the user's request, let's be consistent.
-                  const domainStatuses = await checkDomains(nginxConfig, status);
-                  verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
-              }
-          } catch (e) {
-              console.warn('Failed to fetch gateway status for services list', e);
-          }
-      }
-
-      return [{
+       // If graph didn't return gateway (e.g. timeout), rely on basic config description
+       
+       gatewayService.push({
           name: 'Internet Gateway',
           active: true,
           status: 'gateway',
@@ -129,12 +122,43 @@ export async function GET(request: Request) {
           description: gatewayDescription,
           id: 'gateway',
           labels: {},
-          verifiedDomains // Pass to frontend
-      }];
-  })();
+          verifiedDomains
+      });
+  }
 
-  // Wait for everything to finish
-  const [services, gatewayService] = await Promise.all([servicesPromise, gatewayPromise]);
+  // Enrich Managed Services using Graph Data
+  if (graphData && graphData.nodes) {
+    // Map of Service Name -> Graph Node
+    const nodeMap = new Map();
+     
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    graphData.nodes.forEach((n: any) => {
+        // Match by label, name, or metadata containerId
+        if (n.data?.name) nodeMap.set(n.data.name, n);
+        if (n.label) nodeMap.set(n.label, n);
+    });
+
+    // Check if Nginx is present (for reverse proxy renaming later)
+    // ... logic preserved below
+    
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    services.forEach((s: any) => {
+        // Try strict match
+        let node = nodeMap.get(s.name);
+        
+        // Try base name match (immich.service -> immich)
+        if (!node) {
+            const baseName = s.name.replace(/\.(container|kube|service|pod)$/, '');
+            node = nodeMap.get(baseName);
+        }
+
+        if (node && node.metadata?.verifiedDomains) {
+            s.verifiedDomains = node.metadata.verifiedDomains;
+        }
+        
+        // Also enrich with other metadata from graph if useful (e.g. load, uptime)
+    });
+  }
 
   // Check if Nginx is present
   const nginxIndex = services.findIndex(s => s.name === 'nginx-web' || s.name === 'nginx');

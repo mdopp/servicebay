@@ -92,7 +92,6 @@ export default function OnboardingWizard() {
       // Determine which steps are active based on selection
       const activeSteps = order.filter(step => {
          if (step === 'welcome' || step === 'finish') return true;
-         // @ts-expect-error type safety
          return selection[step as keyof typeof selection]; 
       });
 

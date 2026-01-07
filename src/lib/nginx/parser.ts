@@ -180,9 +180,9 @@ export class NginxParser {
                 let files: string[] = [];
                 if (this.executor) {
                     if (this.containerId) {
-                        // Use ls -1 to ensure single column output and suppress stderr
+                        // Use ls -1 to ensure single column output and suppress stderr, force success
                         try {
-                            const { stdout } = await this.executor.exec(`podman exec ${this.containerId} ls -1 ${dir} 2>/dev/null`);
+                            const { stdout } = await this.executor.exec(`podman exec ${this.containerId} sh -c "ls -1 ${dir} 2>/dev/null || true"`);
                             files = stdout.split('\n').map(f => f.trim()).filter(f => f);
                         } catch (e) {
                             console.warn(`[NginxParser] Failed to list files in ${dir} inside container ${this.containerId}`, e);
@@ -192,7 +192,7 @@ export class NginxParser {
                     }
                 } else if (this.containerId) {
                     try {
-                        const { stdout } = await execAsync(`podman exec ${this.containerId} ls -1 ${dir} 2>/dev/null`);
+                        const { stdout } = await execAsync(`podman exec ${this.containerId} sh -c "ls -1 ${dir} 2>/dev/null || true"`);
                         files = stdout.split('\n').map(f => f.trim()).filter(f => f);
                     } catch (e) {
                         console.warn(`[NginxParser] Failed to list files in ${dir} inside container ${this.containerId}`, e);
