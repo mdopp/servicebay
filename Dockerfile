@@ -42,7 +42,7 @@ ENV NEXT_TELEMETRY_DISABLED 1
 ENV PATH="/app/node_modules/.bin:$PATH"
 
 # Install ssh-keygen
-RUN apk add --no-cache openssh-client
+RUN apk add --no-cache openssh-client openssh-keygen
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
