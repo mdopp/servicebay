@@ -40,6 +40,9 @@ export interface ServiceInfo {
   isServiceBay?: boolean; // Flag to identify the ServiceBay self-service
 }
 
+/**
+ * @deprecated Use ServiceManager.listServices instead. This implementation relies on legacy executor patterns.
+ */
 export async function listServices(connection?: PodmanConnection): Promise<ServiceInfo[]> {
   // If no connection is provided, we are in "Local" mode.
   // But "Local" is disabled for services.
@@ -775,12 +778,18 @@ export async function updateAndRestartService(name: string, connection?: PodmanC
   return { logs, status };
 }
 
+/**
+ * @deprecated Use ServiceManager.startService instead.
+ */
 export async function startService(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   await executor.exec(`systemctl --user start ${name}.service`);
   return getServiceStatus(name, connection);
 }
 
+/**
+ * @deprecated Use ServiceManager.stopService instead.
+ */
 export async function stopService(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   await executor.exec(`systemctl --user stop ${name}.service`);

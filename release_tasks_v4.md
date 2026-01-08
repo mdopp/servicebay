@@ -24,7 +24,7 @@ This roadmap outlines the steps to migrate ServiceBay to the V4 "Agentless SSH" 
 
 ## Phase 2: Refactoring "Manager"
 
-- [ ] **Task 2.1: Split `manager.ts`**
+- [x] **Task 2.1: Split `manager.ts`**
     - Create `src/lib/services/ServiceManager.ts`:
         - Move `listServices`, `startService`, `stopService` here.
         - Update them to use `AgentHandler` instead of direct `Executor`.
@@ -32,7 +32,7 @@ This roadmap outlines the steps to migrate ServiceBay to the V4 "Agentless SSH" 
         - Move `readFile`, `writeFile` logic.
         - Implement naive caching (TTL 5s) for file reads to multiple consumers.
 
-- [ ] **Task 2.2: Refactor `UnitGenerator` (Kube/Quadlet)**
+- [x] **Task 2.2: Refactor `UnitGenerator` (Kube/Quadlet)**
     - Isolate pure generation logic from `manager.ts` into `src/lib/services/UnitGenerator.ts`.
     - Support primary use case: **Kube Quadlets** (.kube -> .yml).
         - Generate the Pod YAML (Mustache replacement).
@@ -42,22 +42,23 @@ This roadmap outlines the steps to migrate ServiceBay to the V4 "Agentless SSH" 
 
 ## Phase 3: Integration
 
-- [ ] **Task 3.1: Update `server.ts` Event Bus**
+- [x] **Task 3.1: Update `server.ts` Event Bus**
     - Connect `AgentHandler` events to Socket.IO.
     - Define event types: `service:update`, `file:change`, `node:status`.
     - Update the frontend `SocketProvider` to listen for these.
 
-- [ ] **Task 3.2: Migrate `LocalExecutor` Users**
+- [x] **Task 3.2: Migrate `LocalExecutor` Users**
     - Identify all callers of `LocalExecutor` (except for `data/nodes.json`).
     - Migrate them to use the "Local Node" via SSH Loopback.
     - **Critical**: Ensure the onboarding/install script sets up the local SSH keys properly.
 
 ## Phase 4: Frontend & Cleanup
 
-- [ ] **Task 4.1: Optimistic UI Updates**
+- [x] **Task 4.1: Optimistic UI Updates**
     - Update `useServicesList` to react to Socket events immediately.
     - Remove manual polling intervals (or increase them to fallback-only levels).
 
 - [ ] **Task 4.2: Deprecate Legacy Code**
-    - Remove old `monitoring/scheduler.ts` (polling logic) in favor of the Agent stream.
-    - Delete unused `Executor` implementations.
+    - [x] Remove old `monitoring/scheduler.ts` (polling logic) in favor of the Agent stream.
+    - [x] Delete unused `Executor` implementations.
+    - [ ] Mark old `manager.ts` functions as deprecated or remove them if unused.

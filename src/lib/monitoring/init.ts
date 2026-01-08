@@ -1,5 +1,5 @@
 import { MonitoringStore } from './store';
-import { listServices } from '../manager';
+import { ServiceManager } from '../services/ServiceManager';
 import { getConfig } from '../config';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -76,7 +76,7 @@ export async function initializeDefaultChecks() {
 
   // 3. Managed Services
   try {
-    const services = await listServices();
+    const services = await ServiceManager.listServices('Local');
     for (const service of services) {
         // Check if we have a check for this service (either by name or target)
         const alreadyMonitored = existingChecks.some(c => 

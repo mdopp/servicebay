@@ -1,7 +1,8 @@
 import { NetworkGraph, NetworkNode, NetworkEdge } from './types';
 import { FritzBoxClient } from '../fritzbox/client';
 import { NginxParser } from '../nginx/parser';
-import { getEnrichedContainers, listServices } from '../manager';
+import { getEnrichedContainers } from '../manager';
+import { ServiceManager } from '../services/ServiceManager';
 import { listNodes, PodmanConnection } from '../nodes';
 import { getExecutor } from '../executor';
 import { getConfig } from '../config';
@@ -550,7 +551,7 @@ export class NetworkService {
         // 2. Enriched Containers (replaces PodmanPs + Inspect + HostPorts)
         getEnrichedContainers(connection),
         // 3. List Services
-        listServices(connection)
+        ServiceManager.listServices(nodeName)
     ]);
 
     const nodeIPs = nodeIPsResult;
