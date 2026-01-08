@@ -5,6 +5,11 @@ import { decrypt } from '@/lib/auth';
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // 0. Development Bypass
+  if (process.env.LOGIN_REQUIRED === 'false') {
+    return NextResponse.next();
+  }
+
   // Public paths
   if (
     pathname.startsWith('/login') ||

@@ -1,8 +1,5 @@
 ---
-applyTo: 
-  - "scripts/release.sh"
-  - "package.json"
-  - ".github/workflows/**/*.yml"
+applyTo: "{scripts/release.sh,package.json,.github/workflows/**/*.yml}"
 ---
 
 # ServiceBay Release Instructions

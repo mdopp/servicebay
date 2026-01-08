@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { CheckConfig, CheckResult } from './types';
 import { DATA_DIR } from '../config';
 
@@ -60,7 +59,11 @@ export class MonitoringStore {
     const now = Date.now();
     results = results.filter(r => new Date(r.timestamp).getTime() > now - retentionMs);
     
-    fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
+    try {
+        fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
+    } catch (e) {
+        console.error(`[MonitoringStore] Failed to save result for ${result.check_id}:`, e);
+    }
   }
 
   static getResults(checkId: string): CheckResult[] {

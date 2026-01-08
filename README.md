@@ -39,7 +39,6 @@ ServiceBay is designed to be stateless regarding the application code, but state
 | Host Path | Container Path | Description |
 |-----------|----------------|-------------|
 | `~/.servicebay` | `/app/data` | **Main Data Directory.** Stores `config.json` (settings), `checks.json` (monitoring), and `results/` (history logs). |
-| `~/.ssh` | `/root/.ssh` | **SSH Keys.** Read-only access to your SSH keys for connecting to remote nodes. |
 
 **Backup Strategy:** To backup your entire ServiceBay setup, simply backup the `~/.servicebay` directory.
 

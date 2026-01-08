@@ -63,12 +63,20 @@ export default function SystemInfoPlugin() {
   const updates = data?.updates || null;
 
   useEffect(() => {
-    const saved = localStorage.getItem('podcli-selected-node');
-    if (saved) {
-        // eslint-disable-next-line
-        setSelectedNode(saved);
-    }
-    getNodes().then(setNodes).catch(console.error);
+    getNodes().then(nodeList => {
+        setNodes(nodeList);
+        const saved = localStorage.getItem('podcli-selected-node');
+        // Only restore selection if the node actually exists (or is Local)
+        if (saved) {
+            if (saved === 'Local' || nodeList.find(n => n.Name === saved)) {
+                setSelectedNode(saved);
+            } else {
+                console.warn(`Saved node '${saved}' not found in available nodes. Reverting to Local.`);
+                setSelectedNode('Local');
+                localStorage.removeItem('podcli-selected-node');
+            }
+        }
+    }).catch(console.error);
   }, []);
 
   if (loading) return <div className="p-8 text-center text-gray-500">Loading system information...</div>;

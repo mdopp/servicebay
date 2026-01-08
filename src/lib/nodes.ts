@@ -1,6 +1,5 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { SSHExecutor } from './executor';
 import { DATA_DIR } from './config';
 
 const NODES_FILE = path.join(DATA_DIR, 'nodes.json');
@@ -23,10 +22,45 @@ async function ensureDataDir() {
 async function loadNodes(): Promise<PodmanConnection[]> {
   try {
     await ensureDataDir();
+    // Check if file exists first to avoid exception spam
+    try {
+        await fs.access(NODES_FILE);
+    } catch {
+        return [];
+    }
+
     const content = await fs.readFile(NODES_FILE, 'utf-8');
-    return JSON.parse(content);
+    let nodes: PodmanConnection[] = JSON.parse(content);
+
+    // V4 Auto-Migration: Convert legacy "Host" SSH config to "Local" spawn config
+    let migrated = false;
+    nodes = nodes.map(node => {
+        const isLegacyHost = (node.Name === 'Host' || node.Name === 'Local') && 
+                             node.URI.startsWith('ssh://') && 
+                             (node.Identity.includes('id_rsa') || node.URI.includes('@localhost') || node.URI.includes('@127.0.0.1'));
+        
+        if (isLegacyHost) {
+             console.log(`[Migration] Updating legacy node '${node.Name}' to use Local Spawn...`);
+             migrated = true;
+             return {
+                 ...node,
+                 Name: 'Local',
+                 URI: 'local',
+                 Identity: ''
+             };
+        }
+        return node;
+    });
+
+    if (migrated) {
+        // We can't call saveNodes here comfortably if it causes recursive issues or hoisting, 
+        // but since we are inside an async function executing at runtime, saveNodes (hoisted) is fine.
+        await fs.writeFile(NODES_FILE, JSON.stringify(nodes, null, 2), 'utf-8');
+    }
+
+    return nodes;
   } catch (error) {
-    // If file doesn't exist, return empty array
+    console.error('Failed to load nodes:', error);
     return [];
   }
 }
@@ -66,8 +100,10 @@ export async function verifyNodeConnection(name: string): Promise<{ success: boo
             throw new Error(`Node ${name} not found`);
         }
 
-        // Use SSHExecutor to verify connection
-        const executor = new SSHExecutor(node);
+        // Use Executor to verify connection
+        // Dynamic import to avoid circular dependency (nodes -> executor -> agent -> handler -> nodes)
+        const { getExecutor } = await import('./executor');
+        const executor = getExecutor(node);
         // We run 'podman info' remotely to verify both SSH access and Podman installation
         await executor.exec('podman info'); 
         

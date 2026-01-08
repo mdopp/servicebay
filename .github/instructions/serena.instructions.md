@@ -1,8 +1,5 @@
 ---
-applyTo: 
-  - "scripts/release.sh"
-  - "package.json"
-  - ".github/workflows/**/*.yml"
+applyTo: "**"
 ---
 
 ## **CRITICAL: Always Use Serena First (#serena MCP server)**

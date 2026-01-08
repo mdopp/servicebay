@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
-import { listServices } from '@/lib/manager';
+import { ServiceManager } from '@/lib/services/ServiceManager';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
     try {
-        const services = await listServices();
+        const services = await ServiceManager.listServices('Local');
         const nginxService = services.find(s => s.name === 'nginx-web');
         
         return NextResponse.json({ 

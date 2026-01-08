@@ -6,11 +6,14 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 
 ### Added
 - Created `changelog.instructions.md` to enforce changelog updates.
+- Added `scripts/load-env.ts` to bootstrap environment variables for the custom server.
 - Added `services.smoke.test.ts`, `robustness.test.ts`, and `api.integration.test.ts` for regression testing.
 - Implemented `AgentExecutor.spawn` for streaming command execution.
 - Added `src/lib/manager_status.test.ts` to verify service status parsing logic.
 
 ### Changed
+- **Auth**: Implemented `LOGIN_REQUIRED` environment variable support for development bypass.
+- **Config**: Modifed `server.ts` to explicitly load `.env.local` via `@next/env`.
 - Refactored `src/lib/network/service.ts` to suppress "container state improper" error during Nginx config fetch.
 - Updated `src/app/api/services/route.ts` to inject global services (Gateway, External Links) on the **Default Node** instead of just "Local".
 - Extracted `Executor` interface to `src/lib/interfaces.ts` to fix circular dependencies.
@@ -35,3 +38,12 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 ### Configuration
 - Refactored `src/lib/config.ts` to export `SSH_DIR` pointing to persistent volume.
 - Removed hardcoded `~/.ssh` paths in favor of persistent `/app/data/ssh`.
+
+## [Unreleased] - 2026-01-08
+### Architecture
+- **V4 Migration (Phase 2)**: Started refactoring monolithic `manager.ts`.
+- Created `src/lib/services/ServiceManager.ts` which uses the new V4 Agent Architecture.
+- Migrated `listServices` and `saveService` logic to `ServiceManager`.
+- Updated API routes (`src/app/api/services/route.ts`, `src/app/api/system/nginx/status/route.ts`) to use the new `ServiceManager`.
+- Fixed duplicated code blocks in `src/lib/agent/agent.py`.
+- Ensured linting compliance for new files.

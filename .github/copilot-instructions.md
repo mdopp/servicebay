@@ -1,5 +1,3 @@
-STOP: Read carefully, and use Serena for reads and code understanding.
-
 # ServiceBay Copilot Instructions
 
 You are an expert developer working on **ServiceBay**, a web-based management interface for Podman containers using **Quadlet** (systemd integration).
@@ -24,6 +22,7 @@ You are an expert developer working on **ServiceBay**, a web-based management in
     - "Local" refers to the machine running ServiceBay.
     - Remote nodes are accessed via SSH keys (strictly `id_rsa` or configured identity files).
 4.  **Containerized Infrastructure:** ServiceBay itself runs as a container. Nginx (Reverse Proxy) is also deployed as a container (`nginx-web`), not a host package.
+5.  **Source-Centric Truth:** Logic for identifying data properties (e.g., "Active Status", "Service Role") must reside as close to the source as possible (e.g., the Manager parsing layer) and be exposed as flags/fields. Upper layers (API/UI) should consume these flags rather than re-implementing identification logic. This ensures a single source of truth across the stack.
 
 ## Coding Guidelines
 

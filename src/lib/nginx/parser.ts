@@ -125,7 +125,11 @@ export class NginxParser {
         content = await fs.readFile(filePath, 'utf-8');
       }
       // console.log(`[NginxParser] File content length: ${content.length}`);
-    } catch (e) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      if (e.message && (e.message.includes('container state improper') || e.message.includes('not running'))) {
+        return;
+      }
       console.warn(`[NginxParser] Failed to read file ${filePath}:`, e);
       return; // File not found or not readable
     }

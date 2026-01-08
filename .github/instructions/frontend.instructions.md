@@ -1,8 +1,5 @@
 ---
-applyTo: 
-  - "**/*.tsx"
-  - "src/components/**/*.ts"
-  - "src/app/**/*.tsx"
+applyTo: "{**/*.tsx,src/components/**/*.ts,src/app/**/*.tsx}"
 ---
 
 # ServiceBay Frontend Instructions

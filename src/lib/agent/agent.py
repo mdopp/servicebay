@@ -101,26 +101,7 @@ def handle_command(cmd_line):
             except Exception as e:
                 error = str(e)
 
-        elif action == "read_file":
-            path = cmd.get("path")
-            try:
-                # Security check (basic) - user should be trusted for now as this is "my server" context
-                with open(path, 'r') as f:
-                    content = f.read()
-                result = {"content": content}
-            except Exception as e:
-                error = str(e)
 
-        elif action == "write_file":
-            path = cmd.get("path")
-            content = cmd.get("content")
-            try:
-                 # Ensure directory exists? No, mimick fs.writeFile
-                with open(path, 'w') as f:
-                    f.write(content)
-                result = {"success": True}
-            except Exception as e:
-                error = str(e)
                 
         elif action == "list_files":
              if os.path.exists(WATCH_DIR):

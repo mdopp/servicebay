@@ -15,6 +15,7 @@ interface Check extends CheckConfig {
   status: 'ok' | 'fail' | 'unknown';
   lastRun: string | null;
   lastResult: string | null;
+  message?: string; // Add optional message property
   history: { status: 'ok' | 'fail'; latency: number; timestamp: string }[];
 }
 
@@ -419,18 +420,26 @@ export default function MonitoringPlugin() {
                   </td>
                   <td className="p-4 text-gray-500 dark:text-gray-400 font-mono text-sm break-all whitespace-normal min-w-[250px] max-w-[350px]">{check.target}</td>
                   <td className="p-4">
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                      check.status === 'ok' ? 'bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400' :
-                      check.status === 'fail' ? 'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400' :
-                      'bg-gray-100 dark:bg-gray-500/10 text-gray-700 dark:text-gray-400'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        check.status === 'ok' ? 'bg-green-500 dark:bg-green-400' :
-                        check.status === 'fail' ? 'bg-red-500 dark:bg-red-400' :
-                        'bg-gray-500 dark:bg-gray-400'
-                      }`} />
-                      {check.status.toUpperCase()}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium w-fit ${
+                        check.status === 'ok' ? 'bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400' :
+                        check.status === 'fail' ? 'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400' :
+                        'bg-gray-100 dark:bg-gray-500/10 text-gray-700 dark:text-gray-400'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          check.status === 'ok' ? 'bg-green-500 dark:bg-green-400' :
+                          check.status === 'fail' ? 'bg-red-500 dark:bg-red-400' :
+                          'bg-gray-500 dark:bg-gray-400'
+                        }`} />
+                        {check.status.toUpperCase()}
+                      </span>
+                      {/* Show error details if failed */}
+                      {check.status === 'fail' && check.message && (
+                          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/10 p-1.5 rounded border border-red-100 dark:border-red-900/30 w-full max-w-[200px] break-words">
+                              {check.message.replace('Error: ', '')}
+                          </div>
+                      )}
+                    </div>
                   </td>
                   <td className="p-4">
                     <div className="flex items-end gap-0.5 h-8 w-32">
@@ -475,7 +484,14 @@ export default function MonitoringPlugin() {
                 {filteredChecks.map(check => (
                     <div key={check.id} className="p-4 space-y-3">
                         <div className="flex justify-between items-start gap-2">
-                            <span className="font-medium text-gray-900 dark:text-white break-words">{check.name}</span>
+                            <div className="flex flex-col gap-2 min-w-0">
+                                <span className="font-medium text-gray-900 dark:text-white break-words">{check.name}</span>
+                                {check.status === 'fail' && check.message && (
+                                    <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/10 p-2 rounded border border-red-100 dark:border-red-900/30 break-all">
+                                        {check.message.replace('Error: ', '')}
+                                    </div>
+                                )}
+                            </div>
                             <span className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
                                 check.status === 'ok' ? 'bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400' :
                                 check.status === 'fail' ? 'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400' :

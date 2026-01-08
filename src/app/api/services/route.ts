@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { listServices, saveService } from '@/lib/manager';
+import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import { listNodes } from '@/lib/nodes';
@@ -8,92 +8,120 @@ import crypto from 'crypto';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node');
-  const isLocal = !nodeName || nodeName === 'Local';
-  
-  // Start fetching config immediately
-  const configPromise = getConfig();
-
-  const servicesPromise = (async () => {
-    let connection;
-    if (nodeName && nodeName !== 'Local') {
-        const nodes = await listNodes();
-        connection = nodes.find(n => n.Name === nodeName);
-    }
-    return listServices(connection);
-  })();
-
-  // Wait for services and config
-  const [services, configResolved] = await Promise.all([servicesPromise, configPromise]);
-  
-  // Use resolved config
-  const config = configResolved;
-
-  // Only fetch links and gateway if we are on the local node
-  const links = isLocal ? (config.externalLinks || []) : [];
-
-  // Get monitoring status for links
-  const checks = MonitoringStore.getChecks();
-
-  const mappedLinks = links.map(link => {
-    // Find associated check if monitored
-    const check = checks.find(c => c.name === `Link: ${link.name}`);
-    const lastResult = check ? MonitoringStore.getLastResult(check.id) : null;
+  try {
+    const { searchParams } = new URL(request.url);
+    const nodeName = searchParams.get('node');
+    const isLocal = !nodeName || nodeName === 'Local';
     
-    return {
-        name: link.name,
-        active: lastResult ? lastResult.status === 'ok' : true,
-        status: lastResult ? lastResult.status : 'external',
-        kubePath: '',
-        yamlPath: null,
-        ports: [],
-        volumes: [],
-        type: 'link',
-        url: link.url,
-        description: link.description,
-        id: link.id,
-        monitor: link.monitor,
-        ip_targets: link.ip_targets,
-        labels: {}
+    // Start fetching config immediately
+    const configPromise = getConfig();
+
+    const servicesPromise = (async () => {
+        const targetNode = (!nodeName || nodeName === 'Local') ? 'Local' : nodeName;
+        return ServiceManager.listServices(targetNode);
+    })();
+
+    // Helper to determine if we should inject global services (Gateway, Links, Self)
+    const shouldInjectGlobals = async () => {
+        if (isLocal) return true;
+        // If "Local" is unused, we inject on the Default node
+        const nodes = await listNodes();
+        const defaultNode = nodes.find(n => n.Default);
+        return defaultNode && defaultNode.Name === nodeName;
     };
-  });
+
+    const isDefaultOrLocal = await shouldInjectGlobals();
+
+    // Wait for services and config
+    const [services, configResolved] = await Promise.all([servicesPromise, configPromise]);
+    
+    // Use resolved config
+    const config = configResolved;
+
+    // Only fetch links and gateway if we are on the local or default node
+    const links = isDefaultOrLocal ? (config.externalLinks || []) : [];
+
+    // Get monitoring status for links
+    const checks = MonitoringStore.getChecks();
+
+    const mappedLinks = links.map(link => {
+        // Find associated check if monitored
+        const check = checks.find(c => c.name === `Link: ${link.name}`);
+        const lastResult = check ? MonitoringStore.getLastResult(check.id) : null;
+        
+        return {
+            name: link.name,
+            active: lastResult ? lastResult.status === 'ok' : true,
+            status: lastResult ? lastResult.status : 'external',
+            kubePath: '',
+            yamlPath: null,
+            ports: [],
+            volumes: [],
+            type: 'link',
+            url: link.url,
+            description: link.description,
+            id: link.id,
+            monitor: link.monitor,
+            ip_targets: link.ip_targets,
+            labels: {}
+        };
+    });
 
 
-  // Gateway Info from Config
-  const gatewayService = [];
-  if (isLocal) {
+    // Gateway Info from Config
+    const gatewayService = [];
+  if (isDefaultOrLocal) {
        const gatewayDescription = `Fritz!Box at ${config.gateway?.host || 'unknown'}`;
        const verifiedDomains: string[] = [];
 
-       gatewayService.push({
-          name: 'Internet Gateway',
-          active: true,
-          status: 'gateway',
-          kubePath: '',
-          yamlPath: null,
-          ports: [],
-          volumes: [],
-          type: 'gateway',
-          description: gatewayDescription,
-          id: 'gateway',
-          labels: {},
-          verifiedDomains
-      });
-  }
+        gatewayService.push({
+            name: 'Internet Gateway',
+            active: true,
+            status: 'gateway',
+            kubePath: '',
+            yamlPath: null,
+            ports: [],
+            volumes: [],
+            type: 'gateway',
+            description: gatewayDescription,
+            id: 'gateway',
+            labels: {},
+            verifiedDomains
+        });
+    }
 
-  // Check if Nginx is present
-  const nginxIndex = services.findIndex(s => s.name === 'nginx-web' || s.name === 'nginx');
+    // Check if Nginx (Reverse Proxy) is present using the new flag
+    // We prioritize candidates that are explicitly marked as Reverse Proxy
+    const proxyCandidates = services.filter(s => s.isReverseProxy);
 
-  if (nginxIndex !== -1) {
-      // Rename existing service
-      const originalName = services[nginxIndex].name;
-      services[nginxIndex] = {
-          ...services[nginxIndex],
-          name: 'Reverse Proxy',
-          id: originalName
-      };
-  } else if (isLocal) {
+    // Debug logging for Nginx detection
+    console.log(`[API] Listing Services for ${nodeName}: Found ${proxyCandidates.length} Proxy Candidates`, proxyCandidates.map(c => `${c.name} (${c.status})`));
+
+    if (proxyCandidates.length > 0) {
+        // Sort candidates: Active first, then by meaningfulness
+        proxyCandidates.sort((a, b) => {
+             if (a.active && !b.active) return -1;
+             if (!a.active && b.active) return 1;
+             return 0;
+        });
+
+        const bestCandidate = proxyCandidates[0];
+        
+        // Remove ALL proxy candidates from the main list to avoid duplication
+        // We will insert the renamed best candidate at the top
+        for (const c of proxyCandidates) {
+            const idx = services.findIndex(s => s === c);
+            if (idx !== -1) services.splice(idx, 1);
+        }
+
+        // Add Best Candidate as Reverse Proxy
+        services.unshift({
+            ...bestCandidate,
+            name: 'Reverse Proxy',
+            id: bestCandidate.name // Use original name as ID
+        });
+
+  } else if (isDefaultOrLocal) {
       // Inject virtual service
       services.push({
           name: 'Reverse Proxy',
@@ -108,15 +136,15 @@ export async function GET(request: Request) {
           ports: [],
           volumes: [],
           labels: {},
-          node: 'Local'
+          node: nodeName || 'Local'
       });
   }
 
   // Check if ServiceBay is present (Self-Management)
-  const sbIndex = services.findIndex(s => s.name === 'servicebay' || s.name === 'ServiceBay');
+  const isServiceBayPresent = services.some(s => s.isServiceBay);
 
-  if (sbIndex === -1 && isLocal) {
-       // Inject ServiceBay (Self)
+  if (!isServiceBayPresent && isDefaultOrLocal) {
+       // Inject ServiceBay (Self) if missing
        services.push({
           name: 'ServiceBay',
           id: 'servicebay',
@@ -130,13 +158,22 @@ export async function GET(request: Request) {
           ports: [],
           volumes: [],
           labels: { 'servicebay.protected': 'true' },
-          node: 'Local' 
+          isServiceBay: true, // Mark virtual injection too
+          node: nodeName || 'Local' 
       });
   }
 
-  const mappedServices = services.map(s => ({ ...s, type: 'container' }));
+    const mappedServices = services.map(s => ({ ...s, type: 'container' }));
 
-  return NextResponse.json([...mappedLinks, ...gatewayService, ...mappedServices]);
+    return NextResponse.json([...mappedLinks, ...gatewayService, ...mappedServices]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } catch (error: any) {
+    console.error('Failed to list services:', error);
+    return NextResponse.json(
+        { error: error.message || 'Internal Server Error' },
+        { status: 500 }
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -144,11 +181,7 @@ export async function POST(request: Request) {
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node');
   
-  let connection;
-  if (nodeName) {
-      const nodes = await listNodes();
-      connection = nodes.find(n => n.Name === nodeName);
-  }
+  const targetNode = (!nodeName || nodeName === 'Local') ? 'Local' : nodeName;
   
   // Handle Link Creation
   if (body.type === 'link') {
@@ -206,6 +239,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
-  await saveService(name, kubeContent, yamlContent, yamlFileName, connection);
+  await ServiceManager.deployKubeService(targetNode, name, kubeContent, yamlContent, yamlFileName);
   return NextResponse.json({ success: true });
 }

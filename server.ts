@@ -1,15 +1,16 @@
+import './scripts/load-env';
 import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';
 import { Server } from 'socket.io';
 import * as pty from 'node-pty';
 import os from 'os';
-import schedule from 'node-schedule';
-import { getConfig } from './src/lib/config';
-import { checkForUpdates, performUpdate, setUpdaterIO } from './src/lib/updater';
-import scheduler from './src/lib/monitoring/scheduler'; // Initialize monitoring scheduler
-import { initializeDefaultChecks } from './src/lib/monitoring/init';
+import { setUpdaterIO } from './src/lib/updater';
+// Monitoring init moved to Agent logic in V4
+import { MonitoringService } from './src/lib/monitoring/service';
+import { agentManager } from './src/lib/agent/manager';
 import { listNodes } from './src/lib/nodes';
+import { AgentEvent } from './src/lib/agent/handler';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -17,6 +18,7 @@ const port = parseInt(process.env.PORT || '3000', 10);
 // when using middleware `hostname` and `port` must be provided below
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
+
 
 // Global PTY state
 interface PtySession {
@@ -41,16 +43,47 @@ app.prepare().then(() => {
 
   const io = new Server(server);
   
-  // Pass IO to scheduler
-  scheduler.setIO(io);
+  // --- V4 Agent Event Bus Integration ---
+  agentManager.on('agent:connected', (nodeName: string) => {
+      io.emit('node:status', { node: nodeName, status: 'connected' });
+  });
+  agentManager.on('agent:disconnected', (nodeName: string) => {
+      io.emit('node:status', { node: nodeName, status: 'disconnected' });
+  });
   
+  // Subscribe to specific agent events and broadcast
+  const broadcastAgentEvent = (nodeName: string, event: AgentEvent) => {
+       io.emit('agent:event', { node: nodeName, ...event });
+       
+       // Helper for specific UI updates
+       if (event.type === 'file:change') {
+           io.emit('service:list-stale', { node: nodeName }); 
+       }
+  };
+  
+  // Auto-connect agents for known nodes
+  listNodes().then(nodes => {
+      nodes.forEach(node => {
+         const agent = agentManager.getAgent(node.Name);
+         // Forward events
+         agent.on('event', (e: AgentEvent) => broadcastAgentEvent(node.Name, e));
+         
+         // Start connection in background
+         agent.start().catch(err => {
+             console.error(`[Agent:${node.Name}] Failed to auto-connect:`, err.message);
+         });
+      });
+  });
+
   // Pass IO to updater
   setUpdaterIO(io);
 
-  // Initialize default monitoring checks (Auto-discovery)
-  initializeDefaultChecks().catch(err => {
-    console.error('[Monitoring] Failed to initialize default checks:', err);
+  // Initialize Monitoring Service (V4 Legacy Bridge)
+  MonitoringService.init(io).catch(err => {
+      console.error('Failed to start monitoring service:', err);
   });
+
+
 
   // Function to spawn a PTY
   const ensurePty = async (id: string, cols: number = 80, rows: number = 30) => {
@@ -262,24 +295,6 @@ app.prepare().then(() => {
   server.listen(port, async () => {
     console.log(`> Ready on http://${hostname}:${port}`);
 
-    // Initialize Auto-Update Scheduler
-    try {
-      const config = await getConfig();
-      if (config.autoUpdate.enabled) {
-        console.log(`Scheduling auto-updates with schedule: ${config.autoUpdate.schedule}`);
-        schedule.scheduleJob(config.autoUpdate.schedule, async () => {
-          console.log('Running scheduled update check...');
-          const status = await checkForUpdates();
-          if (status.hasUpdate && status.latest) {
-            console.log(`Update found: ${status.latest.version}. Installing...`);
-            await performUpdate(status.latest.version);
-          } else {
-            console.log('No updates found.');
-          }
-        });
-      }
-    } catch (e) {
-      console.error('Failed to initialize auto-updater:', e);
-    }
+    // Auto-update logic to be migrated to Executor Task
   });
 });

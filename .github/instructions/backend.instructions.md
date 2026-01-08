@@ -1,8 +1,5 @@
 ---
-applyTo: 
-  - "src/lib/**/*.ts"
-  - "server.ts"
-  - "src/app/api/**/*.ts"
+applyTo: "{src/lib/**/*.ts,server.ts,src/app/api/**/*.ts}"
 ---
 
 # ServiceBay Backend Instructions

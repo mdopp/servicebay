@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
-  serverExternalPackages: ['socket.io', 'node-pty', 'node-schedule'],
+  serverExternalPackages: ['socket.io', 'node-pty'],
   async redirects() {
     return [
       {

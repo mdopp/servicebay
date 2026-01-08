@@ -1,4 +1,5 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
+import { useSocket } from '@/hooks/useSocket';
 import { useCache } from '@/providers/CacheProvider';
 import { NetworkGraph } from '@/lib/network/types';
 import { getNodes } from '@/app/actions/nodes';
@@ -98,7 +99,16 @@ export function useServicesList() {
                     const query = (node === 'Local') ? '' : `?node=${node}`;
                     const servicesRes = await fetch(`/api/services${query}`);
                     
-                    if (!servicesRes.ok) return [];
+                    if (!servicesRes.ok) {
+                        let errorMessage = `Failed to fetch from ${node}: ${servicesRes.status}`;
+                        try {
+                             const errJson = await servicesRes.json();
+                             if (errJson.error) errorMessage = errJson.error;
+                        } catch {}
+                        
+                        updateToast(toastId, 'error', `Node ${node} Error`, errorMessage, 5000);
+                        return [];
+                    }
                     
                     const servicesData = await servicesRes.json();
                     return servicesData.map((s: Service) => ({ ...s, nodeName: node }));
@@ -130,5 +140,24 @@ export function useServicesList() {
         }
     }, [addToast, updateToast]);
 
-    return useCache<{ services: Service[]; nodes: PodmanConnection[] }>('services-list-raw', fetcher, [], { revalidateOnMount: false });
+    const cache = useCache<{ services: Service[]; nodes: PodmanConnection[] }>('services-list-raw', fetcher, [], { revalidateOnMount: false });
+    const { socket } = useSocket();
+
+    useEffect(() => {
+        if (!socket) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const handleEvent = (event: any) => {
+             // Refresh on service updates or relevant file changes
+             if (event.type === 'service:update' || (event.type === 'file:change' && event.payload?.path?.endsWith('.container'))) {
+                 // Trigger silent refresh
+                 cache.refresh(false); 
+             }
+        };
+        socket.on('agent:event', handleEvent);
+        return () => {
+             socket.off('agent:event', handleEvent);
+        };
+    }, [socket, cache]);
+
+    return cache;
 }

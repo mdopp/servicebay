@@ -29,6 +29,12 @@ export async function decrypt(input: string): Promise<any> {
 }
 
 export async function getSession() {
+  if (process.env.LOGIN_REQUIRED === 'false') {
+    return {
+      user: process.env.SERVICEBAY_USERNAME || 'dev-user',
+      expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    };
+  }
   const cookieStore = await cookies();
   const session = cookieStore.get('session')?.value;
   if (!session) return null;
