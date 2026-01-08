@@ -4,12 +4,12 @@ This roadmap outlines the steps to migrate ServiceBay to the V4 "Agentless SSH" 
 
 ## Phase 1: Infrastructure & Core Libs
 
-- [ ] **Task 1.1: Create `SSHConnectionPool`**
+- [x] **Task 1.1: Create `SSHConnectionPool`**
     - Implement a class in `src/lib/ssh/pool.ts` that manages persistent SSH clients (`ssh2` or `child_process` spawn).
     - Implement automatic reconnection logic.
     - Add a `getConnection(nodeId)` method.
 
-- [ ] **Task 1.2: Develop the Ephemeral Agent Script**
+- [x] **Task 1.2: Develop the Ephemeral Agent Script**
     - Create `src/lib/agent/agent.sh` (or .py).
     - Features:
         - Read input loop (stdin) for commands.
@@ -17,7 +17,7 @@ This roadmap outlines the steps to migrate ServiceBay to the V4 "Agentless SSH" 
         - Simple poller for `systemctl --user is-active`.
     - Ensure it outputs structured JSON Lines.
 
-- [ ] **Task 1.3: Implement `AgentHandler`**
+- [x] **Task 1.3: Implement `AgentHandler`**
     - Create `src/lib/agent/handler.ts`.
     - Logic to spawn the SSH session and pipe the script.
     - Parse JSON output lines and emit internal Node.js events.
