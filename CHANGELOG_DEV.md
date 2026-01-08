@@ -24,6 +24,7 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 - Fixed backend crash when fetching Nginx config from stopped containers.
 - Fixed issue where Internet Gateway and External Links were missing from the dashboard when using remote nodes.
 - Updated ServicePlugin.tsx to support composite key lookup for Service Graph nodes, fixing "Inactive" status and missing ports for services with mismatching display names vs IDs (e.g. Reverse Proxy vs nginx). 
+- Fixed duplication bug where managed Quadlet containers (e.g., .container files) were incorrectly listed as "Unmanaged Services". Updated `discovery.ts` to recognize `.container` and `.pod` files in the systemd directory as managed. 
 
 ## [2026.1.68] - 2026-01-07
 ### Architecture

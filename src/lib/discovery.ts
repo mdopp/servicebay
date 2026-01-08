@@ -130,7 +130,7 @@ export async function discoverSystemdServices(connection?: PodmanConnection): Pr
         // Since paths might be absolute or relative, and we are remote, this is tricky.
         // But usually SYSTEMD_DIR is ~/.config/containers/systemd
         
-        if (type === 'kube' && sourcePath && sourcePath.includes('.config/containers/systemd')) {
+        if ((type === 'kube' || type === 'container' || type === 'pod') && sourcePath && sourcePath.includes('.config/containers/systemd')) {
             status = 'managed';
         }
 
