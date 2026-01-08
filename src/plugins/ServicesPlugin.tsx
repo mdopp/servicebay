@@ -93,6 +93,9 @@ export default function ServicesPlugin() {
           if (n.data?.name) nodeMap.set(n.data.name, n);
           if (n.label) nodeMap.set(n.label, n);
           nodeMap.set(n.id, n);
+          // Key by node + label/name to avoid collisions across servers
+          if (n.node && n.label) nodeMap.set(`${n.node}:${n.label}`, n);
+          if (n.node && n.data?.name) nodeMap.set(`${n.node}:${n.data.name}`, n);
       });
 
       return allServices.map(s => {
@@ -121,10 +124,28 @@ export default function ServicesPlugin() {
                 return copy;
             }
 
-            let node = nodeMap.get(copy.name);
+            // Try specific lookup first (Node aware)
+            const nodeName = copy.nodeName || 'Local';
+            let node = nodeMap.get(`${nodeName}:${copy.name}`);
+            
+            if (!node) {
+                // Try fallback logic
+                node = nodeMap.get(copy.name);
+            }
+            
             if (!node) {
                 const baseName = copy.name.replace(/\.(container|kube|service|pod)$/, '');
-                node = nodeMap.get(baseName);
+                // Try specific base name
+                node = nodeMap.get(`${nodeName}:${baseName}`);
+                if (!node) {
+                   node = nodeMap.get(baseName);
+                }
+            }
+
+            // Try lookup by ID (e.g. "nginx" vs "Reverse Proxy")
+            if (!node && copy.id) {
+                node = nodeMap.get(`${nodeName}:${copy.id}`);
+                if (!node) node = nodeMap.get(copy.id);
             }
             
             if (node) {
@@ -812,9 +833,16 @@ export default function ServicesPlugin() {
                                     />
                                     <div>
                                         <h3 className="font-bold text-lg break-all">{service.serviceName}</h3>
-                                        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 mt-1">
-                                            Type: {service.type}
-                                        </span>
+                                        <div className="flex gap-2 flex-wrap">
+                                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 mt-1">
+                                                Type: {service.type}
+                                            </span>
+                                            {service.nodeName && (
+                                                <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 mt-1">
+                                                    Node: {service.nodeName}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                                 <button 

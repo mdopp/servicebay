@@ -36,6 +36,8 @@ export interface ServiceInfo {
   hostNetwork?: boolean;
   node?: string; // Added node name
   id?: string; // Optional ID for mapping display name to service name
+  isReverseProxy?: boolean; // Flag to identify the reverse proxy service
+  isServiceBay?: boolean; // Flag to identify the ServiceBay self-service
 }
 
 export async function listServices(connection?: PodmanConnection): Promise<ServiceInfo[]> {
@@ -52,48 +54,90 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
     if (!(await executor.exists(systemdDir))) {
         await executor.mkdir(systemdDir);
     }
-  } catch (e) {
+  } catch (e: any) {
       console.error('Failed to access systemd dir', e);
-      return [];
+      // Determine if this is an Agent connection issue
+      if (e.message && e.message.includes('Agent not connected')) {
+          throw new Error(`Failed to communicate with ServiceBay Agent on ${connection?.Name || 'Remote Node'}.\nCheck if the node is online and the agent is running.`);
+      }
+      throw e;
   }
 
   const systemdDir = getSystemdDir(connection);
   // Optimized batch fetch script to reduce SSH round-trips
   const script = `
     cd "${systemdDir}" || exit 0
+    
+    echo "DEBUG_INFO: $(id) | $(env | grep -E 'XDG|DBUS')"
+    
+    # Pre-flight check for systemd accessibility
+    if ! systemctl --user list-units --no-pager -n 0 >/dev/null 2>&1; then
+        echo "ERROR_SYSTEMD_ACCESS_FAILED"
+        exit 1
+    fi
+
     # Loop over both .kube and .container files
     for f in *.kube *.container; do
         [ -e "$f" ] || continue
         
-        # Determine Name and Type based on extension
-        if [[ "$f" == *.kube ]]; then
-            name="\${f%.kube}"
-            type="kube"
-        else
-            name="\${f%.container}"
-            type="container"
-        fi
+        # Determine Name and Type based on extension (POSIX sh compatible)
+        case "$f" in
+            *.kube)
+                name="\${f%.kube}"
+                type="kube"
+                ;;
+            *.container)
+                name="\${f%.container}"
+                type="container"
+                ;;
+            *)
+                # Should not happen given the loop, but fallback
+                name="$f"
+                type="other"
+                ;;
+        esac
 
         echo "---SERVICE_START---"
         echo "NAME: $name"
         echo "TYPE: $type"
         echo "FILE: $f"
-        echo "STATUS: $(systemctl --user is-active "$name.service" 2>/dev/null || echo inactive)"
+        
+        # Robust status check - capture stderr for debugging
+        svc_status=$(systemctl --user is-active "$name.service" 2>&1)
+        exit_code=$?
+        
+        if [ $exit_code -ne 0 ]; then
+             # If completely empty, assume inactive (race condition or weird state)
+             if [ -z "$svc_status" ]; then
+                # Include debug info in the inactive status so we can verify user identity
+                svc_status="inactive (uid: $(id -u))"
+             else
+                # If it has content (e.g. error message), keep it so we see it in the UI/Logs
+                # But systemctl returns 'inactive' (exit 3) or 'failed' (exit 3) or 'unknown (exit 4)
+                # 'failed' state is valid content.
+                # Error messages (like 'Bus error') are also content.
+                # Let's prefix error for clarity if it looks like an error
+                if [[ "$svc_status" == *"Failed to"* ]] || [[ "$svc_status" == *"No such"* ]]; then
+                     svc_status="ERROR: $svc_status"
+                fi
+             fi
+        fi
+        echo "STATUS: $svc_status"
+
         echo "DESCRIPTION: $(systemctl --user show -p Description --value "$name.service" 2>/dev/null)"
         echo "CONTENT_START"
         cat "$f"
         echo "CONTENT_END"
         
         # Only parse Yaml for Kube types
-        if [[ "$type" == "kube" ]]; then
+        if [ "$type" = "kube" ]; then
             yaml_file=$(grep "^Yaml=" "$f" | head -n1 | cut -d= -f2- | sed 's/^[ \t]*//;s/[ \t]*$//')
             if [ -n "$yaml_file" ]; then
                 echo "YAML_CONTENT_START"
-                if [[ "$yaml_file" == /* ]]; then
-                    cat "$yaml_file" 2>/dev/null
-                else
-                    cat "$yaml_file" 2>/dev/null
-                fi
+                case "$yaml_file" in
+                    /*) cat "$yaml_file" 2>/dev/null ;;
+                    *) cat "$yaml_file" 2>/dev/null ;;
+                esac
                 echo "YAML_CONTENT_END"
             fi
         fi
@@ -105,9 +149,17 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
   try {
       const res = await executor.exec(script);
       stdout = res.stdout;
-  } catch (e) {
+      // Debug logging to troubleshoot status issues
+      if (stdout.includes('STATUS: inactive') || stdout.includes('STATUS: failed')) {
+          console.log('[ServiceManager] Raw Batch Output:', stdout);
+      }
+  } catch (e: any) {
       console.error('Failed to fetch services batch', e);
-      return [];
+      if (e.stdout && e.stdout.includes('ERROR_SYSTEMD_ACCESS_FAILED')) {
+          throw new Error('Systemd User Session inaccessible. Check DBUS/XDG environment.');
+      }
+      // Propagate error to let the UI handle it properly
+      throw e;
   }
 
   const services: ServiceInfo[] = [];
@@ -123,8 +175,12 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
       
       if (!nameLine) continue;
       
-      const name = nameLine.substring(6).trim();
+      let name = nameLine.substring(6).trim();
        
+      // Fix: Strip extensions that might have leaked from the shell script or weird filenames
+      // This fixes the 'foo.kube' name issue reported by users
+      name = name.replace(/\.(kube|container|service|pod)$/, '');
+
       const type = typeLine ? typeLine.substring(6).trim() : 'kube';
       const fileName = fileLine ? fileLine.substring(6).trim() : `${name}.kube`;
       const status = statusLine ? statusLine.substring(8).trim() : 'unknown';
@@ -175,6 +231,15 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
       const volumes: { host: string; container: string }[] = [];
       let labels: Record<string, string> = {};
       let hostNetwork = false;
+      let isReverseProxy = false;
+      let isServiceBay = false;
+
+      // Identify special services
+      // 1. Reverse Proxy (Nginx)
+      if (name === 'nginx' || name === 'nginx-web') isReverseProxy = true;
+      
+      // 2. ServiceBay (Self)
+      if (name === 'servicebay' || name === 'ServiceBay') isServiceBay = true;
 
       if (yamlContent) {
         try {
@@ -183,6 +248,9 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
                 if (parsed) {
                     if (parsed.metadata && parsed.metadata.labels) {
                         labels = { ...labels, ...parsed.metadata.labels };
+                        // Detect Roles by Label (Best Practice)
+                        if (labels['servicebay.role'] === 'reverse-proxy') isReverseProxy = true;
+                        if (labels['servicebay.protected'] === 'true') isServiceBay = true;
                     }
                     if (parsed.spec) {
                         if (parsed.spec.hostNetwork) {
@@ -231,11 +299,61 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
         } catch (e) {
             console.warn(`Failed to parse YAML for ${name}`, e);
         }
+      } else if (content) {
+          // Fallback: Parse attributes from Quadlet .container files
+          // Parse PublishPort (e.g., PublishPort=8080:80)
+          const portMatches = content.matchAll(/PublishPort=(.+)/g);
+          for (const match of portMatches) {
+              const val = match[1].trim();
+              // Handle ip:hostPort:containerPort vs hostPort:containerPort vs containerPort
+              const parts = val.split(':');
+              if (parts.length === 3) {
+                   // ip:host:container
+                   ports.push({ host: parts[1], container: parts[2] });
+              } else if (parts.length === 2) {
+                   // host:container
+                   ports.push({ host: parts[0], container: parts[1] });
+              } else {
+                   // container
+                   ports.push({ container: val });
+              }
+          }
+
+          // Parse Labels (e.g., Label=foo=bar)
+          const labelMatches = content.matchAll(/Label=(.+)/g);
+          for (const match of labelMatches) {
+               const val = match[1].trim();
+               const firstEq = val.indexOf('=');
+               if (firstEq !== -1) {
+                   const k = val.substring(0, firstEq);
+                   const v = val.substring(firstEq + 1);
+                   labels[k] = v;
+               }
+          }
+          
+          // Re-evaluate Identify Logic based on new labels
+          if (labels['servicebay.role'] === 'reverse-proxy') isReverseProxy = true;
+          if (labels['servicebay.protected'] === 'true') isServiceBay = true;
+
+          // Parse Host Network
+          if (content.match(/Network=host/)) {
+              hostNetwork = true;
+          }
+      }
+
+      // Deduplicate services by name to prevent multiple files (e.g. .kube and .container)
+      // from showing as separate services if they map to the same systemd unit.
+      const existing = services.find(s => s.name === name);
+      if (existing) {
+          // If we found a duplicate, we might want to update it if the new one 
+          // provides more info (like yaml content), but for now we skip to avoid key collisions.
+          continue;
       }
 
       services.push({
-        name,
-        kubeFile: `${name}.kube`,
+        id: name, // Unique ID for React keys
+        name: name, // Display Name
+        kubeFile: fileName,
         kubePath,
         yamlFile,
         yamlPath,
@@ -246,6 +364,8 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
         volumes,
         labels,
         hostNetwork,
+        isReverseProxy,
+        isServiceBay, // <--- Added field
         node: connection?.Name || 'Local'
       });
   }

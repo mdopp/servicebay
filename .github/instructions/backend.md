@@ -22,6 +22,16 @@ You are working on the **ServiceBay** backend (Node.js + Podman/Quadlet).
     -   "Remote" nodes: Accessed via SSH `id_rsa`.
     -   Host Access: The container accesses the host via SSH to `host.containers.internal` or detected IP.
 
+## Registry & Templates
+-   **Structure**: Every template or stack in `templates/` or `stacks/` MUST have:
+    -   `template.yml` (for templates) or structure definition.
+    -   `README.md`: This is the user-facing description shown in the UI. It is NOT for developers.
+        -   Format: `# Title`, `## Description`, `## Variables` (if any).
+
 ## Performance
 -   **Batching**: Combine SSH commands into single executions where possible.
 -   **Concurrency**: Use `Promise.all` for independent operations.
+
+## Testing & Quality Assurance
+-   **Regression Testing**: When fixing a bug, you MUST update an existing test or add a new test case that reproduces the bug (and passes with the fix). This ensures the bug does not recur.
+-   **Coverage**: Critical logic in `src/lib/` must have unit tests.

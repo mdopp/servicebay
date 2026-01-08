@@ -55,7 +55,11 @@ export class NetworkService {
           
           const { stdout } = await executor.exec(cmd);
           return stdout.trim().split(' ')[0];
-      } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (e: any) {
+          if (e.message && (e.message.includes('container state improper') || e.message.includes('not running'))) {
+              return null;
+          }
           console.warn('[NetworkService] Failed to calculate config hash:', e);
           return null;
       }
@@ -72,8 +76,13 @@ export class NetworkService {
     try {
         const { stdout } = await executor.exec(`podman exec ${containerId} test -d /data/nginx && echo "yes" || echo "no"`);
         includeData = stdout.trim() === 'yes';
-    } catch (e) {
-        console.warn(`[NetworkService] Failed to check /data/nginx existence:`, e);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+        if (e.message && (e.message.includes('container state improper') || e.message.includes('not running'))) {
+             // Container stopped, ignore
+        } else {
+             console.warn(`[NetworkService] Failed to check /data/nginx existence:`, e);
+        }
     }
 
     // Tar command
@@ -81,8 +90,8 @@ export class NetworkService {
     const paths = ['/etc/nginx'];
     if (includeData) paths.push('/data/nginx');
     
-    // Remove 2>/dev/null to capture stderr
-    const tarCmd = `podman exec ${containerId} tar -czf - ${paths.join(' ')} --exclude /data/logs`;
+    // Remove 2>/dev/null to capture stderr. Use base64 to safely transport binary data over agent.
+    const tarCmd = `podman exec ${containerId} sh -c "tar -czf - ${paths.join(' ')} --exclude /data/logs | base64"`;
     
     try {
         const { stdout: remoteStream, stderr: remoteStderr, promise: remotePromise } = executor.spawn(tarCmd);
@@ -90,25 +99,43 @@ export class NetworkService {
         let remoteErrOutput = '';
         remoteStderr.on('data', chunk => remoteErrOutput += chunk.toString());
 
-        // Handle remote promise to avoid unhandled rejection
-        remotePromise.catch(e => console.warn(`[NetworkService] Remote tar exited with: ${e}. Stderr: ${remoteErrOutput}`));
-
-        // Local tar extract
+        // Local pipeline: base64 -d | tar -xzf - -C tmpDir
+        const localBase64 = spawn('base64', ['-d']);
         const localTar = spawn('tar', ['-xzf', '-', '-C', tmpDir]);
         
-        remoteStream.pipe(localTar.stdin);
+        remoteStream.pipe(localBase64.stdin);
+        localBase64.stdout.pipe(localTar.stdin);
         
         await new Promise<void>((resolve, reject) => {
+            let pending = 2; // Wait for both
+            const checkDone = () => {
+                pending--;
+                if (pending === 0) resolve();
+            };
+
             localTar.on('close', (code) => {
-                if (code === 0) resolve();
+                if (code === 0) checkDone();
                 else reject(new Error(`Local tar failed with code ${code}`));
             });
+
+            localBase64.on('close', (code) => {
+                if (code === 0) checkDone();
+                else reject(new Error(`Local base64 failed with code ${code}`));
+            });
+
             localTar.on('error', reject);
+            localBase64.on('error', reject);
             remoteStream.on('error', reject);
+            remotePromise.catch(reject);
         });
         
         return tmpDir;
-    } catch (e) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+        if (e.message && (e.message.includes('container state improper') || e.message.includes('not running'))) {
+            // Container stopped, ignore
+            return null;
+        }
         console.warn(`[NetworkService] Failed to fetch/extract remote config:`, e);
         // Cleanup
         try { await fs.rm(tmpDir, { recursive: true, force: true }); } catch {}
@@ -597,11 +624,7 @@ export class NetworkService {
     // Find the Reverse Proxy Service
     watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Analyzing services...`, node: nodeName });
     
-    const proxyService = services.find(s =>  
-        s.labels['servicebay.role'] === 'reverse-proxy' || 
-        s.name === 'nginx-web' || 
-        s.name === 'nginx'
-    );
+    const proxyService = services.find(s => s.isReverseProxy);
     const proxyServiceName = proxyService?.name || 'nginx-web';
 
     // Nginx Config (Only relevant if Nginx is running on this node)

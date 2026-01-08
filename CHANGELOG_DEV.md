@@ -5,13 +5,25 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 ## [Unreleased]
 
 ### Added
-- 
+- Created `changelog.instructions.md` to enforce changelog updates.
+- Added `services.smoke.test.ts`, `robustness.test.ts`, and `api.integration.test.ts` for regression testing.
+- Implemented `AgentExecutor.spawn` for streaming command execution.
+- Added `src/lib/manager_status.test.ts` to verify service status parsing logic.
 
 ### Changed
-- 
+- Refactored `src/lib/network/service.ts` to suppress "container state improper" error during Nginx config fetch.
+- Updated `src/app/api/services/route.ts` to inject global services (Gateway, External Links) on the **Default Node** instead of just "Local".
+- Extracted `Executor` interface to `src/lib/interfaces.ts` to fix circular dependencies.
+- Improved error handling in `listServices` to report "Agent not connected" to the UI.
+- Refactored `src/lib/manager.ts` bash script generation to reliably report service status without appending "inactive" on failure conditions.
+- Updated `src/lib/agent/handler.ts` to inject `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` for remote agents, fixing `systemctl --user` commands in non-interactive SSH sessions.
+- Enhanced `src/lib/manager.ts` to parse `PublishPort` and `Label` from Quadlet `.container` files (fallback when YAML logic is skipped).
+- Standardized Reverse Proxy identification in `src/lib/network/service.ts` to use `isReverseProxy` flag (Source-Centric Truth).
 
 ### Fixed
-- 
+- Fixed backend crash when fetching Nginx config from stopped containers.
+- Fixed issue where Internet Gateway and External Links were missing from the dashboard when using remote nodes.
+- Updated ServicePlugin.tsx to support composite key lookup for Service Graph nodes, fixing "Inactive" status and missing ports for services with mismatching display names vs IDs (e.g. Reverse Proxy vs nginx). 
 
 ## [2026.1.68] - 2026-01-07
 ### Architecture
