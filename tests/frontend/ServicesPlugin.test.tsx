@@ -145,4 +145,69 @@ describe('ServicesPlugin', () => {
         // Expect to see it
         await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
     });
+
+    it('shows Unmanaged ServiceBay service (Agent V4)', async () => {
+        currentMockData = {
+          nodes: {
+            'Local': {
+              services: [
+                { 
+                    name: 'servicebay',  // No extension
+                    activeState: 'active', 
+                    subState: 'running', 
+                    type: 'container', 
+                    description: 'ServiceBay Management Interface',
+                    isServiceBay: true // Flag from Agent V4
+                }
+              ],
+              containers: [],
+              files: {} // No .kube files
+            }
+          },
+          proxy: { provider: 'none' },
+          gateway: { upstreamStatus: 'up' }
+        };
+
+        render(<ServicesPlugin />);
+        
+        // Should show up even if unmanaged
+        await waitFor(() => screen.getByText('ServiceBay System'));
+        
+        // Check for System badge
+        await waitFor(() => screen.getByText('System'));
+    });
+
+    it('shows ports for Unmanaged Kube-style services (Agent V4)', async () => {
+        currentMockData = {
+          nodes: {
+            'Local': {
+              services: [
+                { 
+                    name: 'nginx-web',
+                    activeState: 'active', subState: 'running', type: 'container', description: 'Nginx',
+                    isReverseProxy: true
+                }
+              ],
+              containers: [
+                  {
+                      // Podman Kube naming convention: k8s_<container-name>_<pod-name>_<namespace>...
+                      id: 'abc12345',
+                      names: ['k8s_nginx_nginx-web_default_0_0'], 
+                      ports: [{ hostPort: 80, containerPort: 80 }, { hostPort: 443, containerPort: 443 }]
+                  }
+              ],
+              files: {} // Unmanaged
+            }
+          },
+          proxy: { provider: 'nginx' },
+          gateway: { upstreamStatus: 'up' }
+        };
+
+        render(<ServicesPlugin />);
+        
+        await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
+        // Should show ports
+        await waitFor(() => screen.getByText('80:80')); 
+        await waitFor(() => screen.getByText('443:443')); 
+    });
 });

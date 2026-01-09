@@ -147,9 +147,11 @@ export default function ServicesPlugin() {
              // Filter: Only show Managed services
              if (!managedType && !unit.description?.includes('ServiceBay')) {
                 // Also check if it's the gateway or proxy which might be special
-                // If it is NOT managed, we still want to show it if it's the proxy.
+                // If it is NOT managed, we still want to show it if it's the proxy or ServiceBay itself.
                 // Note: Agent V4 strips .service extension, so we check base names
                 if (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web' || unit.name === 'nginx' || unit.name === 'nginx-web.service')) {
+                   // allow
+                } else if (unit.name === 'servicebay' || unit.name === 'servicebay-dev' || unit.name === 'servicebay.service') {
                    // allow
                 } else {
                    return;
@@ -220,6 +222,14 @@ export default function ServicesPlugin() {
                           }
                      }
                  }
+             } else {
+                 // Fallback: Try to find a direct YAML file if it's unmanaged
+                 // (e.g., used by 'podman play kube' but not via a .kube unit file)
+                 const fallbackYaml = fileKeys.find(f => f.endsWith(`/${baseName}.yml`) || f.endsWith(`/${baseName}.yaml`));
+                 if (fallbackYaml) {
+                     yamlPath = fallbackYaml;
+                     // Optional: Parse this YAML too? For now, just linking it allows the UI to show "YAML" badge
+                 }
              }
 
              // 2. Find Container with Strict Matching
@@ -227,12 +237,32 @@ export default function ServicesPlugin() {
              const container = nodeState.containers.find(c => {
                  return c.names.some(n => {
                      const cleanName = n.replace(/^\//, '');
-                     return uniqueExpected.includes(cleanName);
+                     // Direct match
+                     if (uniqueExpected.includes(cleanName)) return true;
+                     
+                     // Podman Kube Match (k8s_<container>_<pod>_...)
+                     // We check if the container name inside the k8s pattern matches one of our expected names
+                     // Format: k8s_CONTAINER_POD_NAMESPACE_ID_...
+                     if (cleanName.startsWith('k8s_')) {
+                         const parts = cleanName.split('_');
+                         if (parts.length >= 3) {
+                             const k8sContainer = parts[1];
+                             const k8sPod = parts[2];
+                             // Check if container name matches our expected names
+                             // OR if pod name matches our expected service names
+                             if (uniqueExpected.includes(k8sContainer) || uniqueExpected.includes(k8sPod)) {
+                                 return true;
+                             }
+                         }
+                     }
+                     
+                     return false;
                  });
              });
 
              const isProxy = (twin.proxy?.provider === 'nginx' && (unit.isReverseProxy || unit.name === 'nginx-web' || unit.name === 'nginx' || unit.name === 'nginx-web.service' || unit.name === 'nginx.service'));
-             
+             const isServiceBay = (unit.isServiceBay || unit.name === 'servicebay' || unit.name === 'servicebay-dev' || unit.name === 'servicebay.service');
+
              // Find Verified Domains
              // Robust match: targetService must match Service Name OR any Known Container Name
              const verifiedDomains = (twin.proxy?.routes || [])
@@ -275,9 +305,9 @@ export default function ServicesPlugin() {
 
              const svc: Service = {
                  id: unit.name,
-                 name: isProxy ? 'Reverse Proxy (Nginx)' : unit.name,
+                 name: isProxy ? 'Reverse Proxy (Nginx)' : (isServiceBay ? 'ServiceBay System' : unit.name),
                  nodeName: nodeName,
-                 description: isProxy ? 'System Status\nNginx is installed and managed by ServiceBay\n\nReady to serve traffic' : unit.description,
+                 description: isProxy ? 'System Status\nNginx is installed and managed by ServiceBay\n\nReady to serve traffic' : (isServiceBay ? 'ServiceBay Management Interface' : unit.description),
                  active: unit.activeState === 'active',
                  status: unit.activeState === 'active' ? 'active' : 'inactive',
                  activeState: unit.activeState,
@@ -288,7 +318,7 @@ export default function ServicesPlugin() {
                  ports: [],
                  volumes: [],
                  monitor: false,
-                 labels: isProxy ? { 'servicebay.role': 'reverse-proxy' } : {},
+                 labels: isProxy ? { 'servicebay.role': 'reverse-proxy' } : (isServiceBay ? { 'servicebay.role': 'system' } : {}),
                  verifiedDomains: verifiedDomains
              };
              
@@ -839,6 +869,11 @@ export default function ServicesPlugin() {
                                             {service.labels && service.labels['servicebay.role'] === 'reverse-proxy' && (
                                                 <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 rounded">
                                                     Reverse Proxy
+                                                </span>
+                                            )}
+                                            {service.labels && service.labels['servicebay.role'] === 'system' && (
+                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 rounded">
+                                                    System
                                                 </span>
                                             )}
                                             
