@@ -146,5 +146,81 @@ class TestAgent(unittest.TestCase):
         self.assertTrue(a.scan_scheduled)
         mock_timer.assert_not_called() # Should strictly rely on the existing timer
 
+    @patch('agent.fetch_services')
+    @patch('agent.fetch_proxy_routes')
+    def test_deduplication_on_file_change(self, mock_fetch_proxy, mock_fetch_services):
+        # Scenario: File watcher detects a change
+        # But Proxy Routes return SAME data.
+        # We expect Agent NOT to push 'proxy' updates.
+        
+        a = agent.Agent()
+        a.push_state = MagicMock()
+        
+        # Initial State
+        initial_proxy = [{"host": "example.com", "targetService": "127.0.0.1:80"}]
+        a.state['proxy'] = initial_proxy
+        a.state['services'] = []
+        # (Files state isn't checked inside _process_file_changes, only updated)
+        
+        # Mocks
+        mock_fetch_services.return_value = []
+        # Return Identical Proxy Config
+        mock_fetch_proxy.return_value = [{"host": "example.com", "targetService": "127.0.0.1:80"}]
+        
+        # Call the method
+        new_files = {'/tmp/test': {'modified': 200}}
+        a._process_file_changes(new_files)
+        
+        # ASSERT FAIL: The current implementation blindly pushes proxy
+        # We expect this test to verify that the bug exists (it SHOULD fail if we assert it shouldn't push)
+        
+        # Let's count calls to push_state with 'proxy'
+        proxy_pushes = 0
+        for call in a.push_state.call_args_list:
+            args, _ = call
+            if args[0] == 'SYNC_PARTIAL' and 'proxy' in args[1]:
+                proxy_pushes += 1
+        
+        # To "find the bug", we assert that it should confirm deduplication works (0 pushes).
+        # Since the code is currently broken, this assert will RAISE AssertionError, proving the bug.
+        self.assertEqual(proxy_pushes, 0, "Bug Found: Proxy state pushed despite no changes!")
+
+    @patch('agent.log_debug')
+    @patch('sys.stderr')
+    @patch('subprocess.run')
+    @patch('agent.run_command')
+    def test_fetch_proxy_routes_silence(self, mock_run_cmd, mock_sub_run, mock_stderr, mock_log_debug):
+        # Setup mocks to return valid proxy routes
+        mock_run_cmd.return_value = "nginx-proxy" # found container
+        
+        # Mock exec output
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = '[{"host": "test.com", "targetService": "127.0.0.1:80", "targetPort": 80, "ssl": true}]'
+        mock_proc.stderr = ""
+        mock_sub_run.return_value = mock_proc
+        
+        # Enable agent.DEBUG_MODE = False (default)
+        original_debug = agent.DEBUG_MODE
+        agent.DEBUG_MODE = False
+        
+        try:
+            routes = agent.fetch_proxy_routes()
+            
+            # Assert correct parsing
+            self.assertEqual(len(routes), 1)
+            self.assertEqual(routes[0]['host'], "test.com")
+            
+            # CRITICAL: Should NOT write "Parsed Nginx Routes" to stderr
+            # We iterate over all write calls to find the spammy one
+            for call in mock_stderr.write.call_args_list:
+                args, _ = call
+                msg = args[0]
+                if "Parsed Nginx Routes" in msg:
+                    self.fail(f"Found spammy log in stderr: {msg}")
+                    
+        finally:
+            agent.DEBUG_MODE = original_debug
+
 if __name__ == '__main__':
     unittest.main()

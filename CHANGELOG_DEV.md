@@ -4,7 +4,12 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 
 ## [Unreleased]
 
+### Added
+- **Frontend Tests**: Implemented comprehensive test suite using Vitest and React Testing Library. Covered Core Visualization (`ContainerList`, `ServiceMonitor`, `NetworkGraph`), Onboarding Wizard flow (`OnboardingWizard`), Configuration (`GatewayConfig`), and Responsive Layout (`Sidebar`, `MobileNav`, `MobileLayout`). Achieved passing status for all 20 tests.
+
 ### Fixed
+- **Agent V4:** Silenced "Parsed Nginx Routes" stderr logging which was spamming the console when file changes triggered frequent re-scans.
+- **Agent V4**: Fixed a bug where file timestamp updates would trigger redundant state pushes even if the service/proxy configuration logic remained identical.
 - **Agent Logging**: Suppressed verbose debug output (`STDERR: Process started`, `STDERR: Received command`) from the Python Agent in `AgentHandler` to reduce console noise.
 - **NetworkService**: Enhanced Nginx container detection logic to validly identify containers matching Podman Kube naming conventions (`k8s_...`) and standard naming. This resolves issues where Nginx configuration parsing was skipped in the graph generation.
 - **ServiceMonitor**: Fixed crash (`undefined.replace`) and enhanced handling of empty states with troubleshooting UI.
@@ -22,6 +27,7 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 - **Frontend**: Enhanced `ContainersPlugin` to differentiate between "connected but syncing" and "empty state" using `isNodeSynced` from `useDigitalTwin`.
 
 ### Refactored
+- **Agent V4**: Switched from polling file watcher to Linux `inotify` (via ctypes) for instant and efficient file change detection.
 - **Logging**: Completed the migration from `console.log` to `src/lib/logger.ts` for all backend services (`Server`, `AgentHandler`, `FritzBox`, `GatewayPoller`, `Executor`, `SSH`, `Monitoring`). This ensures consistent, timestamped structured logging across the application.
 - **Gateway Configuration**: Removed dependency on `FRITZBOX_USER`/`PASSWORD` legacy environment variables. Migrated `GatewayPoller` and `FritzBoxClient` to use the unified `config.json` via `getConfig()`.
 - **UI**: Moved `GatewayConfig` from `RegistryBrowser` to `SettingsPage`. Refactored `GatewayConfig.tsx` to match the settings page "Card" design system.

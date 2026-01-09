@@ -8,6 +8,9 @@ import glob
 import platform
 import socket
 import shutil
+import ctypes
+import struct
+import select
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional, Any
 
@@ -368,6 +371,9 @@ def fetch_containers():
                 'isInfra': c.get('IsInfra', False),
                 'pid': pid # Useful for debugging or further mapping
             })
+        
+        # Sort by ID to ensure consistent order for deduplication
+        enriched.sort(key=lambda x: x['id'])
         return enriched
     except json.JSONDecodeError:
         return []
@@ -402,6 +408,7 @@ def fetch_volumes(containers=None):
             for v in volumes:
                 v['UsedBy'] = usage_map.get(v['Name'], [])
                 
+        volumes.sort(key=lambda x: x.get('Name', ''))
         return volumes
     except json.JSONDecodeError:
         return []
@@ -479,6 +486,9 @@ def fetch_services():
                 'isReverseProxy': is_proxy,
                 'isServiceBay': clean_name == 'servicebay' or clean_name == 'ServiceBay'
             })
+        
+        # Sort by Name
+        services.sort(key=lambda x: x['name'])
         return services
     except Exception:
         # Fallback for manual parsing or older systemd?
@@ -829,7 +839,11 @@ def fetch_proxy_routes():
 
         if result.returncode == 0:
             routes = json.loads(result.stdout)
-            sys.stderr.write(f"[Agent] Parsed Nginx Routes (Container: {container_name}): {json.dumps(routes)}\n")
+            log_debug(f"Parsed Nginx Routes (Container: {container_name}): {json.dumps(routes)}")
+            
+            # Sort routes for deduplication stability
+            # Also ensure all keys are strings to prevent comparison errors if None
+            routes.sort(key=lambda x: (str(x.get('host', '')), str(x.get('targetService', ''))))
             return routes
     except Exception as e:
         sys.stderr.write(f"[Agent] Proxy inspector failed: {e}\n")
@@ -837,6 +851,107 @@ def fetch_proxy_routes():
         pass
         
     return []
+
+
+# --- Inotify ---
+
+class InotifyWatcher:
+    """
+    A ctypes-based inotify watcher.
+    """
+    IN_MODIFY = 0x00000002
+    IN_ATTRIB = 0x00000004
+    IN_CLOSE_WRITE = 0x00000008
+    IN_MOVED_FROM = 0x00000040
+    IN_MOVED_TO = 0x00000080
+    IN_CREATE = 0x00000100
+    IN_DELETE = 0x00000200
+    IN_DELETE_SELF = 0x00000400
+    IN_MOVE_SELF = 0x00000800
+    
+    # We care about modifications, creations, deletions, moves
+    MASK = IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF
+
+    def __init__(self):
+        self.libc = ctypes.CDLL(None)
+        # int inotify_init(void);
+        try:
+            self.libc.inotify_init.argtypes = []
+            self.libc.inotify_init.restype = ctypes.c_int
+            
+            # int inotify_add_watch(int fd, const char *pathname, uint32_t mask);
+            self.libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+            self.libc.inotify_add_watch.restype = ctypes.c_int
+            
+            # int inotify_rm_watch(int fd, int wd);
+            self.libc.inotify_rm_watch.argtypes = [ctypes.c_int, ctypes.c_int]
+            self.libc.inotify_rm_watch.restype = ctypes.c_int
+            
+            self.fd = self.libc.inotify_init()
+        except Exception:
+            self.fd = -1
+
+        if self.fd < 0:
+            raise OSError("inotify_init failed")
+            
+        self.watches = {} # path -> wd
+        self.reverse_watches = {} # wd -> path
+
+    def update_watches(self, dirs):
+        """
+        Updates the set of watched directories.
+        Adds new ones, removes old ones. Recurses into subdirs.
+        """
+        desired = set()
+        for d in dirs:
+            if os.path.exists(d) and os.path.isdir(d):
+                desired.add(os.path.abspath(d))
+                # Recurse
+                for root, subs, files in os.walk(d):
+                    for s in subs:
+                        desired.add(os.path.abspath(os.path.join(root, s)))
+        
+        current = set(self.watches.keys())
+        
+        to_add = desired - current
+        to_remove = current - desired
+        
+        for d in to_remove:
+            wd = self.watches.pop(d)
+            self.reverse_watches.pop(wd, None)
+            try:
+                self.libc.inotify_rm_watch(self.fd, wd)
+            except: pass
+            
+        for d in to_add:
+            try:
+                wd = self.libc.inotify_add_watch(self.fd, d.encode('utf-8'), self.MASK)
+                if wd >= 0:
+                    self.watches[d] = wd
+                    self.reverse_watches[wd] = d
+            except Exception:
+                pass
+
+    def wait_for_events(self, timeout=None):
+        """
+        Waits for events. Returns True if events occurred, False on timeout.
+        Timeout is in seconds.
+        """
+        try:
+            r, w, x = select.select([self.fd], [], [], timeout)
+            if r:
+                # Consume events to empty buffer
+                os.read(self.fd, 4096)
+                # We don't parse deeply, just knowing change happened is enough to trigger scan
+                return True
+        except:
+            pass
+        return False
+        
+    def close(self):
+        if self.fd >= 0:
+            os.close(self.fd)
+            self.fd = -1
 
 
 # --- Aggregator ---
@@ -982,21 +1097,52 @@ class Agent:
             reply(error=str(e))
 
     def file_watcher_loop(self):
-        last_scan_time = 0
+        # Initialize Inotify
+        watcher = None
+        try:
+            watcher = InotifyWatcher()
+            log_debug("Inotify Watcher Initialized")
+        except Exception as e:
+             sys.stderr.write(f"WARNING: Inotify init failed ({e}). Falling back to polling.\n")
+             pass
+
         while True:
-            # 1. Throttling: Ensure we don't scan files more often than once every 2 seconds
-            # The sleep is at the end, but calculate loop time safety.
-            
-            # 2. Get active container dirs (requires lock for state read)
+            # 1. Update Watches & Wait
             extra_dirs = []
             with self.lock:
                 if self.state['containers']:
                     extra_dirs = self._get_nginx_config_dirs(self.state['containers'])
+            
+            # Use both default config dir and extra dirs
+            base_config = os.path.expanduser("~/.config/containers/systemd")
+            # Ensure base dir exists for watching
+            if not os.path.exists(base_config):
+                try: os.makedirs(base_config, exist_ok=True)
+                except: pass
 
-            # 3. Fetch files (expensive IO, done outside lock)
+            dirs_to_watch = [base_config] + extra_dirs
+
+            if watcher:
+                watcher.update_watches(dirs_to_watch)
+                
+                # Wait for events with timeout (re-check dirs period 3s)
+                has_events = watcher.wait_for_events(timeout=3.0)
+                
+                if not has_events:
+                     continue
+                
+                # Debounce
+                time.sleep(0.5)
+                watcher.wait_for_events(timeout=0.1)
+                
+            else:
+                # Polling Fallback
+                time.sleep(2)
+
+            # 2. Fetch files (expensive IO)
             new_files = fetch_files(extra_dirs)
             
-            # 4. Compare State (inside lock)
+            # 3. Compare State
             changes_pushed = False
             with self.lock:
                 # Check for changes
@@ -1017,34 +1163,36 @@ class Agent:
                         else:
                             changed = True; break
                 
-                # Check if we should suppress updates (if recently pushed)
-                # But files usually change explicitly, so immediate push is preferred.
-                
                 if changed:
-                    self.state['files'] = new_files
-                    
-                    # File changes might imply service definition changes.
-                    # Nginx config changes usually don't affect systemd service state, so we might skip fetch_services
-                    # unless a .kube/.container file changed.
-                    # BUT distinguishing is hard here without granular diff.
-                    # Optimization: If only .conf files changed, skip fetch_services()
-                    only_conf_changed = True
-                    # Re-detect what changed? logic above just broke on first change.
-                    # Let's keep it simple: refetch all for safety but rate limit.
-                    
-                    self.state['services'] = fetch_services()
-                    self.state['proxy'] = fetch_proxy_routes() # Update proxy routes (in case .conf changed)
-                    
-                    self.push_state('SYNC_PARTIAL', {'files': self.state['files']})
-                    self.push_state('SYNC_PARTIAL', {'services': self.state['services']})
-                    self.push_state('SYNC_PARTIAL', {'proxy': self.state['proxy']})
+                    self._process_file_changes(new_files)
                     changes_pushed = True
             
-            # 5. Backoff if changes found to allow settling (e.g. multiple file writes)
+            # 4. Backoff
             if changes_pushed:
-                time.sleep(5)
-            else:
                 time.sleep(2)
+
+    def _process_file_changes(self, new_files):
+        """
+        Internal method to handle state updates when files change.
+        Separated for testing purposes.
+        """
+        # Always update and push files since we know they changed
+        self.state['files'] = new_files
+        self.push_state('SYNC_PARTIAL', {'files': self.state['files']})
+        
+        # Check Services
+        new_services = fetch_services()
+        if new_services != self.state.get('services'):
+            self.state['services'] = new_services
+            self.push_state('SYNC_PARTIAL', {'services': self.state['services']})
+            log_debug("File change triggered services update")
+        
+        # Check Proxy
+        new_proxy = fetch_proxy_routes()
+        if new_proxy != self.state.get('proxy'):
+            self.state['proxy'] = new_proxy
+            self.push_state('SYNC_PARTIAL', {'proxy': self.state['proxy']})
+            log_debug("File change triggered proxy update")
 
     def refresh_all(self):
         with self.lock:

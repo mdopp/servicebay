@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **Logging**: Improved server logging format for better readability and debugging.
 
 ### Changed
+- **Performance**: Optimized the Node Agent to use passive file watching (Inotify) instead of polling, improving system efficiency.
 - **Config**: Moved **Internet Gateway** configuration from the Registry Browser to the main **Settings** page.
 - **Gateway**: Internet Gateway configuration is now managed via the central settings file instead of environment variables.
 - **Reverse Proxy**: Explicitly identifies "Nginx" as "Reverse Proxy (Nginx)" with status information in the services list.
@@ -20,6 +21,8 @@ All notable changes to this project will be documented in this file.
 - **Services**: The service list now strictly shows only services managed by ServiceBay (Quadlet `.container`, `.kube`, and `.pod` files), hiding unrelated system services.
 
 ### Fixed
+- **Agent**: Reduced log noise by quieting debug messages related to Nginx route parsing.
+- **Stability**: Fixed a bug where the agent would excessively update the server when configuration files were touched but unchanged.
 - **Network Graph**: Fixed Nginx Reverse Proxy node appearing detached or missing connections due to container naming mismatches in Podman Kube environments.
 - Fixed an issue where the Nginx Reverse Proxy service would incorrectly show as "DOWN" in the Service Monitor despite being active.
 - Added detailed "Active State" and "Sub State" fields to the Raw Data view in Service Monitor.
