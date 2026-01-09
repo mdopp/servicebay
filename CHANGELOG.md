@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - **Services**: The service list now strictly shows only services managed by ServiceBay (Quadlet `.container`, `.kube`, and `.pod` files), hiding unrelated system services.
 
 ### Fixed
+- **Dashboard**: Fixed an issue where the Nginx Reverse Proxy card was missing or mislabeled when using the latest Agent V4.
 - **Agent**: Reduced log noise by quieting debug messages related to Nginx route parsing.
 - **Stability**: Fixed a bug where the agent would excessively update the server when configuration files were touched but unchanged.
 - **Network Graph**: Fixed Nginx Reverse Proxy node appearing detached or missing connections due to container naming mismatches in Podman Kube environments.

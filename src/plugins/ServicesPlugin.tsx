@@ -120,7 +120,7 @@ export default function ServicesPlugin() {
   // const { data: servicesData, loading: servicesLoading, validating: servicesValidating, refresh: refreshServices } = useServicesList();
   // const { data: graphData, loading: graphLoading, validating: graphValidating, refresh: refreshGraph } = useNetworkGraph();
   
-  const { services, nodes } = useMemo(() => {
+  const { services } = useMemo(() => {
     if (!twin || !twin.nodes) return { services: [], nodes: [] };
 
     logger.debug('ServicesPlugin', 'Computing services from Twin', { nodeCount: Object.keys(twin.nodes).length });
@@ -148,7 +148,8 @@ export default function ServicesPlugin() {
              if (!managedType && !unit.description?.includes('ServiceBay')) {
                 // Also check if it's the gateway or proxy which might be special
                 // If it is NOT managed, we still want to show it if it's the proxy.
-                if (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web.service' || unit.name === 'nginx.service')) {
+                // Note: Agent V4 strips .service extension, so we check base names
+                if (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web' || unit.name === 'nginx' || unit.name === 'nginx-web.service')) {
                    // allow
                 } else {
                    return;
@@ -230,7 +231,7 @@ export default function ServicesPlugin() {
                  });
              });
 
-             const isProxy = (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web.service' || unit.name === 'nginx.service'));
+             const isProxy = (twin.proxy?.provider === 'nginx' && (unit.isReverseProxy || unit.name === 'nginx-web' || unit.name === 'nginx' || unit.name === 'nginx-web.service' || unit.name === 'nginx.service'));
              
              // Find Verified Domains
              // Robust match: targetService must match Service Name OR any Known Container Name
@@ -342,8 +343,6 @@ export default function ServicesPlugin() {
   }, [twin]);
 
   const loading = !isConnected && services.length === 0;
-  const validating = false;
-  const refreshing = false;
 
   const fetchData = () => {
      // Twin updates automatically
