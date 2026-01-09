@@ -7,7 +7,6 @@ import { fetchReadme } from '@/app/actions';
 import ReactMarkdown from 'react-markdown';
 import { Download, Loader2, Folder, Layers, Globe, Server, Link as LinkIcon, Shield } from 'lucide-react';
 import InstallerModal from './InstallerModal';
-import GatewayConfig from './GatewayConfig';
 import ExternalLinkConfig from './ExternalLinkConfig';
 import ManualServiceForm from './ManualServiceForm';
 import ReverseProxyConfig from './ReverseProxyConfig';
@@ -22,14 +21,6 @@ type SpecialItem = {
 };
 
 const specialItems: SpecialItem[] = [
-    {
-        id: 'gateway',
-        name: 'Internet Gateway',
-        description: 'Configure router integration',
-        icon: <Globe size={18} className="text-amber-500" />,
-        type: 'special',
-        component: <GatewayConfig />
-    },
     {
         id: 'proxy',
         name: 'Reverse Proxy',

@@ -15,7 +15,10 @@ You are an expert developer working on **ServiceBay**, a web-based management in
 - **Container Engine:** Podman (Rootless)
 
 ## Core Architecture Principles
-1.  **Quadlet-First:** We do not use `podman run` or `docker-compose` directly. We generate `.container`, `.kube`, `.network`, and `.volume` files in `~/.config/containers/systemd/`.
+1.  **Kube-First (Podman Kube):** We STRICTLY use `*.kube` files (referencing Pod YAMLs) for all managed services.
+    -   We **DO NOT** use `*.container` files (Simple Quadlets).
+    -   We **DO NOT** use `podman run` or `docker-compose` directly.
+    -   Any `*.container` files or raw containers are considered **Unmanaged** and should be migrated to `*.kube` stacks.
 2.  **Systemd Management:** Services are managed via `systemctl --user`. Reloading the daemon (`systemctl --user daemon-reload`) is required after file changes.
 3.  **Multi-Node Support:** The application manages the local machine and remote nodes via SSH.
     - Always consider the `nodeName` context.

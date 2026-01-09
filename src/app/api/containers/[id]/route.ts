@@ -1,28 +1,39 @@
-import { NextResponse } from 'next/server';
-import { getContainerInspect } from '@/lib/manager';
-import { listNodes } from '@/lib/nodes';
+
+import { NextRequest, NextResponse } from 'next/server';
+import { agentManager } from '@/lib/agent/manager';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node');
-  
-  let connection;
-  if (nodeName) {
-      const nodes = await listNodes();
-      connection = nodes.find(n => n.Name === nodeName);
-  }
+  const searchParams = request.nextUrl.searchParams;
+  const nodeName = searchParams.get('node') || 'Local';
 
-  const container = await getContainerInspect(id, connection);
-  
-  if (!container) {
-    return NextResponse.json({ error: 'Container not found' }, { status: 404 });
-  }
+  try {
+    const agent = agentManager.getAgent(nodeName);
+    if (!agent) {
+        return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
+    }
 
-  return NextResponse.json(container);
+    // Use 'exec' command to inspect
+    // We inspect the container to get full details
+    const response = await agent.sendCommand('exec', {
+        command: `podman inspect ${id}`
+    });
+
+    if (response && response.code === 0) {
+        const data = JSON.parse(response.stdout);
+        if (Array.isArray(data) && data.length > 0) {
+            return NextResponse.json(data[0]);
+        }
+    }
+    
+    return NextResponse.json({ error: 'Container not found or inspect failed', details: response }, { status: 404 });
+
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || String(error) }, { status: 500 });
+  }
 }

@@ -2,6 +2,7 @@ import { PortMapping, FritzBoxStatus } from './types';
 import * as dns from 'dns/promises';
 import { fetchWithDigest } from './digest';
 import crypto from 'crypto';
+import { logger } from '@/lib/logger';
 
 export interface FritzBoxOptions {
   host?: string;
@@ -27,8 +28,8 @@ export class FritzBoxClient {
   constructor(options: FritzBoxOptions = {}) {
     this.host = options.host || 'fritz.box';
     this.port = options.port || 49000;
-    this.username = options.username || process.env.FRITZBOX_USER;
-    this.password = options.password || process.env.FRITZBOX_PASSWORD;
+    this.username = options.username;
+    this.password = options.password;
 
     if (this.username && this.password) {
         // Switch to TR-064 (Authenticated)
@@ -72,9 +73,9 @@ export class FritzBoxClient {
           FritzBoxClient.discoveryCache.set(cacheKey, new Map(this.services));
       }
 
-      console.log(`[FritzBox] Discovered ${this.services.size} services via TR-64`);
+      logger.info('FritzBox', `Discovered ${this.services.size} services via TR-64`);
     } catch (e) {
-      console.warn('[FritzBox] Service discovery failed:', e);
+      logger.warn('FritzBox', 'Service discovery failed:', e);
     }
   }
 
@@ -100,7 +101,7 @@ export class FritzBoxClient {
               this.serviceType = type;
               this.controlUrl = this.services.get(type)!;
               this.serviceDetected = true;
-              console.log(`[FritzBox] Auto-configured service: ${this.serviceType}`);
+              logger.info('FritzBox', `Auto-configured service: ${this.serviceType}`);
               return;
           }
       }
@@ -134,7 +135,7 @@ export class FritzBoxClient {
           // console.log(`[FritzBox] Failed ${this.serviceType}:`, e instanceof Error ? e.message : e);
           
           // Reset to IP if both fail, or handle error
-          console.log('[FritzBox] All authenticated services failed, falling back to default WANIPConnection:1');
+          logger.info('FritzBox', 'All authenticated services failed, falling back to default WANIPConnection:1');
           this.serviceType = 'urn:dslforum-org:service:WANIPConnection:1';
           this.controlUrl = '/upnp/control/wanipconnection1';
       }
@@ -368,7 +369,7 @@ ${argsXml}
         const lookup = await dns.lookup(this.host);
         internalIP = lookup.address;
     } catch (e) {
-        console.warn('Failed to resolve FritzBox hostname', e);
+        logger.warn('FritzBox', 'Failed to resolve FritzBox hostname', e);
     }
 
     // Get DNS Servers
@@ -413,7 +414,7 @@ ${argsXml}
                 try {
                     const avmDnsXml = await this.soapRequest('X_AVM-DE_GetDNSServer', {}, altService, undefined, true);
                     if (avmDnsXml) {
-                         console.log('[FritzBox] Found DNS on alternative service:', altService);
+                         logger.info('FritzBox', `Found DNS on alternative service: ${altService}`);
                          const v4 = this.extractValue(avmDnsXml, 'NewIPv4DNSServer1');
                          const v4_2 = this.extractValue(avmDnsXml, 'NewIPv4DNSServer2');
                          if (v4) dnsServers.push(v4);
@@ -451,16 +452,22 @@ ${argsXml}
 
         // Deduplicate
         dnsServers = Array.from(new Set(dnsServers));
+        
+        if (dnsServers.length > 0) {
+            logger.info('FritzBox', `Found DNS Servers: ${dnsServers.join(', ')}`);
+        } else {
+            logger.warn('FritzBox', 'No DNS servers found via discover service.');
+        }
 
     } catch (e) {
-        console.warn('[FritzBox] Failed to get DNS servers:', e);
+        logger.warn('FritzBox', `Failed to get DNS servers: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // Get Port Mappings
     const portMappings: PortMapping[] = [];
     let index = 0;
     
-    console.log('[FritzBox] Fetching port mappings...');
+    logger.info('FritzBox', 'Fetching port mappings...');
     while (true) {
       try {
         const mappingXml = await this.soapRequest('GetGenericPortMappingEntry', { NewPortMappingIndex: index });
@@ -478,7 +485,7 @@ ${argsXml}
         };
         
         portMappings.push(mapping);
-        console.log(`[FritzBox] Found mapping: ${mapping.externalPort} -> ${mapping.internalClient}:${mapping.internalPort}`);
+        logger.info('FritzBox', `Found mapping: ${mapping.externalPort} -> ${mapping.internalClient}:${mapping.internalPort}`);
 
         index++;
         // Safety break
@@ -488,7 +495,7 @@ ${argsXml}
         break;
       }
     }
-    console.log(`[FritzBox] Total mappings found: ${portMappings.length}`);
+    logger.info('FritzBox', `Total mappings found: ${portMappings.length}`);
 
     // Get Device Log
     const deviceLog = await this.getDeviceLog() || undefined;

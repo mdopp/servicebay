@@ -12,6 +12,7 @@ import 'prismjs/components/prism-ini'; // For systemd/kube files (ini-like)
 import 'prismjs/themes/prism-tomorrow.css'; // Dark theme for code
 import HistoryViewer from './HistoryViewer';
 import { getNodes } from '@/app/actions/system';
+import { logger } from '@/lib/logger';
 import { PodmanConnection } from '@/lib/nodes';
 import { useToast } from '@/providers/ToastProvider';
 
@@ -76,7 +77,7 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
         fetch(`/api/volumes?node=${selectedNode}`)
             .then(res => res.json())
             .then(data => setAvailableVolumes(Array.isArray(data) ? data : []))
-            .catch(e => console.error('Failed to fetch volumes:', e));
+            .catch(e => logger.error('ServiceForm', 'Failed to fetch volumes:', e));
     } else {
         setAvailableVolumes([]);
     }

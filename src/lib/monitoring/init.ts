@@ -4,11 +4,12 @@ import { getConfig } from '../config';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import crypto from 'crypto';
+import { logger } from '@/lib/logger';
 
 const execAsync = promisify(exec);
 
 export async function initializeDefaultChecks() {
-  console.log('[Monitoring] Initializing default checks...');
+  logger.info('Monitoring', 'Initializing default checks...');
   const existingChecks = MonitoringStore.getChecks();
 
   // Helper to check if exists
@@ -20,7 +21,7 @@ export async function initializeDefaultChecks() {
     const config = await getConfig();
     if (config.gateway?.host) {
         if (!exists('ping', config.gateway.host)) {
-            console.log(`[Monitoring] Adding Configured Gateway check for ${config.gateway.host}`);
+            logger.info('Monitoring', `Adding Configured Gateway check for ${config.gateway.host}`);
             MonitoringStore.saveCheck({
                 id: crypto.randomUUID(),
                 name: 'Internet Gateway',
@@ -33,7 +34,7 @@ export async function initializeDefaultChecks() {
         }
     }
   } catch (e) {
-    console.error('Failed to add configured gateway check', e);
+    logger.error('Monitoring', 'Failed to add configured gateway check', e);
   }
 
   // 1. Auto-detected Gateway Check
@@ -44,7 +45,7 @@ export async function initializeDefaultChecks() {
     if (match && match[1]) {
       const gateway = match[1];
       if (!exists('ping', gateway)) {
-          console.log(`[Monitoring] Adding Gateway check for ${gateway}`);
+          logger.info('Monitoring', `Adding Gateway check for ${gateway}`);
           MonitoringStore.saveCheck({
               id: crypto.randomUUID(),
               name: 'Gateway',
@@ -57,12 +58,12 @@ export async function initializeDefaultChecks() {
       }
     }
   } catch (e) {
-    console.error('Failed to detect gateway', e);
+    logger.error('Monitoring', 'Failed to detect gateway', e);
   }
 
   // 2. Podman Socket (more reliable than service for API availability)
   if (!exists('systemd', 'podman.socket')) {
-    console.log('[Monitoring] Adding Podman Socket check');
+    logger.info('Monitoring', 'Adding Podman Socket check');
     MonitoringStore.saveCheck({
         id: crypto.randomUUID(),
         name: 'Podman Socket',
@@ -85,7 +86,7 @@ export async function initializeDefaultChecks() {
         );
 
         if (!alreadyMonitored) {
-            console.log(`[Monitoring] Adding Managed Service check for ${service.name}`);
+            logger.info('Monitoring', `Adding Managed Service check for ${service.name}`);
             MonitoringStore.saveCheck({
                 id: crypto.randomUUID(),
                 name: `Service: ${service.name}`,

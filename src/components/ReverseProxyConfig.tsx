@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Shield, Download, Server, Check, RefreshCw } from 'lucide-react';
+import { logger } from '@/lib/logger';
 import { useToast } from '@/providers/ToastProvider';
 
 export default function ReverseProxyConfig() {
@@ -21,7 +22,7 @@ export default function ReverseProxyConfig() {
             const data = await res.json();
             setStatus(data.installed ? 'installed' : 'not-installed');
         } catch (error) {
-            console.error(error);
+            logger.error('ReverseProxy', 'Check status failed', error);
             setStatus('unknown');
         } finally {
             setLoading(false);

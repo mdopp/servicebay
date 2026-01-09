@@ -1,4 +1,5 @@
 import { Server } from 'socket.io';
+import { logger } from '@/lib/logger';
 import { MonitoringStore } from './store';
 import { CheckRunner } from './runner';
 import { CheckConfig } from './types';
@@ -33,7 +34,7 @@ export class MonitoringService {
       this.scheduleCheck(check);
     });
 
-    console.log(`[Monitoring] Started ${intervals.size} checks.`);
+    logger.info('Monitoring', `Started ${intervals.size} checks.`);
   }
 
   static stopAll() {
@@ -85,7 +86,7 @@ export class MonitoringService {
         }
       }
     } catch (e) {
-      console.error(`[Monitoring] Error running check ${check.name}:`, e);
+      logger.error('Monitoring', `Error running check ${check.name}:`, e);
     }
   }
 }

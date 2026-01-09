@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import type { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
+import { logger } from '@/lib/logger';
 
 interface ActionProgressModalProps {
   isOpen: boolean;

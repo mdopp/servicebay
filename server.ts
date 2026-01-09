@@ -11,6 +11,10 @@ import { MonitoringService } from './src/lib/monitoring/service';
 import { agentManager } from './src/lib/agent/manager';
 import { listNodes } from './src/lib/nodes';
 import { AgentEvent } from './src/lib/agent/handler';
+import { DigitalTwinStore } from './src/lib/store/twin';
+import { AgentMessage } from './src/lib/agent/types';
+import { GatewayPoller } from './src/lib/gateway/poller';
+import { logger } from './src/lib/logger';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -35,20 +39,69 @@ app.prepare().then(() => {
       const parsedUrl = parse(req.url!, true);
       await handle(req, res, parsedUrl);
     } catch (err) {
-      console.error('Error occurred handling', req.url, err);
+      logger.error('Server', `Error occurred handling ${req.url}`, err);
       res.statusCode = 500;
       res.end('internal server error');
     }
   });
 
   const io = new Server(server);
+  const twinStore = DigitalTwinStore.getInstance();
+
+  // Track active clients for monitoring optimization
+  const updateMonitoringState = () => {
+      // Small delay to allow io.engine.clientsCount to update after disconnect
+      setTimeout(() => {
+          const clientCount = io.engine.clientsCount;
+          const shouldMonitor = clientCount > 0;
+          logger.info('Server', `Active Clients: ${clientCount}. Monitoring Enabled: ${shouldMonitor}`);
+          agentManager.setMonitoringAll(shouldMonitor);
+      }, 100);
+  };
+
+  // Broadcast Twin Updates to UI
+  twinStore.subscribe(() => {
+      io.emit('twin:state', twinStore.getSnapshot());
+  });
   
   // --- V4 Agent Event Bus Integration ---
   agentManager.on('agent:connected', (nodeName: string) => {
+      logger.info('Server', `Agent connected: ${nodeName}`);
+      twinStore.setNodeConnection(nodeName, true);
       io.emit('node:status', { node: nodeName, status: 'connected' });
+      
+      // If we have clients, enable monitoring on this new agent
+      if (io.engine.clientsCount > 0) {
+          agentManager.getAgent(nodeName).setMonitoring(true);
+      }
   });
   agentManager.on('agent:disconnected', (nodeName: string) => {
+      logger.info('Server', `Agent disconnected: ${nodeName}`);
+      twinStore.setNodeConnection(nodeName, false);
       io.emit('node:status', { node: nodeName, status: 'disconnected' });
+  });
+
+  // Handle incoming V4.1 Agent Messages
+  agentManager.on('agent:message', (nodeName: string, message: AgentMessage) => {
+      if (message.type === 'SYNC_PARTIAL') {
+          // Robust Partial Update: payload can be { containers: [] } or { initialSyncComplete: true }
+          const keys = Object.keys(message.payload || {});
+          let logMsg = `SYNC_PARTIAL from ${nodeName} | Keys: ${keys.join(', ')}`;
+          
+          if (message.payload && 'services' in message.payload && Array.isArray(message.payload.services)) {
+              const serviceNames = message.payload.services.map(s => s.name).join(', ');
+              logMsg += ` | Services: ${serviceNames}`;
+          }
+
+          logger.info('Server', logMsg);
+          
+          // TS "as any" is simplistic but TwinStore handles Partial<NodeTwin> safely.
+          twinStore.updateNode(nodeName, message.payload as any);
+      } else if (message.type === 'SYNC_DIFF') {
+         logger.info('Server', `SYNC_DIFF from ${nodeName}`);
+         // TODO: Implement diff patching
+         twinStore.updateNode(nodeName, message.payload as any);
+      }
   });
   
   // Subscribe to specific agent events and broadcast
@@ -63,14 +116,20 @@ app.prepare().then(() => {
   
   // Auto-connect agents for known nodes
   listNodes().then(nodes => {
-      nodes.forEach(node => {
+      // Ensure Local Agent is initialized and hooked up to the Event Bus
+      const targets = [...nodes];
+      if (!targets.find(n => n.Name === 'Local')) {
+          targets.push({ Name: 'Local', URI: 'local', Identity: '', Default: false });
+      }
+
+      targets.forEach(node => {
          const agent = agentManager.getAgent(node.Name);
          // Forward events
          agent.on('event', (e: AgentEvent) => broadcastAgentEvent(node.Name, e));
          
          // Start connection in background
          agent.start().catch(err => {
-             console.error(`[Agent:${node.Name}] Failed to auto-connect:`, err.message);
+             logger.error(node.Name, 'Failed to auto-connect:', err.message);
          });
       });
   });
@@ -80,7 +139,12 @@ app.prepare().then(() => {
 
   // Initialize Monitoring Service (V4 Legacy Bridge)
   MonitoringService.init(io).catch(err => {
-      console.error('Failed to start monitoring service:', err);
+      logger.error('Server', 'Failed to start monitoring service:', err);
+  });
+  
+  // Start V4.1 Gateway Poller
+  GatewayPoller.getInstance().start().catch(err => {
+      logger.error('Server', 'Failed to start Gateway Poller:', err);
   });
 
 
@@ -94,7 +158,7 @@ app.prepare().then(() => {
             try {
                 session.process.resize(cols, rows);
             } catch (e) {
-                console.error(`Error resizing existing session ${id}:`, e);
+                logger.error('Server', `Error resizing existing session ${id}:`, e);
             }
         }
         return session;
@@ -117,7 +181,7 @@ app.prepare().then(() => {
         }
 
         if (!containerId) {
-            console.error('Invalid container ID');
+            logger.error('Server', 'Invalid container ID');
             if (sessions.has('host')) return sessions.get('host')!;
             throw new Error('Invalid container ID');
         }
@@ -146,7 +210,7 @@ app.prepare().then(() => {
                     }
                 }
             } catch (e) {
-                console.error(`Failed to setup remote container terminal for ${nodeName}:`, e);
+                logger.error('Server', `Failed to setup remote container terminal for ${nodeName}:`, e);
             }
         } else {
             shell = 'podman';
@@ -184,11 +248,11 @@ app.prepare().then(() => {
                 }
             }
         } catch (e) {
-            console.error('Failed to resolve node connection', e);
+            logger.error('Server', 'Failed to resolve node connection', e);
         }
     }
     
-    console.log(`Spawning PTY: ${shell} ${args.join(' ')}`);
+    logger.info('Server', `Spawning PTY: ${shell} ${args.join(' ')}`);
 
     const ptyProcess = pty.spawn(shell, args, {
       name: 'xterm-256color',
@@ -199,7 +263,7 @@ app.prepare().then(() => {
       env: { ...process.env, TERM: 'xterm-256color' } as any
     });
 
-    console.log(`Spawned new PTY process for ${id} (PID: ${ptyProcess.pid})`);
+    logger.info('Server', `Spawned new PTY process for ${id} (PID: ${ptyProcess.pid})`);
 
     const session: PtySession = {
         process: ptyProcess,
@@ -222,7 +286,7 @@ app.prepare().then(() => {
 
     ptyProcess.onExit((e) => {
       const code = e.exitCode;
-      console.log(`PTY process ${id} exited with code ${code}`);
+      logger.info('Server', `PTY process ${id} exited with code ${code}`);
       io.to(id).emit('output', `\r\n\x1b[31m>>> Session exited with code ${code}\x1b[0m\r\n`);
       sessions.delete(id);
     });
@@ -231,10 +295,14 @@ app.prepare().then(() => {
   };
 
   // Initialize host PTY immediately
-  ensurePty('host').catch(console.error);
+  ensurePty('host').catch(err => logger.error('Server', 'ensurePty(host) failed', err));
 
   io.on('connection', (socket) => {
-    console.log('Client connected');
+    logger.info('Server', 'Client connected');
+    updateMonitoringState();
+    
+    // Send immediate initial state to new client
+    socket.emit('twin:state', twinStore.getSnapshot());
     
     socket.on('join', async (payload: string | { id: string, cols?: number, rows?: number }) => {
         let id: string;
@@ -249,13 +317,13 @@ app.prepare().then(() => {
             rows = payload.rows || 30;
         }
         
-        console.log(`Client joining terminal ${id} with dims ${cols}x${rows}`);
+        logger.info('Server', `Client joining terminal ${id} with dims ${cols}x${rows}`);
         socket.join(id);
         try {
             const session = await ensurePty(id, cols, rows);
             socket.emit('history', session.history);
         } catch (e) {
-            console.error('Failed to join terminal:', e);
+            logger.error('Server', 'Failed to join terminal:', e);
             socket.emit('output', '\r\n\x1b[31m>>> Failed to join terminal session.\x1b[0m\r\n');
         }
     });
@@ -276,7 +344,8 @@ app.prepare().then(() => {
     });
 
     socket.on('disconnect', () => {
-      console.log('Client disconnected');
+      logger.info('Server', 'Client disconnected');
+      updateMonitoringState();
     });
   });
 
@@ -285,7 +354,7 @@ app.prepare().then(() => {
       const now = Date.now();
       for (const [id, session] of sessions.entries()) {
           if (id !== 'host' && now - session.lastActive > 1000 * 60 * 5) { // 5 mins inactivity
-              console.log(`Killing inactive session ${id}`);
+              logger.info('Server', `Killing inactive session ${id}`);
               session.process.kill();
               sessions.delete(id);
           }
@@ -293,7 +362,7 @@ app.prepare().then(() => {
   }, 60000);
 
   server.listen(port, async () => {
-    console.log(`> Ready on http://${hostname}:${port}`);
+    logger.info('Server', `> Ready on http://${hostname}:${port}`);
 
     // Auto-update logic to be migrated to Executor Task
   });

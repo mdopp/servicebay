@@ -113,7 +113,7 @@ export function useServicesList() {
                     const servicesData = await servicesRes.json();
                     return servicesData.map((s: Service) => ({ ...s, nodeName: node }));
                 } catch (e) {
-                    console.error(`Failed to fetch services for node ${node}`, e);
+                    logger.error('useSharedData', `Failed to fetch services for node ${node}`, e);
                     return [];
                 } finally {
                     pending.delete(node);

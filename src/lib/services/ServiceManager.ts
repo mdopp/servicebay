@@ -1,6 +1,7 @@
 import { agentManager } from '../agent/manager';
 import path from 'path';
 import yaml from 'js-yaml'; 
+import { logger } from '../logger';
 
 export interface ServiceInfo {
   name: string;
@@ -19,334 +20,384 @@ export interface ServiceInfo {
   id?: string;
   isReverseProxy?: boolean;
   isServiceBay?: boolean;
+  verifiedDomains?: string[];
 }
 
 export class ServiceManager {
     static async listServices(nodeName: string): Promise<ServiceInfo[]> {
-        const agent = await agentManager.ensureAgent(nodeName);
-        
-        // Use relative path with HOME fallback for flexibility
-        const systemdDir = '.config/containers/systemd';
-        
-        // Optimized batch fetch script
-        const script = `
-        target_dir="${systemdDir}"
-        # Try cd to target, or relative to HOME
-        if cd "$target_dir" 2>/dev/null; then
-            echo "DEBUG: Changed dir to $target_dir from PWD"
-        elif cd "$HOME/$target_dir" 2>/dev/null; then
-            echo "DEBUG: Changed dir to HOME/$target_dir"
-        else
-            echo "DEBUG: Failed to change dir to $target_dir or $HOME/$target_dir. PWD=$(pwd) HOME=$HOME"
-            # Fail silently? Or echo empty? 
-            # If the directory doesn't exist, we just have no services.
-            exit 0
-        fi
-        
-        # Pre-flight check for systemd accessibility
-        if ! systemctl --user list-units --no-pager -n 0 >/dev/null 2>&1; then
-            echo "ERROR_SYSTEMD_ACCESS_FAILED"
-            exit 1
-        fi
+        // V4: Use DigitalTwinStore
+        const { DigitalTwinStore } = await import('../store/twin');
+        const twin = DigitalTwinStore.getInstance().nodes[nodeName];
+        const proxyState = DigitalTwinStore.getInstance().proxy; // Access Global Proxy State
 
-        echo "DEBUG: CWD IS $(pwd)"
+        if (!twin) return [];
 
+        const services: ServiceInfo[] = [];
 
-        # Loop over both .kube and .container files
-        # POSIX compliant loop - if no files match, the pattern is passed as literal
-        # The [ -e "$f" ] check handles this.
-        
-        has_files=0
-        for f in *.kube *.container; do
-            if [ -e "$f" ]; then
-                has_files=1
-                break
-            fi
-        done
-        
-        if [ "$has_files" -eq 0 ]; then
-            exit 0
-        fi
-
-        for f in *.kube *.container; do
-            [ -e "$f" ] || continue
+        for (const [filePath, file] of Object.entries(twin.files)) {
+            // Only process .kube and .container
+            if (!filePath.endsWith('.kube') && !filePath.endsWith('.container')) continue;
             
-            # Determine Name and Type based on extension
-            case "$f" in
-                *.kube)
-                    name="\${f%.kube}"
-                    type="kube"
-                    ;;
-                *.container)
-                    name="\${f%.container}"
-                    type="container"
-                    ;;
-                *)
-                    name="$f"
-                    type="other"
-                    ;;
-            esac
+            const fileName = path.basename(filePath);
+            const baseName = filePath.endsWith('.kube') ? fileName.replace('.kube', '') : fileName.replace('.container', '');
+            const type = filePath.endsWith('.kube') ? 'kube' : 'container';
 
-            echo "---SERVICE_START---"
-            echo "NAME: $name"
-            echo "TYPE: $type"
-            echo "FILE: $f"
+            // Find State
+            const unitName = `${baseName}.service`;
+            // Relaxed matching for service unit (strip .service to compare with baseName)
+            const serviceUnit = twin.services.find(s => s.name === unitName || s.name === baseName);
             
-            svc_status=$(systemctl --user is-active "$name.service" 2>&1)
-            exit_code=$?
+            // STRICT MATCHING Strategy (RFC-Compliant):
+            // 1. Service Name is the Single Source of Truth.
+            // 2. Containers MUST adhere to systemd-generated naming conventions:
+            //    - "systemd-<serviceName>" (e.g., systemd-adguard)
+            //    - "<serviceName>-<serviceName>" (e.g., adguard-adguard, typical for Pods)
+            //    - Exact match (legacy/simple)
             
-            if [ $exit_code -ne 0 ]; then
-                if [ -z "$svc_status" ]; then
-                    svc_status="inactive (uid: $(id -u))"
-                else
-                    # POSIX string matching
-                    case "$svc_status" in
-                        *"Failed to"*|*"No such"*)
-                            svc_status="ERROR: $svc_status"
-                            ;;
-                    esac
-                fi
-            fi
-            echo "STATUS: $svc_status"
+            // NEW STRATEGY: Parse YAML first if available to get explicit container names
+            const expectedNames = [
+                baseName,                   // simple
+                `systemd-${baseName}`,      // quadlet root
+                `${baseName}-${baseName}`   // pod member
+            ];
+            
+            // Attempt to read YAML *before* container matching to extract explicit names
+            let yamlContent: string | null = null;
+            let yamlPath: string | null = null;
+            let yamlFile: string | null = null;
 
-            desc=$(systemctl --user show -p Description --value "$name.service" 2>/dev/null)
-            echo "DESCRIPTION: $desc"
-            
-            echo "CONTENT_START"
-            cat "$f"
-            echo "CONTENT_END"
-            
-            if [ "$type" = "kube" ]; then
-                # Extract Yaml=... value
-                yaml_file=$(grep "^Yaml=" "$f" | head -n1 | cut -d= -f2- | sed 's/^[ \t]*//;s/[ \t]*$//')
-                if [ -n "$yaml_file" ]; then
-                    echo "YAML_CONTENT_START"
-                    # Handle absolute vs relative path for the yaml file
-                    if [ -f "$yaml_file" ]; then
-                        cat "$yaml_file" 2>/dev/null
-                    elif [ -f "$HOME/$target_dir/$yaml_file" ]; then
-                        # Try relative to systemd dir (which we are in)
-                        cat "$yaml_file" 2>/dev/null
-                    fi
-                    echo "YAML_CONTENT_END"
-                fi
-            fi
-            echo "---SERVICE_END---"
-        done
-        `;
+            if (type === 'kube' && file.content) {
+                 const match = file.content.match(/^Yaml=(.+)$/m);
+                 if (match) {
+                     yamlFile = match[1].trim();
+                     yamlPath = path.join(path.dirname(filePath), yamlFile);
+                     
+                     // Find YAML content
+                     yamlContent = twin.files[yamlPath]?.content;
+                     if (!yamlContent) {
+                         const foundPath = Object.keys(twin.files).find(p => p.endsWith(yamlFile!));
+                         if (foundPath) yamlContent = twin.files[foundPath].content;
+                     }
 
-        let stdout = '';
-        try {
-            const res = await agent.sendCommand('exec', { command: script });
-            if (res.code !== 0) {
-                 const err = new Error(`Service list failed: ${res.stderr}`);
-                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                 (err as any).code = res.code;
-                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                 (err as any).stdout = res.stdout;
-                 throw err;
+                     if (yamlContent) {
+                         try {
+                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                             const docs = yaml.loadAll(yamlContent) as any[];
+                             docs.forEach(doc => {
+                                 // Add PodName explicitly if defined
+                                 if (doc?.metadata?.name) {
+                                     expectedNames.push(`${doc.metadata.name}`); // Entire Pod might share name? 
+                                 }
+                                 
+                                 if (doc?.spec?.containers) {
+                                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                     doc.spec.containers.forEach((c: any) => {
+                                         if (c.name) {
+                                             // Podman usually namespaces usage: PodName-ContainerName
+                                             // or ServiceName-ContainerName
+                                             
+                                             // Add raw container name (unlikely alone in a pod, but possible)
+                                             expectedNames.push(c.name);
+                                             
+                                             // Add ServiceName-ContainerName
+                                             expectedNames.push(`${baseName}-${c.name}`);
+                                             
+                                             // Add PodName-ContainerName (if pod name known)
+                                             if (doc.metadata?.name) {
+                                                  expectedNames.push(`${doc.metadata.name}-${c.name}`);
+                                             }
+                                         }
+                                     });
+                                 }
+                             });
+                         } catch (e) { /* ignore parse error here, handled below */ }
+                     }
+                 }
             }
-            stdout = res.stdout;
             
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (e: any) {
-            console.error(`[ServiceManager:${nodeName}] Failed to list services`, e);
-             if (e.stdout && e.stdout.includes('ERROR_SYSTEMD_ACCESS_FAILED')) {
-                throw new Error('Systemd User Session inaccessible. Check DBUS/XDG environment.');
+            // Deduplicate names
+            const uniqueExpected = Array.from(new Set(expectedNames));
+
+            const candidates = twin.containers.filter(c => {
+                 if (!c.names) return false;
+                 return c.names.some(n => {
+                     const cleanName = n.replace(/^\//, ''); // Strip leading slash
+                     return uniqueExpected.includes(cleanName);
+                 });
+            });
+
+            // Prioritize containers with ports if multiple matches (though improbable with infra gone)
+            let container = candidates.find(c => c.ports && c.ports.length > 0);
+            
+            if (!container && candidates.length > 0) {
+                 container = candidates[0];
             }
-            throw e;
-        }
 
-        return this.parseServiceOutput(stdout, nodeName, systemdDir);
-    }
+            if (baseName === 'adguard' || baseName.includes('adguard') || baseName.includes('immich')) {
+                logger.debug('ServiceManager', `Processing ${baseName}`);
+                logger.debug('ServiceManager', `STRICT Expected Names: ${uniqueExpected.join(', ')}`);
+                logger.debug('ServiceManager', `Candidates found: ${candidates.length}`);
+                if (container) logger.debug('ServiceManager', `Selected: ${container.names?.join(', ')}`);
+            }
 
-    private static parseServiceOutput(stdout: string, nodeName: string, systemdDir: string): ServiceInfo[] {
-      const services: ServiceInfo[] = [];
-      const blocks = stdout.split('---SERVICE_START---').filter(b => b.trim());
+            // Special logic for Nginx Proxy & ServiceBay identification (Source of Truth alignment)
+            const isProxy = (proxyState?.provider === 'nginx' && (baseName === 'nginx-web' || baseName === 'nginx')) || (serviceUnit?.isReverseProxy ?? false);
+            const isServiceBay = baseName === 'servicebay' || (serviceUnit?.isServiceBay ?? false);
 
-      for (const block of blocks) {
-          try {
-             services.push(this.parseBlock(block, nodeName, systemdDir));
-          } catch (e) {
-              console.error(`Error parsing service block for node ${nodeName}:`, e);
-          }
-      }
-      return services;
-    }
-
-    private static parseBlock(block: string, nodeName: string, systemdDir: string): ServiceInfo {
-      const lines = block.split('\n');
-      const getVal = (prefix: string) => {
-          const line = lines.find(l => l.startsWith(prefix));
-          return line ? line.substring(prefix.length).trim() : '';
-      };
-
-      let name = getVal('NAME: ');
-      name = name.replace(/\.(kube|container|service|pod)$/, '');
-      // const type = getVal('TYPE: ') || 'kube';
-      const fileName = getVal('FILE: ') || `${name}.kube`;
-      const status = getVal('STATUS: ') || 'unknown';
-      let description = getVal('DESCRIPTION: ');
-      const active = status === 'active';
-
-      // Extract Contents
-      const extract = (startMarker: string, endMarker: string) => {
-          const s = block.indexOf(startMarker);
-          const e = block.indexOf(endMarker);
-          if (s !== -1 && e !== -1) return block.substring(s + startMarker.length, e).trim();
-          return '';
-      };
-
-      const content = extract('CONTENT_START', 'CONTENT_END');
-      const yamlContent = extract('YAML_CONTENT_START', 'YAML_CONTENT_END');
-
-      // Description Fallback
-      if (!description && content) {
-          const match = content.match(/Description=(.+)/);
-          if (match) description = match[1].trim();
-      }
-
-      // Paths
-      const kubePath = path.join(systemdDir, fileName); 
-      const yamlMatch = content.match(/Yaml=(.+)/);
-      const yamlFile = yamlMatch ? yamlMatch[1].trim() : null;
-      const yamlPath = yamlFile ? (yamlFile.startsWith('/') ? yamlFile : path.join(systemdDir, yamlFile)) : null;
-
-      // Metadata extraction
-      const ports: { host?: string; container: string }[] = [];
-      const volumes: { host: string; container: string }[] = [];
-      const labels: Record<string, string> = {};
-      let hostNetwork = false;
-      let isReverseProxy = false;
-      let isServiceBay = false;
-
-      // Basic Identification
-      if (name === 'nginx' || name === 'nginx-web') isReverseProxy = true;
-      if (name.toLowerCase() === 'servicebay') isServiceBay = true;
-
-      // Parsing Logic (YAML or Quadlet)
-      if (yamlContent) {
-          this.parseYaml(yamlContent, labels, ports, volumes);
-          if (labels['servicebay.role'] === 'reverse-proxy') isReverseProxy = true;
-          if (labels['servicebay.protected'] === 'true') isServiceBay = true;
-          if (yamlContent.includes('hostNetwork: true')) hostNetwork = true; 
-      } else if (content) {
-          this.parseQuadlet(content, labels, ports);
-          if (labels['servicebay.role'] === 'reverse-proxy') isReverseProxy = true;
-          if (labels['servicebay.protected'] === 'true') isServiceBay = true;
-          if (content.match(/Network=host/)) hostNetwork = true;
-      }
-
-      return {
-          id: name,
-          name,
-          kubeFile: fileName,
-          kubePath,
-          yamlFile,
-          yamlPath,
-          active,
-          status,
-          description,
-          ports,
-          volumes,
-          labels,
-          hostNetwork,
-          isReverseProxy,
-          isServiceBay,
-          node: nodeName
-      };
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private static parseYaml(content: string, labels: any, ports: any[], volumes: any[]) {
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const documents = yaml.loadAll(content) as any[];
-            documents.forEach((parsed) => {
-                if (parsed) {
-                    if (parsed.metadata && parsed.metadata.labels) {
-                        Object.assign(labels, parsed.metadata.labels);
+            // Find Verified Domains
+            const verifiedDomains = (proxyState?.routes || [])
+                .filter(r => {
+                    const target = r.targetService.split(':')[0]; // Strip port
+                    if (target === baseName) return true;
+                    if (container && container.names) {
+                        return container.names.some(n => n.replace(/^\//, '') === target);
                     }
-                    if (parsed.spec) {
-                        if (parsed.spec.containers) {
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            parsed.spec.containers.forEach((container: any) => {
-                                if (container.ports) {
-                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                    container.ports.forEach((port: any) => {
-                                        if (port.hostPort) {
-                                            ports.push({ host: String(port.hostPort), container: String(port.containerPort) });
-                                        } else {
-                                            ports.push({ container: String(port.containerPort) });
-                                        }
-                                    });
-                                }
-                            });
+                    return false;
+                })
+                .map(r => r.host);
+            
+            // Generate ServiceInfo
+            const info: ServiceInfo = {
+                name: baseName,
+                id: baseName,
+                // Files are watched, so path is available
+                kubeFile: fileName,
+                kubePath: filePath,
+                yamlFile: yamlFile,
+                yamlPath: yamlPath,
+                active: serviceUnit?.activeState === 'active' || (serviceUnit?.active ?? false), // Use boolean flag if available
+                status: serviceUnit ? serviceUnit.activeState : 'inactive',
+                description: serviceUnit?.description || '',
+                labels: container?.labels || {},
+                ports: container ? container.ports.map(p => ({
+                   host: String(p.host_port || p.hostPort), // Handle V4 snake_case vs camelCase
+                   container: String(p.container_port || p.containerPort)
+                })) : [],
+                volumes: [], // Populate if needed from twin.volumes
+                hostNetwork: false, // Infer
+                node: nodeName,
+                isReverseProxy: isProxy,
+                isServiceBay: isServiceBay,
+                verifiedDomains: verifiedDomains
+            };
+
+            // Parse File Content for metadata like Yaml path
+            // (We re-use yamlContent from above if parsed)
+            if (type === 'kube' && yamlContent) {
+                 // Already parsed above broadly, now strictly for metadata
+                     if (yamlContent) {
+                         try {
+                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                             const docs = yaml.loadAll(yamlContent) as any[];
+                             for (const doc of docs) {
+                                 if (!doc) continue;
+                                 
+                                 // Labels (Merge with container labels)
+                                 if (doc.metadata?.labels) {
+                                     info.labels = { ...info.labels, ...doc.metadata.labels };
+                                     // Check role labels
+                                     if (doc.metadata.labels['servicebay.role'] === 'reverse-proxy') info.isReverseProxy = true;
+                                 }
+                                 
+                                 // Spec
+                                 if (doc.spec) {
+                                     // Host Network
+                                     if (doc.spec.hostNetwork) info.hostNetwork = true;
+                                     
+                                     // Ports (Fallback if container not providing them)
+                                     if (doc.spec.containers && info.ports.length === 0) {
+                                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                         doc.spec.containers.forEach((c: any) => {
+                                             if (c.ports) {
+                                                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                                 c.ports.forEach((p: any) => {
+                                                     let host = p.hostPort ? String(p.hostPort) : undefined;
+                                                     const container = String(p.containerPort);
+                                                     
+                                                     // If Host Network, container port IS host port
+                                                     if (!host && (info.hostNetwork || doc.spec.hostNetwork)) {
+                                                         host = container;
+                                                     }
+                                                     
+                                                     info.ports.push({ host, container });
+                                                 });
+                                             }
+
+                                             // Volumes (Kube)
+                                             if (c.volumeMounts && doc.spec.volumes) {
+                                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                                c.volumeMounts.forEach((m: any) => {
+                                                    // Find matching volume definition to get host path or claim
+                                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                                    const volDef = doc.spec.volumes.find((v: any) => v.name === m.name);
+                                                    let host = '';
+                                                    if (volDef) {
+                                                        if (volDef.hostPath) host = volDef.hostPath.path;
+                                                        else if (volDef.persistentVolumeClaim) host = `pvc:${volDef.persistentVolumeClaim.claimName}`;
+                                                        else host = 'volume:' + m.name;
+                                                    }
+                                                    info.volumes.push({ host, container: m.mountPath });
+                                                });
+                                             }
+                                         });
+                                     }
+                                 }
+                             }
+                         } catch (e) {
+                             logger.warn('ServiceManager', `Failed to parse YAML for ${baseName}`, e);
+                         }
+                     }
+            }
+
+            // Parse Container/Quadlet for metadata
+            if (type === 'container' && file.content) {
+                // Parse INI-like content
+                const lines = file.content.split('\n');
+                let inContainerSection = false;
+                
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed === '[Container]') {
+                        inContainerSection = true;
+                        continue;
+                    }
+                    if (trimmed.startsWith('[')) {
+                        inContainerSection = false;
+                        continue;
+                    }
+                    
+                    if (inContainerSection) {
+                        // Network
+                        if (trimmed.startsWith('Network=host')) {
+                            info.hostNetwork = true;
                         }
                         
-                        // Extract Volumes
-                        if (parsed.spec.volumes && parsed.spec.containers) {
-                            const volumeMap = new Map<string, string>();
-                            
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            parsed.spec.volumes.forEach((vol: any) => {
-                                if (vol.hostPath && vol.hostPath.path) {
-                                    volumeMap.set(vol.name, vol.hostPath.path);
-                                } else if (vol.persistentVolumeClaim) {
-                                    volumeMap.set(vol.name, `PVC:\${vol.persistentVolumeClaim.claimName}`);
+                        // Ports: PublishPort=8080:80
+                        if (trimmed.startsWith('PublishPort=')) {
+                            const val = trimmed.split('=')[1];
+                            if (val && info.ports.length === 0) {
+                                // 80:80 or 80 (implicitly host?)
+                                const parts = val.split(':');
+                                if (parts.length === 2) {
+                                    info.ports.push({ host: parts[0], container: parts[1] });
+                                } else {
+                                    info.ports.push({ host: parts[0], container: parts[0] });
                                 }
-                            });
+                            }
+                        }
 
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            parsed.spec.containers.forEach((container: any) => {
-                                if (container.volumeMounts) {
-                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                    container.volumeMounts.forEach((mount: any) => {
-                                        const source = volumeMap.get(mount.name);
-                                        if (source) {
-                                            volumes.push({ host: source, container: mount.mountPath });
-                                        }
-                                    });
+                        // Volumes: Volume=/host:/container
+                        if (trimmed.startsWith('Volume=')) {
+                            const val = trimmed.split('=')[1];
+                            if (val) {
+                                const parts = val.split(':');
+                                if (parts.length >= 2) {
+                                    // Handle /host:/container:Z or /host:/container
+                                    // Quadlet format: host-path:container-path[:options]
+                                    info.volumes.push({ host: parts[0], container: parts[1] });
                                 }
-                            });
+                            }
+                        }
+                        
+                        // Labels: Label=key=value
+                        if (trimmed.startsWith('Label=')) {
+                           const val = trimmed.substring(6); // remove Label=
+                           const firstEq = val.indexOf('=');
+                           if (firstEq > -1) {
+                               const k = val.substring(0, firstEq);
+                               const v = val.substring(firstEq + 1);
+                               // Only set if not already present from container runtime
+                               if (!info.labels[k]) {
+                                   info.labels[k] = v;
+                               }
+                           }
                         }
                     }
                 }
-            });
-        } catch (e) {
-            console.warn('YAML Parse Error', e);
-        }
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private static parseQuadlet(content: string, labels: any, ports: any[]) {
-        // Parse PublishPort
-        const portMatches = content.matchAll(/PublishPort=(.+)/g);
-        for (const match of portMatches) {
-            const val = match[1].trim();
-            const parts = val.split(':');
-            if (parts.length === 3) {
-                    ports.push({ host: parts[1], container: parts[2] });
-            } else if (parts.length === 2) {
-                    ports.push({ host: parts[0], container: parts[1] });
-            } else {
-                    ports.push({ container: val });
             }
+
+            services.push(info);
         }
 
-        // Parse Labels
-        const labelMatches = content.matchAll(/Label=(.+)/g);
-        for (const match of labelMatches) {
-                const val = match[1].trim();
-                const firstEq = val.indexOf('=');
-                if (firstEq !== -1) {
-                    const k = val.substring(0, firstEq);
-                    const v = val.substring(firstEq + 1);
-                    labels[k] = v;
-                }
+        // --- Implicit Services (System-Managed or Source-Built) ---
+        // Nginx (Reverse Proxy) and ServiceBay often don't have .kube/.container files in user config
+        // but we still want to visualize them if they are detected by the Agent.
+        
+        const processedIds = new Set(services.map(s => s.id));
+        const specialServices = twin.services.filter(s => 
+            (s.isReverseProxy || s.isServiceBay) && !processedIds.has(s.name)
+        );
+
+        for (const serviceUnit of specialServices) {
+            const baseName = serviceUnit.name; // e.g. nginx-web (agent strips .service)
+            // Determine expected container names for these system services
+            const expectedNames = [baseName];
+            
+            // Special aliases
+            if (serviceUnit.isReverseProxy) {
+                expectedNames.push(baseName);
+                expectedNames.push('nginx');
+                expectedNames.push('nginx-web');
+                expectedNames.push('systemd-nginx');
+                expectedNames.push('systemd-nginx-web');
+            }
+            if (serviceUnit.isServiceBay) {
+                expectedNames.push('servicebay');
+                expectedNames.push('servicebay-dev');
+            }
+
+            // Find Container
+            const candidates = twin.containers.filter(c => {
+                 if (!c.names) return false;
+                 return c.names.some(n => {
+                     const cleanName = n.replace(/^\//, '');
+                     return expectedNames.includes(cleanName);
+                 });
+            });
+            const container = candidates[0]; // Simple best match
+
+            const isProxy = (proxyState?.provider === 'nginx' && (baseName === 'nginx-web' || baseName === 'nginx')) || (serviceUnit?.isReverseProxy ?? false);
+            const isServiceBay = baseName === 'servicebay' || (serviceUnit?.isServiceBay ?? false);
+
+            // Find Verified Domains
+            const verifiedDomains = (proxyState?.routes || [])
+                .filter(r => {
+                    const target = r.targetService.split(':')[0]; // Strip port
+                    if (target === baseName) return true; // Matches service name
+                    if (target === 'nginx' && isProxy) return true; // Matches implicit proxy name
+                    if (container && container.names) {
+                        return container.names.some(n => n.replace(/^\//, '') === target);
+                    }
+                    return false;
+                })
+                .map(r => r.host);
+
+            services.push({
+                name: baseName,
+                id: baseName,
+                kubeFile: '', // Virtual
+                kubePath: '',
+                yamlFile: null,
+                yamlPath: null,
+                active: serviceUnit.activeState === 'active' || (serviceUnit.active ?? false),
+                status: serviceUnit.activeState,
+                description: serviceUnit.description || '',
+                labels: container?.labels || {},
+                ports: container ? container.ports.map(p => ({
+                   host: String(p.host_port || p.hostPort),
+                   container: String(p.container_port || p.containerPort)
+                })) : [],
+                volumes: [],
+                hostNetwork: false,
+                node: nodeName,
+                isReverseProxy: isProxy,
+                isServiceBay: isServiceBay,
+                verifiedDomains: verifiedDomains
+            });
         }
+        
+        return services;
     }
-
     static async startService(nodeName: string, serviceName: string) {
         const agent = await agentManager.ensureAgent(nodeName);
         const res = await agent.sendCommand('exec', { command: `systemctl --user start ${serviceName}.service` });
@@ -386,7 +437,7 @@ export class ServiceManager {
         try {
              await this.startService(nodeName, name);
         } catch(e) {
-             console.warn(`[ServiceManager] Service ${name} deployed but start failed:`, e);
+             logger.warn('ServiceManager', `Service ${name} deployed but start failed:`, e);
         }
     }
 

@@ -58,7 +58,7 @@ CONTENT_END
 
       const services = await listServices(mockConnection);
 
-      expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('for f in *.kube *.container; do'));
+      expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('for f in *.kube; do'));
       expect(services).toHaveLength(1);
       const svc = services[0];
       expect(svc.name).toBe('nginx-web');

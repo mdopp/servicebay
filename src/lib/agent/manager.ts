@@ -1,5 +1,6 @@
 import { AgentHandler } from './handler';
 import { EventEmitter } from 'events';
+import { logger } from '@/lib/logger';
 
 export class AgentManager extends EventEmitter {
   private static instance: AgentManager;
@@ -21,6 +22,9 @@ export class AgentManager extends EventEmitter {
       const agent = new AgentHandler(nodeName);
       agent.on('connected', () => this.emit('agent:connected', nodeName));
       agent.on('disconnected', () => this.emit('agent:disconnected', nodeName));
+      // Forward all agent events to the manager as 'agent:message'
+      agent.on('event', (msg) => this.emit('agent:message', nodeName, msg));
+      
       // Auto-start or lazy start? 
       // Lazy start is better (async). But AgentHandler.start() is async.
       // We return the handler processing instance. The caller must ensure connected or start() it.
@@ -35,6 +39,12 @@ export class AgentManager extends EventEmitter {
       const agent = this.getAgent(nodeName);
       await agent.start();
       return agent;
+  }
+  
+  public async setMonitoringAll(enabled: boolean): Promise<void> {
+      logger.info('AgentManager', `Setting monitoring to ${enabled} for all agents`);
+      const updates = Array.from(this.agents.values()).map(agent => agent.setMonitoring(enabled));
+      await Promise.allSettled(updates);
   }
 }
 

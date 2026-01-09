@@ -1,0 +1,26 @@
+FROM quay.io/podman/stable:latest
+
+# Install dependencies Agent needs
+# python3: Runtime
+# procps-ng: For 'ss' command (port detection)
+# iproute: Network tools
+# systemd: Service manager simulation (generic)
+RUN dnf install -y python3 procps-ng iproute systemd && dnf clean all
+
+# Setup a fake "user" to match rootless behavior
+# This is crucial as ServiceBay targets rootless Podman
+RUN useradd -m -G wheel podmanuser
+USER podmanuser
+WORKDIR /home/podmanuser
+
+# Mock structure for Quadlets
+RUN mkdir -p /home/podmanuser/.config/containers/systemd/
+
+# Copy Agent Source (This will be overridden by volume mount during dev)
+COPY src/lib/agent/v4/agent.py .
+
+# Dependencies for testing (if any specific python libs were needed later, none for now)
+
+# Entrypoint
+ENV PYTHONUNBUFFERED=1
+CMD ["python3", "agent.py"]

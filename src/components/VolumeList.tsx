@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { Trash2, Plus, HardDrive, RefreshCw, X } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Trash2, Plus, HardDrive, X } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { useCache } from '@/providers/CacheProvider';
+import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import PluginHelp from './PluginHelp';
 
 interface Volume {
@@ -25,30 +25,34 @@ export default function VolumeList() {
   const [newVolPath, setNewVolPath] = useState('');
   const [creating, setCreating] = useState(false);
   
-  const { addToast, updateToast } = useToast();
+  const { addToast } = useToast();
   // We ignore searchParams node for displaying ALL volumes, unless specifically filtering.
   // Actually, let's just fetch all by default.
   // const searchParams = useSearchParams();
   // const node = searchParams?.get('node'); 
   const node = null; // Force fetch all
    
-  const volumesFetcher = useCallback(async () => {
-       const toastId = addToast('loading', 'Refreshing Volumes', 'Fetching latest volumes...', 0);
-       try {
-          const res = await fetch(`/api/volumes`); 
-          if (!res.ok) throw new Error('Failed to fetch volumes');
-          const data = await res.json();
-          updateToast(toastId, 'success', 'Volumes Updated', 'Data refreshed', 500);
-          return data;
-       } catch (e: unknown) {
-          updateToast(toastId, 'error', 'Refresh Failed', e instanceof Error ? e.message : String(e));
-          throw e;
-       }
-  }, [addToast, updateToast]);
+  const { data: twin } = useDigitalTwin();
 
-  const { data: volumesData, loading, validating, refresh } = useCache<Volume[]>('volumes', volumesFetcher);
-  const volumes = volumesData || [];
-  const refreshing = validating && !loading; // Show refresh spinner if validating in background
+  const volumes = useMemo(() => {
+    if (!twin || !twin.nodes) return [];
+    
+    const list: Volume[] = [];
+    Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
+        if (nodeState.volumes) {
+            nodeState.volumes.forEach((v: any) => {
+                list.push({
+                    ...v,
+                    Node: nodeName
+                });
+            });
+        }
+    });
+    return list;
+  }, [twin]);
+
+  const loading = !twin; // Simple loading state
+  const refreshing = false; // Real-time updates don't show loading spinner usually
 
   const handleDelete = async (name: string, volumeNode?: string) => {
     if (!confirm(`Are you sure you want to delete volume ${name}?`)) return;
@@ -61,7 +65,7 @@ export default function VolumeList() {
         throw new Error(err.error || 'Failed to delete');
       }
       addToast('success', 'Volume deleted');
-      refresh();
+      // No explicit refresh needed, Twin will update
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       addToast('error', e.message);
@@ -100,7 +104,7 @@ export default function VolumeList() {
         setIsCreateOpen(false);
         setNewVolName('');
         setNewVolPath('');
-        refresh();
+        // No explicit refresh needed, Twin will update
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
         addToast('error', e.message);
@@ -127,14 +131,6 @@ export default function VolumeList() {
                     Show System
                 </label>
                 <PluginHelp helpId="volumes" />
-                <button 
-                    onClick={() => refresh(true)} 
-                    disabled={refreshing}
-                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
-                    title="Refresh"
-                >
-                    <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
-                </button>
                 <button 
                     onClick={() => setIsCreateOpen(true)}
                     className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors font-medium shadow-sm"

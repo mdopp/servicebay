@@ -16,6 +16,7 @@ export interface ExternalLink {
   name: string;
   url: string;
   description?: string;
+  icon?: string;
   monitor?: boolean;
   ip_targets?: string[]; // e.g. ["192.168.1.10:8123", "10.0.0.5:80"]
 }
@@ -46,6 +47,7 @@ export interface ReverseProxyConfig {
 }
 
 export interface AppConfig {
+  domain?: string; // Optional domain for display
   gateway?: GatewayConfig;
   reverseProxy?: ReverseProxyConfig;
   autoUpdate: {

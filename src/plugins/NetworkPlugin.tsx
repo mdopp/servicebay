@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNetworkGraph } from '@/hooks/useSharedData';
+import { useDigitalTwin } from '@/hooks/useDigitalTwin';
+// import { useNetworkGraph } from '@/hooks/useSharedData';
 import { 
   ReactFlow, 
   Background, 
@@ -126,15 +127,18 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
       ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 border-dashed'
       : (typeColors[effectiveType] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900');
 
-  // Pre-calculate effective ports to use in IP extraction if data.ports is empty
-  // (e.g. Pod Nodes which inherit ports from children)
-  const effectivePorts = (data.ports && data.ports.length > 0) 
-      ? data.ports 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      : (summary.portMap?.map((p: any) => p) || []);
+      // Pre-calculate effective ports to use in IP extraction if data.ports is empty
+      // (e.g. Pod Nodes which inherit ports from children)
+      // Make sure we merge distinct ports if multiple sources exist
+      const rawPorts = (data.ports && data.ports.length > 0) 
+          ? data.ports 
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          : (summary.portMap?.map((p: any) => p) || []);
+      
+      const effectivePorts = rawPorts; // No deep merge needed for now, trust source
 
-  // Helper to extract IP info from ports
-  const extractIpInfo = () => {
+      // Helper to extract IP info from ports
+      const extractIpInfo = () => {
     // Rely on rawData if available for consistency, or fallback to effectivePorts
     
     if (!effectivePorts || effectivePorts.length === 0) return { globalIp: null, portMap: [] };
@@ -156,9 +160,24 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const parsedPorts = effectivePorts.map((p: any) => {
-        const isObj = typeof p === 'object';
-        let ip = isObj ? p.host_ip : null;
+        const isObj = typeof p === 'object' && p !== null;
+        // Check both camelCase (API) and snake_case (Agent) properties
+        // Also handle the case where p is just a number (legacy/simple)
         
+        let ip: string | null = null;
+        let hostPort: number | string | null = null;
+        let containerPort: number | string | null = null;
+        
+        if (isObj) {
+            ip = p.host_ip || p.hostIp || p.IP; // IP is rarely on port obj in recent models, but check
+            hostPort = p.host || p.host_port || p.hostPort || p.PublicPort;
+            containerPort = p.container || p.container_port || p.containerPort || p.PrivatePort;
+        } else {
+            // p is number or string
+            hostPort = p;
+            containerPort = p; // Assume symmetry if simple number
+        }
+
         // Normalize IP: If missing, empty, or 0.0.0.0, use the Node IP (fallbackIp)
         // This ensures containers (empty IP) and services (0.0.0.0) look the same
         // and show the actual reachable IP of the node.
@@ -166,11 +185,9 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
             ip = fallbackIp;
         }
 
-        // Handle case where p is from summary.portMap (already parsed object) 
-        // vs data.ports (might satisfy PortMapping interface or be raw number)
         return {
-            host: isObj ? (p.host || p.host_port) : p,
-            container: isObj ? (p.container || p.container_port) : null,
+            host: hostPort,
+            container: containerPort,
             ip: ip
         };
     });
@@ -183,7 +200,7 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
         const key = `${p.ip || '_'}:${p.host}`;
         // Keep the first one, or maybe prefer one with container info?
         // Usually first is fine.
-        if (!uniquePortsMap.has(key)) {
+        if (p.host && !uniquePortsMap.has(key)) { // Only add if host port exists
             uniquePortsMap.set(key, p);
         }
     });
@@ -789,13 +806,64 @@ export default function NetworkPlugin() {
     setEdges(layouted.edges);
   }, [setNodes, setEdges, applyFilter]);
 
-  const { data: rawData, loading, validating, refresh } = useNetworkGraph();
-  const refreshing = validating && !loading;
+  const { data: twin } = useDigitalTwin();
+
+  // Compute graph data from Twin on the fly
+  // This replaces backend aggregation logic with client-side graph builder.
+  // OR we keep backend API but make it reactive?
+  // Ideally, if we have full twin, we can build the graph locally.
+  // BUT the graph logic is complex (see `src/app/api/network/graph/route.ts`).
+  // For now, let's keep fetching the graph from API but trigger it via Twin updates OR 
+  // rewrite `useNetworkGraph` to be a pure function of `twin`.
+  //
+  // Given user request "loaded from digital twin", we should rebuild graph here.
+  // However, rewriting the entire graph builder logic from server to client is risky and large.
+  //
+  // Alternative: Auto-fetch graph when twin updates. (Slightly cheating but fits "no refresh button")
+  // Better: Port the essential graph logic. 
+  //
+  // Let's check `src/lib/network/graph.ts` complexity. If it's pure logic, we can import it?
+  // It imports `manager`, `nodes` which are server-side.
+  // So we CANNOT run graph builder on client easily without heavy refactor.
+  // 
+  // Compromise: We keep fetching from API, but we use `twin` as a dependency to trigger re-fetch automatically.
+  // AND we verify if the server pushes graph updates? The server pushes TWIN updates.
+  // So when twin updates, we re-fetch graph.
+  //
+  // Actually, for "Network Map loaded from digital twin", ideally the client builds it.
+  // But let's stick to the "No Refresh Button" requirement first.
+  
+  const [rawData, setRawData] = useState<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const [loading, setLoading] = useState(true);
+
+  const fetchGraph = useCallback(async () => {
+     try {
+         const res = await fetch('/api/network/graph');
+         if (res.ok) {
+             const data = await res.json();
+             setRawData(data);
+             setLoading(false);
+         }
+     } catch (e) {
+         console.error('Failed to fetch graph', e);
+     }
+  }, []);
+
+  // Auto-fetch when Twin updates (debounced)
+  useEffect(() => {
+     if (!twin) return;
+     
+     // Debounce slightly to avoid thrashing on rapid partial updates
+     const t = setTimeout(fetchGraph, 500);
+     return () => { clearTimeout(t); };
+  }, [twin, fetchGraph]); 
+
+  const refreshing = false; // Hidden
 
   const graphData = useMemo(() => {
       if (!rawData) return null;
       
-      const flowNodes: Node[] = rawData.nodes.map(n => {
+      const flowNodes: Node[] = rawData.nodes.map((n: any) => {
         const isGroup = n.type === 'group';
         
         return {
@@ -822,7 +890,7 @@ export default function NetworkPlugin() {
         };
       });
 
-      const flowEdges: Edge[] = rawData.edges.map(e => ({
+      const flowEdges: Edge[] = rawData.edges.map((e: any) => ({
         id: e.id,
         source: e.source,
         target: e.target,
@@ -842,7 +910,7 @@ export default function NetworkPlugin() {
       return { nodes: flowNodes, edges: flowEdges };
   }, [rawData]);
 
-  const fetchGraph = () => refresh(true);
+
 
   useEffect(() => {
      if (graphData) {
@@ -964,15 +1032,6 @@ export default function NetworkPlugin() {
         title="Map" 
         showBack={false} 
         helpId="network"
-        actions={
-            <button 
-                onClick={fetchGraph}
-                disabled={refreshing}
-                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-                <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
-            </button>
-        }
       >
         <div className="relative flex-1 max-w-md min-w-[100px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />

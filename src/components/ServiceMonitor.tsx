@@ -39,10 +39,11 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
         // We assume the service name is part of the container name or pod name
         // Quadlet usually names containers like "systemd-<service>" or just uses the name from .container
         // We'll try to match loosely
+        const startName = serviceName.replace('.service', '');
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const filteredPs = data.podmanPs.filter((c: any) => {
             const names = Array.isArray(c.Names) ? c.Names : [c.Names];
-            return names.some((n: string) => n.includes(serviceName));
+            return names.some((n: string) => n.includes(startName));
         });
         
         setLogs({ ...data, podmanPs: filteredPs });
@@ -59,7 +60,10 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
           const graph = await graphRes.json();
           // Find the node corresponding to this service
           // 1. Check for Proxy
-          if (serviceName === 'Reverse Proxy' || serviceName === 'nginx' || serviceName === 'nginx-web') {
+          // Handle 'nginx-web' without extension or 'nginx-web.service' with extension
+          const cleanName = serviceName.replace('.service', '');
+
+          if (cleanName.includes('Reverse Proxy') || cleanName === 'nginx' || cleanName === 'nginx-web') {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const proxyNode = graph.nodes.find((n: any) => n.type === 'proxy' && (node ? n.node === node : true));
               if (proxyNode) setNetworkData(proxyNode);
@@ -67,15 +71,15 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
               // 2. Check for Service
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const serviceNode = graph.nodes.find((n: any) => 
-                  ((n.type === 'service' && n.label === serviceName) ||
-                  (n.type === 'container' && n.label.includes(serviceName))) &&
+                  ((n.type === 'service' && n.label && n.label.replace('.service', '') === cleanName) ||
+                  (n.type === 'container' && n.label && n.label.includes(cleanName))) &&
                   (node ? n.node === node : true)
               );
               if (serviceNode) setNetworkData(serviceNode);
           }
       }
     } catch (e) {
-      console.error('Failed to fetch data', e);
+      logger.error('ServiceMonitor', 'Failed to fetch data', e);
     } finally {
       setLoading(false);
     }
@@ -90,7 +94,7 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
             setContainerLogs(data.logs);
         }
     } catch (e) {
-        console.error('Failed to fetch container logs', e);
+        logger.error('ServiceMonitor', 'Failed to fetch container logs', e);
     }
   };
 
@@ -164,7 +168,12 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
             )}
             {activeTab === 'service' && (
             <pre className="text-sm font-mono text-gray-300 whitespace-pre-wrap">
-                {logs?.serviceLogs || 'No logs available.'}
+                {logs?.serviceLogs || (
+                    <div className="text-gray-400 italic">
+                        <p>No service logs available.</p>
+                        <p className="text-xs mt-2">Checking journalctl for unit: {serviceName.match(/\.(service|scope|socket|timer)$/) ? serviceName : `${serviceName}.service`}</p>
+                    </div>
+                )}
             </pre>
             )}
             {activeTab === 'network' && (
@@ -223,7 +232,17 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
                             </div>
                         </>
                     ) : (
-                        <div className="text-gray-400 italic">No network data found for this service.</div>
+                        <div className="text-gray-400 italic">
+                            <p className="mb-2">No network data found for this service.</p>
+                            <div className="text-xs text-gray-500 border border-gray-700 p-2 rounded bg-black/50">
+                                <p>Troubleshooting:</p>
+                                <ul className="list-disc ml-4 space-y-1 mt-1">
+                                    <li>If the service is inactive, it will not appear in the network graph.</li>
+                                    <li>Searched for node types: 'service', 'proxy', 'container'</li>
+                                    <li>Matched against label: "{serviceName}" or "{serviceName.replace('.service', '')}"</li>
+                                </ul>
+                            </div>
+                        </div>
                     )}
                 </div>
             )}
@@ -258,7 +277,17 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
                             </div>
                         </>
                     ) : (
-                        <div className="text-gray-400 italic">No running containers found matching this service.</div>
+                        <div className="text-gray-400 italic">
+                             <p className="mb-2">No running containers found matching this service.</p>
+                             <div className="text-xs text-gray-500 border border-gray-700 p-2 rounded bg-black/50">
+                                <p>Possible reasons:</p>
+                                <ul className="list-disc ml-4 space-y-1 mt-1">
+                                    <li>The service has not started any containers yet.</li>
+                                    <li>The containers have stopped or crashed.</li>
+                                    <li>Container names do not contain the service name "{serviceName.replace('.service', '')}".</li>
+                                </ul>
+                            </div>
+                        </div>
                     )}
                 </div>
             )}

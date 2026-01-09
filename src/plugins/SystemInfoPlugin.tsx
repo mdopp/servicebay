@@ -1,18 +1,19 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { getSystemInfo, getDiskUsage, getSystemUpdates, SystemInfo, DiskInfo } from '@/app/actions/system';
-import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { getSystemUpdates } from '@/app/actions/system';
+import { logger } from '@/lib/logger';
+import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { useCache } from '@/providers/CacheProvider';
+import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // Migrated from useCache
+import PluginLoading from '@/components/PluginLoading';
 import PageHeader from '@/components/PageHeader';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 
-interface CombinedSystemInfo {
-    sysInfo: SystemInfo;
-    diskInfo: DiskInfo[];
-    updates: { count: number; list: string[] };
+interface UpdateInfo {
+    count: number;
+    list: string[];
 }
 
 /**
@@ -24,7 +25,44 @@ export default function SystemInfoPlugin() {
   const [copied, setCopied] = useState(false);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [selectedNode, setSelectedNode] = useState<string>('Local');
-  const { addToast, updateToast } = useToast();
+  const [updates, setUpdates] = useState<UpdateInfo | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const { addToast } = useToast();
+
+  const { data: twin, isConnected } = useDigitalTwin();
+
+  // Load available nodes
+  useEffect(() => {
+    getNodes().then(nodeList => {
+        setNodes(nodeList);
+        const saved = localStorage.getItem('podcli-selected-node');
+        if (saved) {
+            if (saved === 'Local' || nodeList.find(n => n.Name === saved)) {
+                setSelectedNode(saved);
+            } else {
+                setSelectedNode('Local');
+            }
+        }
+    }).catch(e => logger.error('SystemInfoPlugin', 'Failed to fetch nodes', e));
+  }, []);
+
+  // Fetch updates separately
+  useEffect(() => {
+      let mounted = true;
+      const loadUpdates = async () => {
+          setCheckingUpdates(true);
+          try {
+            const up = await getSystemUpdates(selectedNode);
+            if (mounted) setUpdates(up);
+          } catch (e) {
+              logger.error('SystemInfoPlugin', 'Failed to check updates', e);
+          } finally {
+              if (mounted) setCheckingUpdates(false);
+          }
+      };
+      loadUpdates();
+      return () => { mounted = false; };
+  }, [selectedNode]);
 
   const handleCopyCommand = () => {
     navigator.clipboard.writeText('sudo apt update && sudo apt upgrade -y');
@@ -33,56 +71,33 @@ export default function SystemInfoPlugin() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const systemFetcher = useCallback(async () => {
-    const toastId = addToast('loading', 'Refreshing System Info', `Fetching info for ${selectedNode}...`, 0);
-    
-    try {
-      const [sys, disk, up] = await Promise.all([
-        getSystemInfo(selectedNode),
-        getDiskUsage(selectedNode),
-        getSystemUpdates(selectedNode)
-      ]);
-      
-      updateToast(toastId, 'success', 'System Info Updated', `${selectedNode} refreshed`, 500);
-      
-      return {
-          sysInfo: sys,
-          diskInfo: disk,
-          updates: up
-      };
-    } catch (error) {
-      console.error('Failed to fetch system info', error);
-      updateToast(toastId, 'error', 'Refresh Failed', error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }, [selectedNode, addToast, updateToast]);
-
-  const { data, loading, validating, refresh } = useCache<CombinedSystemInfo>(`system-info-${selectedNode}`, systemFetcher, [selectedNode]);
-  const sysInfo = data?.sysInfo || null;
-  const diskInfo = data?.diskInfo || [];
-  const updates = data?.updates || null;
-
-  useEffect(() => {
-    getNodes().then(nodeList => {
-        setNodes(nodeList);
-        const saved = localStorage.getItem('podcli-selected-node');
-        // Only restore selection if the node actually exists (or is Local)
-        if (saved) {
-            if (saved === 'Local' || nodeList.find(n => n.Name === saved)) {
-                setSelectedNode(saved);
-            } else {
-                console.warn(`Saved node '${saved}' not found in available nodes. Reverting to Local.`);
-                setSelectedNode('Local');
-                localStorage.removeItem('podcli-selected-node');
-            }
-        }
-    }).catch(console.error);
-  }, []);
-
-  if (loading) return <div className="p-8 text-center text-gray-500">Loading system information...</div>;
+  // Get resources from Twin
+  const resources = twin?.nodes?.[selectedNode]?.resources;
   
+  if (!resources || !resources.os) {
+      return (
+        <div className="h-full flex flex-col">
+            <PageHeader title="System Information" showBack={false} />
+            <PluginLoading 
+                message="Waiting for agent report..." 
+                subMessage={selectedNode !== 'Local' ? `Waiting for data from ${selectedNode}` : undefined} 
+            />
+        </div>
+      );
+  }
+
+  const { cpuUsage, memoryUsage, totalMemory, os, disks, network } = resources;
+  
+  const formatBytes = (bytes: number) => {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col overflow-y-auto">
       <PageHeader 
         title="System Information" 
         showBack={false} 
@@ -106,171 +121,168 @@ export default function SystemInfoPlugin() {
                         ))}
                     </select>
                 </div>
-                <button onClick={() => refresh(true)} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
-                    <RefreshCw size={18} className={(loading || validating) ? 'animate-spin' : ''} />
-                </button>
             </div>
         }
       />
       
-      {!sysInfo ? (
-          <div className="p-8 text-center text-red-500">Failed to load system information for {selectedNode}.</div>
-      ) : (
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
-                <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-                    <Server size={18} /> OS Information
-                </h3>
-                <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                        <span className="text-gray-500">Hostname:</span>
-                        <span className="font-mono">{sysInfo.os.hostname}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-500">Platform:</span>
-                        <span>{sysInfo.os.platform} ({sysInfo.os.release})</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-500">Uptime:</span>
-                        <span>{Math.floor(sysInfo.os.uptime / 3600)}h {Math.floor((sysInfo.os.uptime % 3600) / 60)}m</span>
-                    </div>
+      <div className="p-6 space-y-6">
+        {/* OS Overview */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-2 mb-2 text-gray-500">
+                    <Server size={18} />
+                    <span className="text-sm font-medium">Hostname</span>
                 </div>
+                <div className="text-lg font-semibold truncate" title={os.hostname}>{os.hostname}</div>
+                <div className="text-xs text-gray-400">Node ID: {selectedNode}</div>
             </div>
-
-            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
-                <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-                    <Cpu size={18} /> CPU & Memory
-                </h3>
-                <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                        <span className="text-gray-500">Model:</span>
-                        <span className="truncate max-w-[200px]" title={sysInfo.cpu.model}>{sysInfo.cpu.model}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-500">Cores:</span>
-                        <span>{sysInfo.cpu.cores}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-500">Memory:</span>
-                        <span>
-                            {Math.round((sysInfo.memory.total - sysInfo.memory.free) / 1024 / 1024 / 1024 * 100) / 100} GB / 
-                            {Math.round(sysInfo.memory.total / 1024 / 1024 / 1024 * 100) / 100} GB
-                        </span>
-                    </div>
+            
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-2 mb-2 text-gray-500">
+                    <Info size={18} />
+                    <span className="text-sm font-medium">OS / Kernel</span>
                 </div>
+                <div className="text-lg font-semibold truncate" title={os.platform}>{os.platform}</div>
+                <div className="text-xs text-gray-400">Arch: {os.arch}</div>
             </div>
-        </div>
 
-        {/* Disk Usage */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
-            <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-                <HardDrive size={18} /> Disk Usage
-            </h3>
-            <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                    <thead className="text-gray-500 border-b border-gray-200 dark:border-gray-800">
-                        <tr>
-                            <th className="pb-2">Mount</th>
-                            <th className="pb-2">Size</th>
-                            <th className="pb-2">Used</th>
-                            <th className="pb-2">Avail</th>
-                            <th className="pb-2">Use%</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                        {diskInfo.map((d, i) => (
-                            <tr key={i}>
-                                <td className="py-2 font-mono text-xs">{d.mount}</td>
-                                <td className="py-2">{d.size}</td>
-                                <td className="py-2">{d.used}</td>
-                                <td className="py-2">{d.avail}</td>
-                                <td className="py-2">
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-16 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                                            <div 
-                                                className={`h-full ${parseInt(d.use) > 90 ? 'bg-red-500' : parseInt(d.use) > 70 ? 'bg-yellow-500' : 'bg-green-500'}`} 
-                                                style={{ width: d.use }}
-                                            />
-                                        </div>
-                                        <span className="text-xs">{d.use}</span>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-2 mb-2 text-gray-500">
+                    <RefreshCw size={18} />
+                    <span className="text-sm font-medium">Uptime</span>
+                </div>
+                <div className="text-lg font-semibold">{(os.uptime / 3600).toFixed(1)} hrs</div>
+                <div className="text-xs text-gray-400">Total running time</div>
             </div>
-        </div>
 
-        {/* Network */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
-            <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-                <Network size={18} /> Network Interfaces
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {Object.entries(sysInfo.network).map(([name, ifaces]) => (
-                    <div key={name} className="p-3 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
-                        <div className="font-bold text-sm mb-1">{name}</div>
-                        {ifaces?.map((iface, i) => (
-                            <div key={i} className="text-xs font-mono text-gray-600 dark:text-gray-400">
-                                {iface.family} {iface.address}
+             <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-2 mb-2 text-gray-500">
+                    <Package size={18} />
+                    <span className="text-sm font-medium">Pending Updates</span>
+                </div>
+                <div className="flex items-center justify-between">
+                    <div>
+                        {checkingUpdates ? (
+                            <div className="text-sm animate-pulse">Checking...</div>
+                        ) : (
+                            <div className={`text-lg font-semibold ${updates && updates.count > 0 ? 'text-yellow-600' : 'text-green-600'}`}>
+                                {updates ? updates.count : 0}
                             </div>
-                        ))}
+                        )}
+                        <div className="text-xs text-gray-400">System packages</div>
                     </div>
-                ))}
-            </div>
-        </div>
-
-        {/* OS Updates */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
-            <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-                <Package size={18} /> System Updates
-            </h3>
-            {updates ? (
-                <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                        <div className={`p-3 rounded-full ${updates.count > 0 ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400' : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'}`}>
-                            <Package size={24} />
-                        </div>
-                        <div>
-                            <p className="font-medium text-gray-900 dark:text-white">
-                                {updates.count > 0 ? `${updates.count} updates available` : 'System is up to date'}
-                            </p>
-                            <div className="flex items-center gap-2">
-                                <p className="text-sm text-gray-500 dark:text-gray-400">
-                                    {updates.count > 0 ? 'Run system update via terminal to apply.' : 'Last checked just now'}
-                                </p>
-                                {updates.count > 0 && (
-                                    <button 
-                                        onClick={handleCopyCommand}
-                                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                                        title="Copy update command"
-                                    >
-                                        {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                    {updates.list.length > 0 && (
-                        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 max-h-40 overflow-y-auto">
-                            <ul className="space-y-1">
-                                {updates.list.map((pkg, i) => (
-                                    <li key={i} className="text-xs font-mono text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 last:border-0 pb-1 last:pb-0">
-                                        {pkg}
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
+                     {updates && updates.count > 0 && (
+                        <button 
+                            onClick={handleCopyCommand}
+                            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition"
+                            title="Copy update command"
+                        >
+                            {copied ? <Check size={16} className="text-green-500"/> : <Copy size={16}/>}
+                        </button>
                     )}
                 </div>
-            ) : (
-                <div className="text-sm text-gray-500">Checking for updates...</div>
-            )}
+            </div>
+        </div>
+
+        {/* Resources Charts */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* CPU & Memory */}
+            <div className="bg-white dark:bg-gray-800 p-5 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
+                    <Cpu size={20} /> Compute Resources
+                </h3>
+                
+                <div className="space-y-6">
+                    <div>
+                        <div className="flex justify-between mb-1 text-sm">
+                            <span>CPU Usage</span>
+                            <span className="font-medium">{cpuUsage}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+                            <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${Math.min(cpuUsage, 100)}%` }}></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div className="flex justify-between mb-1 text-sm">
+                            <span>Memory Usage</span>
+                            <span className="font-medium">{formatBytes(memoryUsage)} / {formatBytes(totalMemory)}</span>
+                        </div>
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+                            <div className="bg-purple-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${Math.min((memoryUsage / totalMemory) * 100, 100)}%` }}></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Disk Usage */}
+            <div className="bg-white dark:bg-gray-800 p-5 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
+                    <HardDrive size={20} /> Storage ({disks?.length || 0} mounts)
+                </h3>
+                
+                <div className="space-y-4 max-h-60 overflow-y-auto pr-2">
+                    {disks && disks.map((disk, i) => {
+                        const percent = disk.total > 0 ? Math.round((disk.used / disk.total) * 100) : 0;
+                        return (
+                        <div key={i} className="text-sm">
+                            <div className="flex justify-between mb-1">
+                                <span className="font-medium truncate max-w-[150px]" title={disk.mountpoint}>{disk.mountpoint}</span>
+                                <span className="text-xs text-gray-500">{disk.type}</span>
+                            </div>
+                            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 relative">
+                                <div 
+                                    className={`absolute left-0 h-2 rounded-full transition-all duration-500 ${percent > 90 ? 'bg-red-500' : 'bg-green-600'}`} 
+                                    style={{ width: `${Math.min(percent, 100)}%` }}
+                                ></div>
+                            </div>
+                            <div className="flex justify-between mt-1 text-xs text-gray-400">
+                                <span>{formatBytes(disk.used)} used</span>
+                                <span>{percent}% of {formatBytes(disk.total)}</span>
+                            </div>
+                        </div>
+                    )})}
+                    {(!disks || disks.length === 0) && (
+                        <div className="text-center text-gray-400 py-4">No disk information available</div>
+                    )}
+                </div>
+            </div>
+
+            {/* Network Interfaces */}
+            <div className="md:col-span-2 bg-white dark:bg-gray-800 p-5 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
+                    <Network size={20} /> Network Interfaces
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {network && Object.entries(network).map(([ifaceName, addrs]) => (
+                        <div key={ifaceName} className="border border-gray-200 dark:border-gray-700 rounded p-3">
+                            <div className="font-medium text-sm mb-2 pb-1 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center">
+                                <span>{ifaceName}</span>
+                                {addrs.some(a => !a.internal) ? 
+                                    <span className="text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-100 px-1.5 py-0.5 rounded">Public</span> : 
+                                    <span className="text-[10px] bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded">Local</span>
+                                }
+                            </div>
+                            <div className="space-y-1">
+                                {addrs.map((addr, idx) => (
+                                    <div key={idx} className="text-xs font-mono break-all flex justify-between gap-2">
+                                        <span className={addr.family === 'IPv6' ? 'text-purple-600 dark:text-purple-400' : 'text-emerald-600 dark:text-emerald-400'}>
+                                            {addr.address}
+                                        </span>
+                                        <span className="text-gray-400 shrink-0">{addr.family}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                    {(!network || Object.keys(network).length === 0) && (
+                        <div className="col-span-full text-center text-gray-400 py-4">No network information available</div>
+                    )}
+                </div>
+            </div>
         </div>
       </div>
-      )}
     </div>
   );
 }

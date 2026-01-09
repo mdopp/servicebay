@@ -1,73 +1,159 @@
-# Architecture (Target V4)
+# Architecture (Target V4.1 - Reactive Digital Twin)
 
 ## Overview
 
 ServiceBay is a Next.js application designed to manage containerized services using Podman. It provides a web interface for creating, monitoring, and managing services defined as Kubernetes Pod YAMLs (Quadlet style).
 
-**Version 4 Architecture** moves away from direct filesystem access and synchronous CLI calls. It adopts a **Unified Agentless SSH Architecture**, where the "Local" node is treated identically to "Remote" nodes.
+**Version 4.1 Architecture** moves to a **Reactive Digital Twin** model. This design eliminates polling and user-waiting times by maintaining an always-in-sync "Digital Twin" of the node state in the backend.
 
-The core core abstraction for services is **Podman Kube Quadlets** (`.kube` files pointing to Kubernetes YAMLs), allowing for full-stack definitions in a single YAML file, managed by systemd. Standard Quadlet `.container` files are also supported.
+### Core Principles
 
-## Core Architecture Principles
-
-1.  **Unified Node Access**: All nodes (Local & Remote) are accessed via SSH. This ensures consistent behavior and isolates the ServiceBay container from the host OS.
-2.  **Stateless Manager**: The backend does not maintain stateful watchers on files. Instead, it relies on the target host to push updates.
-3.  **Ephemeral Agents**: We do not install daemons on the targets. We inject a temporary Bash/Python script into an active SSH session to stream events (File chnages, Service status, Logs).
+*   **Push-Based**: The Agent pushes state changes (Files, Services, Containers) to the Backend immediately upon detection.
+*   **Digital Twin**: The Backend maintains a real-time copy of the node's state. The UI reads only from this local cache (Store).
+*   **Rootless Compatible**: All monitoring uses standard user-space tools available to the non-root user (`systemctl --user`, `podman`, `inotify`).
+*   **Abstracted Modularity**: Gateways and Proxies are "Peripheral Twins" that feed into a generic data model.
 
 ## Architecture Diagram
 
 ```mermaid
 graph TD
-    subgraph "Frontend Layer"
-        UI[React UI Components]
-        SocketClient[Socket.IO Client]
-        Cache[SWR / CacheProvider]
-    end
-
-    subgraph "Application Layer (Container)"
-        API[Next.js API Routes]
-        EventBus[Event Bus / Socket.IO Server]
+    subgraph "Frontend Layer (Browser)"
+        UI[React Dashboard]
+        API[API / Socket.IO]
         
-        subgraph "Domain Services"
-            SvcMgr[Service Manager]
-            FileMgr[File Manager]
-            Monitor[Monitoring Service]
-        end
-
-        subgraph "Infrastructure Layer"
-            Pool[SSH Connection Pool]
-            AgentHandler[Agent Protocol Handler]
-        end
+        UI <-->|1. Immediate Read| API
     end
 
-    subgraph "Target Host (Local or Remote)"
-        subgraph "SSH Session"
-            Script[Ephemeral Agent Script]
+    subgraph "ServiceBay Backend (Container)"
+        API <-->|Read| StateStore["Digital Twin (In-Memory Store)"]
+        
+        SSH_Server[SSH Server / Listener] -->|Update Node State| StateStore
+        GatewayPoller[Gateway Manager] -->|Update Gateway State| StateStore
+    end
+
+    subgraph "Target Node (Rootless User Space)"
+        subgraph "Python Agent (One Process)"
+            
+            subgraph "Input Optimizations"
+                Mon_DBus["DBus Monitor"] -- Signals --> Logic
+                Mon_Pod["Podman Events"] -- JSON Stream --> Logic
+                Mon_File["Inotify Watcher"] -- File Events --> Logic
+            end
+            
+            subgraph "Core Logic"
+                Logic[State Aggregator]
+                
+                Logic -->|Query| Local_Podman[Podman CLI]
+                Logic -->|Query| Native_Prox["Proxy Inspector (Shell)"]
+            end
+            
+            Logic -->|Push: SYNC_STATE| SSH_Out[Start SSH Tunnel]
         end
         
-        Systemd[systemd --user]
-        Podman[podman]
-        Files[~/.config/containers/systemd/]
+        Mon_DBus -.->|Listen| SystemdUser["systemd --user"]
+        Mon_Pod -.->|Listen| PodmanSocket["Podman"]
+        Native_Prox -.->|Exec| ProxyCont[Nginx Container]
     end
 
-    %% Data Flow
-    UI <-->|Fetch/Cache| API
-    UI <-->|Real-time Events| SocketClient
-    
-    API --> SvcMgr
-    API --> FileMgr
-    
-    SvcMgr & FileMgr & Monitor --> AgentHandler
-    AgentHandler --> Pool
-    Pool <-->|Long-lived Connection| Script
-    
-    Script -->|Stream: JSON Events| AgentHandler
-    AgentHandler -->|Parse & Publish| EventBus
-    EventBus --> SocketClient
-    
-    Script -->|Exec: systemctl| Systemd
-    Script -->|Watch: file mod| Files
+    SSH_Out -->|JSON Stream| SSH_Server
 ```
+
+## The Digital Twin Data Model
+
+The Backend Store serves as the Single Source of Truth. It aggregates data from multiple sources into a generic model.
+
+```typescript
+interface DigitalTwinStore {
+  // Core Node State (Pushed by Python Agent)
+  nodes: Record<string, {
+    connected: boolean;
+    lastSync: number;
+    resources: SystemResources; // CPU, RAM
+    containers: EnrichedContainer[]; // Ports, Status, etc.
+    services: ServiceUnit[]; // Systemd Units
+  }>;
+
+  // Abstract Peripheral: Internet Gateway (Polled by Backend)
+  gateway: {
+    provider: 'fritzbox' | 'unifi' | 'mock';
+    publicIp: string;
+    upstreamStatus: 'up' | 'down';
+    lastUpdated: number;
+  };
+
+  // Abstract Peripheral: Reverse Proxy (Pushed by Agent via Inspector)
+  proxy: {
+    provider: 'nginx' | 'traefik' | 'caddy';
+    routes: Array<{
+      host: string;
+      targetService: string; // e.g., "immich"
+      targetPort: number;
+      ssl: boolean;
+    }>;
+  };
+}
+```
+
+## Component Details
+
+### A. The Agent (State Aggregator)
+A single lightweight Python script (`src/lib/agent/v4/agent.py`) running on the target host. It acts as the "Digital Twin" source of truth, optimizing data collection to minimize system load while ensuring real-time responsiveness.
+
+#### 1. Agent Components
+
+| Component | Trigger | Role & Data Provided |
+| :--- | :--- | :--- |
+| **Podman Monitor** | `podman events` (Stream) | **Role**: Tracks runtime state of containers.<br>**Trigger**: Real-time event stream with **1s Debounce**. Ignores noisy events (`exec`, `cleanup`).<br>**Data**: `containers[]` (State, Networks, Mounts, Labels). Correlates host ports via `ss` to mapped internal ports. |
+| **Systemd Monitor** | Event-Driven | **Role**: Tracks Managed Kube Services (Podman Kube Stacks).<br>**Trigger**: Triggered by File changes or Container lifecycle events.<br>**Data**: `services[]` (ActiveState, SubState, Flags: `isReverseProxy`). |
+| **File Watcher** | Hybrid | **Role**: Monitors config files for hot-reloads.<br>**Trigger**: Current: Efficient Polling (2s). Target: `inotify` events.<br>**Inputs**: `~/.config/containers/systemd/` + Dynamic Nginx mount paths.<br>**Data**: `files{}` (Content, timestamp). Sends raw content of `*.conf`, `*.yaml` for the editor. |
+| **Nginx Inspector** | On-Change | **Role**: Extracts *actual* routing table from the active proxy.<br>**Mechanism**: Execs a shell script inside the `nginx` container to dump internal config.<br>**Data**: `proxy[]` (`host`, `targetService`, `targetPort`, `ssl`). |
+| **Resource Monitor** | Polling (5s) | **Role**: Tracks system health and hardware stats.<br>**Trigger**: Polls system files (`/proc/*`) every 5s. Pushes updates **only** if metrics change beyond threshold.<br>**Data**: `resources` (CPU Load, RAM Usage/Total, Disk Usage, OS Release info). |
+
+#### 2. Agent Data Flow
+
+```mermaid
+graph TD
+    subgraph Host[Host: Agent.py]
+        PE[Podman Events] -->|Stream| PM[PodmanMonitor]
+        PM -->|Debounce 1s| FC[fetch_containers]
+        FC -->|Trigger| NM[Nginx Inspector]
+        
+        FW[FileWatcher Loop] -->|Poll 2s| FF[fetch_files]
+        FF -->|Change Detected| FS[fetch_services]
+        
+        SS[ss -tulpnH] --> FC
+        SYS[systemctl list-units] --> FS
+        
+        subgraph NginxContainer
+            NM -->|podman exec| INC[Inspector Script]
+        end
+        
+        FC -->|Push| ST["STDOUT (JSON)"]
+        FS -->|Push| ST
+        FF -->|Push| ST
+        NM -->|Push| ST
+    end
+```
+
+#### 3. Traffic Optimization (Deduplication)
+To minimize SSH bandwidth and Backend processing, the Agent applies strict filtering before sending data:
+*   **Event Debouncing**: Burst events (e.g., stack startup) are grouped into a single scan using a 1-second settling timer.
+*   **Noise Filtering**: High-frequency, irrelevant events (like `exec_create` from healthchecks) are dropped immediately.
+*   **Payload Deduplication**: The Agent caches the last pushed state for every component (Services, Files, etc.). A `SYNC_PARTIAL` message is **only** generated if the new JSON payload differs from the previous one.
+
+### B. The Backend (Gateway Poller)
+*   **Goal**: Monitor Internet connectivity.
+*   **Mechanism**: A scheduled task (e.g., every 60s) runs in the Backend.
+*   **Abstraction**: A `GatewayProvider` interface allows different implementations (FritzBox, Ubiquiti, etc.) to feed the same `gateway` state in the Store.
+
+## Technology Decision: Python Agent
+
+We have explicitly chosen **Python 3** (Standard Library only) over Bash/Shell scripts for the Agent implementation.
+
+### Rationale
+1.  **JSON Handling**: The entire V4 architecture relies on structured JSON streams. Python handles this natively.
+2.  **Concurrency**: Managing multiple monitoring threads (DBus, Podman, File Watcher) in a single process is robust in Python.
+3.  **Abstraction**: Python is the "Driver" that orchestrates the "Native Shell Scripts" (like the Nginx inspector), acting as the bridge between raw OS commands and the structured Backend API.
 
 ## Plugin Architecture
 
@@ -88,27 +174,6 @@ The dashboard (`/`) is built using a modular plugin architecture. This allows fo
 6.  **SSH Terminal**: A fully functional web-based terminal using `xterm.js`.
 7.  **Settings**: Application settings and ServiceBay updates.
 
-## Infrastructure Layer
-
-### SSH Connection Pool
-To avoid the overhead of SSH handshakes (300ms+) for every action, ServiceBay maintains a pool of persistent SSH connections.
-- **Multiplexing**: Commands are executed over existing sessions where possible.
-- **Recovery**: Broken connections are automatically re-established.
-
-### The Ephemeral Agent
-When ServiceBay connects to a node, it pipes a lightweight script (Bash or Python) into `ssh user@host 'bash -s'`.
-This script:
-1.  **Loops** indefinitely, accepting commands from `stdin` (JSON).
-2.  **Polls/Watches** critical paths (`.config/containers/systemd`) for changes.
-3.  **Streams** `journalctl` output for active services.
-4.  **Emits** events to `stdout` as JSON Lines.
-
-## Client Data Management
-
-ServiceBay uses a custom caching layer (`src/providers/CacheProvider.tsx`) to manage client-side state.
-- **Optimistic UI**: Writes updates to cache immediately before confirmation.
-- **Event-Driven**: Listens to WebSocket events from the `EventBus` to invalidate or update cache keys without polling.
-
 ## Registry & Installation
 
 - **Local Registry**: Templates are read from `templates/` and `stacks/` directories.
@@ -127,4 +192,3 @@ ServiceBay uses a custom caching layer (`src/providers/CacheProvider.tsx`) to ma
 - **Backend**: Node.js custom server.
 - **Tunneling**: SSH (Client: `ssh2` or `openssh` binary).
 - **Target**: Generic Linux with Podman & Systemd.
-

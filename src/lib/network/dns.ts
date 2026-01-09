@@ -1,6 +1,7 @@
 import * as dns from 'dns/promises';
 import { NginxConfig } from '../nginx/types';
 import { FritzBoxStatus } from '../fritzbox/types';
+import { logger } from '@/lib/logger';
 
 export interface DomainStatus {
     domain: string;
@@ -28,7 +29,7 @@ export async function checkDomains(nginxConfig: NginxConfig, fbStatus: FritzBoxS
         }
     }
 
-    console.log(`[DNS] Extracting domains (verification disabled): ${Array.from(domains).join(', ')}`);
+    logger.info('DNS', `Extracting domains (verification disabled): ${Array.from(domains).join(', ')}`);
 
     const results: DomainStatus[] = [];
 

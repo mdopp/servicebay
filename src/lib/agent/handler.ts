@@ -5,15 +5,19 @@ import path from 'path';
 import { ClientChannel } from 'ssh2';
 import { spawn, ChildProcess } from 'child_process';
 import { listNodes } from '../nodes';
+import { logger } from '@/lib/logger';
 
 // Cache the agent script content
+// Updated: Force reload 2
 let AGENT_SCRIPT_B64: string = '';
 
 function getAgentScript() {
-  if (!AGENT_SCRIPT_B64) {
+  // In development, always reload the script to pick up changes
+  if (!AGENT_SCRIPT_B64 || process.env.NODE_ENV === 'development') {
     // Determine path. In Next.js prod, this might need adjustment or bundling.
     // For now, assume process.cwd() is project root.
-    const p = path.join(process.cwd(), 'src/lib/agent/agent.py');
+    // V4 Update: Point to new agent script
+    const p = path.join(process.cwd(), 'src/lib/agent/v4/agent.py');
     const content = fs.readFileSync(p, 'utf-8');
     AGENT_SCRIPT_B64 = Buffer.from(content).toString('base64');
   }
@@ -27,10 +31,10 @@ export interface AgentEvent {
 }
 
 export class AgentHandler extends EventEmitter {
-  private nodeName: string;
+  public nodeName: string;
   private channel: ClientChannel | null = null;
   private process: ChildProcess | null = null;
-  private buffer: string = '';
+  private buffer: Buffer = Buffer.alloc(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private pendingRequests: Map<string, { resolve: (val: any) => void; reject: (err: any) => void }> = new Map();
   private isConnected: boolean = false;
@@ -61,8 +65,10 @@ export class AgentHandler extends EventEmitter {
     }
 
     if (useLocalSpawn) {
+        logger.info('AgentHandler', 'Starting Local Agent...');
         this.startLocal();
     } else {
+        logger.info('AgentHandler', `Starting SSH Agent for ${this.nodeName}...`);
         await this.startSSH();
     }
   }
@@ -71,24 +77,32 @@ export class AgentHandler extends EventEmitter {
     try {
         const script = getAgentScript();
         const args = ['-u', '-c', `import base64, sys; exec(base64.b64decode("${script}"))`];
+        logger.info('Agent:Local', 'Spawning python3...');
         const child = spawn('python3', args);
 
         this.process = child;
         this.isConnected = true;
         this.emit('connected');
 
-        child.stdout.on('data', (data) => this.handleData(data));
+        child.stdout.on('data', (data) => {
+             // console.log(`[Agent:Local] Raw Data (${data.length} bytes)`); // Debug disabled
+             this.handleData(data);
+        });
         child.stderr.on('data', (data) => {
-             console.error(`[Agent:Local STDERR] ${data.toString()}`);
+             // Suppress debug logs from agent if they slipped through
+             const str = data.toString();
+             if (!str.includes('[DEBUG]') && !str.includes('Process started') && !str.includes('Received command')) {
+                logger.error('Agent:Local', `STDERR: ${str}`);
+             }
         });
         
         child.on('close', (code) => {
-            console.log(`[Agent:Local] Closed. Code: ${code}`);
+            logger.info('Agent:Local', `Closed. Code: ${code}`);
             this.handleDisconnect();
         });
         
         child.on('error', (err) => {
-            console.error('[Agent:Local] Spawn Error:', err);
+            logger.error('Agent:Local', 'Spawn Error:', err);
             this.emit('error', err);
         });
 
@@ -126,13 +140,16 @@ export class AgentHandler extends EventEmitter {
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
           stream.on('close', (code: any, signal: any) => {
-            console.log(`[Agent:${this.nodeName}] Closed. Code: ${code}`);
+            logger.info(this.nodeName, `Agent Closed. Code: ${code}`);
             this.handleDisconnect();
           });
 
           stream.on('data', (data: Buffer) => this.handleData(data));
           stream.stderr.on('data', (data: Buffer) => {
-              console.error(`[Agent:${this.nodeName} STDERR] ${data.toString()}`);
+              const str = data.toString();
+              if (!str.includes('[DEBUG]') && !str.includes('Process started') && !str.includes('Received command')) {
+                  logger.error(this.nodeName, `STDERR: ${str}`);
+              }
           });
         });
       });
@@ -151,23 +168,37 @@ export class AgentHandler extends EventEmitter {
   }
 
   private handleData(data: Buffer) {
-    this.buffer += data.toString();
+    // console.log(`[Agent:${this.nodeName}] Received ${data.length} bytes`);
+    this.buffer = Buffer.concat([this.buffer, data]);
     
-    // Process line by line
-    let newlineIndex: number;
-    while ((newlineIndex = this.buffer.indexOf('\n')) !== -1) {
-      const line = this.buffer.slice(0, newlineIndex).trim();
-      this.buffer = this.buffer.slice(newlineIndex + 1);
+    // Process null-terminated messages
+    let offset = 0;
+    while (true) {
+      const delimiterIndex = this.buffer.indexOf(0, offset); // 0 = null byte
+      if (delimiterIndex === -1) break;
       
-      if (line) {
+      const msgBuf = this.buffer.subarray(offset, delimiterIndex);
+      const msgStr = msgBuf.toString('utf-8').trim();
+      
+      if (msgStr) {
         try {
-          const msg = JSON.parse(line);
+          // console.log(`[Agent:${this.nodeName}] Processing JSON: ${msgStr.substring(0, 50)}...`);
+          const msg = JSON.parse(msgStr);
+          // console.log(`[Agent:${this.nodeName}] Parsed Message Type: ${msg.type}`);
           this.processMessage(msg);
-        } catch (e) {
+        } catch (e: any) {
              // Ignoring lint for 'e' to match eslint config for unused vars in catch blocks if necessary
-             console.error(`[Agent:${this.nodeName}] Invalid JSON: ${line}`);
+             logger.error(this.nodeName, `Invalid JSON error: ${e && e.message ? e.message : String(e)}`);
+             logger.error(this.nodeName, `Invalid JSON content (first 200 chars): ${msgStr.substring(0, 200)}...`);
         }
       }
+      
+      offset = delimiterIndex + 1;
+    }
+    
+    // Keep remaining buffer
+    if (offset > 0) {
+        this.buffer = this.buffer.subarray(offset);
     }
   }
 
@@ -195,17 +226,17 @@ export class AgentHandler extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public async sendCommand(action: string, params: any = {}): Promise<any> {
     if (!this.isConnected) {
-        console.log(`[Agent:${this.nodeName}] Not connected, attempting to reconnect...`);
+        logger.info(this.nodeName, 'Not connected, attempting to reconnect...');
         try {
             await this.start();
         } catch (e) {  
-            console.error(`[Agent:${this.nodeName}] Reconnection failed:`, e);
+            logger.error(this.nodeName, 'Reconnection failed:', e);
             throw new Error(`Agent not connected: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
 
     const id = Math.random().toString(36).substring(7);
-    const cmd = JSON.stringify({ id, action, ...params });
+    const cmd = JSON.stringify({ id, action, payload: params });
     
     return new Promise((resolve, reject) => {
         // maintain pending map
@@ -236,6 +267,15 @@ export class AgentHandler extends EventEmitter {
       }
       if (this.process) {
           this.process.kill();
+      }
+  }
+  
+  public async setMonitoring(enabled: boolean): Promise<void> {
+      if (!this.isConnected) return;
+      try {
+          await this.sendCommand(enabled ? 'startMonitoring' : 'stopMonitoring');
+      } catch (e) {
+          logger.warn(this.nodeName, 'Failed to toggle monitoring:', e);
       }
   }
 

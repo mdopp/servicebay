@@ -1,9 +1,45 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useNetworkGraph, useServicesList, Service } from '@/hooks/useSharedData';
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, FileText, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import yaml from 'js-yaml'; // Import YAML parser for Strict Matching
+import { logger } from '@/lib/logger';
+import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
+import PluginLoading from '@/components/PluginLoading';
+// import { useNetworkGraph, useServicesList, Service } from '@/hooks/useSharedData'; // Legacy Hooks
+// We keep Service interface but recreate it or import from shared data if it matches?
+// SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
+// WE NEED TO MAP TWIN -> UI SERVICE here.
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, FileText, ArrowRight } from 'lucide-react';
+
+// Define/Import UI Service Type locally or keep using legacy type if compatible
+// Let's redefine locally to be explicit about V4 structure or map to it.
+interface Service {
+  name: string;
+  id?: string;
+  active: boolean; // activeState == 'active'
+  status: string; // subState
+  activeState: string; 
+  subState: string;
+  kubePath: string; // path
+  yamlPath: string | null;
+  ports: { host?: string; container: string }[];
+  volumes: { host: string; container: string }[];
+  type?: 'container' | 'link' | 'gateway' | 'kube' | 'pod';
+  url?: string;
+  description?: string;
+  monitor?: boolean;
+  labels?: Record<string, string>;
+  verifiedDomains?: string[];
+  hostNetwork?: boolean;
+  nodeName?: string;
+  // Gateway specific
+  externalIP?: string;
+  uptime?: number;
+  internalIP?: string;
+  dnsServers?: string[];
+}
+
 import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
@@ -78,134 +114,295 @@ export default function ServicesPlugin() {
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [linkForm, setLinkForm] = useState<{ name: string; url: string; description: string; monitor: boolean; ip_targets?: string }>({ name: '', url: '', description: '', monitor: false, ip_targets: '' });
   
-  const { data: servicesData, loading: servicesLoading, validating: servicesValidating, refresh: refreshServices } = useServicesList();
-  const { data: graphData, loading: graphLoading, validating: graphValidating, refresh: refreshGraph } = useNetworkGraph();
+  const { data: twin, isConnected, lastUpdate } = useDigitalTwin();
   
-  const nodes = servicesData?.nodes || [];
+  // Replaced Legacy Hooks with Twin Logic
+  // const { data: servicesData, loading: servicesLoading, validating: servicesValidating, refresh: refreshServices } = useServicesList();
+  // const { data: graphData, loading: graphLoading, validating: graphValidating, refresh: refreshGraph } = useNetworkGraph();
   
-  const services = useMemo(() => {
-      const allServices = servicesData?.services || [];
-      if (!graphData?.nodes) return allServices;
+  const { services, nodes } = useMemo(() => {
+    if (!twin || !twin.nodes) return { services: [], nodes: [] };
 
-      const nodeMap = new Map();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      graphData.nodes.forEach((n: any) => {
-          if (n.data?.name) nodeMap.set(n.data.name, n);
-          if (n.label) nodeMap.set(n.label, n);
-          nodeMap.set(n.id, n);
-          // Key by node + label/name to avoid collisions across servers
-          if (n.node && n.label) nodeMap.set(`${n.node}:${n.label}`, n);
-          if (n.node && n.data?.name) nodeMap.set(`${n.node}:${n.data.name}`, n);
-      });
+    logger.debug('ServicesPlugin', 'Computing services from Twin', { nodeCount: Object.keys(twin.nodes).length });
 
-      return allServices.map(s => {
-            const copy = { ...s };
-            
-            if (copy.type === 'gateway' && copy.id === 'gateway') {
-                const gatewayNode = nodeMap.get('router');
-                if (gatewayNode) {
-                    if (gatewayNode.metadata?.verifiedDomains) {
-                        copy.verifiedDomains = gatewayNode.metadata.verifiedDomains;
-                    }
-                    const raw = gatewayNode.rawData || {};
-                    const meta = gatewayNode.metadata || {};
-                    
-                    if (raw.externalIP) copy.externalIP = raw.externalIP;
-                    else if (meta.internalIP) copy.externalIP = meta.internalIP;
-                    
-                    if (raw.uptime) copy.uptime = raw.uptime;
-                    if (raw.dnsServers) copy.dnsServers = raw.dnsServers;
-                    if (meta.internalIP) copy.internalIP = meta.internalIP; 
+    // 1. Extract Nodes
+    const nodeList = Object.keys(twin.nodes).map(name => ({ Name: name, Addr: '0.0.0.0' }));
 
-                    if (copy.externalIP) {
-                        copy.description = `Online: ${copy.externalIP}`;
-                    }
+    const servicesList: Service[] = [];
+
+    Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
+         const fileKeys = Object.keys(nodeState.files);
+         
+         const getManagedType = (baseName: string): 'container' | 'kube' | null => {
+             // STRICT: Only .kube files are considered "Managed" (ServiceBay Stacks)
+             // .container files (Simple Quadlets) are considered Unmanaged/Legacy
+             if (fileKeys.some(f => f.endsWith(`/${baseName}.kube`))) return 'kube';
+             return null;
+         };
+
+         nodeState.services.forEach(unit => {
+             const baseName = unit.name.replace('.service', '');
+             const managedType = getManagedType(baseName);
+             
+             // Filter: Only show Managed services
+             if (!managedType && !unit.description?.includes('ServiceBay')) {
+                // Also check if it's the gateway or proxy which might be special
+                // If it is NOT managed, we still want to show it if it's the proxy.
+                if (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web.service' || unit.name === 'nginx.service')) {
+                   // allow
+                } else {
+                   return;
                 }
-                return copy;
-            }
+             }
 
-            // Try specific lookup first (Node aware)
-            const nodeName = copy.nodeName || 'Local';
-            let node = nodeMap.get(`${nodeName}:${copy.name}`);
-            
-            if (!node) {
-                // Try fallback logic
-                node = nodeMap.get(copy.name);
-            }
-            
-            if (!node) {
-                const baseName = copy.name.replace(/\.(container|kube|service|pod)$/, '');
-                // Try specific base name
-                node = nodeMap.get(`${nodeName}:${baseName}`);
-                if (!node) {
-                   node = nodeMap.get(baseName);
-                }
-            }
+             // --- STRICT MATCHING LOGIC (Ported from ServiceManager.ts) ---
+             
+             // 1. Determine Expected Names
+             const expectedNames = [
+                 baseName, 
+                 `systemd-${baseName}`, 
+                 `${baseName}-${baseName}`
+             ];
+             
+             // Implicit/System Service Aliases
+             if (unit.isReverseProxy) { // Prefer flag over name guessing
+                 expectedNames.push(baseName); // e.g. custom-proxy
+                 expectedNames.push('nginx');
+                 expectedNames.push('nginx-web');
+                 expectedNames.push('systemd-nginx');
+             }
+             if (unit.isServiceBay) {
+                 expectedNames.push('servicebay');
+                 expectedNames.push('servicebay-dev');
+             }
 
-            // Try lookup by ID (e.g. "nginx" vs "Reverse Proxy")
-            if (!node && copy.id) {
-                node = nodeMap.get(`${nodeName}:${copy.id}`);
-                if (!node) node = nodeMap.get(copy.id);
-            }
-            
-            if (node) {
-                if (node.metadata?.verifiedDomains) {
-                    copy.verifiedDomains = node.metadata.verifiedDomains;
-                }
-                
-                if (node.ports && node.ports.length > 0) {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    copy.ports = node.ports.map((p: any) => {
-                        if (typeof p === 'number') return { host: String(p), container: String(p) };
-                        const host = p.host || p.host_port;
-                        const container = p.container || p.container_port || host;
-                        return { 
-                            host: host ? String(host) : undefined, 
-                            container: String(container || 0)
-                        };
-                    });
-                }
+             let yamlPath: string | null = null;
+             // Try to find Kube/YAML files to extract explicit container names
+             if (managedType) {
+                 const ext = managedType === 'container' ? '.container' : '.kube';
+                 const filePath = fileKeys.find(f => f.endsWith(`/${baseName}${ext}`));
+                 
+                 if (filePath) {
+                     yamlPath = filePath;
+                     const file = nodeState.files[filePath];
+                     
+                     // If it's a kube file, find the referenced YAML
+                     if (managedType === 'kube' && file && file.content) {
+                          const match = file.content.match(/^Yaml=(.+)$/m);
+                          if (match) {
+                              const yamlFile = match[1].trim();
+                              // Simple lookup for the yaml file in the file list
+                              const yamlKey = fileKeys.find(k => k.endsWith(`/${yamlFile}`));
+                              if (yamlKey && nodeState.files[yamlKey]?.content) {
+                                  try {
+                                      const yamlContent = nodeState.files[yamlKey].content;
+                                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                      const docs = yaml.loadAll(yamlContent) as any[];
+                                      docs.forEach(doc => {
+                                           if (doc?.spec?.containers) {
+                                               // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                               doc.spec.containers.forEach((c: any) => {
+                                                   if (c.name) {
+                                                       expectedNames.push(c.name);
+                                                       expectedNames.push(`${baseName}-${c.name}`);
+                                                       if (doc.metadata?.name) {
+                                                           expectedNames.push(`${doc.metadata.name}-${c.name}`);
+                                                       }
+                                                   }
+                                               });
+                                           }
+                                      });
+                                  } catch (e) {
+                                      logger.warn('ServicesPlugin', 'Failed to parse YAML for', baseName, e);
+                                  }
+                              }
+                          }
+                     }
+                 }
+             }
 
-                if (node.status) {
-                    copy.active = node.status === 'up';
-                    copy.status = node.status === 'up' ? 'active' : 'inactive';
-                }
-            }
-            return copy;
-      });
-  }, [servicesData, graphData]);
+             // 2. Find Container with Strict Matching
+             const uniqueExpected = Array.from(new Set(expectedNames));
+             const container = nodeState.containers.find(c => {
+                 return c.names.some(n => {
+                     const cleanName = n.replace(/^\//, '');
+                     return uniqueExpected.includes(cleanName);
+                 });
+             });
 
-  const loading = servicesLoading || (graphLoading && !servicesData);
-  const validating = servicesValidating || graphValidating;
-  const refreshing = validating && !loading;
+             const isProxy = (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web.service' || unit.name === 'nginx.service'));
+             
+             // Find Verified Domains
+             // Robust match: targetService must match Service Name OR any Known Container Name
+             const verifiedDomains = (twin.proxy?.routes || [])
+                 .filter(r => {
+                     // Normalize target: remove port
+                     const targetHtml = r.targetService.replace(/^https?:\/\//, '');
+                     const parts = targetHtml.split(':');
+                     const target = parts[0]; 
+                     const targetPort = parts[1] ? parseInt(parts[1], 10) : null;
+                     
+                     // Direct match to Service Name
+                     if (target === baseName) return true;
+                     
+                     // Match to Container Names
+                     if (container && container.names) {
+                         const nameMatch = container.names.some(n => {
+                             const clean = n.replace(/^\//, '');
+                             return clean === target;
+                         });
+                         if (nameMatch) return true;
+
+                         // Match by Port (if target is localhost/127.0.0.1)
+                         if (targetPort && (target === '127.0.0.1' || target === 'localhost')) {
+                              // Check if container exposes this host port
+                              if (container.ports) {
+                                  return container.ports.some(p => {
+                                      const hp = p.host_port || p.hostPort;
+                                      return hp === targetPort;
+                                  });
+                              }
+                         }
+                     }
+                     return false;
+                 })
+                 .map(r => r.host);
+             
+             if (baseName === 'immich' || baseName==='adguard') {
+                 logger.debug('ServicesPlugin', 'Domain Check:', baseName, verifiedDomains, twin.proxy?.routes); 
+             }
+
+             const svc: Service = {
+                 id: unit.name,
+                 name: isProxy ? 'Reverse Proxy (Nginx)' : unit.name,
+                 nodeName: nodeName,
+                 description: isProxy ? 'System Status\nNginx is installed and managed by ServiceBay\n\nReady to serve traffic' : unit.description,
+                 active: unit.activeState === 'active',
+                 status: unit.activeState === 'active' ? 'active' : 'inactive',
+                 activeState: unit.activeState,
+                 subState: unit.subState,
+                 kubePath: unit.path,
+                 yamlPath: yamlPath,
+                 type: managedType || 'container',
+                 ports: [],
+                 volumes: [],
+                 monitor: false,
+                 labels: isProxy ? { 'servicebay.role': 'reverse-proxy' } : {},
+                 verifiedDomains: verifiedDomains
+             };
+             
+             // Enriched with Container Info
+             if (container) {
+                 svc.ports = (container.ports || []).map(p => ({
+                     host: String(p.host_port || p.hostPort || 0),
+                     container: String(p.container_port || p.containerPort)
+                 }));
+             } else if (managedType === 'kube') {
+                 // Fallback: Try to guess ports from YAML if container not found/running
+                 // (Simplified parsing since we already parsed for names above, but we didn't store docs)
+                 // For now, let's rely on container runtime data as primary truth for ports
+             }
+
+             if (twin.proxy?.routes) {
+                 const route = twin.proxy.routes.find(r => r.targetService === baseName);
+                 if (route) {
+                     svc.url = `https://${route.host}`;
+                 }
+             }
+             
+             servicesList.push(svc);
+         });
+    });
+
+    // 2. Add Abstract Gateway Service (if not already present as a physical service)
+    // We treat the Gateway (Router) as a service to ensure it appears in the list.
+    const gatewayService: Service = {
+        name: twin.gateway.provider === 'fritzbox' ? 'FritzBox Gateway' : 'Internet Gateway',
+        id: 'gateway',
+        nodeName: 'Global',
+        description: 'Upstream Internet Connection',
+        active: twin.gateway.upstreamStatus === 'up',
+        status: twin.gateway.upstreamStatus === 'up' ? 'active' : 'inactive',
+        activeState: twin.gateway.upstreamStatus === 'up' ? 'active' : 'inactive',
+        subState: 'running',
+        kubePath: '',
+        yamlPath: null,
+        type: 'gateway',
+        ports: [],
+        volumes: [],
+        monitor: true,
+        externalIP: twin.gateway.publicIp,
+        internalIP: twin.gateway.internalIp,
+        dnsServers: twin.gateway.dnsServers,
+        uptime: twin.gateway.uptime
+    };
+    servicesList.push(gatewayService);
+
+    return { services: servicesList, nodes: nodeList };
+  }, [twin]);
+
+  const loading = !isConnected && services.length === 0;
+  const validating = false;
+  const refreshing = false;
 
   const fetchData = () => {
-      refreshServices(false);
-      refreshGraph(false);
+     // Twin updates automatically
   };
 
   const discoverUnmanaged = async () => {
+    if (!twin || !twin.nodes) return;
     setDiscoveryLoading(true);
-    try {
-      const targets = [...nodes.map(n => n.Name)];
-      const results = await Promise.all(targets.map(async (node) => {
-        try {
-            const query = `?node=${node}`;
-            const discoveryRes = await fetch(`/api/system/discovery${query}`);
-            const discoveryData = discoveryRes.ok ? await discoveryRes.json() : [];
-            return discoveryData.map((s: DiscoveredService) => ({ ...s, nodeName: node }));
-        } catch (e) {
-            console.error(`Failed to discover services for node ${node}`, e);
-            return [];
-        }
-      }));
+    
+    // Simulate async to show loading state briefy
+    await new Promise(r => setTimeout(r, 300));
 
-      const allDiscovery = results.flatMap(r => r);
-      setDiscoveredServices(allDiscovery);
-      setHasDiscovered(true);
+    try {
+        const allDiscovery: DiscoveredService[] = [];
+        
+        Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
+            const fileKeys = Object.keys(nodeState.files);
+            
+            nodeState.services.forEach(unit => {
+                const baseName = unit.name.replace('.service', '');
+                // Check if Managed (already shown in main list)
+                // STRICT: Only .kube files are considered "Managed".
+                // .container files are considered "Unmanaged" (Legacy) and should be available for migration.
+                const isManaged = fileKeys.some(f => f.endsWith(`/${baseName}.kube`));
+                
+                // ALSO Check if it's the Proxy which we force-show in the main list
+                // This prevents "nginx-web" from appearing in both Lists if it is a legacy .container
+                const isForcedProxy = (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web.service' || unit.name === 'nginx.service'));
+
+                // Filter out Infrastructure Services (like podman.service)
+                const isInfra = unit.name === 'podman.service' || unit.name === 'podman.socket';
+
+                if (!isManaged && !isForcedProxy && !isInfra && unit.activeState === 'active') {
+                    // Try to identify relevant services (containers, or key system services)
+                    const container = nodeState.containers.find(c => c.names.includes(baseName) || c.names.includes(unit.name) || unit.name.includes(c.id.substring(0, 12)));
+                    
+                    // Only show if it looks like a container service or has "container" in name
+                    if (container || unit.name.startsWith('container-') || unit.description.includes('Podman') || unit.description.includes('Container')) {
+                         allDiscovery.push({
+                             serviceName: unit.name,
+                             containerNames: container ? container.names : [],
+                             containerIds: container ? [container.id] : [],
+                             status: 'unmanaged',
+                             type: 'container',
+                             nodeName: nodeName,
+                             sourcePath: unit.path,
+                             // Optional fields
+                             podId: undefined,
+                             unitFile: undefined
+                         });
+                    }
+                }
+            });
+        });
+        
+        setDiscoveredServices(allDiscovery);
+        setHasDiscovered(true);
     } catch (error) {
-      console.error('Failed to discover services', error);
-      addToast('error', 'Failed to discover services');
+      logger.error('ServicesPlugin', 'Failed to discover services', error);
     } finally {
       setDiscoveryLoading(false);
     }
@@ -246,7 +443,7 @@ export default function ServicesPlugin() {
               setMigrationPlan(data.plan);
           }
       } catch (e) {
-          console.error('Failed to fetch migration plan', e);
+          logger.error('ServicesPlugin', 'Failed to fetch migration plan', e);
       }
   };
 
@@ -291,7 +488,7 @@ export default function ServicesPlugin() {
               setMigrationPlan(data.plan);
           }
       } catch (e) {
-          console.error('Failed to fetch migration plan', e);
+          logger.error('ServicesPlugin', 'Failed to fetch migration plan', e);
       }
   };
 
@@ -320,7 +517,7 @@ export default function ServicesPlugin() {
               setMigrationPlan(data.plan);
           }
       } catch (e) {
-          console.error('Failed to fetch merge plan', e);
+          logger.error('ServicesPlugin', 'Failed to fetch merge plan', e);
       }
   };
 
@@ -367,31 +564,21 @@ export default function ServicesPlugin() {
       }
   };
 
+  // SSE Effect removed - Twin handles updates.
+  /*
   useEffect(() => {
     // Setup SSE for real-time updates
     const eventSource = new EventSource('/api/stream');
     
     eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'config' || data.type === 'container') {
-           // Refresh data on change
-           // We use a small debounce/delay because file writes might be atomic/multi-step
-           // or systemd might take a moment to reflect status
-           setTimeout(() => {
-               fetchData();
-           }, 500);
-        }
-      } catch (e) {
-        console.error('Error parsing SSE message', e);
-      }
+      // ...
     };
 
     return () => {
       eventSource.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  */
 
   const handleEditLink = (service: Service) => {
     setLinkForm({
@@ -503,7 +690,7 @@ export default function ServicesPlugin() {
             setTimeout(fetchData, 1000);
         }
     } catch (e) {
-        console.error('Action failed', e);
+        logger.error('ServicesPlugin', 'Action failed', e);
         updateToast(toastId, 'error', 'Action failed', 'An unexpected error occurred.');
     } finally {
         setActionLoading(false);
@@ -544,9 +731,6 @@ export default function ServicesPlugin() {
         helpId="services"
         actions={
             <>
-                <button onClick={fetchData} className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" title="Refresh">
-                    <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
-                </button>
                 <button 
                     onClick={() => router.push('/registry')}
                     className="flex items-center gap-2 bg-blue-600 text-white p-2 rounded hover:bg-blue-700 shadow-sm transition-colors text-sm font-medium"
@@ -571,10 +755,42 @@ export default function ServicesPlugin() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {loading ? (
-            <div className="text-center text-gray-500 mt-10">Loading services...</div>
+            <PluginLoading message="Loading services..." subMessage="Waiting for agent synchronization..." />
         ) : filteredServices.length === 0 ? (
-            <div className="text-center text-gray-500 mt-10">
-                {services.length > 0 ? 'No services match your search.' : 'No services found. Create one to get started.'}
+            <div className="flex flex-col items-center justify-center p-12 text-center">
+                 <div className="bg-slate-50 dark:bg-slate-900 rounded-full p-6 mb-4">
+                     <Box size={48} className="text-slate-300 dark:text-slate-600" />
+                 </div>
+                 <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100 mb-2">
+                     {services.length > 0 ? 'No Matching Services' : 'No Managed Services Found'}
+                 </h3>
+                 <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mb-6">
+                     {services.length > 0 
+                       ? `No services match "${searchQuery}". Try a different search term.`
+                       : "ServiceBay couldn't find any Quadlet-managed services running on your nodes."}
+                 </p>
+                 
+                 {/* Debug Info for troubleshooting why list is empty */}
+                 {services.length === 0 && (
+                     <div className="text-left text-xs text-slate-400 bg-slate-100 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800 font-mono w-full max-w-md overflow-x-auto">
+                        <p className="font-bold mb-2">Debug Information:</p>
+                        <ul className="space-y-1">
+                            <li>Twin Status: {isConnected ? 'Connected' : 'Disconnected'}</li>
+                            <li>Last Update: {new Date(lastUpdate).toLocaleTimeString()}</li>
+                            {Object.entries(twin?.nodes || {}).map(([name, state]) => (
+                                <li key={name} className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                                    <strong>Node: {name}</strong><br/>
+                                    - Raw Services: {state.services.length}<br/>
+                                    - Files: {Object.keys(state.files).length}<br/>
+                                    - Containers: {state.containers.length}
+                                </li>
+                            ))}
+                        </ul>
+                        <p className="mt-2 italic opacity-75">
+                            Note: ServiceBay filters services to only show those managed by Quadlet (matching .container/.kube files) or explicit system services.
+                        </p>
+                     </div>
+                 )}
             </div>
         ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6 auto-rows-fr">
@@ -602,7 +818,7 @@ export default function ServicesPlugin() {
                                     <div className="flex-1 min-w-0">
                                         <div className="flex flex-wrap items-center gap-2 mb-1">
                                             <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate" title={service.name}>
-                                                {service.name}
+                                                {service.name.replace('.service', '')}
                                             </h3>
                                             
                                             {/* Badges */}
@@ -726,12 +942,7 @@ export default function ServicesPlugin() {
                                                 </div>
                                             </div>
                                         )}
-                                        {service.load && (
-                                            <div className="flex flex-col">
-                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Load</span>
-                                                <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.load}</span>
-                                            </div>
-                                        )}
+
                                         {/* Host Mode indicator removed as requested */}
                                     </>
                                 )}
@@ -744,18 +955,25 @@ export default function ServicesPlugin() {
                                     <div className="flex gap-2 items-center text-sm">
                                         <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Ports:</span>
                                         <div className="flex flex-wrap gap-1.5">
-                                            {dedupedPorts.map((p, i) => (
+                                            {dedupedPorts.map((p, i) => {
+                                                const display = p.host ? `:${p.host}` : `${p.container}/tcp`;
+                                                return (
                                                 <a 
                                                     key={i} 
-                                                    href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${p.host}`}
-                                                    target="_blank" 
+                                                    href={p.host ? `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${p.host}` : '#'}
+                                                    target={p.host ? "_blank" : undefined}
                                                     rel="noopener noreferrer"
-                                                    className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-xs font-mono border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                                                    title={p.container ? `Maps to container port ${p.container}` : 'Host Port'}
+                                                    className={`px-2 py-0.5 rounded text-xs font-mono border transition-colors ${
+                                                        p.host 
+                                                        ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 cursor-pointer' 
+                                                        : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800/30 cursor-default'
+                                                    }`}
+                                                    title={p.container ? `Container Port: ${p.container}` : 'Host Port'}
+                                                    onClick={(e) => !p.host && e.preventDefault()}
                                                 >
-                                                    :{p.host}
+                                                    {display}
                                                 </a>
-                                            ))}
+                                            )})}
                                         </div>
                                     </div>
                                 )}

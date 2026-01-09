@@ -3,6 +3,7 @@
 import { useState, useEffect, use } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { RefreshCw, Box, ArrowLeft } from 'lucide-react';
+import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
 interface Container {
   Id: string;
@@ -12,7 +13,7 @@ interface Container {
   Status: string;
   Created: number;
   Ports?: ({ IP?: string; PrivatePort: number; PublicPort?: number; Type: string } | { host_ip?: string; container_port: number; host_port?: number; protocol: string })[];
-  Mounts?: (string | { Source: string; Destination: string; Type: string })[];
+  Mounts?: (string | { Source: string; Destination: string; Type: string })[] | any[];
 }
 
 export default function ContainerLogsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -20,6 +21,8 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const searchParams = useSearchParams();
   const node = searchParams?.get('node');
+  
+  const { data: twin, isConnected } = useDigitalTwin();
   const [container, setContainer] = useState<Container | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [details, setDetails] = useState<any>(null);
@@ -28,36 +31,57 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
   const [logsLoading, setLogsLoading] = useState(false);
 
   useEffect(() => {
-    const fetchContainer = async () => {
-      setLoading(true);
-      try {
-        // Fetch container info (using list endpoint for now as we don't have single container endpoint)
-        const res = await fetch(`/api/containers${node ? `?node=${node}` : ''}`);
-        if (res.ok) {
-          const containers: Container[] = await res.json();
-          const found = containers.find(c => c.Id.startsWith(id) || c.Id === id);
-          if (found) {
-            setContainer(found);
-          } else {
-            console.error('Container not found');
-          }
-        }
+    if (!twin || !twin.nodes) {
+        if (isConnected) setLoading(false);
+        return;
+    }
+    setLoading(true);
 
-        // Fetch detailed info
-        const detailRes = await fetch(`/api/containers/${id}${node ? `?node=${node}` : ''}`);
-        if (detailRes.ok) {
-            const data = await detailRes.json();
-            setDetails(data);
-        }
-      } catch (error) {
-        console.error('Failed to fetch data', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+    let targetNode = node || 'Local';
+    if (targetNode === 'local' && twin.nodes['Local']) targetNode = 'Local';
 
-    fetchContainer();
-  }, [id]);
+    const nodeData = twin.nodes[targetNode];
+    let found = null;
+    if (nodeData) {
+        found = nodeData.containers.find(c => c.id.startsWith(id) || c.id === id);
+    } else {
+         // Fallback search
+         for (const n of Object.values(twin.nodes)) {
+             const m = n.containers.find(c => c.id.startsWith(id) || c.id === id);
+             if (m) { found = m; break; }
+         }
+    }
+
+    if (found) {
+        // Map EnrichedContainer to UI Container
+        setContainer({
+            Id: found.id,
+            Names: found.names,
+            Image: found.image,
+            State: found.state,
+            Status: found.status,
+            Created: found.created,
+            Ports: found.ports.map(p => ({
+                 host_port: p.hostPort,
+                 container_port: p.containerPort,
+                 protocol: p.protocol
+            })),
+            Mounts: found.mounts,
+            // Mounts might need adjustment
+        });
+    } else {
+        console.error('Container not found');
+    }
+    setLoading(false);
+
+    // Fetch details strictly if API exists (it might 404)
+    // We suppress error visually for now
+    fetch(`/api/containers/${id}${node ? `?node=${node}` : ''}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => data && setDetails(data))
+        .catch(() => {});
+
+  }, [id, node, twin, isConnected]);
 
   useEffect(() => {
     if (!container) return;

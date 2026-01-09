@@ -2,6 +2,7 @@ import { Executor } from '../interfaces';
 import { AgentHandler } from './handler';
 import { AgentManager } from './manager';
 import { Readable } from 'stream';
+import { logger } from '@/lib/logger';
 
 export class AgentExecutor implements Executor {
   private agent: AgentHandler;
@@ -16,6 +17,9 @@ export class AgentExecutor implements Executor {
 
   async exec(command: string): Promise<{ stdout: string; stderr: string }> {
     await this.ensureConnected();
+    const truncatedCmd = command.length > 100 ? command.substring(0, 100) + '...' : command;
+    logger.info(`Executor:${this.agent.nodeName}`, `Executing: ${truncatedCmd}`);
+    
     const res = await this.agent.sendCommand('exec', { command });
     // Agent returns { code, stdout, stderr }
     if (res.code !== 0) {

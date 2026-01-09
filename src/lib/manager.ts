@@ -29,6 +29,8 @@ export interface ServiceInfo {
   yamlPath: string | null;
   active: boolean;
   status: string;
+  activeState?: string;
+  subState?: string;
   description?: string;
   ports: { host?: string; container: string }[];
   volumes: { host: string; container: string }[];
@@ -79,24 +81,19 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
         exit 1
     fi
 
-    # Loop over both .kube and .container files
-    for f in *.kube *.container; do
+    # Loop over .kube files only (Strict Kube-First Architecture)
+    for f in *.kube; do
         [ -e "$f" ] || continue
         
-        # Determine Name and Type based on extension (POSIX sh compatible)
+        # Determine Name and Type (Only kube supported now)
         case "$f" in
             *.kube)
                 name="\${f%.kube}"
                 type="kube"
                 ;;
-            *.container)
-                name="\${f%.container}"
-                type="container"
-                ;;
             *)
                 # Should not happen given the loop, but fallback
-                name="$f"
-                type="other"
+                continue
                 ;;
         esac
 
@@ -126,6 +123,11 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
              fi
         fi
         echo "STATUS: $svc_status"
+        
+        # Get detailed states
+        echo "STATE_DETAILS_START"
+        systemctl --user show -p ActiveState,SubState "$name.service"
+        echo "STATE_DETAILS_END"
 
         echo "DESCRIPTION: $(systemctl --user show -p Description --value "$name.service" 2>/dev/null)"
         echo "CONTENT_START"
@@ -188,7 +190,25 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
       const fileName = fileLine ? fileLine.substring(6).trim() : `${name}.kube`;
       const status = statusLine ? statusLine.substring(8).trim() : 'unknown';
       let description = descLine ? descLine.substring(13).trim() : '';
-      const active = status === 'active';
+      
+      // Extract detailed states
+      const stateStart = block.indexOf('STATE_DETAILS_START');
+      const stateEnd = block.indexOf('STATE_DETAILS_END');
+      let activeState = '';
+      let subState = '';
+      
+      if (stateStart !== -1 && stateEnd !== -1) {
+          const stateBlock = block.substring(stateStart + 19, stateEnd).trim();
+          const matchActive = stateBlock.match(/ActiveState=(.+)/);
+          const matchSub = stateBlock.match(/SubState=(.+)/);
+          if (matchActive) activeState = matchActive[1].trim();
+          if (matchSub) subState = matchSub[1].trim();
+      }
+
+      // Enhanced Active Check: Consider ActiveState property as authority if available
+      // 'is-active' command (captured in status) is usually reliable but sometimes exit codes vary
+      const isActiveState = activeState === 'active' || activeState === 'reloading';
+      const active = isActiveState || status === 'active';
 
       // Extract Content (Kube or Container)
       const contentStart = block.indexOf('CONTENT_START');
@@ -362,6 +382,8 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
         yamlPath,
         active,
         status,
+        activeState,
+        subState,
         description,
         ports,
         volumes,
@@ -521,7 +543,15 @@ export async function deleteService(name: string, connection?: PodmanConnection)
 export async function getServiceLogs(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   try {
-    const { stdout } = await executor.exec(`journalctl --user -u ${name}.service -n 100 --no-pager`);
+    // Determine unit name: Append .service if missing, unless it's a quadlet type
+    // But journalctl usually requires .service for exact match or works with alias.
+    // Safest is to append .service if it doesn't have an extension.
+    let unit = name;
+    if (!unit.match(/\.(service|scope|socket|timer)$/)) {
+        unit += '.service';
+    }
+
+    const { stdout } = await executor.exec(`journalctl --user -u ${unit} -n 100 --no-pager`);
     return stdout;
   } catch (e) {
     console.error('Error fetching service logs:', e);
@@ -680,8 +710,9 @@ export async function getContainerLogs(containerId: string, connection?: PodmanC
 
 export async function getServiceStatus(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
+  const serviceName = name.endsWith('.service') ? name : `${name}.service`;
   try {
-    const { stdout } = await executor.exec(`systemctl --user status ${name}.service`);
+    const { stdout } = await executor.exec(`systemctl --user status ${serviceName}`);
     return stdout;
   } catch (e: any) {
     // systemctl status returns non-zero exit code if service is not running, but we still want the output
@@ -761,15 +792,17 @@ export async function updateAndRestartService(name: string, connection?: PodmanC
 
   logs.push('Reloading systemd daemon...');
   await executor.exec('systemctl --user daemon-reload');
+  
+  const serviceName = name.endsWith('.service') ? name : `${name}.service`;
 
-  logs.push(`Stopping service ${name}...`);
+  logs.push(`Stopping service ${serviceName}...`);
   try {
-    await executor.exec(`systemctl --user stop ${name}.service`);
+    await executor.exec(`systemctl --user stop ${serviceName}`);
   } catch (e) {}
 
-  logs.push(`Starting service ${name}...`);
+  logs.push(`Starting service ${serviceName}...`);
   try {
-    await executor.exec(`systemctl --user start ${name}.service`);
+    await executor.exec(`systemctl --user start ${serviceName}`);
   } catch (e: any) {
      logs.push(`Error starting service: ${e.message}`);
   }
@@ -783,7 +816,8 @@ export async function updateAndRestartService(name: string, connection?: PodmanC
  */
 export async function startService(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  await executor.exec(`systemctl --user start ${name}.service`);
+  const serviceName = name.endsWith('.service') ? name : `${name}.service`;
+  await executor.exec(`systemctl --user start ${serviceName}`);
   return getServiceStatus(name, connection);
 }
 
@@ -792,13 +826,15 @@ export async function startService(name: string, connection?: PodmanConnection) 
  */
 export async function stopService(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  await executor.exec(`systemctl --user stop ${name}.service`);
+  const serviceName = name.endsWith('.service') ? name : `${name}.service`;
+  await executor.exec(`systemctl --user stop ${serviceName}`);
   return getServiceStatus(name, connection);
 }
 
 export async function restartService(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  await executor.exec(`systemctl --user restart ${name}.service`);
+  const serviceName = name.endsWith('.service') ? name : `${name}.service`;
+  await executor.exec(`systemctl --user restart ${serviceName}`);
   return getServiceStatus(name, connection);
 }
 

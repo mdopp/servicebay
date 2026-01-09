@@ -6,6 +6,7 @@ import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import SSHSetupModal from '@/components/SSHSetupModal';
+import GatewayConfig from '@/components/GatewayConfig';
 import { AppConfig } from '@/lib/config';
 import { getNodes, createNode, deleteNode, setNodeAsDefault } from '@/app/actions/nodes';
 import { checkConnection } from '@/app/actions/ssh';
@@ -481,6 +482,8 @@ export default function SettingsPage() {
                 </div>
             </div>
         )}
+
+        <GatewayConfig />
 
         {/* System Connections (Nodes) */}
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">

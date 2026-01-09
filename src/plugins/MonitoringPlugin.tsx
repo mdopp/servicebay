@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Activity, Plus, RefreshCw, CheckCircle, XCircle, AlertTriangle, Play, Edit, Trash2, X, History, Search } from 'lucide-react';
 import { useToast, ToastType } from '@/providers/ToastProvider';
+import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // Added
 import PageHeader from '@/components/PageHeader';
 import { Autocomplete } from '@/components/Autocomplete';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -51,21 +52,25 @@ export default function MonitoringPlugin() {
   const [resourcesLoading, setResourcesLoading] = useState(false);
   const isFetchingRef = useRef(false);
   const { addToast, updateToast } = useToast();
+  // Using Digital Twin hook to trigger re-fetches when state changes?
+  // Monitoring data is stored in `data/checks.json` in backend, NOT in twin directly.
+  // HOWEVER, the backend runs the checks and emits events.
+  // The original implementation used sockets directly.
+  // 
+  // Let's keep the manual `fetchData` but trigger it on 'monitoring:update' socket event which is still valid.
+  // The user asked to remove "Updating data" notifications and refresh buttons.
+  
+  // Clean up socket listener logic to use the global socket hook if possible? 
+  // Or just remove the toasts.
 
-  // Form state
-  const [formData, setFormData] = useState<Partial<CheckConfig>>({
-    name: '',
-    type: 'http',
-    target: '',
-    interval: 60,
-    enabled: true,
-    nodeName: ''
-  });
+  const [lastFetch, setLastFetch] = useState(0);
 
-  const fetchData = useCallback(async () => {
+  // Still fetch from API because checks are server-side config
+  const fetchData = useCallback(async (silent = true) => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
-    setLoading(true);
+    if (!silent) setLoading(true); // Only show spinner on initial load
+    
     try {
       const [checksRes, nodeList] = await Promise.all([
         fetch('/api/monitoring/checks'),
@@ -76,12 +81,23 @@ export default function MonitoringPlugin() {
       setNodes(nodeList);
     } catch (error) {
       console.error('Failed to fetch data', error);
-      addToast('error', 'Failed to fetch monitoring data');
+      // addToast('error', 'Failed to fetch monitoring data'); // Suppress error toast on bg sync?
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
       isFetchingRef.current = false;
     }
-  }, [addToast]);
+  }, []); // Dependencies removed
+
+
+  // Form state (restored)
+  const [formData, setFormData] = useState<Partial<CheckConfig>>({
+    name: '',
+    type: 'http',
+    target: '',
+    interval: 60,
+    enabled: true,
+    nodeName: ''
+  });
 
   // Fetch resources when node changes in form
   useEffect(() => {
@@ -122,19 +138,23 @@ export default function MonitoringPlugin() {
   }, [isModalOpen, formData.nodeName]);
 
   useEffect(() => {
-    fetchData();
+    fetchData(false); // Initial load (not silent)
 
     // Request notification permission
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission();
     }
 
+    let socket: any;
+
     // Listen for updates via socket
     const initSocket = async () => {
         const { io } = await import('socket.io-client');
-        const socket = io();
+        socket = io();
         
         socket.on('monitoring:alert', (data: { title: string, message: string, type: string }) => {
+            // Toast removed/kept? "no notifications for updating data"
+            // Alerts are important, keeping them.
             addToast(data.type as ToastType, data.title, data.message);
             
             // Only show native notification if page is hidden
@@ -143,22 +163,19 @@ export default function MonitoringPlugin() {
             }
             
             // Refresh data on alert
-            fetchData();
+            fetchData(true);
         });
 
         socket.on('monitoring:update', () => {
             // Silent update
-            fetchData();
+            fetchData(true);
         });
-
-        return () => {
-            socket.disconnect();
-        };
     };
+    
+    initSocket();
 
-    const cleanup = initSocket();
     return () => {
-        cleanup.then(c => c());
+        if (socket) socket.disconnect();
     };
   }, [fetchData, addToast]);
 
@@ -289,13 +306,6 @@ export default function MonitoringPlugin() {
         helpId="monitoring"
         actions={
             <div className="flex gap-2 shrink-0">
-                <button 
-                    onClick={fetchData} 
-                    className="p-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
-                    title="Refresh"
-                >
-                    <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-                </button>
                 <button 
                     onClick={() => handleOpenModal()}
                     className="flex items-center gap-2 p-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm transition-colors font-medium"

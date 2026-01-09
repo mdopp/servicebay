@@ -1,12 +1,15 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { useCache } from '@/providers/CacheProvider';
+// import { useCache } from '@/providers/CacheProvider'; // Replaced by useDigitalTwin
+import { useDigitalTwin } from '@/hooks/useDigitalTwin';
+import { logger } from '@/lib/logger';
+import PluginLoading from '@/components/PluginLoading';
 import { RefreshCw, Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft, Search } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
-import { getNodes } from '@/app/actions/nodes';
-import { PodmanConnection } from '@/lib/nodes';
+// import { getNodes } from '@/app/actions/nodes'; // Not needed
+// import { PodmanConnection } from '@/lib/nodes'; // Not needed
 
 interface Container {
   Id: string;
@@ -19,7 +22,8 @@ interface Container {
   PodName?: string;
   // Support both formats (standard Podman JSON vs Docker-like)
   Ports?: ({ IP?: string; PrivatePort: number; PublicPort?: number; Type: string } | { host_ip?: string; container_port: number; host_port?: number; protocol: string })[];
-  Mounts?: (string | { Source: string; Destination: string; Type: string })[];
+  // Mounts?: (string | { Source: string; Destination: string; Type: string })[]; // Not strict check
+  Mounts?: any[];
   Labels?: { [key: string]: string };
   NetworkMode?: string;
   IsHostNetwork?: boolean;
@@ -28,6 +32,8 @@ interface Container {
 
 export default function ContainersPlugin() {
   const router = useRouter();
+  const { data: twin, isConnected, isNodeSynced } = useDigitalTwin();
+
   const [filteredContainers, setFilteredContainers] = useState<Container[]>([]);
   const [selectedContainer, setSelectedContainer] = useState<Container | null>(null);
   const [showActions, setShowActions] = useState(false);
@@ -36,83 +42,54 @@ export default function ContainersPlugin() {
   const [searchQuery, setSearchQuery] = useState('');
   const { addToast, updateToast } = useToast();
 
-  const containersFetcher = useCallback(async () => {
-    const toastId = addToast('loading', 'Refreshing Containers', 'Initializing...', 0);
+  const containers = useMemo(() => {
+    if (!twin || !twin.nodes) return [];
     
-    try {
-      const nodeList = await getNodes();
+    const list: Container[] = [];
+    Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
+        nodeState.containers.forEach(ec => {
+            // Map enriched container to UI interface
+            list.push({
+                Id: ec.id,
+                Names: ec.names,
+                Image: ec.image,
+                State: ec.state,
+                Status: ec.status,
+                Created: ec.created,
+                nodeName: nodeName,
+                // Ports need mapping from {hostPort, containerPort, protocol} to UI format
+                Ports: (ec.ports || []).map(p => ({
+                    host_ip: '0.0.0.0', // Default
+                    host_port: p.hostPort,
+                    container_port: p.containerPort,
+                    protocol: p.protocol
+                })),
+                Mounts: ec.mounts || [],
+                Labels: ec.labels || {},
+                // NetworkMode? Not directly available on EnrichedContainer yet, maybe in misc
+                NetworkMode: (ec.networks && ec.networks.length > 0) ? ec.networks[0] : 'default',
+                Pod: ec.podId,
+                PodName: ec.podName
+            });
+        });
+    });
+    return list;
+  }, [twin]);
 
-      // Only fetch from configured nodes. 
-      // Implicit 'Local' fetching is disabled to prevent duplicates if the local machine is also added as a node.
-      const targets = nodeList.map(n => n.Name);
-      const pending = new Set(targets);
-      
-      if (targets.length === 0) {
-          updateToast(toastId, 'success', 'Containers Updated', 'No nodes configured', 500);
-          return { nodes: nodeList, containers: [] };
-      }
-      
-      // Update with initial pending list
-      updateToast(toastId, 'loading', 'Refreshing Containers', `Pending: ${Array.from(pending).join(', ')}`);
+  const loading = !isConnected && containers.length === 0;
+  // If we are connected but no data yet, check sync status
+  const waitingForSync = isConnected && !isNodeSynced() && containers.length === 0;
+  
+  const validating = false;
+  const refreshing = false;
+  const refresh = () => {}; // No-op as twin updates auto
 
-      const fetchNode = async (node: string) => {
-        try {
-            // Using ?node=Local allows explicit local fetching if a node is named "Local"
-            const query = (node === 'Local') ? '' : `?node=${node}`;
-            const res = await fetch(`/api/containers${query}`);
-            if (!res.ok) return [];
-            const data = await res.json();
-            return data.map((c: Container) => ({ ...c, nodeName: node }));
-        } catch (e) {
-            console.error(`Failed to fetch containers for node ${node}`, e);
-            return [];
-        } finally {
-            pending.delete(node);
-            if (pending.size > 0) {
-                updateToast(toastId, 'loading', 'Refreshing Containers', `Pending: ${Array.from(pending).join(', ')}`);
-            }
-        }
-      };
-
-      const results = await Promise.all(targets.map(fetchNode));
-      const allContainers = results.flat();
-      
-      updateToast(toastId, 'success', 'Containers Updated', 'All nodes refreshed', 500);
-      return { nodes: nodeList, containers: allContainers };
-    } catch (error) {
-      console.error('Failed to fetch containers', error);
-      updateToast(toastId, 'error', 'Failed to fetch containers', error instanceof Error ? error.message : undefined);
-      throw error;
-    }
-  }, [addToast, updateToast]);
-
-  const { data, loading, validating, refresh } = useCache<{nodes: PodmanConnection[], containers: Container[]}>('containers-full', containersFetcher);
-  const containers = useMemo(() => data?.containers || [], [data]);
-  const refreshing = validating && !loading;
-
+  // Legacy SSE Removed
+  /*
   useEffect(() => {
-    // Setup SSE for real-time updates
-    const eventSource = new EventSource('/api/stream');
-    
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'container') {
-           // Refresh data on container change
-           setTimeout(() => {
-               refresh();
-           }, 500);
-        }
-      } catch (e) {
-        console.error('Error parsing SSE message', e);
-      }
-    };
-
-    return () => {
-      eventSource.close();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // ...
   }, []);
+  */
 
   useEffect(() => {
       let filtered = containers;
@@ -178,7 +155,7 @@ export default function ContainersPlugin() {
             setTimeout(() => refresh(), 1000);
         }
     } catch (e) {
-        console.error('Action failed', e);
+        logger.error('ContainersPlugin', 'Action failed', e);
         updateToast(toastId, 'error', 'Action failed', 'An unexpected error occurred.');
     } finally {
         setActionLoading(false);
@@ -225,17 +202,6 @@ export default function ContainersPlugin() {
         title="Containers" 
         showBack={false} 
         helpId="containers"
-        actions={
-            <>
-                <button 
-                  onClick={() => refresh(true)} 
-                  disabled={refreshing}
-                  className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors shrink-0" title="Refresh"
-                >
-                    <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
-                </button>
-            </>
-        }
       >
         <div className="relative flex-1 max-w-md min-w-[100px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -251,7 +217,9 @@ export default function ContainersPlugin() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {loading ? (
-            <div className="text-center text-gray-500 mt-10">Loading containers...</div>
+            <PluginLoading message="Connecting to Agent..." />
+        ) : waitingForSync ? (
+            <PluginLoading message="Synchronizing state..." />
         ) : filteredContainers.length === 0 ? (
             <div className="text-center text-gray-500 mt-10">
                 {containers.length > 0 ? 'No containers match your search.' : 'No active containers found.'}
@@ -339,10 +307,21 @@ export default function ContainersPlugin() {
                                                 {c.Ports.map((p: any, i) => {
                                                     const hostPort = p.PublicPort || p.host_port;
                                                     const containerPort = p.PrivatePort || p.container_port;
-                                                    const protocol = p.Type || p.protocol;
+                                                    const protocol = (p.Type || p.protocol || 'tcp').toLowerCase();
+                                                    
+                                                    // Display format: 
+                                                    // With Host Map: 8080:80/tcp
+                                                    // Without Host Map: 80/tcp
+                                                    
+                                                    const display = hostPort && hostPort !== containerPort 
+                                                        ? `${hostPort}:${containerPort}/${protocol}`
+                                                        : hostPort // If same, usually host net
+                                                            ? `${hostPort}/${protocol}`
+                                                            : `${containerPort}/${protocol}`;
+
                                                     return (
-                                                        <span key={i} className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono">
-                                                            {hostPort ? `${hostPort}:` : ''}{containerPort}/{protocol}
+                                                        <span key={i} className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300">
+                                                            {display}
                                                         </span>
                                                     );
                                                 })}

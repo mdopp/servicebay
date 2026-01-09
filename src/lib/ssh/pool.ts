@@ -1,6 +1,7 @@
 import { Client } from 'ssh2';
 import { readFileSync } from 'fs';
 import { PodmanConnection, listNodes } from '../nodes';
+import { logger } from '@/lib/logger';
 
 export interface SSHClientWrapper {
   client: Client;
@@ -72,12 +73,12 @@ export class SSHConnectionPool {
           connected: true,
           lastUsed: Date.now()
         });
-        console.log(`[SSH] Connected to ${nodeName}`);
+        logger.info('SSH', `Connected to ${nodeName}`);
         resolve(conn);
       });
 
       conn.on('error', (err) => {
-        console.error(`[SSH] Error on ${nodeName}:`, err);
+        logger.error('SSH', `Error on ${nodeName}:`, err);
         this.removeConnection(nodeName);
         if (conn.listenerCount('ready') > 0) {
             reject(err);
@@ -85,12 +86,12 @@ export class SSHConnectionPool {
       });
 
       conn.on('end', () => {
-        console.log(`[SSH] Connection ended for ${nodeName}`);
+        logger.info('SSH', `Connection ended for ${nodeName}`);
         this.removeConnection(nodeName);
       });
 
       conn.on('close', () => {
-        console.log(`[SSH] Connection closed for ${nodeName}`);
+        logger.info('SSH', `Connection closed for ${nodeName}`);
         this.removeConnection(nodeName);
       });
 

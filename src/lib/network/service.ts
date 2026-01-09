@@ -1,29 +1,16 @@
 import { NetworkGraph, NetworkNode, NetworkEdge } from './types';
 import { FritzBoxClient } from '../fritzbox/client';
-import { NginxParser } from '../nginx/parser';
-import { getEnrichedContainers } from '../manager';
 import { ServiceManager } from '../services/ServiceManager';
 import { listNodes, PodmanConnection } from '../nodes';
-import { getExecutor } from '../executor';
 import { getConfig } from '../config';
 import { NetworkStore } from './store';
 import { checkDomains, resolveHostname } from './dns';
 import os from 'os';
-import fs from 'fs/promises';
-import path from 'path';
-import { spawn } from 'child_process';
-import { Executor } from '../executor';
 import watcher from '../watcher';
-
-interface NginxCacheEntry {
-    hash: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    config: any;
-    timestamp: number;
-}
+import { DigitalTwinStore } from '../store/twin'; // Import Twin Store
+import { logger } from '../logger';
 
 export class NetworkService {
-  private static nginxCache = new Map<string, NginxCacheEntry>();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private static fbStatusCache: { data: any, timestamp: number } | null = null;
 
@@ -41,108 +28,6 @@ export class NetworkService {
     return results;
   }
 
-  private async getRemoteConfigHash(containerId: string, executor: Executor): Promise<string | null> {
-      try {
-          // Optimization: Try to use find -printf for precise metadata hashing (GNU find).
-          // Fallback to ls -lR for BusyBox/Alpine.
-          // %T@ = modification time (seconds), %s = size, %p = path
-          const paths = ['/etc/nginx', '/data/nginx'];
-          const pathsStr = paths.join(' ');
-          
-          // The command checks if find supports -printf. If so, uses it. Else falls back to ls -lR.
-          // We squash it into one line to avoid shell/SSH multiline issues.
-          // Note: "2>/dev/null" hides errors about missing /data/nginx
-          const cmd = `podman exec ${containerId} sh -c "if find /etc/nginx -maxdepth 0 -printf '' >/dev/null 2>&1; then find ${pathsStr} -type f -printf '%T@ %s %p\n' 2>/dev/null | md5sum; else ls -lR ${pathsStr} 2>/dev/null | md5sum; fi"`;
-          
-          const { stdout } = await executor.exec(cmd);
-          return stdout.trim().split(' ')[0];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (e: any) {
-          if (e.message && (e.message.includes('container state improper') || e.message.includes('not running'))) {
-              return null;
-          }
-          console.warn('[NetworkService] Failed to calculate config hash:', e);
-          return null;
-      }
-  }
-
-  private async fetchRemoteConfig(nodeName: string, containerId: string, executor: Executor): Promise<string | null> {
-    // Create temp dir
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `servicebay-nginx-${nodeName}-`));
-    
-    console.log(`[NetworkService] Fetching Nginx config from ${nodeName} to ${tmpDir}`);
-
-    // Check if /data/nginx exists
-    let includeData = false;
-    try {
-        const { stdout } = await executor.exec(`podman exec ${containerId} test -d /data/nginx && echo "yes" || echo "no"`);
-        includeData = stdout.trim() === 'yes';
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-        if (e.message && (e.message.includes('container state improper') || e.message.includes('not running'))) {
-             // Container stopped, ignore
-        } else {
-             console.warn(`[NetworkService] Failed to check /data/nginx existence:`, e);
-        }
-    }
-
-    // Tar command
-    // We want /etc/nginx and /data/nginx (if exists). We exclude logs.
-    const paths = ['/etc/nginx'];
-    if (includeData) paths.push('/data/nginx');
-    
-    // Remove 2>/dev/null to capture stderr. Use base64 to safely transport binary data over agent.
-    const tarCmd = `podman exec ${containerId} sh -c "tar -czf - ${paths.join(' ')} --exclude /data/logs | base64"`;
-    
-    try {
-        const { stdout: remoteStream, stderr: remoteStderr, promise: remotePromise } = executor.spawn(tarCmd);
-        
-        let remoteErrOutput = '';
-        remoteStderr.on('data', chunk => remoteErrOutput += chunk.toString());
-
-        // Local pipeline: base64 -d | tar -xzf - -C tmpDir
-        const localBase64 = spawn('base64', ['-d']);
-        const localTar = spawn('tar', ['-xzf', '-', '-C', tmpDir]);
-        
-        remoteStream.pipe(localBase64.stdin);
-        localBase64.stdout.pipe(localTar.stdin);
-        
-        await new Promise<void>((resolve, reject) => {
-            let pending = 2; // Wait for both
-            const checkDone = () => {
-                pending--;
-                if (pending === 0) resolve();
-            };
-
-            localTar.on('close', (code) => {
-                if (code === 0) checkDone();
-                else reject(new Error(`Local tar failed with code ${code}`));
-            });
-
-            localBase64.on('close', (code) => {
-                if (code === 0) checkDone();
-                else reject(new Error(`Local base64 failed with code ${code}`));
-            });
-
-            localTar.on('error', reject);
-            localBase64.on('error', reject);
-            remoteStream.on('error', reject);
-            remotePromise.catch(reject);
-        });
-        
-        return tmpDir;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-        if (e.message && (e.message.includes('container state improper') || e.message.includes('not running'))) {
-            // Container stopped, ignore
-            return null;
-        }
-        console.warn(`[NetworkService] Failed to fetch/extract remote config:`, e);
-        // Cleanup
-        try { await fs.rm(tmpDir, { recursive: true, force: true }); } catch {}
-        return null;
-    }
-  }
 
   async getGraph(targetNode?: string): Promise<NetworkGraph> {
     // 1. Get Global Infrastructure (Internet, Router, External Links) - ONLY ONCE
@@ -397,108 +282,93 @@ export class NetworkService {
     } else {
         try {
             fbStatus = await fbClient.getStatus();
+            // Cache it
             NetworkService.fbStatusCache = { data: fbStatus, timestamp: Date.now() };
         } catch (e) {
-            console.warn('Failed to get FritzBox status', e);
+            console.warn('[NetworkService] Failed to fetch FritzBox status, using offline mockup', e);
+            fbStatus = {
+                connected: false,
+                ip: 'Offline',
+                uptime: 0,
+                bytesIn: 0,
+                bytesOut: 0,
+                maxDown: 0,
+                maxUp: 0
+            };
         }
     }
 
-    // 1. Internet Node
+    // --- Add Synthetic Nodes (Gateway, Internet) ---
+    // These must ALWAYS be present in the graph for visualization
+    const domain = config.domain || 'node';
+    
+    // Internet Node
     nodes.push({
       id: 'internet',
-      type: 'internet',
       label: 'Internet',
-      ports: [],
+      type: 'internet',
       status: 'up',
-      metadata: {}
+      node: 'global',
+      ports: [],
+      metadata: {
+        host: '0.0.0.0',
+        url: 'https://' + domain
+      }
     });
 
-    // 2. Router Node (FritzBox)
-    const routerId = 'router';
-    const routerHost = config.gateway?.host || 'fritz.box';
-    const resolvedRouterHost = await resolveHostname(routerHost);
-    
-    const isRouterResolved = resolvedRouterHost && resolvedRouterHost !== routerHost;
-    const routerSubLabel = isRouterResolved ? routerHost : (resolvedRouterHost || routerHost);
-    const routerHostnameField = isRouterResolved ? resolvedRouterHost : undefined;
-
-    // Check Domains (Global check, but usually relevant for Local Nginx)
-    // We'll pass fbStatus to getNodeGraph for domain verification
-
+    // Gateway Node
     nodes.push({
-      id: routerId,
-      type: 'router',
-      label: 'Fritz!Box',
-      subLabel: routerSubLabel, 
-      hostname: routerHostnameField,
-      ports: [80, 443],
-      status: fbStatus?.connected ? 'up' : 'down',
-      metadata: { 
-        uptime: fbStatus?.uptime,
-        source: 'FritzBox TR-064',
-        link: 'http://fritz.box',
-        internalIP: fbStatus?.internalIP,
-        dnsServers: fbStatus?.dnsServers,
-        verifiedDomains: [] // Will be populated by nodes
-      },
-      rawData: {
-          ...fbStatus,
-          type: 'router'
+      id: 'gateway',
+      label: 'Gateway',
+      type: 'gateway',
+      status: fbStatus?.upstreamStatus === 'up' ? 'up' : 'down',
+      node: 'global',
+      ports: [],
+      metadata: {
+        host: config.gateway?.host || '192.168.178.1',
+        url: `http://${config.gateway?.host || 'fritz.box'}`,
+        stats: fbStatus
       }
     });
 
     edges.push({
-        id: 'edge-internet-router',
-        source: 'internet',
-        target: routerId,
-        protocol: 'tcp',
-        port: 0,
-        state: fbStatus?.connected ? 'active' : 'inactive'
+      id: 'edge-internet-gateway',
+      source: 'internet',
+      target: 'gateway',
+      protocol: 'https',
+      port: 443,
+      state: 'active'
     });
-
-    // 3. External Links (Global)
-    const externalLinks = config.externalLinks || [];
-    for (const link of externalLinks) {
-        const linkId = `link-${link.id}`;
-        let hostname = 'External Link';
-        let port = 0;
-        try {
-            const u = new URL(link.url);
-            hostname = u.hostname;
-            if (u.port) {
-                port = parseInt(u.port);
-            } else if (u.protocol === 'http:') {
-                port = 80;
-            } else if (u.protocol === 'https:') {
-                port = 443;
-            }
-        } catch {
-            // ignore invalid urls
+    
+    // External Links (Bookmarks)
+    if (config.externalLinks) {
+        for (const link of config.externalLinks) {
+            nodes.push({
+                id: `ext-${link.name}`,
+                label: link.name,
+                type: 'service',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                status: 'active' as any,
+                node: 'global',
+                ports: [],
+                metadata: {
+                    url: link.url,
+                    icon: link.icon,
+                    description: link.description,
+                    isExternal: true
+                }
+            });
+            // If they are local LAN links, connect to Gateway? Or just floating?
+            // Usually connected to Gateway/LAN
+            edges.push({
+                id: `edge-gateway-ext-${link.name}`,
+                source: 'gateway',
+                target: `ext-${link.name}`,
+                protocol: 'http',
+                port: 80,
+                state: 'active'
+            });
         }
-
-        const resolvedHostname = await resolveHostname(hostname);
-        const isResolved = resolvedHostname && resolvedHostname !== hostname;
-        const subLabel = isResolved ? hostname : (resolvedHostname || hostname);
-        const hostnameField = isResolved ? resolvedHostname : undefined;
-
-        nodes.push({
-            id: linkId,
-            type: 'link',
-            label: link.name,
-            subLabel: subLabel,
-            hostname: hostnameField,
-            ports: port > 0 ? [{ host: port, container: port, host_ip: resolvedHostname || undefined }] : [],
-            status: 'up',
-            metadata: {
-                source: 'External Link',
-                link: link.url,
-                description: link.description
-            },
-            rawData: {
-                ...link,
-                type: 'link'
-            }
-        });
     }
 
     return { nodes, edges, config, fbStatus };
@@ -529,30 +399,79 @@ export class NetworkService {
     const routerId = 'router'; // Global ID
 
     // 0. Prepare Data for this Node
-    const executor = getExecutor(connection);
     
-    // Parallelize data gathering
-    watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Gathering container info...`, node: nodeName });
+    // Check Digital Twin first
+    const twinNode = DigitalTwinStore.getInstance().nodes[nodeName];
+    // We consider twin usable if it has basic data. 
+    // Agent V4 pushes 'containers' and 'services'.
     
-    const [nodeIPsResult, enrichedResult, services] = await Promise.all([
-        // 1. Hostname IPs
-        (async () => {
-             // Optimize for local node
-             if (nodeName.toLowerCase() === 'local') return this.getLocalIPs();
-             
-             try {
-                const { stdout } = await executor.exec('hostname -I');
-                return stdout.trim().split(' ').filter(ip => ip.length > 0);
-            } catch (e) {
-                console.warn(`[NetworkService] Failed to get IPs for ${nodeName}`, e);
-                return [];
+    // Check if node is missing from store entirely
+    if (!twinNode) {
+         if (nodeName === 'Local') {
+             // Implicit Local node might not be in store yet if agent hasn't connected
+             throw new Error(`Local Agent not yet connected.`);
+         }
+         throw new Error(`Node ${nodeName} unknown or not connected.`);
+    }
+
+    const hasContainers = twinNode.containers && twinNode.containers.length >= 0; // Allow empty array
+    const useTwin = twinNode.connected || twinNode.initialSyncComplete;
+
+    let nodeIPsResult: string[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let enrichedResult: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let services: any[];
+
+    if (useTwin && hasContainers) {
+        // console.log(`[NetworkService] Using Digital Twin data for ${nodeName}`);
+        
+        // 1. IPs
+        if (twinNode.resources?.network) {
+            nodeIPsResult = Object.values(twinNode.resources.network).flatMap(list => list.map(i => i.address)).filter(ip => !ip.startsWith('127.') && !ip.includes(':'));
+        } else {
+             // Fallback if network not yet pushed (older agent?)
+             nodeIPsResult = []; 
+        }
+
+        // 2. Services
+        services = twinNode.services;
+
+        // 3. Containers
+        // Mock the return tuple of getEnrichedContainers: [containers, inspects]
+        const containers = twinNode.containers;
+        const inspects = containers.map(c => ({
+            Id: c.id,
+            State: { 
+                // Use 'pid' field if added to agent, or fallback to 0. 
+                // Note: We recently added 'pid' to Agent V4.
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                Pid: (c as any).pid || 0,
+                Status: c.status,
+                Running: c.state === 'running'
+            },
+            HostConfig: {
+                // Infer network mode roughly
+                NetworkMode: (c.networks && c.networks.length > 0) ? c.networks[0] : 'default'
+            },
+            Config: {
+                Labels: c.labels
+            },
+            Name: c.names[0],
+            NetworkSettings: {
+                 Networks: (c.networks || []).reduce((acc, net) => {
+                     acc[net] = {}; // Mock
+                     return acc;
+                 }, {} as Record<string, any>)
             }
-        })(),
-        // 2. Enriched Containers (replaces PodmanPs + Inspect + HostPorts)
-        getEnrichedContainers(connection),
-        // 3. List Services
-        ServiceManager.listServices(nodeName)
-    ]);
+        }));
+        
+        enrichedResult = [containers, inspects];
+        
+    } else {
+         // If twin exists but not ready
+         throw new Error(`Digital Twin data not ready for ${nodeName} (Connected: ${twinNode.connected}, Synced: ${twinNode.initialSyncComplete})`);
+    }
 
     const nodeIPs = nodeIPsResult;
     // getEnrichedContainers returns [containers, inspects]
@@ -628,6 +547,8 @@ export class NetworkService {
     const proxyService = services.find(s => s.isReverseProxy);
     const proxyServiceName = proxyService?.name || 'nginx-web';
 
+    logger.info('NetworkService', `Scanning ${nodeName} for proxy service: "${proxyServiceName}". Found ${containers.length} containers.`);
+
     // Nginx Config (Only relevant if Nginx is running on this node)
     watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Checking Nginx config...`, node: nodeName });
 
@@ -639,16 +560,31 @@ export class NetworkService {
         // 2. Check if it belongs to the proxy service (Pod or App label)
         if (c.Labels && (
             c.Labels['io.kubernetes.pod.name'] === proxyServiceName ||
+            c.Labels['io.podman.pod.name'] === proxyServiceName ||
             c.Labels['app'] === proxyServiceName
         )) return true;
 
-        // 3. Check Name (Exact or Pod-derived)
+        // 3. Check Name (Exact, Pod-derived, or Kube-generated)
         // e.g. service 'nginx-web' -> container 'nginx-web-nginx' or 'nginx-web'
         if (c.Names && c.Names.some((n: string) => {
             const name = n.startsWith('/') ? n.slice(1) : n;
-            return name === proxyServiceName || 
-                   name.startsWith(`${proxyServiceName}-`) || // Pod container naming
-                   name === `systemd-${proxyServiceName}`; // Systemd generated name
+            
+            // Standard naming
+            if (name === proxyServiceName || 
+                name.startsWith(`${proxyServiceName}-`) || 
+                name === `systemd-${proxyServiceName}`) return true;
+
+            // Podman Kube naming (k8s_<container>_<pod>_...)
+            if (name.startsWith('k8s_')) {
+                const parts = name.split('_');
+                // parts[1] is containerName, parts[2] is podName
+                if (parts.length >= 3) {
+                     // Check if container name or pod name matches the service
+                     return parts[1] === proxyServiceName || parts[2] === proxyServiceName;
+                }
+            }
+
+            return false;
         })) return true;
 
         return false;
@@ -658,92 +594,42 @@ export class NetworkService {
     let verifiedDomains: string[] = [];
     const containerUrlMapping = new Map<string, Set<string>>();
 
-    if (nginxContainer) {
-        let nginxParser: NginxParser | null = null;
-        let tempPath: string | null = null;
-        let useCache = false;
+    // V4.1: Prioritize Agent Data for Nginx Config
+    // twinNode is already defined above
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const agentProxyRoutes = (twinNode as any)?.proxy;
 
-        // Mock path only applies to local node usually, but let's respect it
-        if (nodeName === 'local' && process.env.MOCK_NGINX_PATH) {
-            nginxParser = new NginxParser(process.env.MOCK_NGINX_PATH);
-        } else {
-            // Caching Strategy
-            const executor = getExecutor(connection);
-            const cacheKey = `${nodeName}:${nginxContainer.Id}`;
-            const currentHash = await this.getRemoteConfigHash(nginxContainer.Id, executor);
-            
-            if (currentHash && NetworkService.nginxCache.has(cacheKey)) {
-                const cached = NetworkService.nginxCache.get(cacheKey)!;
-                if (cached.hash === currentHash) {
-                    console.log(`[NetworkService] Using cached Nginx config for ${nodeName} (Hash: ${currentHash})`);
-                    nginxConfig = cached.config;
-                    useCache = true;
-                }
-            }
-
-            if (!useCache) {
-                // Optimization: Fetch config to local temp dir to avoid hundreds of SSH calls
-                try {
-                    tempPath = await this.fetchRemoteConfig(nodeName, nginxContainer.Id, executor);
-                    
-                    if (tempPath) {
-                        // Parse from local temp dir
-                        // We pass sysRoot as tempPath. rootDir is still /etc/nginx (inside the tar structure)
-                        nginxParser = new NginxParser('/etc/nginx', undefined, undefined, tempPath);
-                    } else {
-                        // Fallback to slow method
-                        nginxParser = new NginxParser('/etc/nginx', nginxContainer.Id, executor);
-                    }
-                } catch (e) {
-                    console.warn(`[NetworkService] Failed to fetch remote config for ${nodeName}, falling back to direct parse`, e);
-                    nginxParser = new NginxParser('/etc/nginx', nginxContainer.Id, executor);
-                }
-            }
-        }
-
+    if (agentProxyRoutes && agentProxyRoutes.length > 0) {
+        logger.info('NetworkService', `Using Agent-provided Nginx routes for ${nodeName} (${agentProxyRoutes.length} routes)`);
+        
+        // Construct Nginx Config from Agent Data
+        nginxConfig = {
+            servers: agentProxyRoutes.map((r: any) => ({
+                server_name: [r.host], // Standard Nginx Parser output structure
+                listen: r.ssl ? ['443 ssl', '80'] : ['80'],
+                locations: [{
+                    path: '/',
+                    proxy_pass: typeof r.targetService === 'string' && r.targetService.startsWith('http') ? r.targetService : `http://${r.targetService}`
+                }],
+                // Metadata
+                _agent_data: true,
+                _ssl: r.ssl,
+                _targetPort: r.targetPort || 80
+            }))
+        };
+        
+        // Verify Domains
         try {
-            if (!useCache && nginxParser) {
-                nginxConfig = await nginxParser.parse();
-                
-                // Update Cache
-                if (nodeName !== 'local' || !process.env.MOCK_NGINX_PATH) {
-                    const executor = getExecutor(connection);
-                    // Re-calculate hash if we didn't get it before (e.g. error)
-                    const hash = await this.getRemoteConfigHash(nginxContainer.Id, executor);
-                    if (hash) {
-                        NetworkService.nginxCache.set(`${nodeName}:${nginxContainer.Id}`, {
-                            hash,
-                            config: nginxConfig,
-                            timestamp: Date.now()
-                        });
-                    }
-                }
-            }
-
-            // console.log(`[NetworkService] Parsed Nginx config for ${nodeName}: ${nginxConfig.servers.length} servers found`);
-            // nginxConfig.servers.forEach(s => console.log(`  - Server: ${s.server_name.join(', ')} (Listen: ${s.listen.join(', ')})`));
-
-            watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Verifying domains Nginx...`, node: nodeName });
-
             const domainStatuses = await checkDomains(nginxConfig, fbStatus, nodeIPs);
             verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
-            // console.log(`[NetworkService] Verified domains for ${nodeName}: ${verifiedDomains.join(', ')}`);
-            
-            if (process.env.MOCK_NGINX_PATH) {
-                verifiedDomains = domainStatuses.map(d => d.domain);
+            if (verifiedDomains.length > 0) {
+                logger.info('NetworkService', `Verified domains for ${nodeName} (Agent): ${verifiedDomains.join(', ')}`);
             }
         } catch (e) {
-            console.warn(`[NetworkService] Failed to parse Nginx on ${nodeName}`, e);
-        } finally {
-            // Cleanup temp dir
-            if (tempPath) {
-                try {
-                    await fs.rm(tempPath, { recursive: true, force: true });
-                } catch (e) {
-                    console.warn(`[NetworkService] Failed to cleanup temp dir ${tempPath}`, e);
-                }
-            }
+            console.warn(`[NetworkService] Failed to check domains via Agent data`, e);
         }
+    } else if (nginxContainer) {
+        logger.warn('NetworkService', `Nginx container found on ${nodeName} but no Agent proxy data available. Skipping legacy SSH introspection.`);
     }
 
     // 1. Nginx Node (Per Server)
@@ -812,14 +698,14 @@ export class NetworkService {
 
                 // Fallback to YAML/Config ports if dynamic scan found nothing (or not host network)
                 if (finalPorts.length === 0) {
-                     finalPorts = service.ports.map(p => {
+                     finalPorts = (service.ports || []).map((p: any) => {
                         const hostPort = p.host ? (p.host.includes(':') ? parseInt(p.host.split(':')[1]) : parseInt(p.host)) : 0;
                         const containerPort = p.container ? parseInt(p.container) : 0;
                         if (hostPort > 0 && containerPort > 0) {
                             return { host: hostPort, container: containerPort };
                         }
                         return hostPort;
-                    }).filter(p => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true));
+                    }).filter((p: any) => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true));
                 }
 
                 if (finalPorts.length > 0) {
@@ -847,14 +733,14 @@ export class NetworkService {
         }
 
         if (servicePorts.length === 0) {
-             servicePorts = service.ports.map(p => {
+             servicePorts = (service.ports || []).map((p: any) => {
                 const hostPort = p.host ? (p.host.includes(':') ? parseInt(p.host.split(':')[1]) : parseInt(p.host)) : 0;
                 const containerPort = p.container ? parseInt(p.container) : 0;
                 if (hostPort > 0 && containerPort > 0) {
                     return { host: hostPort, container: containerPort };
                 }
                 return hostPort;
-            }).filter(p => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true));
+            }).filter((p: any) => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true));
         }
 
         // Create Service Node (Merged Group & Node)
