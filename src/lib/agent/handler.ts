@@ -38,6 +38,8 @@ export class AgentHandler extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private pendingRequests: Map<string, { resolve: (val: any) => void; reject: (err: any) => void }> = new Map();
   private isConnected: boolean = false;
+  private consecutiveParseErrors = 0;
+  private readonly MAX_PARSE_ERRORS = 5;
 
   constructor(nodeName: string) {
     super();
@@ -59,7 +61,7 @@ export class AgentHandler extends EventEmitter {
         if ((!configured && this.nodeName === 'Local') || (configured && configured.URI === 'local')) {
             useLocalSpawn = true;
         }
-    } catch (e) {
+    } catch {
         // Fallback for implicit Local
         if (this.nodeName === 'Local') useLocalSpawn = true;
     }
@@ -186,10 +188,20 @@ export class AgentHandler extends EventEmitter {
           const msg = JSON.parse(msgStr);
           // console.log(`[Agent:${this.nodeName}] Parsed Message Type: ${msg.type}`);
           this.processMessage(msg);
-        } catch (e: any) {
+          this.consecutiveParseErrors = 0; // Reset on success
+        } catch (e: unknown) {
+             this.consecutiveParseErrors++;
              // Ignoring lint for 'e' to match eslint config for unused vars in catch blocks if necessary
-             logger.error(this.nodeName, `Invalid JSON error: ${e && e.message ? e.message : String(e)}`);
+             const errorMsg = e instanceof Error ? e.message : String(e);
+             logger.error(this.nodeName, `Invalid JSON error: ${errorMsg}`);
              logger.error(this.nodeName, `Invalid JSON content (first 200 chars): ${msgStr.substring(0, 200)}...`);
+
+             if (this.consecutiveParseErrors >= this.MAX_PARSE_ERRORS) {
+                 logger.error(this.nodeName, `Too many consecutive parse errors (${this.consecutiveParseErrors}). Disconnecting for safety.`);
+                 this.emit('error', new Error('Circuit Breaker: Too many parse errors'));
+                 this.disconnect();
+                 return; // Stop processing further messages in this batch
+             }
         }
       }
       

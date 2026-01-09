@@ -85,6 +85,30 @@ export class DigitalTwinStore {
     if (!this.nodes[nodeId]) {
       this.registerNode(nodeId);
     }
+
+    // Validation
+    if (data.containers !== undefined && !Array.isArray(data.containers)) {
+        console.error(`[TwinStore] Invalid containers update for ${nodeId} (expected Array):`, typeof data.containers);
+        delete data.containers;
+    }
+    if (data.services !== undefined && !Array.isArray(data.services)) {
+        console.error(`[TwinStore] Invalid services update for ${nodeId} (expected Array):`, typeof data.services);
+        delete data.services;
+    }
+    if (data.volumes !== undefined && !Array.isArray(data.volumes)) {
+        console.error(`[TwinStore] Invalid volumes update for ${nodeId} (expected Array):`, typeof data.volumes);
+        delete data.volumes;
+    }
+    if (data.proxy !== undefined && !Array.isArray(data.proxy)) {
+         console.error(`[TwinStore] Invalid proxy update for ${nodeId} (expected Array):`, typeof data.proxy);
+         delete data.proxy;
+    }
+
+    // Files is a Record (Object)
+    if (data.files !== undefined && (typeof data.files !== 'object' || data.files === null || Array.isArray(data.files))) {
+         console.error(`[TwinStore] Invalid files update for ${nodeId} (expected Object):`, typeof data.files);
+         delete data.files;
+    }
     
     this.nodes[nodeId] = {
       ...this.nodes[nodeId],

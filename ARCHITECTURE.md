@@ -146,6 +146,78 @@ To minimize SSH bandwidth and Backend processing, the Agent applies strict filte
 *   **Mechanism**: A scheduled task (e.g., every 60s) runs in the Backend.
 *   **Abstraction**: A `GatewayProvider` interface allows different implementations (FritzBox, Ubiquiti, etc.) to feed the same `gateway` state in the Store.
 
+## Backend API Reference
+
+The Backend exposes a set of standard REST APIs for the Frontend. These APIs primarily interact with the **Digital Twin Store** for reading data, and the **Agent Executor** for writing/actions.
+
+```mermaid
+sequenceDiagram
+    participant UI as Frontend
+    participant API as API Route
+    participant Store as DigitalTwinStore
+    participant Agent as AgentExecutor
+    participant Host as Python Agent
+
+    %% Read Flow
+    UI->>API: GET /api/containers
+    API->>Store: Get Snapshot
+    Store-->>API: Return Cached Data (Instant)
+    API-->>UI: 200 OK (JSON)
+
+    %% Write Flow
+    UI->>API: POST /api/containers/abc/action (restart)
+    API->>Agent: exec("podman restart abc")
+    Agent->>Host: SSH Command
+    Host-->>Agent: Result (Stdout/Stderr)
+    Agent-->>API: Success
+    API-->>UI: 200 OK
+    
+    %% Async Update (Push)
+    Host->>Agent: Stream Event (Container Started)
+    Agent->>Store: Update Node State
+    Store->>UI: WebSocket/SWR Revalidate
+```
+
+### Core Endpoints
+
+#### 1. Containers
+*   `GET /api/containers`: Returns a list of all containers on a node.
+    *   **Source**: Digital Twin Store (Memory).
+    *   **Response**: `EnrichedContainer[]`.
+*   `GET /api/containers/[id]`: Returns detailed inspection data.
+*   `POST /api/containers/[id]/action`: Performs lifecycle actions.
+    *   **Actions**: `start`, `stop`, `restart`, `delete`, `kill`.
+    *   **Mechanism**: Direct RPC via Agent (`podman <action> <id>`).
+
+#### 2. Services (Systemd)
+*   `GET /api/services`: Returns managed services.
+    *   **Source**: Backend Aggregator (Store + Config).
+    *   **Logic**: Merges systemd units (from Agent) with Configured Links and Gateway status.
+    *   **Special Types**: `gateway` (Internet Router), `link` (External Dashboard), `service` (Quadlet).
+
+#### 3. Monitoring
+*   `GET /api/monitoring`: Returns health check results.
+    *   **Source**: Monitoring Store (In-Memory Ring Buffer).
+
+### 4. Terminal (SSH Passthrough)
+*   **Goal**: Provide a fully functional shell interface to the target node directly in the browser.
+*   **Architecture**:
+    *   **Frontend**: `xterm.js` + `xterm-addon-fit`. Handles VT100 emulation and keystrokes.
+    *   **Transport**: Socket.IO bi-directional stream (`term-input` -> `term-output`).
+    *   **Backend**: `AgentExecutor` spawns a persistent SSH shell session using `ssh2` Client.
+    *   **Security**: Restricted to authenticated users. SSH session runs as the configured rootless user.
+
+### 5. Network Graph Aggregation
+*   **Goal**: Visualize the relationships between Nodes, Services, and the Internet.
+*   **Mechanism**: `NetworkService.getGraph()` aggregates data from three layers on-demand:
+    1.  **Infrastructure Layer**: Gateway (Router) status and Internet connectivity.
+    2.  **Config Layer**: Application Settings (External Links, Manual Edges).
+    3.  **Digital Twin Layer**: Real-time container state from the Agent.
+*   **Logic**:
+    *   Nodes are auto-discovered from `twin.services` and `twin.containers`.
+    *   Edges are inferred from Nginx Proxy routes (`proxy_pass`) and DNS settings.
+    *   The graph is "reactive" — as soon as the Agent pushes a container update, the graph acts as a derived view.
+
 ## Technology Decision: Python Agent
 
 We have explicitly chosen **Python 3** (Standard Library only) over Bash/Shell scripts for the Agent implementation.
@@ -185,6 +257,25 @@ The dashboard (`/`) is built using a modular plugin architecture. This allows fo
      - `service.kube` (The Systemd Quadlet unit referencing the YAML).
   3. `FileManager` writes these files via SSH to `~/.config/containers/systemd/`.
   4. `ServiceManager` reloads the daemon.
+
+## Testing Strategy
+
+The project employs a robust testing strategy ensuring reliability across the Agent-Backend boundary.
+
+### 1. Robustness & Resilience (Circuit Breaker)
+*   **Agent Stream Protocol**: The backend implements a "Circuit Breaker" pattern for the JSON stream received from the Python Agent.
+    *   **Logic**: If the stream contains consecutive malformed packets (binary garbage, syntax errors) exceeding a threshold, the connection is forcibly terminated to protect backend resources.
+    *   **Recovery**: The Agent logic includes auto-reconnection backoff.
+*   **Store Validation**: The Digital Twin Store acts as a guarded boundary. All updates entering the store are runtime-validated for correct top-level types (e.g., ensuring `containers` is an Array) to prevent frontend crashes due to corrupted state.
+
+### 2. Backend Unit & Integration Tests
+*   **Vitest** is used for all backend testing.
+*   **Mocking**: External system dependencies (`fs`, `ssh2`, `child_process`) are heavily mocked to test logic in isolation.
+*   **Key Test Suites**:
+    *   `tests/backend/agent_robustness.test.ts`: Verifies connection stability under "fuzzing" conditions.
+    *   `tests/backend/store_robustness.test.ts`: Verifies the Digital Twin's immunity to invalid payloads.
+    *   `tests/backend/graph.test.ts`: Validates the aggregation logic for the Network Map.
+    *   `tests/backend/api.test.ts`: Integration tests for key REST endpoints.
 
 ## Tech Stack
 
