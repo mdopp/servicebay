@@ -21,6 +21,8 @@ All notable changes to this project will be documented in this file.
 - **Services**: The service list now strictly shows only services managed by ServiceBay (Quadlet `.container`, `.kube`, and `.pod` files), hiding unrelated system services.
 
 ### Fixed
+- **Dashboard**: Fixed an issue where duplicates of the Reverse Proxy service would appear. Now intelligently merges aliases (e.g., `nginx-web`, `nginx`) into a single card.
+- **Dashboard**: The Gateway card (FritzBox) now displays active port mappings (UPnP).
 - **Dashboard**: Fixed an issue where the Nginx Reverse Proxy on remote nodes was incorrectly shown as "Unmanaged" (missing YAML/Kube badge) due to a file naming mismatch.
 - **Dashboard**: Fixed an issue where the Nginx Reverse Proxy and ServiceBay System cards were missing or mislabeled when using the latest Agent V4.
 - **Agent**: Reduced log noise by quieting debug messages related to Nginx route parsing.

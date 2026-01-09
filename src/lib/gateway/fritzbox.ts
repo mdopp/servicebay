@@ -30,6 +30,11 @@ export class FritzBoxProvider implements GatewayProvider {
         upstreamStatus: status.connected ? 'up' : 'down',
         dnsServers: status.dnsServers,
         uptime: status.uptime,
+        portMappings: (status.portMappings || []).map(p => ({
+            hostPort: p.externalPort,
+            containerPort: p.internalPort,
+            protocol: p.protocol
+        })),
         lastUpdated: Date.now()
       };
     } catch (e) {

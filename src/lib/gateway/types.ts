@@ -1,3 +1,5 @@
+import { PortMapping } from '../agent/types';
+
 export interface GatewayState {
   provider: 'fritzbox' | 'unifi' | 'mock';
   publicIp: string;
@@ -6,6 +8,7 @@ export interface GatewayState {
   dnsServers?: string[];
   uptime?: number;
   lastUpdated: number;
+  portMappings?: PortMapping[];
   // Provider specific details can be added here or in a details bag
   deviceName?: string;
   connectionType?: string;

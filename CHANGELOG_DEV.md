@@ -8,6 +8,9 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 - **Frontend Tests**: Implemented comprehensive test suite using Vitest and React Testing Library. Covered Core Visualization (`ContainerList`, `ServiceMonitor`, `NetworkGraph`), Onboarding Wizard flow (`OnboardingWizard`), Configuration (`GatewayConfig`), and Responsive Layout (`Sidebar`, `MobileNav`, `MobileLayout`). Achieved passing status for all 20 tests.
 
 ### Fixed
+- **Frontend**: Implemented intelligent service deduplication in `ServicesPlugin` to prevent duplicate "Reverse Proxy" cards when multiple service aliases (e.g., `nginx-web`, `nginx.service`) are reported by the Agent. Priority is given to Managed and Active services.
+- **Frontend**: Added support for displaying Port Mappings on the Gateway Service card (e.g., FritzBox UPnP mappings).
+- **Backend**: Updated `GatewayState` interfaces and `FritzBoxProvider` to propagate port mappings from the router to the Digital Twin.
 - **Frontend**: Updated `ServicesPlugin` to correctly resolve "Managed" status for Remote Nginx services by handling the aliasing between service name (`nginx-web`) and Unit file (`nginx.kube`). Also improved YAML file linking to use the target YAML file referenced in the Unit file.
 - **Frontend**: Updated `ServicesPlugin` to correctly identify Nginx and ServiceBay services from Agent V4 (which sends extension-less unit names) and recognize `isReverseProxy`/`isServiceBay` flags.
 - **Agent V4:** Silenced "Parsed Nginx Routes" stderr logging which was spamming the console when file changes triggered frequent re-scans.

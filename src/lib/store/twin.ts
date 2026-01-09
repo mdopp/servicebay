@@ -1,4 +1,4 @@
-import { EnrichedContainer, ServiceUnit, SystemResources, Volume, WatchedFile, ProxyRoute } from '../agent/types';
+import { EnrichedContainer, ServiceUnit, SystemResources, Volume, WatchedFile, ProxyRoute, PortMapping } from '../agent/types';
 
 export interface NodeTwin {
   connected: boolean;
@@ -19,6 +19,7 @@ export interface GatewayState {
   upstreamStatus: 'up' | 'down';
   dnsServers?: string[];
   uptime?: number;
+  portMappings?: PortMapping[];
   lastUpdated: number;
 }
 

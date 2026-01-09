@@ -251,8 +251,52 @@ spec:
         
         // Should find the Yaml link/badge (implicit check for Managed logic working)
         // Since we didn't mock the link behavior, we assume if no crash and rendering happens it worked.
-        // We can check if YAML Path is correctly set in component logic, but hard to inspect internal state.
-        // Instead, we verify it shows up as "Managed" implicitly by NOT checking for fallback behavior if we had distinct UI.
-        // But since UI looks same, main value is regression "it renders safely".
+    });
+
+    it('deduplicates Reverse Proxy services when multiple aliases exist', async () => {
+        currentMockData = {
+          nodes: {
+            'Local': {
+              services: [
+                // Scenario: Agent sees both the unit and the underlying service alias
+                { name: 'nginx-web', activeState: 'active', subState: 'running', isReverseProxy: true },
+                { name: 'nginx.service', activeState: 'active', subState: 'running', isReverseProxy: true }
+              ],
+              containers: [],
+              files: { '/etc/containers/systemd/nginx.kube': { content: 'Yaml=nginx.yml' } }
+            }
+          },
+          proxy: { provider: 'nginx' },
+          gateway: { upstreamStatus: 'up' }
+        };
+
+        render(<ServicesPlugin />);
+        
+        await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
+        
+        // Check uniqueness using getAllByText matching the Header Title
+        const headers = screen.getAllByTitle('Reverse Proxy (Nginx)');
+        expect(headers.length).toBe(1);
+    });
+
+    it('shows Fritzbox Gateway ports', async () => {
+         currentMockData = {
+          nodes: {},
+          proxy: { provider: 'nginx' },
+          gateway: { 
+             upstreamStatus: 'up', 
+             provider: 'fritzbox',
+             portMappings: [
+                 { hostPort: 8080, containerPort: 80, protocol: 'TCP' }
+             ]
+          }
+        };
+
+        render(<ServicesPlugin />);
+        await waitFor(() => screen.getByText('FritzBox Gateway'));
+        // Expect format :8080 or 80/tcp etc.
+        // Our updated code maps it to { host: '8080', container: '80' }
+        // Display logic: p.host ? `:${p.host}` ...
+        await waitFor(() => screen.getByText(':8080'));
     });
 });

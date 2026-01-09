@@ -366,6 +366,38 @@ export default function ServicesPlugin() {
          });
     });
 
+    // Deduplicate Services (merge aliases like nginx-web and nginx)
+    const uniqueServices = new Map<string, Service>();
+    servicesList.forEach(s => {
+        const key = `${s.nodeName}:${s.name}`;
+        const existing = uniqueServices.get(key);
+        if (!existing) {
+            uniqueServices.set(key, s);
+        } else {
+            // Priority: Managed > Unmanaged, Active > Inactive
+            const isNewManaged = s.type === 'kube';
+            const isOldManaged = existing.type === 'kube';
+            
+            // If one is Managed and other isn't, prefer Managed
+            if (isNewManaged && !isOldManaged) {
+                uniqueServices.set(key, s);
+                return;
+            }
+            if (isOldManaged && !isNewManaged) return;
+            
+            // If both same type, prefer Active
+            if (s.active && !existing.active) {
+                uniqueServices.set(key, s);
+                return;
+            }
+            
+            // If both active, prefer one with Yaml Path
+            if (s.yamlPath && !existing.yamlPath) {
+                uniqueServices.set(key, s);
+            }
+        }
+    });
+
     // 2. Add Abstract Gateway Service (if not already present as a physical service)
     // We treat the Gateway (Router) as a service to ensure it appears in the list.
     const gatewayService: Service = {
@@ -380,7 +412,10 @@ export default function ServicesPlugin() {
         kubePath: '',
         yamlPath: null,
         type: 'gateway',
-        ports: [],
+        ports: (twin.gateway.portMappings || []).map(p => ({
+            host: String(p.hostPort), 
+            container: String(p.containerPort)
+        })),
         volumes: [],
         monitor: true,
         externalIP: twin.gateway.publicIp,
@@ -388,9 +423,11 @@ export default function ServicesPlugin() {
         dnsServers: twin.gateway.dnsServers,
         uptime: twin.gateway.uptime
     };
-    servicesList.push(gatewayService);
+    
+    const finalServices = Array.from(uniqueServices.values());
+    finalServices.push(gatewayService);
 
-    return { services: servicesList, nodes: nodeList };
+    return { services: finalServices, nodes: nodeList };
   }, [twin]);
 
   const loading = !isConnected && services.length === 0;
