@@ -133,16 +133,23 @@ export default function ServicesPlugin() {
     Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
          const fileKeys = Object.keys(nodeState.files);
          
-         const getManagedType = (baseName: string): 'container' | 'kube' | null => {
+         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         const getManagedType = (baseName: string, unit: any): 'container' | 'kube' | null => {
              // STRICT: Only .kube files are considered "Managed" (ServiceBay Stacks)
-             // .container files (Simple Quadlets) are considered Unmanaged/Legacy
+             // 1. Direct match
              if (fileKeys.some(f => f.endsWith(`/${baseName}.kube`))) return 'kube';
+             
+             // 2. Alias match for Nginx (nginx-web -> nginx.kube)
+             if ((unit.isReverseProxy || unit.name === 'nginx-web') && fileKeys.some(f => f.endsWith('/nginx.kube'))) {
+                 return 'kube';
+             }
+
              return null;
          };
 
          nodeState.services.forEach(unit => {
              const baseName = unit.name.replace('.service', '');
-             const managedType = getManagedType(baseName);
+             const managedType = getManagedType(baseName, unit);
              
              // Filter: Only show Managed services
              if (!managedType && !unit.description?.includes('ServiceBay')) {
@@ -183,7 +190,16 @@ export default function ServicesPlugin() {
              // Try to find Kube/YAML files to extract explicit container names
              if (managedType) {
                  const ext = managedType === 'container' ? '.container' : '.kube';
-                 const filePath = fileKeys.find(f => f.endsWith(`/${baseName}${ext}`));
+                 // Handle alias lookup for file finding too
+                 let targetFile = baseName;
+                 if ((unit.isReverseProxy || unit.name === 'nginx-web') && !fileKeys.some(f => f.endsWith(`/${baseName}${ext}`))) {
+                      // If baseName (nginx-web) .kube not found, try 'nginx'
+                      if (fileKeys.some(f => f.endsWith(`/nginx${ext}`))) {
+                          targetFile = 'nginx';
+                      }
+                 }
+                 
+                 const filePath = fileKeys.find(f => f.endsWith(`/${targetFile}${ext}`));
                  
                  if (filePath) {
                      yamlPath = filePath;
@@ -196,11 +212,15 @@ export default function ServicesPlugin() {
                               const yamlFile = match[1].trim();
                               // Simple lookup for the yaml file in the file list
                               const yamlKey = fileKeys.find(k => k.endsWith(`/${yamlFile}`));
-                              if (yamlKey && nodeState.files[yamlKey]?.content) {
-                                  try {
-                                      const yamlContent = nodeState.files[yamlKey].content;
-                                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                      const docs = yaml.loadAll(yamlContent) as any[];
+                              if (yamlKey) {
+                                  // Update yamlPath to point to the actual YAML file if available
+                                  yamlPath = yamlKey;
+                                  
+                                  if (nodeState.files[yamlKey]?.content) {
+                                      try {
+                                          const yamlContent = nodeState.files[yamlKey].content;
+                                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                          const docs = yaml.loadAll(yamlContent) as any[];
                                       docs.forEach(doc => {
                                            if (doc?.spec?.containers) {
                                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -218,6 +238,7 @@ export default function ServicesPlugin() {
                                   } catch (e) {
                                       logger.warn('ServicesPlugin', 'Failed to parse YAML for', baseName, e);
                                   }
+                                }
                               }
                           }
                      }

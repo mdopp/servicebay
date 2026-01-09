@@ -8,6 +8,7 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 - **Frontend Tests**: Implemented comprehensive test suite using Vitest and React Testing Library. Covered Core Visualization (`ContainerList`, `ServiceMonitor`, `NetworkGraph`), Onboarding Wizard flow (`OnboardingWizard`), Configuration (`GatewayConfig`), and Responsive Layout (`Sidebar`, `MobileNav`, `MobileLayout`). Achieved passing status for all 20 tests.
 
 ### Fixed
+- **Frontend**: Updated `ServicesPlugin` to correctly resolve "Managed" status for Remote Nginx services by handling the aliasing between service name (`nginx-web`) and Unit file (`nginx.kube`). Also improved YAML file linking to use the target YAML file referenced in the Unit file.
 - **Frontend**: Updated `ServicesPlugin` to correctly identify Nginx and ServiceBay services from Agent V4 (which sends extension-less unit names) and recognize `isReverseProxy`/`isServiceBay` flags.
 - **Agent V4:** Silenced "Parsed Nginx Routes" stderr logging which was spamming the console when file changes triggered frequent re-scans.
 - **Agent V4**: Fixed a bug where file timestamp updates would trigger redundant state pushes even if the service/proxy configuration logic remained identical.
