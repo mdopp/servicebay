@@ -100,7 +100,7 @@ export class NetworkService {
     }
 
     // Update Router Node with all verified domains
-    const routerNode = allNodes.find(n => n.id === 'router');
+    const routerNode = allNodes.find(n => n.id === 'gateway');
     if (routerNode && routerNode.metadata) {
         routerNode.metadata.verifiedDomains = Array.from(allVerifiedDomains);
     }
@@ -129,11 +129,11 @@ export class NetworkService {
                 });
 
                 if (targetNode) {
-                    const edgeId = `edge-router-dns-${targetNode.id}`;
+                    const edgeId = `edge-gateway-dns-${targetNode.id}`;
                     if (!allEdges.find(e => e.id === edgeId)) {
                         allEdges.push({
                             id: edgeId,
-                            source: 'router',
+                            source: 'gateway',
                             target: targetNode.id,
                             label: 'DNS-Resolver (:53)',
                             protocol: 'udp',
@@ -369,7 +369,7 @@ export class NetworkService {
 
     // Prefix IDs with nodeName to avoid collisions (except for global nodes like 'router')
     const prefix = (id: string) => (nodeName === 'local' ? id : `${nodeName}:${id}`);
-    const routerId = 'router'; // Global ID
+    const routerId = 'gateway'; // Global ID (Matched with getGlobalInfrastructure)
 
     // 0. Prepare Data for this Node
     
@@ -774,54 +774,70 @@ export class NetworkService {
         nodes.push(NodeFactory.createServiceNode(serviceGroupId, serviceRawData, nodeName, serviceMetadata));
     }
 
-    // 3. Router -> Nginx Edges (Port Forwarding & Verified Domains)
-    // If we have port forwardings to a remote node IP, we should link them too.
+    // 3. Gateway -> Service Edges (Port Forwarding & Verified Domains)
+    // We iterate ALL services to see if they are exposed via the Gateway (FritzBox)
+    // Exposure logic:
+    // A) Explicit Port Forwarding (FritzBox Port Mapping -> Service Host Port)
+    // B) Verified Domain (DNS points to Gateway IP -> Implicitly forwarded 80/443 to Service)
     
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const relevantMappings = fbStatus?.portMappings?.filter((m: any) => 
         m.enabled && nodeIPs.includes(m.internalClient)
     ) || [];
 
-    const hasMappings = relevantMappings.length > 0;
-    const hasDomains = verifiedDomains.length > 0;
-
-    if ((hasMappings || hasDomains) && nodes.find(n => n.id === nginxId)) {
-        let label = '';
-        if (hasMappings) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            label = ':' + relevantMappings.map((m: any) => m.externalPort).join(', ');
-        } else {
-            // Discovery: Derive from Digital Twin Enriched Ports (Single Source of Truth)
-            const nginxNode = nodes.find(n => n.id === nginxId);
-            const listenPorts = new Set<string>();
-            
-            if (nginxNode && nginxNode.rawData && nginxNode.rawData.ports) {
+    // Iterate over all services/nodes on this machine
+    for (const targetNode of nodes) {
+        // Skip non-services or things without ports
+        if (!targetNode.rawData || !targetNode.rawData.ports) continue;
+        
+        // Strict Type for ports
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const targetPorts = targetNode.rawData.ports.map((p: any) => typeof p === 'object' ? p.host : p);
+        
+        // 3a. Check Port Forwardings
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const matchingMappings = relevantMappings.filter((m: any) => 
+                targetPorts.includes(m.internalPort)
+        );
+        
+        // 3b. Check Verified Domains (Implicit 80/443)
+        // If this node handles verified domains, IT IS the target for HTTP traffic
+        // This is primarily for Nginx/Proxy, but could apply to any service handling domains
+        const handlesDomains = targetNode.metadata?.verifiedDomains && (targetNode.metadata.verifiedDomains as string[]).length > 0;
+        
+        // Combine
+        if (matchingMappings.length > 0 || handlesDomains) {
+                const labels = new Set<string>();
+                // Add forwardings
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                nginxNode.rawData.ports.forEach((p: any) => {
-                     const hostPort = typeof p === 'object' ? p.host : p;
-                     if (hostPort) listenPorts.add(hostPort.toString());
-                });
-            }
+                matchingMappings.forEach((m:any) => labels.add(`:${m.externalPort}`));
+                
+                if (handlesDomains) {
+                    // Implicit ports if not already mapped
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    if (!matchingMappings.some((m:any) => m.externalPort === 80)) labels.add(':80');
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    if (!matchingMappings.some((m:any) => m.externalPort === 443)) labels.add(':443');
+                }
 
-            if (listenPorts.size > 0) {
-                // Sort numerically if possible
-                label = ':' + Array.from(listenPorts)
-                    .sort((a, b) => parseInt(a) - parseInt(b))
-                    .join(', :');
-            } else {
-                label = ''; // No label if no ports discovered
-            }
+                if (labels.size === 0) continue;
+
+                // Sort numeric
+                const label = Array.from(labels)
+                    .sort((a,b) => parseInt(a.replace(':','')) - parseInt(b.replace(':','')))
+                    .join(', ');
+                
+                // Create Edge
+                edges.push({
+                id: `edge-gateway-${targetNode.id}`,
+                source: routerId, // 'gateway'
+                target: targetNode.id,
+                label: label,
+                protocol: handlesDomains ? 'https' : 'tcp',
+                port: 0, // Visual only
+                state: 'active'
+            });
         }
-
-        edges.push({
-            id: `edge-router-${nginxId}`,
-            source: routerId,
-            target: nginxId,
-            label: label,
-            protocol: hasDomains ? 'http' : 'tcp',
-            port: hasMappings ? relevantMappings[0].externalPort : (hasDomains ? 80 : 0),
-            state: 'active'
-        });
     }
 
     // 4. Nginx -> Containers (Only if Nginx is on this node)
