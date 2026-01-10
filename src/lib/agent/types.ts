@@ -26,8 +26,8 @@ export interface SystemResources {
 }
 
 export interface PortMapping {
-  hostPort: number;
-  containerPort: number;
+  hostPort?: number;
+  containerPort?: number;
   host_port?: number;
   container_port?: number;
   protocol: string;
@@ -65,10 +65,12 @@ export interface EnrichedContainer {
   }[];
   labels: Record<string, string>;
   networks: string[];
+  isHostNetwork?: boolean;
   podId?: string;
   podName?: string;
   isInfra?: boolean;
   pid?: number;
+  verifiedDomains?: string[]; // Enriched by TwinStore (Nginx/Traefik Reverse Lookup)
 }
 
 export interface ServiceUnit {
@@ -82,6 +84,14 @@ export interface ServiceUnit {
   active?: boolean;
   isReverseProxy?: boolean;
   isServiceBay?: boolean;
+  isManaged?: boolean; // True if backed by a .kube file (ServiceBay Stack)
+  isPrimaryProxy?: boolean; // Managed by TwinStore (Consistency)
+  associatedContainerIds?: string[]; // IDs of containers managed by this service (SINGLE SOURCE OF TRUTH)
+  ports?: PortMapping[];
+  // Derived/Enriched Properties (calculated by TwinStore)
+  effectiveHostNetwork?: boolean;
+  proxyConfiguration?: any; // Nginx/Traefik Routing Table (Enriched)
+  verifiedDomains?: string[]; // Enriched by TwinStore (Nginx/Traefik Reverse Lookup)
 }
 
 export interface ProxyRoute {

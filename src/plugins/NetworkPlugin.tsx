@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-// import { useNetworkGraph } from '@/hooks/useSharedData';
+
 import { 
   ReactFlow, 
   Background, 
@@ -130,18 +130,18 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
       // Pre-calculate effective ports to use in IP extraction if data.ports is empty
       // (e.g. Pod Nodes which inherit ports from children)
       // Make sure we merge distinct ports if multiple sources exist
-      const rawPorts = (data.ports && data.ports.length > 0) 
-          ? data.ports 
+      // PREFER: rawData.ports if available (Single Source of Truth)
+      const directPorts = data.rawData?.ports;
+      const rawPorts = (directPorts && directPorts.length > 0) 
+          ? directPorts 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           : (summary.portMap?.map((p: any) => p) || []);
       
-      const effectivePorts = rawPorts; // No deep merge needed for now, trust source
 
       // Helper to extract IP info from ports
       const extractIpInfo = () => {
-    // Rely on rawData if available for consistency, or fallback to effectivePorts
     
-    if (!effectivePorts || effectivePorts.length === 0) return { globalIp: null, portMap: [] };
+    if (!rawPorts || rawPorts.length === 0) return { globalIp: null, portMap: [] };
     
     // Fallback IP (Node IP or Link Targets)
     let fallbackIp = '0.0.0.0';
@@ -159,7 +159,7 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const parsedPorts = effectivePorts.map((p: any) => {
+    const parsedPorts = rawPorts.map((p: any) => {
         const isObj = typeof p === 'object' && p !== null;
         // Check both camelCase (API) and snake_case (Agent) properties
         // Also handle the case where p is just a number (legacy/simple)
@@ -599,10 +599,11 @@ export default function NetworkPlugin() {
         
         // Find target node to get available ports
         const targetNode = nodes.find(n => n.id === params.target);
-        if (targetNode && targetNode.data.ports && Array.isArray(targetNode.data.ports)) {
+        const rawData = targetNode?.data?.rawData as any;
+        if (targetNode && rawData?.ports && Array.isArray(rawData.ports)) {
             // Extract ports (handle both number and object format)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const ports = targetNode.data.ports.map((p: any) => {
+            const ports = rawData.ports.map((p: any) => {
                 if (typeof p === 'object') return p.host || p.container;
                 return p;
             }).filter((p: number) => p > 0);
@@ -662,10 +663,11 @@ export default function NetworkPlugin() {
     if (data.subLabel && String(data.subLabel).toLowerCase().includes(q)) return true;
     if (data.hostname && String(data.hostname).toLowerCase().includes(q)) return true;
     
-    // Check ports
-    if (data.ports && Array.isArray(data.ports)) {
-        const portsStr = data.ports.map((p: number | { host: number, container: number }) => {
-            if (typeof p === 'object') return `${p.host} ${p.container}`;
+    // Check ports (Prefer rawData)
+    const ports = data.rawData?.ports;
+    if (ports && Array.isArray(ports)) {
+        const portsStr = ports.map((p: any) => {
+            if (typeof p === 'object') return `${p.host || p.host_port} ${p.container || p.container_port}`;
             return String(p);
         }).join(' ');
         if (portsStr.includes(q)) return true;
@@ -730,7 +732,7 @@ export default function NetworkPlugin() {
              // eslint-disable-next-line @typescript-eslint/no-explicit-any
              const verifiedDomains = Array.from(new Set(children.flatMap(c => (c.data as any).metadata?.verifiedDomains || []) as string[]));
              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-             const portMap = children.flatMap(c => (c.data as any).ports || []).map(p => typeof p === 'object' ? p : { host: p, container: p });
+             const portMap = children.flatMap(c => (c.data as any).rawData?.ports || []).map(p => typeof p === 'object' ? p : { host: p, container: p });
              
              return {
                  ...node,
@@ -876,7 +878,6 @@ export default function NetworkPlugin() {
                 type: n.type,
                 status: n.status,
                 subLabel: n.subLabel,
-                ports: n.ports,
                 rawData: n.rawData
             },
             parentId: n.parentNode,
@@ -1431,12 +1432,19 @@ export default function NetworkPlugin() {
                                   <span className="font-mono">{selectedNodeData.ip}</span>
                               </div>
                           )}
-                          {selectedNodeData.ports && selectedNodeData.ports.length > 0 && (
+                          {/* Host Network Flag */}
+                          {selectedNodeData.rawData?.hostNetwork && (
+                              <div className="flex justify-between">
+                                  <span className="text-gray-500">Mode</span>
+                                  <span className="font-mono text-amber-600 dark:text-amber-400 font-bold">Host Network</span>
+                              </div>
+                          )}
+                          {selectedNodeData.rawData?.ports && selectedNodeData.rawData.ports.length > 0 && (
                               <div className="flex justify-between">
                                   <span className="text-gray-500">Ports</span>
                                   <span className="font-mono">
                                     {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                    {selectedNodeData.ports.map((p: any) => {
+                                    {selectedNodeData.rawData.ports.map((p: any) => {
                                         if (typeof p === 'object') {
                                             const h = p.host || p.host_port;
                                             const c = p.container || p.container_port;

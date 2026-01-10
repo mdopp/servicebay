@@ -291,6 +291,15 @@ export class AgentHandler extends EventEmitter {
       }
   }
 
+  public async setResourceMode(active: boolean): Promise<void> {
+      if (!this.isConnected) return;
+      try {
+          await this.sendCommand('setResourceMode', { active });
+      } catch (e) {
+          logger.warn(this.nodeName, 'Failed to set resource mode:', e);
+      }
+  }
+
   private cleanupPending() {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for (const [id, req] of this.pendingRequests) {

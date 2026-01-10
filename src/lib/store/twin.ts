@@ -1,4 +1,5 @@
 import { EnrichedContainer, ServiceUnit, SystemResources, Volume, WatchedFile, ProxyRoute, PortMapping } from '../agent/types';
+import { logger } from '../logger';
 
 export interface NodeTwin {
   connected: boolean;
@@ -21,13 +22,6 @@ export interface GatewayState {
   uptime?: number;
   portMappings?: PortMapping[];
   lastUpdated: number;
-}
-
-export interface ProxyRoute {
-  host: string;
-  targetService: string;
-  targetPort: number;
-  ssl: boolean;
 }
 
 export interface ProxyState {
@@ -60,10 +54,15 @@ export class DigitalTwinStore {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const globalStore = global as any;
     if (!globalStore.__DIGITAL_TWIN__) {
+      const id = Math.random().toString(36).substring(7);
+      logger.info('TwinStore', `Creating NEW Singleton (PID: ${process.pid}) | Instance: ${id}`);
       globalStore.__DIGITAL_TWIN__ = new DigitalTwinStore();
+      globalStore.__DIGITAL_TWIN__.instanceId = id;
     }
     return globalStore.__DIGITAL_TWIN__;
   }
+
+  public instanceId: string = "unknown";
 
   public registerNode(nodeId: string) {
     if (!this.nodes[nodeId]) {
@@ -89,35 +88,348 @@ export class DigitalTwinStore {
 
     // Validation
     if (data.containers !== undefined && !Array.isArray(data.containers)) {
-        console.error(`[TwinStore] Invalid containers update for ${nodeId} (expected Array):`, typeof data.containers);
+        logger.error('TwinStore', `Invalid containers update for ${nodeId} (expected Array):`, typeof data.containers);
         delete data.containers;
     }
     if (data.services !== undefined && !Array.isArray(data.services)) {
-        console.error(`[TwinStore] Invalid services update for ${nodeId} (expected Array):`, typeof data.services);
+        logger.error('TwinStore', `Invalid services update for ${nodeId} (expected Array):`, typeof data.services);
         delete data.services;
     }
     if (data.volumes !== undefined && !Array.isArray(data.volumes)) {
-        console.error(`[TwinStore] Invalid volumes update for ${nodeId} (expected Array):`, typeof data.volumes);
+        logger.error('TwinStore', `Invalid volumes update for ${nodeId} (expected Array):`, typeof data.volumes);
         delete data.volumes;
     }
     if (data.proxy !== undefined && !Array.isArray(data.proxy)) {
-         console.error(`[TwinStore] Invalid proxy update for ${nodeId} (expected Array):`, typeof data.proxy);
+         logger.error('TwinStore', `Invalid proxy update for ${nodeId} (expected Array):`, typeof data.proxy);
          delete data.proxy;
     }
 
     // Files is a Record (Object)
     if (data.files !== undefined && (typeof data.files !== 'object' || data.files === null || Array.isArray(data.files))) {
-         console.error(`[TwinStore] Invalid files update for ${nodeId} (expected Object):`, typeof data.files);
+         logger.error('TwinStore', `Invalid files update for ${nodeId} (expected Object):`, typeof data.files);
          delete data.files;
     }
+
+    // CONSISTENCY ENFORCEMENT: Identify Authoritative Proxy Service
+    // We do this ONCE during the update to establish the Single Source of Truth
+    if (data.services) {
+        // Simple logic: Active & Standard preferred. But once picked, it is THE proxy.
+        // We inject a property `isPrimaryProxy` into the service object so consumers don't have to guess.
+        
+        // 1. Reset existing flags in incoming data
+        data.services.forEach(s => delete s.isPrimaryProxy);
+
+        // 2. Select the winner
+        const primary = data.services
+            .filter(s => s.isReverseProxy)
+            .sort((a, b) => {
+                 // Active wins
+                 if (a.active && !b.active) return -1;
+                 if (!a.active && b.active) return 1;
+                 // Standard name wins
+                 const standards = ['nginx', 'nginx-web', 'traefik', 'caddy'];
+                 const isStandardA = standards.includes(a.name);
+                 const isStandardB = standards.includes(b.name);
+                 if (isStandardA && !isStandardB) return -1;
+                 if (!isStandardA && isStandardB) return 1;
+                 return 0;
+            })[0];
+        
+        if (primary) {
+            primary.isPrimaryProxy = true;
+            // console.log(`[TwinStore] Selected Authoritative Proxy for ${nodeId}: ${primary.name}`);
+        }
+    }
+
+    // CONSISTENCY ENFORCEMENT: Link Services to Containers
+    const targetServices = data.services || this.nodes[nodeId]?.services || [];
+    const targetContainers = data.containers || this.nodes[nodeId]?.containers || [];
+
+    if (targetServices.length > 0 && targetContainers.length > 0) {
+        targetServices.forEach(s => {
+             // 1. Strict Label Match (PODMAN_SYSTEMD_UNIT)
+             const labelMatches = targetContainers.filter(c => c.labels?.['PODMAN_SYSTEMD_UNIT'] === `${s.name}.service`);
+             
+             // 2. Pod Match (If service name matches Pod name)
+             const podMatches = targetContainers.filter(c => {
+                 if (!c.podName) return false;
+                 // container.podName is usually just the name.
+                 return c.podName === s.name || c.podName === `${s.name}-pod`;
+             });
+
+             // 3. Strict Name Match (Fallback for basic containers)
+             const nameMatches = targetContainers.filter(c => {
+                 // Strict: name equals s.name or systemd-s.name
+                 return c.names.some(n => {
+                     const name = n.startsWith('/') ? n.slice(1) : n;
+                     return name === s.name || name === `systemd-${s.name}`;
+                 });
+             });
+
+             // Merge unique IDs
+             const allIds = new Set([
+                 ...(s.associatedContainerIds || []),
+                 ...labelMatches.map(c => c.id),
+                 ...podMatches.map(c => c.id),
+                 ...nameMatches.map(c => c.id)
+             ]);
+             
+             s.associatedContainerIds = Array.from(allIds);
+        });
+    }
     
+    // APPLY UPDATE TO STORE
     this.nodes[nodeId] = {
-      ...this.nodes[nodeId],
-      ...data,
-      lastSync: Date.now()
+        ...this.nodes[nodeId],
+        ...data
     };
-    
+
+    // ENRICHMENT: Calculate Derived Properties (Effective Ports, Host Network)
+    // This makes the Twin the Single Source of Truth for "Service Properties"
+    this.enrichNode(nodeId, this.nodes[nodeId]);
+
+    // AGGREGATION: Update Global Proxy State
+    this.recalculateGlobalProxy();
+
+    // Debug logging for updates
+    if (Object.keys(data).length > 0) {
+       logger.info('TwinStore', `Updated ${nodeId} | Keys: ${Object.keys(data).join(', ')} | Instance: ${this.instanceId}`);
+    }
+
     this.notifyListeners();
+  }
+
+  private recalculateGlobalProxy() {
+      const allRoutes: ProxyRoute[] = [];
+      const seen = new Set<string>();
+
+      // Aggregate routes from all connected nodes
+      Object.values(this.nodes).forEach(node => {
+          if (node.connected && node.proxy && node.proxy.length > 0) {
+              node.proxy.forEach(route => {
+                  // Unique key based on host
+                  const key = route.host;
+                  if (!seen.has(key)) {
+                      seen.add(key);
+                      allRoutes.push(route);
+                  }
+              });
+          }
+      });
+
+      this.proxy.routes = allRoutes;
+      
+      // REVERSE MAPPING: Enrich Services/Containers with Verified Domains
+      this.mapDomainsToServices();
+  }
+
+  private mapDomainsToServices() {
+      // Create a lookup map for Global Routes
+      // Target (IP:Port or ServiceName:Port) -> Domain[]
+      const targetMap = new Map<string, string[]>();
+      
+      this.proxy.routes.forEach(r => {
+          // Normalize Target
+          // r.targetService can be: "192.168.1.100:8080", "nginx:80", "http://container:3000"
+          let target = r.targetService.replace(/^https?:\/\//, '');
+          // Strip trailing slash
+          if (target.endsWith('/')) target = target.slice(0, -1);
+          
+          if (!targetMap.has(target)) {
+              targetMap.set(target, []);
+          }
+          targetMap.get(target)!.push(r.host);
+      });
+
+      // Iterate all Nodes -> Services/Containers to match targets
+      Object.entries(this.nodes).forEach(([nodeId, node]) => {
+          const nodeIPs = new Set<string>();
+          // Try to get Node IPs
+          if (node.resources?.network) {
+               Object.values(node.resources.network).flat().forEach(net => {
+                   if (net.family === 'IPv4' && !net.internal) nodeIPs.add(net.address);
+               });
+          }
+          // Also check explicit metadata passed via gateway config or manual settings? 
+          // For now, rely on resources.network or loopback if router is local.
+          
+          // Container Helper
+          const enrichEntity = (entity: EnrichedContainer | ServiceUnit) => {
+               // Must have ports to be reachable
+               if (!entity.ports || entity.ports.length === 0) return;
+               
+               const matchedDomains = new Set<string>();
+               
+               entity.ports.forEach(p => {
+                    const hostPort = p.hostPort || p.host_port;
+                    if (!hostPort) return;
+                    
+                    // Possible targets for this service:
+                    // 1. Unqualified: "containerName:Port" (Only if docker network) - Hard to match here without network context.
+                    // 2. Localhost: "127.0.0.1:Port" (If proxy is on SAME node)
+                    // 3. NodeIP: "192.168.x.x:Port" (If proxy is EXTERNAL or using host binding)
+                    
+                    const targetsToCheck = [
+                        `127.0.0.1:${hostPort}`,
+                        `localhost:${hostPort}`,
+                        `0.0.0.0:${hostPort}`
+                    ];
+                    
+                    if (nodeIPs.size > 0) {
+                        nodeIPs.forEach(ip => targetsToCheck.push(`${ip}:${hostPort}`));
+                    }
+                    
+                    targetsToCheck.forEach(t => {
+                        if (targetMap.has(t)) {
+                            targetMap.get(t)!.forEach(d => matchedDomains.add(d));
+                        }
+                    });
+               });
+               
+               if (matchedDomains.size > 0) {
+                   entity.verifiedDomains = Array.from(matchedDomains);
+               } else {
+                   delete entity.verifiedDomains;
+               }
+          };
+
+          if (node.services) node.services.forEach(enrichEntity);
+          if (node.containers) node.containers.forEach(enrichEntity);
+      });
+  }
+
+  private enrichNode(nodeId: string, node: NodeTwin) {
+      if (!node.services || !node.containers) return;
+
+      // 1. Build Metrics for Dynamic Port Lookup
+      const pidToPorts = new Map<number, PortMapping[]>();
+      node.containers.forEach(c => {
+          if (c.state === 'running' && c.pid && c.ports && c.ports.length > 0) {
+              pidToPorts.set(c.pid, c.ports);
+          }
+      });
+      const containerMap = new Map<string, EnrichedContainer>();
+      node.containers.forEach(c => containerMap.set(c.id, c));
+
+      // 2. Iterate Services to Calculate Effective State
+      node.services.forEach(svc => {
+          const linkedIds = svc.associatedContainerIds || [];
+          const linkedContainers = linkedIds.map(id => containerMap.get(id)).filter((c): c is EnrichedContainer => !!c);
+
+          // A. Effective Host Network
+          // If ANY linked container is host network, the service is effectively host network
+          const isContainerHostNetwork = linkedContainers.some(c => c.isHostNetwork || c.networks?.includes('host'));
+          svc.effectiveHostNetwork = isContainerHostNetwork; // Note: Service unit file might not say it, but runtime does.
+
+          // C. Proxy-Specific Enrichment (Source of Truth for Nginx Ports)
+          if (svc.isPrimaryProxy && node.proxy && node.proxy.length > 0) {
+              const standardPorts = new Set<number>();
+              
+              // 1. Gather configured routes
+              node.proxy.forEach(r => {
+                  standardPorts.add(80); // Always listen on 80
+                  if (r.ssl) standardPorts.add(443);
+              });
+
+              // 2. Map to PortMapping structure
+              const derivedPorts: PortMapping[] = Array.from(standardPorts).map(p => ({
+                  hostPort: p,
+                  containerPort: p, // Nginx usually maps 80:80, 443:443 on host network
+                  protocol: 'tcp', 
+                  hostIp: '0.0.0.0'
+              }));
+              
+              // 3. MERGE with Runtime Ports (This is the critical fix)
+              // If the actual container has other listening ports (e.g. 81, 8080), we merge them in!
+              // We rely on the generic port gathering loop below to find them, BUT we need to make sure we don't return early.
+              
+              // Enrich with Proxy Configuration (Nginx Routes)
+              if (node.proxy) {
+                  svc.proxyConfiguration = {
+                      servers: node.proxy.map((r: any) => ({
+                          server_name: [r.host],
+                          listen: r.ssl ? ['443 ssl', '80'] : ['80'],
+                          locations: [{
+                              path: '/',
+                              proxy_pass: typeof r.targetService === 'string' && r.targetService.startsWith('http') ? r.targetService : `http://${r.targetService}`
+                          }],
+                          // Metadata
+                          _agent_data: true, // Marker for Frontend
+                          _ssl: r.ssl,
+                          _targetPort: r.targetPort || 80
+                      }))
+                  };
+              }
+              
+              // DO NOT RETURN EARLY! 
+              // Instead, initialize 'dynamicPorts' with our derived ones, and let the rest of the logic
+              // merge in the actual container ports (which will catch 81, etc.)
+              // dynamicPorts = derivedPorts; (Wait, we need to convert format matching below)
+              // Actually, simply pushing them to dynamicPorts is enough if we trust our deduplication logic below.
+              
+              // Actually dynamicPorts are 'discovered' ports. derivedPorts are 'assumed' ports.
+              // We can just add them to the svc.ports at the end.
+              
+              // Let's seed the discovered ports with the assumed ones, so at least 80/443 show up even if agent fails.
+              // But if agent succeeds (which it should now), it will find 80/443/81.
+              // So maybe we don't need derivedPorts AT ALL if discovery works?
+              // YES. If discovery works, we should trust it. The 'derivedPorts' was a fallback.
+              // But 'isPrimaryProxy' logic was overriding everything.
+              
+              // FIX: Remove 'return;' to allow runtime discovery to augment/replace these defaults.
+              // We'll add derivedPorts ONLY if they aren't found by discovery.
+          }
+
+          // B. Effective Ports (Consolidated into 'ports')
+          // Priority 1: Dynamic Ports from PID (if running & host network)
+          let dynamicPorts: PortMapping[] = [];
+          
+          // ALWAYS TRY TO ENRICH PORTS FROM LINKED CONTAINERS
+          // Whether it is host network or not, if the container has ports, the service should have them.
+          // The previous condition (svc.effectiveHostNetwork || linkedContainers.some(c => c.ports.length == 0)) was too restrictive.
+          
+          // Helper for robust key access (camelCase vs snake_case)
+          const getHP = (p: PortMapping) => p.hostPort || p.host_port;
+          const getCP = (p: PortMapping) => p.containerPort || p.container_port;
+
+          // Case 1: Dynamic PID Ports (Host Network/Socket Activation)
+          if (svc.active && (svc.effectiveHostNetwork || linkedContainers.some(c => c.ports && c.ports.length === 0))) {
+              linkedContainers.forEach(c => {
+                   if (c.pid && pidToPorts.has(c.pid)) {
+                       const ports = pidToPorts.get(c.pid)!;
+                       // Deduplicate
+                       ports.forEach(p => {
+                           // Loose matching on port numbers using robust helpers
+                           if (!dynamicPorts.some(dp => getHP(dp) === getHP(p) && getCP(dp) === getCP(p) && dp.protocol === p.protocol)) {
+                               dynamicPorts.push(p);
+                           }
+                       });
+        
+                   }
+              });
+          }
+          
+          // Case 2: Static Container Ports (Bridge Mode / Port Mappings)
+          // Even if not host network, we want to aggregate all ports from all containers in this pod/service.
+          linkedContainers.forEach(c => {
+               if (c.ports) {
+                   c.ports.forEach(p => {
+                       // Deduplicate against dynamic ports AND existing list
+                       if (!dynamicPorts.some(dp => getHP(dp) === getHP(p) && getCP(dp) === getCP(p))) {
+                           dynamicPorts.push(p);
+                       }
+                   });
+               }
+          });
+
+          if (dynamicPorts.length > 0) {
+              svc.ports = dynamicPorts;
+              // logger.debug('TwinStore', `Enriched ${svc.name} with dynamic ports: ${dynamicPorts.length}`);
+          } else { 
+              // Priority 3: Keep existing 'ports' (Static Service Definition)
+              // No action needed as svc.ports is already set from agent data
+          }
+      });
   }
 
   public updateGateway(data: Partial<GatewayState>) {
@@ -148,6 +460,7 @@ export class DigitalTwinStore {
   
   public getSnapshot() {
       return {
+          instanceId: this.instanceId,
           nodes: this.nodes,
           gateway: this.gateway,
           proxy: this.proxy

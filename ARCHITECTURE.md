@@ -99,6 +99,113 @@ interface DigitalTwinStore {
 ### A. The Agent (State Aggregator)
 A single lightweight Python script (`src/lib/agent/v4/agent.py`) running on the target host. It acts as the "Digital Twin" source of truth, optimizing data collection to minimize system load while ensuring real-time responsiveness.
 
+## Data Lineage & Visualization
+
+The system flows data from the raw source (Linux Host) through the Backend Aggregator to the Frontend visualization.
+
+### 1. Data Flow Diagram
+
+```mermaid
+graph TD
+    %% Define Styles
+    classDef source fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef agent fill:#e0f2f1,stroke:#00695c,stroke-width:2px;
+    classDef store fill:#f3e5f5,stroke:#4a148c,stroke-width:2px;
+    classDef api fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    classDef ui fill:#fbe9e7,stroke:#bf360c,stroke-width:2px;
+
+    %% Source Layer
+    subgraph "Target Node (Linux)"
+        direction TB
+        Podman[Podman Engine]:::source
+        Systemd[Systemd User]:::source
+        Nginx[Nginx Configs]:::source
+        SS[Netstat / SS]:::source
+    end
+
+    %% Agent Layer
+    subgraph "Agent V4 (Python)"
+        direction TB
+        Collector[State Aggregator]:::agent
+        
+        Podman -->|JSON| Collector
+        Systemd -->|JSON| Collector
+        Nginx -->|File Content| Collector
+        SS -->|Ports Map| Collector
+
+        Object_C[Object: EnrichedContainer]:::agent
+        Object_S[Object: ServiceUnit]:::agent
+        Object_F[Object: WatchedFile]:::agent
+
+        Collector -.-> Object_C
+        Collector -.-> Object_S
+        Collector -.-> Object_F
+    end
+
+    %% Backend Layer
+    subgraph "Backend (Digital Twin)"
+        direction TB
+        Ingest[AgentHandler]:::store
+        Store[DigitalTwinStore]:::store
+        
+        Collector ==>|Push JSON Stream| Ingest
+        Ingest -->|Update| Store
+
+        NodeTwin[Object: NodeTwin]:::store
+        NodeTwin_C[NodeTwin.containers]:::store
+        NodeTwin_S[NodeTwin.services]:::store
+        NodeTwin_P[NodeTwin.proxy]:::store
+
+        Store -.-> NodeTwin
+        NodeTwin -- contains --> NodeTwin_C
+        NodeTwin -- contains --> NodeTwin_S
+        NodeTwin -- contains --> NodeTwin_P
+    end
+
+    %% Service Layer
+    subgraph "Network Service"
+        direction TB
+        NetSvc[NetworkService]:::api
+        
+        Store -->|Read| NetSvc
+        NetSvc -->|Transform| GraphObj[Object: NetworkGraph]:::api
+        
+        RawData[Inject: rawData]:::api
+        NodeTwin_C -.-> RawData
+        NodeTwin_S -.-> RawData
+        RawData -- attached to --> GraphObj
+    end
+
+    %% Frontend
+    subgraph "Frontend (React)"
+        direction TB
+        Hook[useDigitalTwin]:::ui
+        Monitor[ServiceMonitor]:::ui
+        
+        NetSvc ==>|REST API| Hook
+        Hook -->|Render| Monitor
+        
+        Monitor -->|Display| Details[Visual: Network Details]:::ui
+        Details -.->|Reads| RawData
+    end
+```
+
+### 2. Object Mapping
+| Layer | Object Name | Description | Key Properties |
+|-------|-------------|-------------|----------------|
+| **Agent** | `EnrichedContainer` | Normalized Podman Container | `Id`, `State`, `Ports` (ss-merged), `Labels`, `Pid` |
+| **Agent** | `ServiceUnit` | Systemd Service Status | `unit`, `activeState`, `subState`, `path` |
+| **Backend** | `NodeTwin` | In-Memory Node State | `containers[]`, `services[]`, `files{}`, `resources` |
+| **API** | `NetworkNode` | Graph Node Representation | `id`, `type`, `ports`, `rawData`, `metadata` |
+| **API** | `rawData` | **Context Injection** | Contains the full source objects (`container`, `service`) attached to the graph node for UI consumption. |
+
+### 3. Transformation Logic
+1.  **Collection**: Agent runs `podman ps --format json` and `ss -tulpnH`. It merges PID ports into the container object to handle Host Network mode.
+2.  **Sync**: Agent pushes the full state to `AgentHandler`, which updates `DigitalTwinStore.nodes[nodeID]`.
+3.  **Graph Generation**: `NetworkService` reads the Store. It creates `NetworkNode` objects (e.g., "nginx", "immich").
+4.  **Enrichment**: Crucially, `NetworkService` injects the original `NodeTwin.container` and `NodeTwin.service` objects into `NetworkNode.rawData`.
+5.  **Visualization**: `ServiceMonitor` reads `rawData.container.Image` or `rawData.service.activeState` to display detailed runtime info without needing extra API calls.
+
 #### 1. Agent Components
 
 | Component | Trigger | Role & Data Provided |
@@ -276,6 +383,18 @@ The project employs a robust testing strategy ensuring reliability across the Ag
     *   `tests/backend/store_robustness.test.ts`: Verifies the Digital Twin's immunity to invalid payloads.
     *   `tests/backend/graph.test.ts`: Validates the aggregation logic for the Network Map.
     *   `tests/backend/api.test.ts`: Integration tests for key REST endpoints.
+
+### 3. Frontend Component & Integration Tests
+*   **Tools**:
+    *   **Runner**: [Vitest](https://vitest.dev/) (with `jsdom` environment).
+    *   **Library**: [React Testing Library (RTL)](https://testing-library.com/) for component rendering and interaction.
+    *   **Mocking**: `vi.mock()` is used primarily to bypass the `useDigitalTwin` hook, injecting fixture data (Nodes, Containers, Gateway) directly into components.
+*   **Philosophy**: "Integration over Implementation". Tests focus on what the user sees (rendering) and does (clicks/inputs), rather than internal state implementation.
+*   **Key Test Scenarios**:
+    *   **Core Visualization**: Verifies `ContainerList`, `ServicesPlugin` (Ports, Domains, Badges), and `NetworkPlugin` render correctly with mocked store data.
+    *   **Logic & Mapping**: ensures complex logic in `ServicesPlugin` (like mapping Proxy Routes to Service Cards or identifying the Gateway) works as expected.
+    *   **Interactive Forms**: Validates form inputs and submission payloads (e.g., `ServiceForm`).
+    *   **Layout**: checks responsiveness (`MobileNav`, `Sidebar`).
 
 ## Tech Stack
 

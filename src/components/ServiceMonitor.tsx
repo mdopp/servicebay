@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Terminal, Activity, Box, ArrowLeft, Network } from 'lucide-react';
+import { RefreshCw, Terminal, Activity, Box, ArrowLeft, FileJson } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { logger } from '@/lib/logger';
 import ContainerList from './ContainerList';
 
 interface ServiceMonitorProps {
@@ -45,11 +46,23 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
             const names = Array.isArray(c.Names) ? c.Names : [c.Names];
             return names.some((n: string) => n.includes(startName));
         });
+
+        // Normalize for ContainerList (expects lowercase id, nodeName, etc.)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const normalizedPs = filteredPs.map((c: any) => ({
+            ...c,
+            id: c.Id,
+            names: Array.isArray(c.Names) ? c.Names : [c.Names],
+            image: c.Image,
+            state: c.State,
+            status: c.Status,
+            nodeName: node || 'Local'
+        }));
         
-        setLogs({ ...data, podmanPs: filteredPs });
+        setLogs({ ...data, podmanPs: normalizedPs });
         
-        if (filteredPs.length > 0 && !selectedContainerId) {
-            setSelectedContainerId(filteredPs[0].Id);
+        if (normalizedPs.length > 0 && !selectedContainerId) {
+            setSelectedContainerId(normalizedPs[0].Id);
         }
       }
       if (statusRes.ok) {
@@ -59,23 +72,20 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
       if (graphRes.ok) {
           const graph = await graphRes.json();
           // Find the node corresponding to this service
-          // 1. Check for Proxy
-          // Handle 'nginx-web' without extension or 'nginx-web.service' with extension
+          // STRICT LOOKUP: Use rawData.name to match serviceName directly.
+          // No fuzzy guessing, no hardcoded proxy checks.
           const cleanName = serviceName.replace('.service', '');
 
-          if (cleanName.includes('Reverse Proxy') || cleanName === 'nginx' || cleanName === 'nginx-web') {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const proxyNode = graph.nodes.find((n: any) => n.type === 'proxy' && (node ? n.node === node : true));
-              if (proxyNode) setNetworkData(proxyNode);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const targetNode = graph.nodes.find((n: any) => 
+               n.rawData && n.rawData.name === cleanName && 
+               (node ? n.node === node : true)
+          );
+
+          if (targetNode) {
+              setNetworkData(targetNode);
           } else {
-              // 2. Check for Service
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const serviceNode = graph.nodes.find((n: any) => 
-                  ((n.type === 'service' && n.label && n.label.replace('.service', '') === cleanName) ||
-                  (n.type === 'container' && n.label && n.label.includes(cleanName))) &&
-                  (node ? n.node === node : true)
-              );
-              if (serviceNode) setNetworkData(serviceNode);
+              console.warn(`[ServiceMonitor] Node not found for service: ${cleanName}`);
           }
       }
     } catch (e) {
@@ -156,7 +166,7 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
             className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'network' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
             onClick={() => setActiveTab('network')}
             >
-            <Network size={16} /> Network & Raw Data
+            <FileJson size={16} /> Raw Data / Config
             </button>
         </div>
 
@@ -180,56 +190,10 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
                 <div className="space-y-6">
                     {networkData ? (
                         <>
-                            {/* Network Details */}
-                            <div className="bg-gray-900 p-4 rounded border border-gray-800">
-                                <h3 className="text-gray-400 text-sm font-bold mb-4 uppercase tracking-wider">Network Details</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                                    <div className="flex justify-between border-b border-gray-800 pb-2">
-                                        <span className="text-gray-500">Node ID</span>
-                                        <span className="font-mono text-gray-300">{networkData.id}</span>
-                                    </div>
-                                    <div className="flex justify-between border-b border-gray-800 pb-2">
-                                        <span className="text-gray-500">Type</span>
-                                        <span className="font-mono text-gray-300">{networkData.type}</span>
-                                    </div>
-                                    <div className="flex justify-between border-b border-gray-800 pb-2">
-                                        <span className="text-gray-500">Status</span>
-                                        <span className={`font-mono ${networkData.status === 'up' ? 'text-green-400' : 'text-red-400'}`}>
-                                            {networkData.status?.toUpperCase()}
-                                        </span>
-                                    </div>
-                                    {networkData.ip && (
-                                        <div className="flex justify-between border-b border-gray-800 pb-2">
-                                            <span className="text-gray-500">IP Address</span>
-                                            <span className="font-mono text-gray-300">{networkData.ip}</span>
-                                        </div>
-                                    )}
-                                    {networkData.ports && networkData.ports.length > 0 && (
-                                        <div className="flex justify-between border-b border-gray-800 pb-2">
-                                            <span className="text-gray-500">Ports</span>
-                                            <span className="font-mono text-gray-300">
-                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                                {networkData.ports.map((p: any) => {
-                                                    if (typeof p === 'object') {
-                                                        const h = p.host || p.host_port;
-                                                        const c = p.container || p.container_port;
-                                                        return h && c && h !== c ? `${h}:${c}` : (h || c);
-                                                    }
-                                                    return p;
-                                                }).join(', ')}
-                                            </span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Raw Data */}
-                            <div className="bg-gray-900 p-4 rounded border border-gray-800">
-                                <h3 className="text-gray-400 text-sm font-bold mb-4 uppercase tracking-wider">Raw Data / Config</h3>
-                                <pre className="text-xs font-mono text-gray-400 whitespace-pre-wrap break-all bg-black p-4 rounded border border-gray-800">
-                                    {JSON.stringify(networkData.rawData, null, 2)}
-                                </pre>
-                            </div>
+                            {/* Raw Data Only */}
+                            <pre className="text-xs font-mono text-gray-400 whitespace-pre-wrap break-all bg-black">
+                                {JSON.stringify(networkData.rawData, null, 2)}
+                            </pre>
                         </>
                     ) : (
                         <div className="text-gray-400 italic">

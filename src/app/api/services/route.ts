@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
+import { DigitalTwinStore } from '@/lib/store/twin';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import { listNodes } from '@/lib/nodes';
@@ -108,17 +109,43 @@ export async function GET(request: Request) {
         const bestCandidate = proxyCandidates[0];
         
         // Remove ALL proxy candidates from the main list to avoid duplication
-        // We will insert the renamed best candidate at the top
         for (const c of proxyCandidates) {
             const idx = services.findIndex(s => s === c);
             if (idx !== -1) services.splice(idx, 1);
         }
 
-        // Add Best Candidate as Reverse Proxy
-        services.unshift({
-            ...bestCandidate,
-            name: 'Reverse Proxy',
-            id: bestCandidate.name // Use original name as ID
+        // Add Best Candidate as Reverse Proxy with Enhanced Gateway Structure
+        const targetNode = (!nodeName || nodeName === 'Local') ? 'Local' : nodeName;
+        const nodeTwin = DigitalTwinStore.getInstance().nodes[targetNode];
+        const proxyRoutes = nodeTwin?.proxy || [];
+
+        // Transform routes to "Nginx Server"-like structure (Compatibility Mode for UI)
+        const formattedServers = proxyRoutes.map(route => ({
+             server_name: [route.host],
+             listen: route.ssl ? ["443 ssl", "80"] : ["80"],
+             locations: [{
+                 path: "/",
+                 proxy_pass: `http://${route.targetService}:${route.targetPort}`
+             }],
+             _agent_data: true,
+             _ssl: route.ssl,
+             _targetPort: route.targetPort
+        }));
+
+        const flatGateway = { ...bestCandidate };
+        // Ensure strictly flat structure by removing any potential nested service objects if they exist
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (flatGateway as any).service; 
+
+        // Insert as Special Gateway Type but extending the underlying service
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (services as any[]).unshift({
+            ...flatGateway, // Flat structure: Inherit all service properties (ports, volumes, etc.)
+            // Flattened Gateway Object (V4.1)
+            type: 'gateway', // Override Type
+            name: 'Reverse Proxy', // Override Name
+            id: bestCandidate.name, // Ensure ID is set
+            servers: formattedServers // Extension Data
         });
 
   } else if (isDefaultOrLocal) {
@@ -163,7 +190,8 @@ export async function GET(request: Request) {
       });
   }
 
-    const mappedServices = services.map(s => ({ ...s, type: 'container' }));
+    // Allow services to override type (e.g. Gateway/Proxy)
+    const mappedServices = services.map(s => ({ type: 'container', ...s }));
 
     return NextResponse.json([...mappedLinks, ...gatewayService, ...mappedServices]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

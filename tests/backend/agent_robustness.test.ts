@@ -79,7 +79,7 @@ describe('AgentHandler Robustness', () => {
          // If it's just one huge chunk without null, it just buffers.
          const huge = Buffer.alloc(10 * 1024, 'A');
          agent.testHandleData(huge);
-         // @ts-expect-error
+         // @ts-ignore
          expect(agent.getBuffer().length).toBe(10 * 1024);
     });
 });

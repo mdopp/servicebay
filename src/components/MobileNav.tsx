@@ -46,6 +46,7 @@ export function MobileBottomBar() {
              <button 
                 key={p.id}
                 onClick={() => router.push(p.path)}
+                title={p.name}
                 className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all ${
                     isActive 
                     ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' 

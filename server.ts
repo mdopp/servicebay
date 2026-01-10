@@ -32,6 +32,7 @@ interface PtySession {
 }
 
 const sessions = new Map<string, PtySession>();
+const resourceViewers = new Map<string, Set<string>>(); // nodeName -> Set<socketId>
 
 app.prepare().then(() => {
   const server = createServer(async (req, res) => {
@@ -47,6 +48,18 @@ app.prepare().then(() => {
 
   const io = new Server(server);
   const twinStore = DigitalTwinStore.getInstance();
+
+  const updateResourceMonitoring = (nodeName: string) => {
+      const viewers = resourceViewers.get(nodeName);
+      const isActive = viewers ? viewers.size > 0 : false;
+      try {
+          const agent = agentManager.getAgent(nodeName);
+          agent.setResourceMode(isActive);
+          logger.info('Server', `Updated resource mode for ${nodeName}: ${isActive} (${viewers?.size || 0} viewers)`);
+      } catch (error) {
+          // Agent might not be connected
+      }
+  };
 
   // Track active clients for monitoring optimization
   const updateMonitoringState = () => {
@@ -343,8 +356,30 @@ app.prepare().then(() => {
       }
     });
 
+    // Resource Monitoring Protocol
+    socket.on('monitor:resources:start', ({ node }: { node: string }) => {
+        if (!node) return;
+        if (!resourceViewers.has(node)) resourceViewers.set(node, new Set());
+        resourceViewers.get(node)!.add(socket.id);
+        updateResourceMonitoring(node);
+    });
+
+    socket.on('monitor:resources:stop', ({ node }: { node: string }) => {
+        if (!node || !resourceViewers.has(node)) return;
+        resourceViewers.get(node)!.delete(socket.id);
+        updateResourceMonitoring(node);
+    });
+
     socket.on('disconnect', () => {
       logger.info('Server', 'Client disconnected');
+      
+      // Remove from all resource viewing groups
+      for (const [node, viewers] of resourceViewers.entries()) {
+          if (viewers.delete(socket.id)) {
+              updateResourceMonitoring(node);
+          }
+      }
+
       updateMonitoringState();
     });
   });

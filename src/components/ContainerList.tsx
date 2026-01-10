@@ -42,6 +42,7 @@ export default function ContainerList({ containers }: ContainerListProps = {}) {
             <th className="pb-2 pr-4">Image</th>
             <th className="pb-2 pr-4">State</th>
             <th className="pb-2 pr-4">Status</th>
+            <th className="pb-2 pr-4">Domains</th>
             <th className="pb-2">Names</th>
           </tr>
         </thead>
@@ -54,6 +55,23 @@ export default function ContainerList({ containers }: ContainerListProps = {}) {
               <td className="py-2 pr-4 text-green-400 truncate max-w-[200px]" title={container.image}>{container.image}</td>
               <td className="py-2 pr-4 text-gray-300">{container.state}</td>
               <td className="py-2 pr-4 text-gray-300">{container.status}</td>
+              <td className="py-2 pr-4">
+                  {container.verifiedDomains && container.verifiedDomains.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                          {container.verifiedDomains.map((d: string) => (
+                              <a 
+                                  key={d} 
+                                  href={`https://${d}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-400 hover:text-blue-300 hover:underline px-1 bg-blue-900/20 rounded"
+                              >
+                                  {d}
+                              </a>
+                          ))}
+                      </div>
+                  ) : <span className="text-gray-600">-</span>}
+              </td>
               <td className="py-2 text-yellow-400">
                 {Array.isArray(container.names) ? container.names.join(', ') : container.names}
               </td>

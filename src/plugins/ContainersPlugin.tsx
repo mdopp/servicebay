@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-// import { useCache } from '@/providers/CacheProvider'; // Replaced by useDigitalTwin
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { logger } from '@/lib/logger';
 import PluginLoading from '@/components/PluginLoading';
@@ -60,8 +59,8 @@ export default function ContainersPlugin() {
                 // Ports need mapping from {hostPort, containerPort, protocol} to UI format
                 Ports: (ec.ports || []).map(p => ({
                     host_ip: '0.0.0.0', // Default
-                    host_port: p.hostPort,
-                    container_port: p.containerPort,
+                    host_port: p.host_port || p.hostPort,
+                    container_port: p.container_port || p.containerPort || 0,
                     protocol: p.protocol
                 })),
                 Mounts: ec.mounts || [],

@@ -6,7 +6,6 @@ import yaml from 'js-yaml'; // Import YAML parser for Strict Matching
 import { logger } from '@/lib/logger';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import PluginLoading from '@/components/PluginLoading';
-// import { useNetworkGraph, useServicesList, Service } from '@/hooks/useSharedData'; // Legacy Hooks
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
@@ -123,6 +122,7 @@ export default function ServicesPlugin() {
   const { services } = useMemo(() => {
     if (!twin || !twin.nodes) return { services: [], nodes: [] };
 
+    console.log("twin:", twin);
     logger.debug('ServicesPlugin', 'Computing services from Twin', { nodeCount: Object.keys(twin.nodes).length });
 
     // 1. Extract Nodes
@@ -133,228 +133,117 @@ export default function ServicesPlugin() {
     Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
          const fileKeys = Object.keys(nodeState.files);
          
-         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-         const getManagedType = (baseName: string, unit: any): 'container' | 'kube' | null => {
-             // STRICT: Only .kube files are considered "Managed" (ServiceBay Stacks)
-             // 1. Direct match
-             if (fileKeys.some(f => f.endsWith(`/${baseName}.kube`))) return 'kube';
-             
-             // 2. Alias match for Nginx (nginx-web -> nginx.kube)
-             if ((unit.isReverseProxy || unit.name === 'nginx-web') && fileKeys.some(f => f.endsWith('/nginx.kube'))) {
-                 return 'kube';
-             }
-
-             return null;
-         };
-
          nodeState.services.forEach(unit => {
              const baseName = unit.name.replace('.service', '');
-             const managedType = getManagedType(baseName, unit);
+             const isManaged = !!unit.isManaged;
              
              // Filter: Only show Managed services
-             if (!managedType && !unit.description?.includes('ServiceBay')) {
+             if (!isManaged) {
                 // Also check if it's the gateway or proxy which might be special
                 // If it is NOT managed, we still want to show it if it's the proxy or ServiceBay itself.
-                // Note: Agent V4 strips .service extension, so we check base names
-                if (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web' || unit.name === 'nginx' || unit.name === 'nginx-web.service')) {
-                   // allow
-                } else if (unit.name === 'servicebay' || unit.name === 'servicebay-dev' || unit.name === 'servicebay.service') {
+                // We rely on the Backend (Agent V4) to flag these via Source-Centric Truth.
+                if (unit.isReverseProxy || unit.isServiceBay) {
                    // allow
                 } else {
                    return;
                 }
              }
 
-             // --- STRICT MATCHING LOGIC (Ported from ServiceManager.ts) ---
+             // --- RAW DATA LINKING (Single Source of Truth) ---
+             // We link the Systemd Service to its Podman Container to get runtime stats.
              
-             // 1. Determine Expected Names
-             const expectedNames = [
-                 baseName, 
-                 `systemd-${baseName}`, 
-                 `${baseName}-${baseName}`
-             ];
-             
-             // Implicit/System Service Aliases
-             if (unit.isReverseProxy) { // Prefer flag over name guessing
-                 expectedNames.push(baseName); // e.g. custom-proxy
-                 expectedNames.push('nginx');
-                 expectedNames.push('nginx-web');
-                 expectedNames.push('systemd-nginx');
-             }
-             if (unit.isServiceBay) {
-                 expectedNames.push('servicebay');
-                 expectedNames.push('servicebay-dev');
-             }
-
+             // 1. Determine Yaml Path (Static Definition, not guessing)
              let yamlPath: string | null = null;
-             // Try to find Kube/YAML files to extract explicit container names
-             if (managedType) {
-                 const ext = managedType === 'container' ? '.container' : '.kube';
-                 // Handle alias lookup for file finding too
-                 let targetFile = baseName;
-                 if ((unit.isReverseProxy || unit.name === 'nginx-web') && !fileKeys.some(f => f.endsWith(`/${baseName}${ext}`))) {
-                      // If baseName (nginx-web) .kube not found, try 'nginx'
-                      if (fileKeys.some(f => f.endsWith(`/nginx${ext}`))) {
-                          targetFile = 'nginx';
-                      }
-                 }
-                 
-                 const filePath = fileKeys.find(f => f.endsWith(`/${targetFile}${ext}`));
-                 
+             if (isManaged) {
+                 // STRICT: The Quadlet file must match the service Base Name.
+                 // Since isManaged=true means it IS a .kube service (Agent V4 definition), we search for .kube
+                 const filePath = fileKeys.find(f => f.endsWith(`/${baseName}.kube`));
+
                  if (filePath) {
-                     yamlPath = filePath;
-                     const file = nodeState.files[filePath];
+                     yamlPath = filePath; 
                      
-                     // If it's a kube file, find the referenced YAML
-                     if (managedType === 'kube' && file && file.content) {
+                     // For Kube, we want the actual YAML file referenced
+                     const file = nodeState.files[filePath];
+                     if (file && file.content) {
                           const match = file.content.match(/^Yaml=(.+)$/m);
                           if (match) {
                               const yamlFile = match[1].trim();
-                              // Simple lookup for the yaml file in the file list
                               const yamlKey = fileKeys.find(k => k.endsWith(`/${yamlFile}`));
                               if (yamlKey) {
-                                  // Update yamlPath to point to the actual YAML file if available
                                   yamlPath = yamlKey;
-                                  
-                                  if (nodeState.files[yamlKey]?.content) {
-                                      try {
-                                          const yamlContent = nodeState.files[yamlKey].content;
-                                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                          const docs = yaml.loadAll(yamlContent) as any[];
-                                      docs.forEach(doc => {
-                                           if (doc?.spec?.containers) {
-                                               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                               doc.spec.containers.forEach((c: any) => {
-                                                   if (c.name) {
-                                                       expectedNames.push(c.name);
-                                                       expectedNames.push(`${baseName}-${c.name}`);
-                                                       if (doc.metadata?.name) {
-                                                           expectedNames.push(`${doc.metadata.name}-${c.name}`);
-                                                       }
-                                                   }
-                                               });
-                                           }
-                                      });
-                                  } catch (e) {
-                                      logger.warn('ServicesPlugin', 'Failed to parse YAML for', baseName, e);
-                                  }
-                                }
                               }
                           }
                      }
                  }
              } else {
-                 // Fallback: Try to find a direct YAML file if it's unmanaged
-                 // (e.g., used by 'podman play kube' but not via a .kube unit file)
+                 // Unmanaged: Check for direct YAML existence
                  const fallbackYaml = fileKeys.find(f => f.endsWith(`/${baseName}.yml`) || f.endsWith(`/${baseName}.yaml`));
                  if (fallbackYaml) {
                      yamlPath = fallbackYaml;
-                     // Optional: Parse this YAML too? For now, just linking it allows the UI to show "YAML" badge
                  }
              }
 
-             // 2. Find Container with Strict Matching
-             const uniqueExpected = Array.from(new Set(expectedNames));
-             const container = nodeState.containers.find(c => {
-                 return c.names.some(n => {
-                     const cleanName = n.replace(/^\//, '');
-                     // Direct match
-                     if (uniqueExpected.includes(cleanName)) return true;
-                     
-                     // Podman Kube Match (k8s_<container>_<pod>_...)
-                     // We check if the container name inside the k8s pattern matches one of our expected names
-                     // Format: k8s_CONTAINER_POD_NAMESPACE_ID_...
-                     if (cleanName.startsWith('k8s_')) {
-                         const parts = cleanName.split('_');
-                         if (parts.length >= 3) {
-                             const k8sContainer = parts[1];
-                             const k8sPod = parts[2];
-                             // Check if container name matches our expected names
-                             // OR if pod name matches our expected service names
-                             if (uniqueExpected.includes(k8sContainer) || uniqueExpected.includes(k8sPod)) {
-                                 return true;
-                             }
-                         }
-                     }
-                     
-                     return false;
-                 });
-             });
-
-             const isProxy = (twin.proxy?.provider === 'nginx' && (unit.isReverseProxy || unit.name === 'nginx-web' || unit.name === 'nginx' || unit.name === 'nginx-web.service' || unit.name === 'nginx.service'));
-             const isServiceBay = (unit.isServiceBay || unit.name === 'servicebay' || unit.name === 'servicebay-dev' || unit.name === 'servicebay.service');
-
-             // Find Verified Domains
-             // Robust match: targetService must match Service Name OR any Known Container Name
-             const verifiedDomains = (twin.proxy?.routes || [])
-                 .filter(r => {
-                     // Normalize target: remove port
-                     const targetHtml = r.targetService.replace(/^https?:\/\//, '');
-                     const parts = targetHtml.split(':');
-                     const target = parts[0]; 
-                     const targetPort = parts[1] ? parseInt(parts[1], 10) : null;
-                     
-                     // Direct match to Service Name
-                     if (target === baseName) return true;
-                     
-                     // Match to Container Names
-                     if (container && container.names) {
-                         const nameMatch = container.names.some(n => {
-                             const clean = n.replace(/^\//, '');
-                             return clean === target;
-                         });
-                         if (nameMatch) return true;
-
-                         // Match by Port (if target is localhost/127.0.0.1)
-                         if (targetPort && (target === '127.0.0.1' || target === 'localhost')) {
-                              // Check if container exposes this host port
-                              if (container.ports) {
-                                  return container.ports.some(p => {
-                                      const hp = p.host_port || p.hostPort;
-                                      return hp === targetPort;
-                                  });
-                              }
-                         }
-                     }
-                     return false;
-                 })
-                 .map(r => r.host);
+             // 2. Find Container
+             let container = undefined;
              
-             if (baseName === 'immich' || baseName==='adguard') {
-                 logger.debug('ServicesPlugin', 'Domain Check:', baseName, verifiedDomains, twin.proxy?.routes); 
+             // STRICT: Only use Explicit Link from Backend (Agent V4.1+)
+             // We do NOT guess based on names. If Agent V4 hasn't linked it, it's not linked.
+             if (unit.associatedContainerIds && unit.associatedContainerIds.length > 0) {
+                 container = nodeState.containers.find(c => unit.associatedContainerIds?.includes(c.id));
              }
+
+             // Find Verified Domains via Proxy State (Source of Truth)
+             // V4.1: Use Enriched Data from Backend (TwinStore)
+             const verifiedDomains = unit.verifiedDomains || [];
+
+             // Prepare Runtime Data from Container (Source of Truth)
+             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             const rawContainer = container as any;
+             
+             // 1. Ports (Prefer direct Twin data)
+             let ports = [];
+             if (unit.ports && unit.ports.length > 0) {
+                 ports = unit.ports.map(p => ({
+                    host: p.host_port || p.hostPort ? String(p.host_port || p.hostPort) : '',
+                    container: p.container_port || p.containerPort ? String(p.container_port || p.containerPort) : ''
+                 }));
+             } else {
+                 // Fallback to container linkage (Legacy)
+                 ports = rawContainer?.ports?.map((p: any) => ({
+                    host: p.host_port || p.hostPort || p.PublicPort ? String(p.host_port || p.hostPort || p.PublicPort) : '',
+                    container: p.container_port || p.containerPort || p.PrivatePort ? String(p.container_port || p.containerPort || p.PrivatePort) : ''
+                 })) || [];
+             }
+
+             // 2. Labels
+             const labels = { ...rawContainer?.labels };
+             if (unit.isReverseProxy) labels['servicebay.role'] = 'reverse-proxy';
+             if (unit.isServiceBay) labels['servicebay.role'] = 'system';
+
+             // 3. Name & Description overrides
+             let displayName = unit.name;
+             if (unit.isReverseProxy) displayName = 'Reverse Proxy (Nginx)';
+             else if (unit.isServiceBay) displayName = 'ServiceBay System';
 
              const svc: Service = {
                  id: unit.name,
-                 name: isProxy ? 'Reverse Proxy (Nginx)' : (isServiceBay ? 'ServiceBay System' : unit.name),
+                 name: displayName,
                  nodeName: nodeName,
-                 description: isProxy ? 'System Status\nNginx is installed and managed by ServiceBay\n\nReady to serve traffic' : (isServiceBay ? 'ServiceBay Management Interface' : unit.description),
+                 description: unit.description,
                  active: unit.activeState === 'active',
-                 status: unit.activeState === 'active' ? 'active' : 'inactive',
+                 status: unit.activeState,
                  activeState: unit.activeState,
                  subState: unit.subState,
                  kubePath: unit.path,
                  yamlPath: yamlPath,
-                 type: managedType || 'container',
-                 ports: [],
-                 volumes: [],
+                 type: isManaged ? 'kube' : 'container',
+                 ports: ports,
+                 volumes: [], // Todo: Map container mounts if needed
                  monitor: false,
-                 labels: isProxy ? { 'servicebay.role': 'reverse-proxy' } : (isServiceBay ? { 'servicebay.role': 'system' } : {}),
+                 labels: labels,
                  verifiedDomains: verifiedDomains
              };
              
-             // Enriched with Container Info
-             if (container) {
-                 svc.ports = (container.ports || []).map(p => ({
-                     host: String(p.host_port || p.hostPort || 0),
-                     container: String(p.container_port || p.containerPort)
-                 }));
-             } else if (managedType === 'kube') {
-                 // Fallback: Try to guess ports from YAML if container not found/running
-                 // (Simplified parsing since we already parsed for names above, but we didn't store docs)
-                 // For now, let's rely on container runtime data as primary truth for ports
-             }
-
              if (twin.proxy?.routes) {
                  const route = twin.proxy.routes.find(r => r.targetService === baseName);
                  if (route) {
@@ -972,9 +861,15 @@ export default function ServicesPlugin() {
                                             <Link href={`/monitor/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors" title="Monitor">
                                                 <Activity size={16} />
                                             </Link>
-                                            <Link href={`/edit/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit">
-                                                <Edit size={16} />
-                                            </Link>
+                                            {service.type === 'kube' ? (
+                                                <Link href={`/edit/${service.id || service.name}${service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : ''}`} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Configuration">
+                                                    <Edit size={16} />
+                                                </Link>
+                                            ) : (
+                                                <div className="p-1.5 text-gray-300 dark:text-gray-700 cursor-not-allowed opacity-50" title="Not Managed via Quadlet Kube">
+                                                    <Edit size={16} />
+                                                </div>
+                                            )}
                                             <button onClick={() => openActions(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/30 rounded transition-colors" title="Actions">
                                                 <MoreVertical size={16} />
                                             </button>

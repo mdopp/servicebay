@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // Migrated from useCache
+import { useSocket } from '@/hooks/useSocket';
 import PluginLoading from '@/components/PluginLoading';
 import PageHeader from '@/components/PageHeader';
 import { getNodes } from '@/app/actions/nodes';
@@ -30,6 +31,19 @@ export default function SystemInfoPlugin() {
   const { addToast } = useToast();
 
   const { data: twin, isConnected } = useDigitalTwin();
+  const { socket } = useSocket();
+
+  // High Frequency Monitoring Subscription
+  useEffect(() => {
+    if (!socket || !selectedNode) return;
+    
+    // Request High-Frequency Resource Mode from Agent
+    socket.emit('monitor:resources:start', { node: selectedNode });
+    
+    return () => {
+        socket.emit('monitor:resources:stop', { node: selectedNode });
+    };
+  }, [socket, selectedNode]);
 
   // Load available nodes
   useEffect(() => {

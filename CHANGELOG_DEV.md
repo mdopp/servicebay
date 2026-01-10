@@ -3,13 +3,62 @@
 This file tracks architectural changes, refactors, and developer-facing improvements.
 
 ## [Unreleased]
+### Known Issues
+- **Network Graph**: Currently not rendering correctly. FritzBox node is missing, and edges are displaying incorrect relationships.
+- **Unmanaged Services**: Search logic needs refactoring. Ideally, discovery should start from running services -> check for `.service` file -> confirm Podman container backing -> mark as Unmanaged.
+
+- **Architecture**: Refactored Nginx Service Node creation (`src/lib/network/service.ts`) to strictly use the Digital Twin Store's `proxyService` object, eliminating hardcoded fallback ports (:80, :443) and ensuring strict Single Source of Truth adherence.
+- **Agent V4**: Fixed missing runtime ports (e.g. Nginx :81) caused by `ss` command output variability in some environments. Added robust column detection logic to `get_host_ports_map`.
+- **Agent V4**: Fixed missing or empty ports for Stopped Quadlet Services. Implemented robust line-based YAML parsing in `agent.py` to extract `containerPort` and `hostPort` from K8s manifests (referenced by `.kube` files) when runtime container data is unavailable.
+- **Backend / Digital Twin**: Fixed a bug in `enrichService` (`src/lib/store/twin.ts`) where runtime discovered ports were ignored if a service was identified as a proxy. Removed the premature return to correctly merge runtime ports (e.g., :81) with configured ports.
+- **Network Graph**: Refactored Nginx Proxy "Edge Label" (Connection from Router) to use discovered listening ports (from Agent Nginx config) instead of a hardcoded `:80, :443` string.
+- **Network Graph**: Refactored Nginx Proxy Node port calculation to strictly use `ports` from Digital Twin Store, removing ad-hoc logic in `Service.ts`.
+- **Docs**: Updated `backend.instructions.md` to explicitly forbid "nice-to-have" assumptions in favor of "Discovery-First" visualization.
+- **Architecture**: Enforced Single Source of Truth for Network Calculations.
+  - Refactored `DigitalTwinStore` to include an `enrichNode` step that calculates `ports` (merging Config + Runtime PIDs) and `effectiveHostNetwork`.
+  - **API**: Removed redundant `effectivePorts` property; `ports` now serves as the Single Source of Truth.
+  - Refactored `NetworkService` to remove complex calculation logic and strictly consume enriched properties from the Twin Store.
+  - Updated `ServiceUnit` interface to support these enriched properties.
+- **Frontend**: Fixed bug in `ContainersPlugin.tsx` where port data was being mapped using camelCase `hostPort` keys instead of the snake_case `host_port` keys sent by Agent V4.
+- **Frontend**: Enforced strict "Raw Data Sovereignty" check in `ServicesPlugin`. Service Cards now only display ports/labels if an explicit `associatedContainerIds` link exists. Removed ALL name-based guessing/fuzzy logic for container linking.
+- **Frontend**: Removed speculative port guessing for system services. Ports now strictly reflect runtime `podman inspect` data.
+- **Frontend**: Removed hardcoded Nginx file-aliasing logic. Service Cards now strictly look for Quadlet files matching the Service Name (e.g. `nginx.service` -> `nginx.kube`).
+- **Agent V4**: Updated `fetch_containers` to handle primitive port lists (e.g., `[80, 443]`) frequently encountered in Host Network scenarios. These are now normalized to `{host_port, container_port, protocol}` objects before being sent to the Digital Twin, ensuring consistent data shape across the stack.
+- [NetworkService] Deleted `ports` property from NetworkNode interface and all internal node creation logic.
+- Deleted main fallback logic in NetworkService. Strict Twin data only.
+- IMPLEMENTED Strict Service-Container Mapping in DigitalTwinStore (Single Source of Truth).
+- Refactored Network Graph node IDs to use cleaner "service-" prefix instead of "group-service-".
+- **Agent V4**: Fixed critical data acquisition issues in `agent.py` for Podman v4.9.x environments.
+  - Implemented side-channel `podman ps --format "{{.ID}}|{{.PodName}}"` to resolve missing Pod Names.
+  - Implemented side-channel `podman inspect` bulk retrieval to correctly detect `hostNetwork` mode, bypassing broken `Networks: []` output in `podman ps` JSON.
 
 ### Added
+- **API**: Updated `GET /api/services` to output a structured "Gateway" object for the Reverse Proxy service. This object adopts a flattened structure (inheriting `ServiceInfo`) extended with a `servers` list containing the operational Nginx routing table.
+- **Docs**: Added comprehensive Data Lineage section to `ARCHITECTURE.md` including a Mermaid diagram visualizing the flow from Agent V4 objects to Digital Twin Store and React Frontend.
 - **Frontend Tests**: Implemented comprehensive test suite using Vitest and React Testing Library. Covered Core Visualization (`ContainerList`, `ServiceMonitor`, `NetworkGraph`), Onboarding Wizard flow (`OnboardingWizard`), Configuration (`GatewayConfig`), and Responsive Layout (`Sidebar`, `MobileNav`, `MobileLayout`). Achieved passing status for all 20 tests.
+- **Tests**: Extended test suite with `tests/backend/test_agent_host_ports.py` to verify Agent V4 port detection logic for Host Networking containers, ensuring discrepancies between `podman ps` and `ss` are resolved.
+- **Tests**: Added `tests/backend/agent_data_flow.test.ts` to verify End-to-End data persistence in `DigitalTwinStore`, confirming that Agent-detected ports are correctly stored and linked to services.
+- **Agent V4 Fix**: Updated Service Logic to support fuzzy matching for Quadlet-generated container names (e.g., `systemd-nginx-web` -> `nginx-web`), ensuring proper Service <-> Container linking and Port propagation for Nginx and other host-network services.
+- **Tests**: Extended `test_agent_service_linking.py` to cover `systemd-` prefix scenarios, confirming the fix.
+- **Tests**: Added `tests/frontend/ServicesPlugin_Twin.test.tsx` to simulate full E2E data flow. Verified that when `useDigitalTwin` receives the correctly linked data (which the fixed Agent now provides), the Frontend `ServicesPlugin` correctly renders the ports (e.g., `8080`).
+- **Tests**: Updated `scripts/test-agent.sh` to execute the Python logic verification tests within the containerized environment.
 
 ### Fixed
+- **Network Graph**: Fixed the "Raw Data" structure for the Reverse Proxy node to be strictly flat. Previously, it nested the `service` object, causing UI inconsistencies. Now, all service properties (status, description, etc.) are merged at the top level alongside the `servers` routing table, ensuring consistency with the standard `ServiceInfo` interface throughout the application.
+- **Frontend Consistency**: Removed all fuzzy matching logic from `ServiceMonitor`. The UI now locates the corresponding graph node using strict equality on `rawData.name`, ensuring 100% alignment between the URL service name and the visualized data.
+- **Data Consistency**: Enforced a "Single Source of Truth" for the Reverse Proxy identity. The Digital Twin Store now flags the authoritative Proxy Service upon update (prioritizing active/standard ones). The Network Graph Service strictly respects this flag, eliminating fuzzy matching inconsistencies.
+- **Network Graph**: Improved Reverse Proxy selection logic to prioritize **Active** services and **Standard Names** (e.g., `nginx`, `nginx-web`) over inactive or fuzzy-matched services (e.g., `compose-nginx`), ensuring the correct service is attached to the Proxy Node.
+- **Service Monitor**: Updated the "Network Details" panel to display comprehensive runtime information sourced from the enriched `rawData`. It now shows Systemd Active/Sub State, Unit File Path, Container Image, ID, and PID alongside standard network info.
+- **Network Graph**: Enriched Service Node `rawData` with the associated active Container object from the Digital Twin. This ensures frontend "Raw Data" views show comprehensive runtime state (Image, ID, Labels) rather than just systemd status.
+- **Network Graph**: Further enriched Nginx Proxy `rawData` with the complete Service Unit object (systemd status, load state, etc.) to provide comprehensive debugging information in the Service Monitor.
+- **Network Graph**: Exposed the detected HTTP/HTTPS ports (80, 443) in the Nginx Proxy `rawData` / JSON Output for better visibility in the Service Monitor, ensuring they align with the visual graph metadata.
+- **ServiceMonitor**: Fixed issue where container logs were not loading due to incorrect API endpoint usage (`/api/containers/[id]/logs` vs `stream`). Created a JSON-compatible logs endpoint. Also fixed the "Related Containers" list by normalizing Podman data to match `ContainerList` expectations (lowercase keys, node injection).
+- **Agent V4**: Refined Reverse Proxy detection logic to exclude system services like `mpris-proxy` (Bluetooth) from being misidentified as proxies due to fuzzy matching.
 - **Frontend**: Implemented intelligent service deduplication in `ServicesPlugin` to prevent duplicate "Reverse Proxy" cards when multiple service aliases (e.g., `nginx-web`, `nginx.service`) are reported by the Agent. Priority is given to Managed and Active services.
 - **Frontend**: Added support for displaying Port Mappings on the Gateway Service card (e.g., FritzBox UPnP mappings).
+- **NetworkService**: Cleaned up the Reverse Proxy / Nginx Raw Data structure. Added `verifiedDomains` to `rawData` to ensure completeness. Removed redundant legacy `servers` property from the top-level `rawData` when `proxyConfiguration` is present, maintaining a cleaner data shape while preserving all information.
+- **NetworkService**: Enforced strict "Single Source of Truth" for Nginx Proxy Node creation. Removed hardcoded `ports: [80, 443]` and removed manual object construction. Now strictly initializes `rawData` from the `proxyService` object (if available), ensuring that `ports` and configuration exactly match the Digital Twin state without duplication or guessing.
+- **Agent V4**: Implemented Recursive PID Scanning (`get_all_descendants`) to support Host Network containers. The agent now collects ports from the Main PID and all child processes (e.g. Nginx workers), ensuring no listening ports are missed.
 - **Backend**: Updated `GatewayState` interfaces and `FritzBoxProvider` to propagate port mappings from the router to the Digital Twin.
 - **Frontend**: Updated `ServicesPlugin` to correctly resolve "Managed" status for Remote Nginx services by handling the aliasing between service name (`nginx-web`) and Unit file (`nginx.kube`). Also improved YAML file linking to use the target YAML file referenced in the Unit file.
 - **Frontend**: Updated `ServicesPlugin` to correctly identify Nginx and ServiceBay services from Agent V4 (which sends extension-less unit names) and recognize `isReverseProxy`/`isServiceBay` flags.
@@ -39,11 +88,13 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 - **Service Identification**: Updated `ServicesPlugin` to enforce "Reverse Proxy (Nginx)" naming and status text for the detected Nginx proxy provider.
 
 ### Optimized
-- **System Monitoring**: Implemented "On-Demand Monitoring" for Agent V4.
-    - Added `startMonitoring` and `stopMonitoring` commands to Agent.
-    - Agent now only sends system resources (CPU/Mem/Disk) if monitoring is enabled by the backend.
-    - Updates are throttled to max once per 10 seconds and only sent if values have changed.
-    - Backend automatically toggles monitoring based on active client connections (`io.engine.clientsCount`).
+- **Services Plugin**: Enriched Service cards to use the linked Container's "Raw Data" as the Single Source of Truth for runtime details. Ports and Labels are now directly populated from the active container object in the Digital Twin, ensuring the UI accurately reflects the current state of the backend.
+- **Services Plugin**: Implemented "Service Level" definitions for Ports. If the runtime container is missing (e.g., service inactive), intrinsic ports for known System Services (Nginx Proxy 80/443, ServiceBay 3000) are still displayed, respecting the service definition rather than just the runtime state.
+- **System Monitoring**: Implemented "Adaptive Resource Frequency".
+    - Replaced static 10s throttle with a bi-modal strategy: 60s (Idle) vs 5s (Active Human Viewer).
+    - Added `setResourceMode` command to Agent V4.
+    - Backend now tracks "resource viewers" (sockets subscribed via `SystemInfoPlugin`) per node.
+    - High-frequency mode (5s) is only enabled when a user is actively viewing the System Info page for that node.
 - **NetworkService**: Refactored `getGraph` to consume data directly from the Digital Twin (memory) when available, reducing graph generation time from ~500ms to <10ms and eliminating SSH `exec` spam.
 - **Agent V4**: Enhanced container fetching to include `pid` and host port mappings directly in the payload, removing the need for separate `ss` execution calls by the backend.
 
@@ -60,10 +111,20 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 - **Server**: Updated `server.ts` to integrate `DigitalTwinStore` and listen for `agent:message` events.
 
 ### Added
+- **Docs**: Added comprehensive Data Lineage section to `ARCHITECTURE.md` including a Mermaid diagram visualizing the flow from Agent V4 objects to Digital Twin Store and React Frontend.
 - Created `changelog.instructions.md` to enforce changelog updates.
 - **Logger**: Added `src/lib/logger.ts` for structured, colorized logging. Refactored key components (`ServiceManager`, `ServicesPlugin`, `ServiceMonitor`, etc.) to replace `console.*` calls with `logger.*`.
 
 ### Fixed
+- **Frontend Consistency**: Removed all fuzzy matching logic from `ServiceMonitor`. The UI now locates the corresponding graph node using strict equality on `rawData.name`, ensuring 100% alignment between the URL service name and the visualized data.
+- **Data Consistency**: Enforced a "Single Source of Truth" for the Reverse Proxy identity. The Digital Twin Store now flags the authoritative Proxy Service upon update (prioritizing active/standard ones). The Network Graph Service strictly respects this flag, eliminating fuzzy matching inconsistencies.
+- **Network Graph**: Improved Reverse Proxy selection logic to prioritize **Active** services and **Standard Names** (e.g., `nginx`, `nginx-web`) over inactive or fuzzy-matched services (e.g., `compose-nginx`), ensuring the correct service is attached to the Proxy Node.
+- **Service Monitor**: Updated the "Network Details" panel to display comprehensive runtime information sourced from the enriched `rawData`. It now shows Systemd Active/Sub State, Unit File Path, Container Image, ID, and PID alongside standard network info.
+- **Network Graph**: Enriched Service Node `rawData` with the associated active Container object from the Digital Twin. This ensures frontend "Raw Data" views show comprehensive runtime state (Image, ID, Labels) rather than just systemd status.
+- **Network Graph**: Further enriched Nginx Proxy `rawData` with the complete Service Unit object (systemd status, load state, etc.) to provide comprehensive debugging information in the Service Monitor.
+- **Network Graph**: Exposed the detected HTTP/HTTPS ports (80, 443) in the Nginx Proxy `rawData` / JSON Output for better visibility in the Service Monitor, ensuring they align with the visual graph metadata.
+- **ServiceMonitor**: Fixed issue where container logs were not loading due to incorrect API endpoint usage (`/api/containers/[id]/logs` vs `stream`). Created a JSON-compatible logs endpoint. Also fixed the "Related Containers" list by normalizing Podman data to match `ContainerList` expectations (lowercase keys, node injection).
+- **Agent V4**: Refined Reverse Proxy detection logic to exclude system services like `mpris-proxy` (Bluetooth) from being misidentified as proxies due to fuzzy matching.
 - **ServicesPlugin**: Updated domain verification logic to strip ports from target URLs, fixing unmatched verified domains.
 - **ServiceManager**: Updated service identification logic to include implicit services (marked `isReverseProxy`) even if they lack a `.kube` file.
 - **Agent V4**: Updated `agent.py` to identify `nginx` container as a valid proxy container if `nginx-web` is missing.
@@ -85,6 +146,15 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 - Standardized Reverse Proxy identification in `src/lib/network/service.ts` to use `isReverseProxy` flag (Source-Centric Truth).
 
 ### Fixed
+- **Frontend Consistency**: Removed all fuzzy matching logic from `ServiceMonitor`. The UI now locates the corresponding graph node using strict equality on `rawData.name`, ensuring 100% alignment between the URL service name and the visualized data.
+- **Data Consistency**: Enforced a "Single Source of Truth" for the Reverse Proxy identity. The Digital Twin Store now flags the authoritative Proxy Service upon update (prioritizing active/standard ones). The Network Graph Service strictly respects this flag, eliminating fuzzy matching inconsistencies.
+- **Network Graph**: Improved Reverse Proxy selection logic to prioritize **Active** services and **Standard Names** (e.g., `nginx`, `nginx-web`) over inactive or fuzzy-matched services (e.g., `compose-nginx`), ensuring the correct service is attached to the Proxy Node.
+- **Service Monitor**: Updated the "Network Details" panel to display comprehensive runtime information sourced from the enriched `rawData`. It now shows Systemd Active/Sub State, Unit File Path, Container Image, ID, and PID alongside standard network info.
+- **Network Graph**: Enriched Service Node `rawData` with the associated active Container object from the Digital Twin. This ensures frontend "Raw Data" views show comprehensive runtime state (Image, ID, Labels) rather than just systemd status.
+- **Network Graph**: Further enriched Nginx Proxy `rawData` with the complete Service Unit object (systemd status, load state, etc.) to provide comprehensive debugging information in the Service Monitor.
+- **Network Graph**: Exposed the detected HTTP/HTTPS ports (80, 443) in the Nginx Proxy `rawData` / JSON Output for better visibility in the Service Monitor, ensuring they align with the visual graph metadata.
+- **ServiceMonitor**: Fixed issue where container logs were not loading due to incorrect API endpoint usage (`/api/containers/[id]/logs` vs `stream`). Created a JSON-compatible logs endpoint. Also fixed the "Related Containers" list by normalizing Podman data to match `ContainerList` expectations (lowercase keys, node injection).
+- **Agent V4**: Refined Reverse Proxy detection logic to exclude system services like `mpris-proxy` (Bluetooth) from being misidentified as proxies due to fuzzy matching.
 - Fixed backend crash when fetching Nginx config from stopped containers.
 - Fixed issue where Internet Gateway and External Links were missing from the dashboard when using remote nodes.
 - Updated ServicePlugin.tsx to support composite key lookup for Service Graph nodes, fixing "Inactive" status and missing ports for services with mismatching display names vs IDs (e.g. Reverse Proxy vs nginx). 
@@ -101,6 +171,10 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 - Removed hardcoded `~/.ssh` paths in favor of persistent `/app/data/ssh`.
 
 ## [Unreleased] - 2026-01-08
+- [NetworkService] Deleted `ports` property from NetworkNode interface and all internal node creation logic.
+- Deleted main fallback logic in NetworkService. Strict Twin data only.
+- IMPLEMENTED Strict Service-Container Mapping in DigitalTwinStore (Single Source of Truth).
+- Refactored Network Graph node IDs to use cleaner "service-" prefix instead of "group-service-".
 ### Architecture
 - **V4 Migration (Phase 2)**: Started refactoring monolithic `manager.ts`.
 - Created `src/lib/services/ServiceManager.ts` which uses the new V4 Agent Architecture.

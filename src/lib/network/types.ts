@@ -13,7 +13,7 @@ export interface NetworkNode {
   subLabel?: string | null;
   hostname?: string | null;
   ip?: string | null;
-  ports: (number | PortMapping)[];
+  // ports property removed - use rawData.ports
   status: 'up' | 'down' | 'unknown';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;

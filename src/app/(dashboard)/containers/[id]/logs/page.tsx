@@ -62,8 +62,8 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
             Status: found.status,
             Created: found.created,
             Ports: found.ports.map(p => ({
-                 host_port: p.hostPort,
-                 container_port: p.containerPort,
+                 host_port: p.host_port || p.hostPort,
+                 container_port: p.container_port || p.containerPort || 0,
                  protocol: p.protocol
             })),
             Mounts: found.mounts,

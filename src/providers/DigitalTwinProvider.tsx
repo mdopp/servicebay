@@ -5,6 +5,7 @@ import { useSocket } from '@/hooks/useSocket';
 import type { NodeTwin, GatewayState, ProxyState } from '@/lib/store/twin';
 
 export interface DigitalTwinSnapshot {
+  instanceId?: string;
   nodes: Record<string, NodeTwin>;
   gateway: GatewayState;
   proxy: ProxyState;
@@ -33,6 +34,9 @@ export function DigitalTwinProvider({ children }: { children: ReactNode }) {
             // Option: If we want to optimize, we can merge diffs here if the server sends diffs.
             // But currently it seems to send full snapshots or we just replace common parts.
             // The previous hook just did setData(snapshot).
+            if (data && snapshot.instanceId && data.instanceId && snapshot.instanceId !== data.instanceId) {
+                console.warn(`[DigitalTwinProvider] CRITICAL: Backend Instance ID changed from ${data.instanceId} to ${snapshot.instanceId}. Possible server restart or split-brain.`);
+            }
             setData(snapshot);
             setLastUpdate(Date.now());
         };

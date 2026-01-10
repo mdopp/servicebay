@@ -10,12 +10,12 @@ echo "=== Building Test Agent Image ==="
 # Build from project root to allow COPY src/... to work
 podman build -t "$IMAGE_NAME" -f "$DOCKERFILE_PATH" "$PROJECT_ROOT"
 
-echo "=== Running Test Agent Container ==="
-# We run in privileged mode (or adequate caps) to allow Podman-in-Podman (Mock)
-# We mount the local agent code to allow quick iteration without rebuilds
-podman run --rm -ti \
+echo "=== Running Agent Logic Verification ==="
+# We mount the agent code and the new test files
+podman run --rm \
     --name servicebay-agent-test-run \
-    --privileged \
     -v "$PROJECT_ROOT/src/lib/agent/v4/agent.py:/home/podmanuser/agent.py:Z" \
+    -v "$PROJECT_ROOT/tests/backend/test_agent_host_ports.py:/home/podmanuser/test_agent_ports.py:Z" \
+    -v "$PROJECT_ROOT/tests/backend/test_agent_service_linking.py:/home/podmanuser/test_agent_linking.py:Z" \
     "$IMAGE_NAME" \
-    bash -c "python3 agent.py & echo 'Agent PID: $!'; echo 'Waiting for logs...'; sleep 2; podman run --rm hello-world; wait"
+    bash -c "python3 test_agent_ports.py && echo '---' && python3 test_agent_linking.py"

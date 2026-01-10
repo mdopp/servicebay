@@ -1,4 +1,5 @@
 import { NetworkGraph, NetworkNode, NetworkEdge } from './types';
+import { NodeFactory } from './factory';
 import { FritzBoxClient } from '../fritzbox/client';
 import { ServiceManager } from '../services/ServiceManager';
 import { listNodes, PodmanConnection } from '../nodes';
@@ -94,7 +95,6 @@ export class NetworkService {
                 label: target.name,
                 subLabel: 'Connection Failed',
                 status: 'down',
-                ports: [],
                 metadata: {
                     source: 'System',
                     description: error instanceof Error ? error.message : String(error)
@@ -122,7 +122,9 @@ export class NetworkService {
 
                     // Check if node exposes port 53
                     // Ports can be number or {host, container}
-                    const exposesDNS = n.ports.some(p => {
+                    const rawPorts = n.rawData?.ports || [];
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const exposesDNS = rawPorts.some((p: any) => {
                         const hostPort = typeof p === 'object' ? p.host : p;
                         return hostPort === 53;
                     });
@@ -182,7 +184,6 @@ export class NetworkService {
                     label: edge.source.split('-').slice(1).join('.') || edge.source, // Try to make a readable label
                     subLabel: 'Missing Node',
                     status: 'down',
-                    ports: [],
                     metadata: {
                         source: 'Manual Link (Orphaned)',
                         description: 'This node was manually linked but is no longer found in the network.'
@@ -203,7 +204,6 @@ export class NetworkService {
                     label: edge.target.split('-').slice(1).join('.') || edge.target,
                     subLabel: 'Missing Node',
                     status: 'down',
-                    ports: [],
                     metadata: {
                         source: 'Manual Link (Orphaned)',
                         description: 'This node was manually linked but is no longer found in the network.'
@@ -309,7 +309,6 @@ export class NetworkService {
       type: 'internet',
       status: 'up',
       node: 'global',
-      ports: [],
       metadata: {
         host: '0.0.0.0',
         url: 'https://' + domain
@@ -323,7 +322,6 @@ export class NetworkService {
       type: 'gateway',
       status: fbStatus?.upstreamStatus === 'up' ? 'up' : 'down',
       node: 'global',
-      ports: [],
       metadata: {
         host: config.gateway?.host || '192.168.178.1',
         url: `http://${config.gateway?.host || 'fritz.box'}`,
@@ -350,7 +348,6 @@ export class NetworkService {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 status: 'active' as any,
                 node: 'global',
-                ports: [],
                 metadata: {
                     url: link.url,
                     icon: link.icon,
@@ -409,9 +406,12 @@ export class NetworkService {
     if (!twinNode) {
          if (nodeName === 'Local') {
              // Implicit Local node might not be in store yet if agent hasn't connected
-             throw new Error(`Local Agent not yet connected.`);
+             logger.warn('NetworkService', `Local Agent not yet connected. Returning empty graph.`);
+             return { nodes: [], edges: [] };
          }
-         throw new Error(`Node ${nodeName} unknown or not connected.`);
+         // Missing non-local node is expected if config exists but agent hasn't reported in yet
+         logger.warn('NetworkService', `Node ${nodeName} unknown in TwinStore. Returning empty graph.`);
+         return { nodes: [], edges: [] };
     }
 
     const hasContainers = twinNode.containers && twinNode.containers.length >= 0; // Allow empty array
@@ -470,7 +470,10 @@ export class NetworkService {
         
     } else {
          // If twin exists but not ready
-         throw new Error(`Digital Twin data not ready for ${nodeName} (Connected: ${twinNode.connected}, Synced: ${twinNode.initialSyncComplete})`);
+         // V4.2 Robustness: Instead of throwing and breaking the whole graph, return empty graph
+         // This allows other nodes to render while this one connects.
+         logger.warn('NetworkService', `Digital Twin data not ready for ${nodeName} (Connected: ${twinNode.connected}, Synced: ${twinNode.initialSyncComplete}). Returning empty graph for this node.`);
+         return { nodes: [], edges: [] };
     }
 
     const nodeIPs = nodeIPsResult;
@@ -492,33 +495,14 @@ export class NetworkService {
      
     const containerToPid = new Map<string, number>();
 
-    // Helper to find the main container for a service
+    // Collect PIDs for internal mapping (Iterate ALL containers, no guessing)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const getContainerForService = (serviceName: string): any | undefined => {
-        // 1. Check for explicit role label
-        // 2. Check PODMAN_SYSTEMD_UNIT
-        // 3. Check Names
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const found = containers.find((c: any) => {
-            if (c.Labels?.['PODMAN_SYSTEMD_UNIT'] === `${serviceName}.service`) return true;
-            if (c.Labels?.['app'] === serviceName) return true;
-            if (c.Names?.some((n: string) => n.includes(serviceName))) return true;
-            return false;
-        });
-        return found;
-    };
-
-    // Collect PIDs for internal mapping
-    services.forEach(service => {
-        if (service.active) {
-             const container = getContainerForService(service.name);
-             if (container) {
-                 const inspect = inspectMap.get(container.Id);
-                 if (inspect && inspect.State?.Pid) {
-                     containerToPid.set(container.Id, inspect.State.Pid);
-                 }
-             }
-        }
+    containers.forEach((c: any) => {
+         const id = c.id || c.Id;
+         const inspect = inspectMap.get(id);
+         if (inspect && inspect.State?.Pid) {
+             containerToPid.set(id, inspect.State.Pid);
+         }
     });
 
     // Populate hostPortsMap directly from enriched containers
@@ -527,16 +511,20 @@ export class NetworkService {
     
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     containers.forEach((c: any) => {
-        if (c.State !== 'running') return;
+        const state = c.state || c.State;
+        if (state !== 'running') return;
         
-        const inspect = inspectMap.get(c.Id);
+        const id = c.id || c.Id;
+        const inspect = inspectMap.get(id);
+        const ports = c.ports || c.Ports;
+
         // Map PID to Ports if available (enriched via getEnrichedContainers)
-        if (inspect?.State?.Pid && c.Ports && c.Ports.length > 0) {
-             hostPortsMap.set(inspect.State.Pid, c.Ports);
+        if (inspect?.State?.Pid && ports && ports.length > 0) {
+             hostPortsMap.set(inspect.State.Pid, ports);
              
              // Ensure standalone containers are also in containerToPid if needed
-             if (!containerToPid.has(c.Id)) {
-                 containerToPid.set(c.Id, inspect.State.Pid);
+             if (!containerToPid.has(id)) {
+                 containerToPid.set(id, inspect.State.Pid);
              }
         }
     });
@@ -544,10 +532,29 @@ export class NetworkService {
     // Find the Reverse Proxy Service
     watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Analyzing services...`, node: nodeName });
     
-    const proxyService = services.find(s => s.isReverseProxy);
+    // Improved Selection Logic: Use the Authoritative Flag from TwinStore
+    // fallback to sorting/guessing ONLY if the flag is missing (for safety)
+    const proxyService = services.find((s: any) => s.isPrimaryProxy) || services
+        .filter(s => s.isReverseProxy)
+        .sort((a, b) => {
+             // 1. Sort by Active State (Active first)
+             if (a.active && !b.active) return -1;
+             if (!a.active && b.active) return 1;
+             
+             // 2. Sort by Name Preference (nginx, nginx-web preferred)
+             const standards = ['nginx', 'nginx-web', 'traefik', 'caddy'];
+             const isStandardA = standards.includes(a.name);
+             const isStandardB = standards.includes(b.name);
+             if (isStandardA && !isStandardB) return -1;
+             if (!isStandardA && isStandardB) return 1;
+             
+             return 0;
+        })[0];
+
+    // If we found a proxy, its name is THE Truth.
     const proxyServiceName = proxyService?.name || 'nginx-web';
 
-    logger.info('NetworkService', `Scanning ${nodeName} for proxy service: "${proxyServiceName}". Found ${containers.length} containers.`);
+    logger.info('NetworkService', `Scanning ${nodeName} for proxy service: "${proxyServiceName}" (Active: ${proxyService?.active}). Found ${containers.length} containers.`);
 
     // Nginx Config (Only relevant if Nginx is running on this node)
     watcher.emit('change', { type: 'network-scan-progress', message: `Scanning ${nodeName}: Checking Nginx config...`, node: nodeName });
@@ -594,40 +601,44 @@ export class NetworkService {
     let verifiedDomains: string[] = [];
     const containerUrlMapping = new Map<string, Set<string>>();
 
-    // V4.1: Prioritize Agent Data for Nginx Config
-    // twinNode is already defined above
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const agentProxyRoutes = (twinNode as any)?.proxy;
-
-    if (agentProxyRoutes && agentProxyRoutes.length > 0) {
-        logger.info('NetworkService', `Using Agent-provided Nginx routes for ${nodeName} (${agentProxyRoutes.length} routes)`);
+    // V4.1: Prioritize Twin Data Enrichment (Single Source of Truth)
+    // The DigitalTwinStore now constructs the 'proxyConfiguration' directly on the service object.
+    const agentProxyRoutes = (twinNode as any)?.proxy; // Keep for legacy check
+    
+    // Check if we have an authoritative proxy service with Enriched Config
+    if (proxyService && proxyService.proxyConfiguration) {
+         logger.info('NetworkService', `Using Enriched Nginx routes from TwinStore for ${nodeName}`);
+         nginxConfig = proxyService.proxyConfiguration;
+         
+         // Verify Domains
+         try {
+            const domainStatuses = await checkDomains(nginxConfig, fbStatus, nodeIPs);
+            verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
+         } catch (e) {
+             console.warn(`[NetworkService] Failed to check domains via Enriched Twin data`, e);
+         }
+    } else if (agentProxyRoutes && agentProxyRoutes.length > 0) {
+        // Fallback: Manually construct if not enriched (should not happen with new TwinStore)
+        logger.info('NetworkService', `Using Agent-provided Nginx routes for ${nodeName} (${agentProxyRoutes.length} routes) [Legacy Path]`);
         
-        // Construct Nginx Config from Agent Data
         nginxConfig = {
             servers: agentProxyRoutes.map((r: any) => ({
-                server_name: [r.host], // Standard Nginx Parser output structure
+                server_name: [r.host], 
                 listen: r.ssl ? ['443 ssl', '80'] : ['80'],
                 locations: [{
                     path: '/',
                     proxy_pass: typeof r.targetService === 'string' && r.targetService.startsWith('http') ? r.targetService : `http://${r.targetService}`
                 }],
-                // Metadata
                 _agent_data: true,
                 _ssl: r.ssl,
                 _targetPort: r.targetPort || 80
             }))
         };
         
-        // Verify Domains
         try {
             const domainStatuses = await checkDomains(nginxConfig, fbStatus, nodeIPs);
             verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
-            if (verifiedDomains.length > 0) {
-                logger.info('NetworkService', `Verified domains for ${nodeName} (Agent): ${verifiedDomains.join(', ')}`);
-            }
-        } catch (e) {
-            console.warn(`[NetworkService] Failed to check domains via Agent data`, e);
-        }
+        } catch(e) { /* ignore */ }
     } else if (nginxContainer) {
         logger.warn('NetworkService', `Nginx container found on ${nodeName} but no Agent proxy data available. Skipping legacy SSH introspection.`);
     }
@@ -638,28 +649,37 @@ export class NetworkService {
     
     // Only add Nginx node if we found the container or it's expected
     if (nginxContainer || proxyService) {
-        // Create Nginx Proxy Node (Group)
-        nodes.push({
-            id: nginxId,
-            type: 'proxy',
-            label: proxyServiceName,
-            subLabel: nodeName === 'local' ? `Reverse Proxy (${nodeIPs[0] || 'localhost'})` : `Proxy (${nodeName} - ${nodeIPs[0] || '?'})`,
-            ports: [80, 443],
-            status: 'up',
-            node: nodeName,
-            metadata: {
-                source: 'Nginx Config',
-                link: null,
+        // STRICT: Use NodeFactory & Single Source of Truth
+        let proxyRawData: any;
+
+        if (proxyService) {
+             // 1. Preferred: Use Digital Twin Service Object directly
+             // We strictly trust the Twin's 'ports', 'active', and 'proxyConfiguration'
+             proxyRawData = {
+                 ...proxyService,
+                 verifiedDomains,
+                 type: 'gateway' // Visual Override
+             };
+        } else {
+             // 2. Fallback: Unmanaged/Legacy Container (No Service Twin)
+             proxyRawData = {
+                ...nginxConfig, // Spreads { servers: ... }
                 verifiedDomains,
-                nodeHost,
-                nodeIPs
-            },
-            rawData: {
-                ...nginxConfig,
+                ports: nginxContainer?.ports || [], // Discovery: Use container ports (no hardcoding)
                 type: 'gateway',
-                name: proxyServiceName
-            }
-        });
+                name: proxyServiceName,
+                active: nginxContainer ? (nginxContainer.State === 'running') : true
+             };
+        }
+        
+        const proxyMeta = {
+             link: null,
+             verifiedDomains,
+             nodeHost,
+             nodeIPs
+        };
+
+        nodes.push(NodeFactory.createProxyNode(nginxId, proxyRawData, nodeName, proxyMeta));
     }
 
     // 2. Managed Services
@@ -674,96 +694,108 @@ export class NetworkService {
                 if (nginxNode.metadata) {
                     nginxNode.metadata.serviceDescription = service.description;
                 }
-                
-                // Determine Ports: YAML vs Host Scan
-                let finalPorts: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
-                
-                if (service.hostNetwork && service.active) {
-                     // Try to get dynamic ports
-                     const container = getContainerForService(service.name);
-                     if (container) {
-                         const pid = containerToPid.get(container.Id);
-                         if (pid && hostPortsMap.has(pid)) {
-                             const realPorts = hostPortsMap.get(pid)!;
-                             console.log(`[NetworkService] Using dynamic host ports for Proxy ${service.name}:`, realPorts.map(p => p.host_port).join(', '));
-                             finalPorts = realPorts.map(p => {
-                                 // Return just host port for host networking usually, or mapped object
-                                 // NetworkNode expects number or {host, container}
-                                 // For host network, hostPort == containerPort usually
-                                 return { host: p.host_port, container: p.container_port, host_ip: p.host_ip }; 
-                             });
-                         }
-                     }
-                }
 
-                // Fallback to YAML/Config ports if dynamic scan found nothing (or not host network)
-                if (finalPorts.length === 0) {
-                     finalPorts = (service.ports || []).map((p: any) => {
-                        const hostPort = p.host ? (p.host.includes(':') ? parseInt(p.host.split(':')[1]) : parseInt(p.host)) : 0;
-                        const containerPort = p.container ? parseInt(p.container) : 0;
-                        if (hostPort > 0 && containerPort > 0) {
-                            return { host: hostPort, container: containerPort };
-                        }
-                        return hostPort;
-                    }).filter((p: any) => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true));
+                // Inject full service details into rawData (Flattened)
+                if (nginxNode.rawData) {
+                    // Start with the existing Raw Data (Gateway properties)
+                    const existingData = { ...nginxNode.rawData };
+                    
+                    // Flatten: Merge service properties onto top level, but preserve Gateway-specifics
+                    // We prioritize existingData (servers, type=gateway) over service props
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    nginxNode.rawData = { ...service, ...existingData };
+                    
+                    // Explicitly cleanup if service object was somehow spread weirdly
+                    // (Not needed if we trust the spread, but just to be sure we don't have nested 'service' key)
+                    if ('service' in nginxNode.rawData) {
+                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                         delete (nginxNode.rawData as any).service;
+                    }
+
+                    // Cleanup redundant 'servers' legacy field if we have the modern 'proxyConfiguration'
+                    // This reduces noise in the Raw Data view
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    if ((nginxNode.rawData as any).proxyConfiguration && (nginxNode.rawData as any).servers) {
+                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                         delete (nginxNode.rawData as any).servers;
+                    }
+                }
+                
+                // Determine Ports: Use Single Source of Truth (TwinStore Enrichment)
+                let finalPorts: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+                if (service.ports && service.ports.length > 0) {
+                    finalPorts = service.ports.map((p: any) => ({
+                         host: p.host_port || p.hostPort,
+                         container: p.container_port || p.containerPort,
+                         host_ip: p.host_ip || p.hostIp,
+                         protocol: p.protocol || 'tcp'
+                     }));
                 }
 
                 if (finalPorts.length > 0) {
-                    nginxNode.ports = finalPorts;
+                    if (nginxNode.rawData) {
+                       nginxNode.rawData.ports = finalPorts;
+                    }
                 }
                 continue;
             }
         }
 
-        const serviceGroupId = prefix(`group-service-${service.name}`);
+        const serviceGroupId = prefix(`service-${service.name}`);
 
-        // Prepare ports for service node
-        let servicePorts: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
-
-        if (service.hostNetwork && service.active) {
-                const container = getContainerForService(service.name);
-                if (container) {
-                    const pid = containerToPid.get(container.Id);
-                    if (pid && hostPortsMap.has(pid)) {
-                        const realPorts = hostPortsMap.get(pid)!;
-                        console.log(`[NetworkService] Using dynamic host ports for ${service.name}:`, realPorts.map(p => p.host_port).join(', '));
-                        servicePorts = realPorts.map(p => ({ host: p.host_port, container: p.container_port, host_ip: p.host_ip }));
-                    }
-                }
+        // Prepare ports for service node (USE TWIN SOURCE OF TRUTH)
+        const effectiveHostNetwork = service.effectiveHostNetwork || service.hostNetwork || false;
+        
+        let servicePorts: any[] = [];
+        
+        if (service.ports && service.ports.length > 0) {
+             servicePorts = service.ports.map((p: any) => ({
+                 host: p.host_port || p.hostPort,
+                 container: p.container_port || p.containerPort,
+                 host_ip: p.host_ip || p.hostIp || '0.0.0.0', // Standardize
+                 protocol: p.protocol || 'tcp'
+             }));
         }
 
-        if (servicePorts.length === 0) {
-             servicePorts = (service.ports || []).map((p: any) => {
-                const hostPort = p.host ? (p.host.includes(':') ? parseInt(p.host.split(':')[1]) : parseInt(p.host)) : 0;
-                const containerPort = p.container ? parseInt(p.container) : 0;
-                if (hostPort > 0 && containerPort > 0) {
-                    return { host: hostPort, container: containerPort };
-                }
-                return hostPort;
-            }).filter((p: any) => p !== 0 && (typeof p === 'number' ? !isNaN(p) : true));
-        }
+        // NEW: Get Linked Containers from Twin Store Property (Single Source of Truth)
+        // STRICT: No fallbacks. Uses DigitalTwin matching logic.
+        const linkedContainerIds: string[] = (service as any).associatedContainerIds || [];
+        const linkedContainers = linkedContainerIds.length > 0
+            ? containers.filter((c: any) => linkedContainerIds.includes(c.id || c.Id))
+            : [];
+            
+        // REMOVED: Redundant Host Network & Dynamic Port Calculation Logic
+        // This is now done in DigitalTwinStore.enrichNode()
 
+        // Enrich Raw Data with more context (Container, File/Quadlet)
+        // Use the list of linked containers instead of singular activeContainer
+        // const activeContainer = getContainerForService(service.name);
+        
+        // Find Quadlet file path (from Service Unit path or search)
+        // ServiceUnit has 'path'. We can try to find the source file in files cache if needed.
+        // For now, let's just inject what we have.
+        
         // Create Service Node (Merged Group & Node)
-        nodes.push({
-            id: serviceGroupId,
-            type: 'service', // Managed Service is a Service Node (acting as Group)
-            label: service.name,
-            subLabel: nodeName === 'local' ? `Managed Service (${nodeIPs[0] || 'localhost'})` : `Service (${nodeName} - ${nodeIPs[0] || '?'})`,
-            ports: servicePorts,
-            status: service.active ? 'up' : 'down',
-            node: nodeName,
-            metadata: {
-                source: 'Systemd/Podman',
-                description: service.description,
-                link: null,
-                nodeHost,
-                nodeIPs
-            },
-            rawData: {
-                ...service,
-                type: 'service'
-            }
-        });
+        // STRICT: Use NodeFactory to enforce RawData derivation
+        const serviceRawData = {
+            ...service,
+            // Inject full digital twin context
+            containers: linkedContainers, // New: Multi-container support
+            ports: servicePorts, // STRICT: Ensure RawData reflects the actual calculated/runtime ports
+            type: 'service',
+            hostNetwork: effectiveHostNetwork
+        };
+
+        const serviceMetadata = {
+            source: 'Systemd/Podman',
+            description: service.description,
+            link: null,
+            nodeHost,
+            nodeIPs
+        };
+
+        nodes.push(NodeFactory.createServiceNode(serviceGroupId, serviceRawData, nodeName, serviceMetadata));
     }
 
     // 3. Router -> Nginx Edges (Port Forwarding & Verified Domains)
@@ -783,7 +815,26 @@ export class NetworkService {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             label = ':' + relevantMappings.map((m: any) => m.externalPort).join(', ');
         } else {
-            label = ':80, :443';
+            // Discovery: Derive from Digital Twin Enriched Ports (Single Source of Truth)
+            const nginxNode = nodes.find(n => n.id === nginxId);
+            const listenPorts = new Set<string>();
+            
+            if (nginxNode && nginxNode.rawData && nginxNode.rawData.ports) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                nginxNode.rawData.ports.forEach((p: any) => {
+                     const hostPort = typeof p === 'object' ? p.host : p;
+                     if (hostPort) listenPorts.add(hostPort.toString());
+                });
+            }
+
+            if (listenPorts.size > 0) {
+                // Sort numerically if possible
+                label = ':' + Array.from(listenPorts)
+                    .sort((a, b) => parseInt(a) - parseInt(b))
+                    .join(', :');
+            } else {
+                label = ''; // No label if no ports discovered
+            }
         }
 
         edges.push({
@@ -957,31 +1008,30 @@ export class NetworkService {
                                 targetId = prefix(`${type}-${targetHost}-${targetPort}`);
                                 
                                 if (!nodes.find(n => n.id === targetId)) {
-                                    nodes.push({
-                                        id: targetId,
+                                    // STRICT: Use NodeFactory
+                                    const deviceRaw = {
                                         type: 'device',
-                                        label: targetHost,
-                                        subLabel: isLocal ? `Unresolved (${targetPort})` : `External (${targetPort})`,
+                                        name: targetHost,
+                                        ip: targetHost,
                                         ports: [targetPort],
-                                        status: isLocal ? 'down' : 'up',
-                                        node: nodeName,
-                                        metadata: {
-                                            source: 'Nginx Proxy',
-                                            description: isLocal 
-                                                ? `Nginx proxies to ${targetHost}:${targetPort}, but no container was found listening on this port.`
-                                                : `External Service detected via Nginx configuration.`,
-                                            link: `http://${targetHost}:${targetPort}`,
-                                            nodeHost,
-                                            verifiedDomains: [],
-                                            expectedTarget: `Host: ${targetHost}, Port: ${targetPort} (${isLocal ? 'Local' : 'External'})`
-                                        },
-                                        rawData: {
-                                            type: 'device',
-                                            name: targetHost,
-                                            ip: targetHost,
-                                            isVirtual: true
-                                        }
-                                    });
+                                        isVirtual: true,
+                                        // Specific visual props injected into raw
+                                        subLabel: isLocal ? `Unresolved (${targetPort})` : `External (${targetPort})`,
+                                        active: !isLocal
+                                    };
+
+                                    const deviceMeta = {
+                                        source: 'Nginx Proxy',
+                                        description: isLocal 
+                                            ? `Nginx proxies to ${targetHost}:${targetPort}, but no container was found listening on this port.`
+                                            : `External Service detected via Nginx configuration.`,
+                                        link: `http://${targetHost}:${targetPort}`,
+                                        nodeHost,
+                                        verifiedDomains: [],
+                                        expectedTarget: `Host: ${targetHost}, Port: ${targetPort} (${isLocal ? 'Local' : 'External'})`
+                                    };
+
+                                    nodes.push(NodeFactory.createDeviceNode(targetId, deviceRaw, nodeName, deviceMeta));
                                 }
                             }
                         }
@@ -1026,7 +1076,13 @@ export class NetworkService {
     // 5. Containers
     for (const container of containers) {
         if (!container || (!container.Id && (!container.Names || container.Names.length === 0))) continue;
-        if (container.Image === 'localhost/podman-pause:4.3.1-0' || container.Names?.some((n: string) => n.includes('-infra'))) continue;
+        
+        // Robust Infra Detection
+        const isInfra = container.isInfra || 
+                        container.Image?.includes('podman-pause') || 
+                        container.Names?.some((n: string) => n.includes('-infra'));
+                        
+        if (isInfra) continue; // Skip Infra containers in Graph
 
         const containerId = prefix(container.Id);
         const isProxy = (container.Labels && container.Labels['servicebay.role'] === 'reverse-proxy') ||
@@ -1070,11 +1126,9 @@ export class NetworkService {
                      
                      // Overwrite exposed ports for consistency
                      exposedPorts = realPorts.map(p => `${p.host_port}/${p.protocol || 'tcp'}`);
-                 } else if (services.some(s => getContainerForService(s.name)?.Id === container.Id)) {
-                     // If it's part of a service we already processed, we might have missed it if not directly in hostPortsMap?
-                     // No, if it was in services and hostNetwork=true, it should be in hostPortsMap.
-                     // But standalone containers were NOT in hostPids initially! We need to fix that earlier.
-                 }
+                 } 
+                 // REMOVED: Fallback to service check (Relied on getContainerForService)
+                 // If it's not in hostPortsMap by PID, it's not dynamic port mapped. strict.
             }
             
             // If in a pod, find infra container for mappings
@@ -1152,33 +1206,33 @@ export class NetworkService {
             
             const linkedUrls = Array.from(containerUrlMapping.get(containerId) || []);
 
-            nodes.push({
-                id: containerId,
+            // STRICT: Use NodeFactory
+            const containerRaw = {
+                ...container,
                 type: 'container',
-                label: containerName || container.Id.substring(0, 12),
-                subLabel: ip,
-                hostname: hostname,
-                ip: ip,
+                name: containerName,
                 ports: ports,
-                status: container.State === 'running' ? 'up' : 'down',
-                parentNode: isProxy ? nginxId : undefined,
-                extent: isProxy ? 'parent' : undefined,
-                node: nodeName,
-                metadata: {
-                    source: 'Podman (Orphan)',
-                    link: hostPort ? `http://${nodeHost}:${hostPort}` : null,
-                    containerId: container.Id,
-                    nodeHost,
-                    nodeIPs,
-                    verifiedDomains: linkedUrls
-                },
-                rawData: {
-                    ...container,
-                    type: 'container',
-                    name: containerName,
-                    hostNetwork: isHostNetwork
-                }
-            });
+                hostNetwork: isHostNetwork || (container.networks && container.networks.includes('host')),
+                ip: ip, // Inject calculated IP for Factory to use
+                inspection // Inject full inspection data for deep details
+            };
+
+            const containerMeta = {
+                source: 'Podman (Orphan)',
+                link: hostPort ? `http://${nodeHost}:${hostPort}` : null,
+                containerId: container.Id,
+                nodeHost,
+                nodeIPs,
+                verifiedDomains: linkedUrls
+            };
+            
+            nodes.push(NodeFactory.createContainerNode(
+                containerId, 
+                containerRaw, 
+                nodeName, 
+                containerMeta, 
+                isProxy ? nginxId : undefined
+            ));
         }
     }
 
@@ -1215,7 +1269,7 @@ export class NetworkService {
             const isProxyService = parentService.name === 'nginx' || parentService.name === 'nginx-web' || (parentService.labels && parentService.labels['servicebay.role'] === 'reverse-proxy');
             // If proxy, parent is the Nginx Group/Node (nginxId)
             // If service, parent is the Service Group/Node
-            serviceGroupId = isProxyService ? nginxId : prefix(`group-service-${parentService.name}`);
+            serviceGroupId = isProxyService ? nginxId : prefix(`service-${parentService.name}`);
         }
 
         // Add Pod info to metadata
@@ -1243,7 +1297,6 @@ export class NetworkService {
                     type: 'pod', // Pod is a Node
                     label: podName, // Pod Group Label
                     subLabel: 'Pod Group',
-                    ports: [],
                     status: 'up',
                     node: nodeName,
                     metadata: { source: 'Podman' },
@@ -1279,6 +1332,15 @@ export class NetworkService {
         // 1. Direct mapping (Virtual or Container Nodes)
         const directUrls = containerUrlMapping.get(node.id);
         const linkedUrls = new Set(directUrls || []);
+
+        // V4.1: Inject Verified Domains from TwinStore (Source of Truth)
+        if (node.rawData) {
+            // Check ServiceUnit or EnrichedContainer
+            const typedRaw = node.rawData as any;
+            if (typedRaw.verifiedDomains && Array.isArray(typedRaw.verifiedDomains)) {
+                 (typedRaw.verifiedDomains as string[]).forEach(d => linkedUrls.add(d));
+            }
+        }
         
         // 2. Child aggregation (Service Nodes containing Containers)
         // Find children of this node

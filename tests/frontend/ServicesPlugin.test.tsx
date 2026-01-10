@@ -12,8 +12,14 @@ const defaultTwinData = {
   nodes: {
     'Local': {
       services: [
-        { name: 'nginx.service', activeState: 'active', subState: 'running', type: 'container', description: 'Nginx Web Server' },
-        { name: 'redis.service', activeState: 'active', subState: 'running', type: 'container', description: 'Redis Cache' }
+        { 
+            name: 'nginx.service', activeState: 'active', subState: 'running', type: 'container', description: 'Nginx Web Server',
+            isManaged: true, isReverseProxy: true, associatedContainerIds: ['nginx-123']
+        },
+        { 
+            name: 'redis.service', activeState: 'active', subState: 'running', type: 'container', description: 'Redis Cache',
+            isManaged: true, associatedContainerIds: ['redis-123']
+        }
       ],
       containers: [
         { 
@@ -185,7 +191,8 @@ describe('ServicesPlugin', () => {
                 { 
                     name: 'nginx-web',
                     activeState: 'active', subState: 'running', type: 'container', description: 'Nginx',
-                    isReverseProxy: true
+                    isReverseProxy: true,
+                    associatedContainerIds: ['abc12345']
                 }
               ],
               containers: [

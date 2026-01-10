@@ -20,7 +20,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 class Logger {
   private fs: any;
   private path: any;
-  private logDir: string;
+  private logDir: string = '';
 
   constructor() {
     if (isServer) {

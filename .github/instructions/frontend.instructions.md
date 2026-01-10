@@ -17,5 +17,10 @@ You are working on the **ServiceBay** frontend (Next.js 16 + Tailwind CSS).
     -   Do not use raw `alert()` or `console.log()` for user feedback.
 
 ## Testing
--   **Methodology**: Fuzzy testing logic implicitly.
--   **Verification**: Ensure components render without hydration errors.
+-   **Methodology**: Use **Vitest** + **React Testing Library (RTL)**.
+-   **Location**: `tests/frontend/`.
+-   **Strategy ("Integration over Implementation")**:
+    -   **DO TEST**: What the user sees (Text, Badges) and does (Clicks, Inputs).
+    -   **DO NOT TEST**: Internal component state or 3rd party implementations.
+    -   **Mocking**: Use `vi.mock('@/hooks/useDigitalTwin', ...)` to inject strict data scenarios (e.g. "Mock Nginx with 2 verified domains"). Do NOT make real API calls.
+-   **Verification**: Ensure components render with the mocked data and handle empty states gracefully (e.g. "No services found").
