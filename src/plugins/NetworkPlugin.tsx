@@ -119,7 +119,7 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
       router: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-600/60',
       internet: 'border-gray-400 dark:border-gray-600 bg-gray-100 dark:bg-gray-800/60',
       proxy: 'border-emerald-400 dark:border-emerald-600 bg-emerald-100 dark:bg-emerald-900/40',
-      gateway: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-600/60', // Add gateway mapping
+      gateway: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-800/50', // Add gateway mapping
 
       link: 'border-cyan-400 dark:border-cyan-600 bg-cyan-100 dark:bg-cyan-900/40',
       device: 'border-indigo-400 dark:border-indigo-600 bg-indigo-100 dark:bg-indigo-900/40',
@@ -1102,9 +1102,9 @@ export default function NetworkPlugin() {
                     const type = n.data?.type as string;
                     switch (type) {
                         case 'container': return '#60a5fa'; // blue-400
-                        case 'service': return 'transparent';
-                        case 'pod': return 'transparent';
-                        case 'proxy': return 'transparent';
+                        case 'service': return '#c084fc'; // purple-400
+                        case 'pod': return '#f472b6'; // pink-400
+                        case 'proxy': return '#34d399'; // emerald-400
                         case 'router': return '#fb923c'; // orange-400
                         case 'gateway': return '#fb923c'; // orange-400
                         case 'internet': return '#9ca3af'; // gray-400
