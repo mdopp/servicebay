@@ -1,6 +1,5 @@
 import { NetworkGraph, NetworkNode, NetworkEdge } from './types';
 import { NodeFactory } from './factory';
-import { FritzBoxClient } from '../fritzbox/client';
 import { ServiceManager } from '../services/ServiceManager';
 import { listNodes, PodmanConnection } from '../nodes';
 import { getConfig } from '../config';
@@ -12,9 +11,6 @@ import { DigitalTwinStore } from '../store/twin'; // Import Twin Store
 import { logger } from '../logger';
 
 export class NetworkService {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private static fbStatusCache: { data: any, timestamp: number } | null = null;
-
   private getLocalIPs(): string[] {
     const nets = os.networkInterfaces();
     const results: string[] = [];
@@ -262,41 +258,20 @@ export class NetworkService {
     
     const config = await getConfig();
     
-    // FritzBox Status
-    let fbClient: FritzBoxClient;
-    if (config.gateway?.type === 'fritzbox') {
-        fbClient = new FritzBoxClient({
-            host: config.gateway.host,
-            username: config.gateway.username,
-            password: config.gateway.password
-        });
-    } else {
-        fbClient = new FritzBoxClient();
-    }
+    // SSOT: Use Digital Twin Gateway State
+    const twin = DigitalTwinStore.getInstance();
+    const gw = twin.gateway;
 
-    let fbStatus = null;
-    
-    // Check Cache (TTL 60s)
-    if (NetworkService.fbStatusCache && (Date.now() - NetworkService.fbStatusCache.timestamp < 60000)) {
-        fbStatus = NetworkService.fbStatusCache.data;
-    } else {
-        try {
-            fbStatus = await fbClient.getStatus();
-            // Cache it
-            NetworkService.fbStatusCache = { data: fbStatus, timestamp: Date.now() };
-        } catch (e) {
-            console.warn('[NetworkService] Failed to fetch FritzBox status, using offline mockup', e);
-            fbStatus = {
-                connected: false,
-                ip: 'Offline',
-                uptime: 0,
-                bytesIn: 0,
-                bytesOut: 0,
-                maxDown: 0,
-                maxUp: 0
-            };
-        }
-    }
+    // Map Twin State to legacy fbStatus format for compatibility
+    const fbStatus = {
+        connected: gw.upstreamStatus === 'up',
+        externalIP: gw.publicIp,
+        internalIP: gw.internalIp,
+        uptime: gw.uptime || 0,
+        portMappings: gw.portMappings || [],
+        dnsServers: gw.dnsServers,
+        upstreamStatus: gw.upstreamStatus
+    };
 
     // --- Add Synthetic Nodes (Gateway, Internet) ---
     // These must ALWAYS be present in the graph for visualization
@@ -318,15 +293,16 @@ export class NetworkService {
     // Gateway Node
     nodes.push({
       id: 'gateway',
-      label: 'Gateway',
+      label: gw.provider === 'fritzbox' ? 'FritzBox Gateway' : 'Gateway',
       type: 'gateway',
-      status: fbStatus?.upstreamStatus === 'up' ? 'up' : 'down',
+      status: gw.upstreamStatus === 'up' ? 'up' : 'down',
       node: 'global',
       metadata: {
         host: config.gateway?.host || '192.168.178.1',
         url: `http://${config.gateway?.host || 'fritz.box'}`,
         stats: fbStatus
-      }
+      },
+      rawData: gw // EXPOSE RICH DATA
     });
 
     edges.push({
