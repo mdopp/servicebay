@@ -77,10 +77,17 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
           const cleanName = serviceName.replace('.service', '');
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const targetNode = graph.nodes.find((n: any) => 
-               n.rawData && n.rawData.name === cleanName && 
-               (node ? n.node === node : true)
-          );
+          const targetNode = graph.nodes.find((n: any) => {
+               // Normal Service Match
+               if (n.rawData && n.rawData.name === cleanName && (node ? n.node === node : true)) {
+                   return true;
+               }
+               // Gateway Match (Special Case)
+               if (cleanName === 'gateway' && n.type === 'gateway') {
+                   return true;
+               }
+               return false;
+          });
 
           if (targetNode) {
               setNetworkData(targetNode);
