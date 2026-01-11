@@ -960,40 +960,78 @@ export class NetworkService {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         let containerWithMapping: any = null;
 
-                        // 0. Check if targetHost is a container IP
+                        // 0. Check if targetHost is a container IP, Name, or Service Name
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const containerByIP = containers.find((c: any) => {
-                            if (!c.Networks) return false;
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const networks = Object.values(c.Networks) as any[];
-                            return networks.some(n => n.IPAddress === targetHost);
+                        const containerByIPOrName = containers.find((c: any) => {
+                            // A) IP Check
+                            if (c.Networks) {
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                const networks = Object.values(c.Networks) as any[];
+                                if (networks.some(n => n.IPAddress === targetHost)) return true;
+                            }
+                            // B) Name Check (Docker internal DNS)
+                            // Clean names (remove /)
+                            const names = (c.Names || []).map((n: string) => n.replace(/^\//, ''));
+                            if (names.some((n: string) => n === targetHost || n.includes(targetHost))) return true;
+
+                            // C) Service Name / Label Check
+                            if (c.Labels) {
+                                if (c.Labels['com.docker.compose.service'] === targetHost) return true;
+                                if (c.Labels['io.kubernetes.pod.name'] === targetHost) return true;
+                                if (c.Labels['app'] === targetHost) return true;
+                            }
+
+                            return false;
                         });
 
-                        if (containerByIP) {
-                            targetContainer = containerByIP;
+                        if (containerByIPOrName) {
+                            targetContainer = containerByIPOrName;
+                            // If we matched by Name/Service, the port in proxy_pass matches the internal Container Port (usually)
+                            // or the service port.
+                            // If it was IP match, it matches internal IP port.
+                            // So usually internalPort = targetPort.
                             internalPort = targetPort;
-                            podId = containerByIP.Pod;
-                            podName = containerByIP.PodName || containerByIP.Labels?.['io.podman.pod.name'] || containerByIP.Labels?.['io.kubernetes.pod.name'];
+                            
+                            podId = containerByIPOrName.Pod;
+                            podName = containerByIPOrName.PodName || containerByIPOrName.Labels?.['io.podman.pod.name'] || containerByIPOrName.Labels?.['io.kubernetes.pod.name'];
                         } else {
-                            // 1. Find the port mapping (HostPort -> ContainerPort)
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            containerWithMapping = containers.find((c: any) => {
-                                if (!c.Ports) return false;
+                            // 1. Find via Host Port Mapping (if target is Host IP/Localhost)
+                            // Only valid if targetHost implies "This Node"
+                            const isSelf = ['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(targetHost) || nodeIPs.includes(targetHost);
+                            
+                            if (isSelf) {
                                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                return c.Ports.some((p: any) => {
-                                    const hostPort = parseInt(p.HostPort || p.host_port || '0', 10);
-                                    return hostPort === targetPort;
+                                containerWithMapping = containers.find((c: any) => {
+                                    // Check Runtime Ports or Config Ports
+                                    const ports = c.ports || [];
+                                    const legacyPorts = c.Ports || [];
+                                    
+                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                    const matchRuntime = ports.some((p: any) => parseInt(p.host_port, 10) === targetPort);
+                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                    const matchLegacy = legacyPorts.some((p: any) => parseInt(p.HostPort || p.host_port, 10) === targetPort);
+                                    
+                                    return matchRuntime || matchLegacy;
                                 });
-                            });
 
-                            if (containerWithMapping) {
-                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                const mapping = containerWithMapping.Ports.find((p: any) => {
-                                    const hostPort = parseInt(p.HostPort || p.host_port || '0', 10);
-                                    return hostPort === targetPort;
-                                });
-                                if (mapping) {
-                                    internalPort = parseInt(mapping.ContainerPort || mapping.container_port || '0', 10);
+                                if (containerWithMapping) {
+                                    // Resolve internal port from mapping
+                                    const ports = containerWithMapping.ports || []; 
+                                    const legacyPorts = containerWithMapping.Ports || [];
+                                    
+                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                    let mapping = ports.find((p: any) => parseInt(p.host_port, 10) === targetPort);
+                                    if (!mapping) {
+                                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                         mapping = legacyPorts.find((p: any) => parseInt(p.HostPort || p.host_port, 10) === targetPort);
+                                    }
+
+                                    if (mapping) {
+                                        internalPort = parseInt(mapping.container_port || mapping.ContainerPort || '0', 10);
+                                    } else {
+                                        internalPort = targetPort; // Fallback
+                                    }
+                                    
                                     podId = containerWithMapping.Pod;
                                     podName = containerWithMapping.PodName || containerWithMapping.Labels?.['io.podman.pod.name'] || containerWithMapping.Labels?.['io.kubernetes.pod.name'];
                                 }
