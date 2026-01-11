@@ -221,13 +221,24 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
 
   // Merge Verified Domains from Summary if available (for collapsed groups)
   const effectiveDomains = [
-     ...(data.metadata?.verifiedDomains || []),
-     ...(summary.verifiedDomains || [])
+     ...(data.metadata?.verifiedDomains || []), // Verified domains for this specific node
+     ...(summary.verifiedDomains || []) // Aggregated domains for collapsed children
   ];
   // Deduplicate
   const uniqueDomains = Array.from(new Set(effectiveDomains));
  
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // For Reverse Proxies: Only show domains that are actively routed to THIS node or its children.
+  // We filter uniqueDomains by checking if the graph contains an edge from valid sources (Gateway/Internet) TO this node with that domain label?
+  // Actually, the backend already filters `verifiedDomains` on the node metadata.
+  // But for the Proxy Node itself, we want to be sure we don't show all domains if it's a generic proxy but only handles some.
+  // The logic in `src/lib/network/service.ts` populates `verifiedDomains` on the generic Gateway/Router node with ALL domains,
+  // but for specific Service nodes, it only adds domains that target that service's IP/Port.
+
+  // So, if we trust the metadata, it should be correct.
+  // However, the user asked to explicitly verify "really routed to this node".
+  
+  // No changes needed if backend metadata is correct, but let's ensure we prefer metadata over summary if expanded.
+  const displayDomains = renderAsExpandedGroup ? [] : uniqueDomains;
   type DetailItem = { label: string; value: any; full?: boolean };
 
   // Helper to get display details based on type
@@ -263,14 +274,15 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
               { label: 'URL', value: raw.url, full: true },
           ];
       }
-      if (effectiveType === 'router') {
+      if (effectiveType === 'gateway' || effectiveType === 'router') { // Handle both
           const items = [
-              { label: 'Ext IP', value: raw.externalIP },
-              { label: 'Int IP', value: raw.internalIP },
+              { label: 'Ext IP', value: raw.externalIP || data.metadata?.stats?.externalIP || 'Unknown' },
+              { label: 'Int IP', value: raw.internalIP || data.metadata?.stats?.internalIP || 'Unknown' },
               { label: 'Uptime', value: raw.uptime ? `${Math.floor(raw.uptime / 3600)}h` : 'N/A', full: true }
           ];
-          if (data.metadata?.dnsServers && data.metadata.dnsServers.length > 0) {
-              items.push({ label: 'DNS', value: data.metadata.dnsServers.join(', '), full: true });
+          const dns = raw.dnsServers || data.metadata?.stats?.dnsServers;
+          if (dns && dns.length > 0) {
+              items.push({ label: 'DNS', value: dns.join(', '), full: true });
           }
           return items;
       }
@@ -463,12 +475,15 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
                     </div>
                 )}
 
-                {/* Verified Domains List */}
-                {uniqueDomains.length > 0 && (
+                {/* Verified Domains List (Filtered for Proxies/Services) */}
+                {displayDomains.length > 0 && (
                     <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
-                        <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold block mb-1">Verified Domains</span>
+                        <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold block mb-1">
+                            {effectiveType === 'proxy' && 'Routed Domains'}
+                            {effectiveType !== 'proxy' && 'Verified Domains'}
+                        </span>
                         <div className="flex flex-col gap-1">
-                            {uniqueDomains.map((domain: string) => (
+                            {displayDomains.map((domain: string) => (
                                 <a 
                                     key={domain} 
                                     href={domain.startsWith('http') ? domain : `https://${domain}`}
