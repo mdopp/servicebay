@@ -991,6 +991,21 @@ export class NetworkService {
                                      if (c.ExposedPorts) Object.keys(c.ExposedPorts).forEach(p => portsToCheck.add(p));
                                      if (inspection?.Config?.ExposedPorts) Object.keys(inspection.Config.ExposedPorts).forEach(p => portsToCheck.add(p));
                                      
+                                     // NEW: Check dynamic/runtime ports from Agent V4
+                                     if (c.ports) {
+                                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                         c.ports.forEach((p: any) => {
+                                             if (p.host_port) portsToCheck.add(`${p.host_port}/tcp`);
+                                         });
+                                     } 
+                                     if (c.Ports) {
+                                         // Legacy or alternate casing
+                                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                         c.Ports.forEach((p: any) => {
+                                             if (p.HostPort) portsToCheck.add(`${p.HostPort}/tcp`);
+                                         });
+                                     }
+                                     
                                      return Array.from(portsToCheck).some(p => parseInt(p.split('/')[0], 10) === targetPort);
                                  });
                              }
@@ -1018,14 +1033,46 @@ export class NetworkService {
                         }
 
                         // Fallback to Virtual Node if no Container/Pod found
+                        // NEW LOGIC: Treat localhost as a real node on the current machine, not self-reference to Nginx.
                         if (!targetId && targetHost) {
-                            // Special handling for localhost/127.0.0.1: Treat as self-reference (User Request)
-                            if (['localhost', '127.0.0.1', '::1'].includes(targetHost)) {
-                                targetId = nginxId;
-                            } else {
-                                const isLocal = nodeIPs.includes(targetHost);
-                                const type = isLocal ? 'missing' : 'external';
+                            
+                            const isLoopback = ['localhost', '127.0.0.1', '::1'].includes(targetHost);
+                            const isLocalIP = nodeIPs.includes(targetHost);
+                            
+                            if (isLoopback || isLocalIP) {
+                                // It IS a local service, just not found in containers
+                                // Create a "Local Service" node visually inside the Node
+                                const type = 'service';
+                                targetId = prefix(`local-svc-${targetHost}-${targetPort}`);
                                 
+                                if (!nodes.find(n => n.id === targetId)) {
+                                    // Create Virtual Node
+                                    const missingNode: any = {
+                                        id: targetId,
+                                        type: 'service', // Use service shape to look integrated
+                                        label: `:${targetPort}`,
+                                        subLabel: 'Internal Service',
+                                        status: 'down', // Warning state (unmanaged or hidden)
+                                        node: nodeName, // Important: Belong to this Node group
+                                        metadata: {
+                                            source: 'Nginx Proxy',
+                                            description: `Nginx forwards to ${targetHost}:${targetPort}, but no managed container was found.`,
+                                            verifiedDomains: serverDomains, // Inherit domains so we see what routes here
+                                            targetUrl: `http://${targetHost}:${targetPort}`
+                                        },
+                                        rawData: {
+                                            type: 'virtual-service',
+                                            name: `Local Service ${targetPort}`,
+                                            active: false,
+                                            ports: [{ host: targetPort, protocol: 'tcp' }]
+                                        }
+                                    };
+                                    nodes.push(missingNode);
+                                }
+
+                            } else {
+                                // External
+                                const type = 'external';
                                 targetId = prefix(`${type}-${targetHost}-${targetPort}`);
                                 
                                 if (!nodes.find(n => n.id === targetId)) {
@@ -1037,19 +1084,17 @@ export class NetworkService {
                                         ports: [targetPort],
                                         isVirtual: true,
                                         // Specific visual props injected into raw
-                                        subLabel: isLocal ? `Unresolved (${targetPort})` : `External (${targetPort})`,
-                                        active: !isLocal
+                                        subLabel: `External (${targetPort})`,
+                                        active: true
                                     };
 
                                     const deviceMeta = {
                                         source: 'Nginx Proxy',
-                                        description: isLocal 
-                                            ? `Nginx proxies to ${targetHost}:${targetPort}, but no container was found listening on this port.`
-                                            : `External Service detected via Nginx configuration.`,
+                                        description: `External Service detected via Nginx configuration.`,
                                         link: `http://${targetHost}:${targetPort}`,
                                         nodeHost,
                                         verifiedDomains: [],
-                                        expectedTarget: `Host: ${targetHost}, Port: ${targetPort} (${isLocal ? 'Local' : 'External'})`
+                                        expectedTarget: `Host: ${targetHost}, Port: ${targetPort} (External)`
                                     };
 
                                     nodes.push(NodeFactory.createDeviceNode(targetId, deviceRaw, nodeName, deviceMeta));
