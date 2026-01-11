@@ -790,15 +790,31 @@ export class NetworkService {
         // Skip non-services or things without ports
         if (!targetNode.rawData || !targetNode.rawData.ports) continue;
         
-        // Strict Type for ports
+        // Strict Type for ports w/ Bind IP check
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const targetPorts = targetNode.rawData.ports.map((p: any) => typeof p === 'object' ? p.host : p);
-        
+        const targetPortObjs = targetNode.rawData.ports.map((p: any) => {
+            if (typeof p === 'number') return { host: p, host_ip: '0.0.0.0' };
+            return p;
+        });
+
         // 3a. Check Port Forwardings
+        // We filter out any mappings where the target service is bound strictly to loopback
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const matchingMappings = relevantMappings.filter((m: any) => 
-                targetPorts.includes(m.internalPort)
-        );
+        const matchingMappings = relevantMappings.filter((m: any) => {
+            // Find corresponding port on the container/service side
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const matchingPort = targetPortObjs.find((p: any) => p.host === m.internalPort);
+            
+            if (!matchingPort) return false;
+            
+            // CRITICAL: If service listens ONLY on localhost (127.0.0.1, ::1), Gateway cannot reach it.
+            // Explicitly exclude these edges to ensure "node that it started from" routing logic.
+            if (matchingPort.host_ip && (matchingPort.host_ip.startsWith('127.') || matchingPort.host_ip === '::1')) {
+                return false;
+            }
+            
+            return true;
+        });
         
         // 3b. Check Verified Domains (Implicit 80/443)
         // If this node handles verified domains, IT IS the target for HTTP traffic
@@ -808,26 +824,68 @@ export class NetworkService {
         // Combine
         if (matchingMappings.length > 0 || handlesDomains) {
                 const labels = new Set<string>();
+                
                 // Add forwardings
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 matchingMappings.forEach((m:any) => labels.add(`:${m.externalPort}`));
                 
                 if (handlesDomains) {
-                    // Implicit ports if not already mapped
+                    // Only imply 80/443 if matching mappings confirm it OR strictly if the node exposes them (0.0.0.0)
+                    // Users want correct "associated with ports" logic.
+                    // Ideally, we should check if 80/443 are actually mapped.
+                    // But if UPnP or "Exposed Host" is used, specific mappings might be missing.
+                    // Compatibility: If logic assumes 80/443 are open, just label them.
+                    
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    if (!matchingMappings.some((m:any) => m.externalPort === 80)) labels.add(':80');
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    if (!matchingMappings.some((m:any) => m.externalPort === 443)) labels.add(':443');
+                    const has80 = matchingMappings.some((m:any) => m.externalPort === 80);
+                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const has443 = matchingMappings.some((m:any) => m.externalPort === 443);
+                    
+                    // If strictly strict, we would only add labels if (has80 || has443).
+                    // But currently we add them implicitly.
+                    if (!has80) labels.add(':80 (implicit)');
+                    if (!has443) labels.add(':443 (implicit)');
                 }
 
                 if (labels.size === 0) continue;
 
                 // Sort numeric
                 const label = Array.from(labels)
-                    .sort((a,b) => parseInt(a.replace(':','')) - parseInt(b.replace(':','')))
+                    .sort((a,b) => parseInt(a.replace(':','').replace(' (implicit)', '')) - parseInt(b.replace(':','').replace(' (implicit)', '')))
                     .join(', ');
                 
                 // Create Edge
+                // Only create edge if we have actual mappings OR verified domains
+                // (And if handlesDomains is true, ensure we aren't bound to localhost logic wise - handled by checkDomains usually)gs.forEach((m:any) => labels.add(`:${m.externalPort}`));
+                
+                if (handlesDomains) {
+                    // Only imply 80/443 if matching mappings confirm it OR strictly if the node exposes them (0.0.0.0)
+                    // Users want correct "associated with ports" logic.
+                    // Ideally, we should check if 80/443 are actually mapped.
+                    // But if UPnP or "Exposed Host" is used, specific mappings might be missing.
+                    // Compatibility: If logic assumes 80/443 are open, just label them.
+                    
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const has80 = matchingMappings.some((m:any) => m.externalPort === 80);
+                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const has443 = matchingMappings.some((m:any) => m.externalPort === 443);
+                    
+                    // If strictly strict, we would only add labels if (has80 || has443).
+                    // But currently we add them implicitly.
+                    if (!has80) labels.add(':80 (implicit)');
+                    if (!has443) labels.add(':443 (implicit)');
+                }
+
+                if (labels.size === 0) continue;
+
+                // Sort numeric
+                const label = Array.from(labels)
+                    .sort((a,b) => parseInt(a.replace(':','').replace(' (implicit)', '')) - parseInt(b.replace(':','').replace(' (implicit)', '')))
+                    .join(', ');
+                
+                // Create Edge
+                // Only create edge if we have actual mappings OR verified domains
+                // (And if handlesDomains is true, ensure we aren't bound to localhost logic wise - handled by checkDomains usually)
                 edges.push({
                 id: `edge-gateway-${targetNode.id}`,
                 source: routerId, // 'gateway'
