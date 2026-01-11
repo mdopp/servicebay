@@ -856,35 +856,6 @@ export class NetworkService {
                 
                 // Create Edge
                 // Only create edge if we have actual mappings OR verified domains
-                // (And if handlesDomains is true, ensure we aren't bound to localhost logic wise - handled by checkDomains usually)gs.forEach((m:any) => labels.add(`:${m.externalPort}`));
-                
-                if (handlesDomains) {
-                    // Only imply 80/443 if matching mappings confirm it OR strictly if the node exposes them (0.0.0.0)
-                    // Users want correct "associated with ports" logic.
-                    // Ideally, we should check if 80/443 are actually mapped.
-                    // But if UPnP or "Exposed Host" is used, specific mappings might be missing.
-                    // Compatibility: If logic assumes 80/443 are open, just label them.
-                    
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const has80 = matchingMappings.some((m:any) => m.externalPort === 80);
-                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const has443 = matchingMappings.some((m:any) => m.externalPort === 443);
-                    
-                    // If strictly strict, we would only add labels if (has80 || has443).
-                    // But currently we add them implicitly.
-                    if (!has80) labels.add(':80 (implicit)');
-                    if (!has443) labels.add(':443 (implicit)');
-                }
-
-                if (labels.size === 0) continue;
-
-                // Sort numeric
-                const label = Array.from(labels)
-                    .sort((a,b) => parseInt(a.replace(':','').replace(' (implicit)', '')) - parseInt(b.replace(':','').replace(' (implicit)', '')))
-                    .join(', ');
-                
-                // Create Edge
-                // Only create edge if we have actual mappings OR verified domains
                 // (And if handlesDomains is true, ensure we aren't bound to localhost logic wise - handled by checkDomains usually)
                 edges.push({
                 id: `edge-gateway-${targetNode.id}`,
