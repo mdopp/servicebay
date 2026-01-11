@@ -9,6 +9,7 @@ import os from 'os';
 import watcher from '../watcher';
 import { DigitalTwinStore } from '../store/twin'; // Import Twin Store
 import { logger } from '../logger';
+import yaml from 'js-yaml'; // Helper: YAML parser
 
 export class NetworkService {
   private getLocalIPs(): string[] {
@@ -732,6 +733,63 @@ export class NetworkService {
                  host_ip: p.host_ip || p.hostIp || '0.0.0.0', // Standardize
                  protocol: p.protocol || 'tcp'
              }));
+        }
+
+        // Fallback: Parse Quadlet File for Ports if service is inactive/missing ports
+        // This ensures the graph shows the intended architecture even if the service is down.
+        if (servicePorts.length === 0 && twinNode.files) {
+             // Heuristic: Look for definitions matching the service name
+             const candidates = Object.values(twinNode.files).filter((f: any) => 
+                f.path.includes(`/${service.name}.yml`) || // Kube YAML
+                f.path.includes(`/${service.name}.container`) // Container Unit
+             ) as any[];
+
+             for (const file of candidates) {
+                 if (file.path.endsWith('.yml') || file.path.endsWith('.yaml')) {
+                     try {
+                         const content = yaml.load(file.content) as any;
+                         // Kube Pod Spec
+                         const kubeContainers = content.spec?.containers || [];
+                         kubeContainers.forEach((c: any) => {
+                             if (c.ports) {
+                                 c.ports.forEach((kp: any) => {
+                                     // Kube: hostPort, containerPort
+                                     if (kp.hostPort) {
+                                         servicePorts.push({
+                                             host: kp.hostPort,
+                                             container: kp.containerPort || 0,
+                                             host_ip: '0.0.0.0', // Definition implies all interfaces usually
+                                             protocol: kp.protocol?.toLowerCase() || 'tcp',
+                                             source: 'definition' // Flag as static definition
+                                         });
+                                     }
+                                 });
+                             }
+                         });
+                     } catch (err) {
+                         logger.warn('NetworkService', `Failed to parse Quadlet YAML for ${service.name}: ${err}`);
+                     }
+                 } else if (file.path.endsWith('.container')) {
+                     // Simple INI Parsing for [Container] PublishPort=...
+                     const lines = file.content.split('\n');
+                     lines.forEach((line: string) => {
+                         const match = line.match(/^PublishPort=(?:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):)?(\d+):(\d+)(?:\/(udp|tcp))?/);
+                         if (match) {
+                             // [1]=IP(opt), [2]=Host, [3]=Container, [4]=Proto(opt)
+                             servicePorts.push({
+                                 host: parseInt(match[2], 10),
+                                 container: parseInt(match[3], 10),
+                                 host_ip: match[1] || '0.0.0.0',
+                                 protocol: match[4] || 'tcp',
+                                 source: 'definition'
+                             });
+                         } else {
+                             // Handle implicit host-only format? "PublishPort=8080" -> 8080:8080?
+                             // Systemd supports multiple formats.
+                         }
+                     });
+                 }
+             }
         }
 
         // NEW: Get Linked Containers from Twin Store Property (Single Source of Truth)
