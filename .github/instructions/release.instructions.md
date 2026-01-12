@@ -29,4 +29,4 @@ This project uses **Release Please** to automate version management and releases
 
 ## Changelogs
 -   `CHANGELOG.md` is automatically managed by Release Please.
--   `CHANGELOG_DEV.md` can still be used for internal dev notes but is optional.
+-   Technical/Developer history is now tracked via **Git Commit History** (`git log`).
