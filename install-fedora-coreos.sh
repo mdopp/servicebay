@@ -132,7 +132,7 @@ storage:
           After=network-online.target
 
           [Container]
-          Image=ghcr.io/mdopp/servicebay:latest
+          Image=ghcr.io/mdopp/servicebay:${SERVICEBAY_VERSION}
           ContainerName=servicebay
           AutoUpdate=registry
           Network=host
@@ -222,6 +222,7 @@ prompt GATEWAY "Gateway" "192.168.178.1"
 prompt DNS_SERVERS "DNS servers (semicolon separated)" "192.168.178.1;8.8.8.8;"
 prompt DATA_ROOT "Data root" "/mnt/data"
 prompt SERVICEBAY_PORT "ServiceBay port" "5888"
+prompt SERVICEBAY_VERSION "ServiceBay version" "latest"
 prompt SERVICEBAY_ADMIN_USER "ServiceBay admin user" "admin"
 prompt_secret SERVICEBAY_ADMIN_PASSWORD "ServiceBay admin password"
 prompt_secret HOST_PASSWORD "Host user console password (will be hashed)"
@@ -229,7 +230,7 @@ prompt_secret HOST_PASSWORD "Host user console password (will be hashed)"
 PASSWORD_HASH="$(printf '%s' "$HOST_PASSWORD" | openssl passwd -6 -stdin)"
 
 export HOST_USER SSH_AUTHORIZED_KEY PASSWORD_HASH NET_INTERFACE STATIC_IP STATIC_PREFIX GATEWAY DNS_SERVERS \
-       DATA_ROOT SERVICEBAY_PORT SERVICEBAY_ADMIN_USER SERVICEBAY_ADMIN_PASSWORD
+       DATA_ROOT SERVICEBAY_PORT SERVICEBAY_VERSION SERVICEBAY_ADMIN_USER SERVICEBAY_ADMIN_PASSWORD
 
 # Render Butane template
 envsubst < "$TEMPLATE" > "$RENDERED_BU"
