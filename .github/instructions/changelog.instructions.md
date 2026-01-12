@@ -4,22 +4,20 @@ applyTo: "**"
 
 # Changelog Maintenance Instructions
 
-You are responsible for keeping the project's changelogs up-to-date.
-
-## Files
-- `CHANGELOG_DEV.md`: Tracks technical changes, architectural decisions, and development notes.
-- `CHANGELOG.md`: User-facing release notes, features, and fixes.
+The project uses **Conventional Commits** and **Release Please** to automate changelog generation and versioning. `CHANGELOG.md` is automatically generated and should NOT be edited manually.
 
 ## Rules
-1.  **Update on Change**: Whenever you implement a feature, fix a bug, or change the architecture, you MUST update the relevant changelog file immediately.
-2.  **Dev vs User**: 
-    - Use `CHANGELOG_DEV.md` for internal details (e.g., refactoring, test suites, internal API changes).
-    - Use `CHANGELOG.md` for user-visible changes (e.g., new UI features, fixed crashes, performance improvements).
-3.  **Format**: Use the existing format in the files (usually Keep a Changelog format or chronological bullets).
-4.  **Architecture**: If you make an architectural change (e.g. "Services now injected on Default node"), document the reasoning in `CHANGELOG_DEV.md`.
+1.  **Commit Messages**: You MUST use Conventional Commits for all changes.
+    -   `feat: ...` -> Triggers a MINOR release (new feature).
+    -   `fix: ...` -> Triggers a PATCH release (bug fix).
+    -   `feat!: ...` or `BREAKING CHANGE:` -> Triggers a MAJOR release.
+    -   `chore:`, `docs:`, `refactor:`, `test:` -> No release trigger (unless configured otherwise), but keeps history clean.
+    
+2.  **No Manual Edits**: Do NOT manually edit `CHANGELOG.md`. `CHANGELOG_DEV.md` is obsolete and has been removed.
+
+3.  **Architecture**: Significant architectural changes should be documented in `ARCHITECTURE.md` or `DESIGN_PRINCIPLES.md` if they affect the system design, rather than a changelog file.
 
 ## Workflow
-- After completing a task or a significant step in a task, read the current `CHANGELOG_DEV.md`.
-- Append a new entry under the "Unreleased" or current date section.
-- If the change affects the user experience, also add an entry to `CHANGELOG.md`.
+- When committing changes, ensure the commit message follows the `<type>: <description>` format.
+- If a change is user-facing, ensure the description is clear and suitable for release notes.
 
