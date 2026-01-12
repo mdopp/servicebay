@@ -126,7 +126,7 @@ export async function performUpdate(version: string) {
     // If we pulled manually, the running container is using the old image ID.
     // The new image tag points to a new ID.
     // So auto-update should detect that.
-    const subprocess = spawn('podman', ['auto-update', 'servicebay'], {
+    const subprocess = spawn('podman', ['auto-update'], {
       detached: true,
       stdio: 'ignore'
     });
