@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { DATA_DIR } from './config';
+import { DATA_DIR } from './dirs';
 
 const NODES_FILE = path.join(DATA_DIR, 'nodes.json');
 

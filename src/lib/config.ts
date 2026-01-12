@@ -1,15 +1,8 @@
 import fs from 'fs/promises';
-import { existsSync } from 'fs';
 import path from 'path';
-import os from 'os';
+import { DATA_DIR } from './dirs';
+import { decrypt, encrypt } from './secrets';
 
-// In container, we map host's .servicebay to /app/data
-// But os.homedir() is /root.
-// So we should check if /app/data exists, otherwise use os.homedir()/.servicebay
-// CRITICAL: .servicebay folder must strictly map to /app/data in container for SSH Keys persistence across re-deployments
-const isContainer = existsSync('/.dockerenv') || (process.env.NODE_ENV === 'production' && existsSync('/app'));
-export const DATA_DIR = process.env.DATA_DIR || (isContainer ? '/app/data' : path.join(os.homedir(), '.servicebay'));
-export const SSH_DIR = path.join(DATA_DIR, 'ssh');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 export interface ExternalLink {
@@ -87,10 +80,35 @@ const DEFAULT_CONFIG: AppConfig = {
   }
 };
 
+// Recursive helper to traverse config and apply a transform function to specific keys
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function transformConfig(obj: any, keysToTransform: string[], transformFn: (val: string) => string): any {
+  if (Array.isArray(obj)) {
+    return obj.map(v => transformConfig(v, keysToTransform, transformFn));
+  } else if (obj !== null && typeof obj === 'object') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newObj: any = {};
+    for (const key of Object.keys(obj)) {
+      if (keysToTransform.includes(key) && typeof obj[key] === 'string') {
+        newObj[key] = transformFn(obj[key]);
+      } else {
+        newObj[key] = transformConfig(obj[key], keysToTransform, transformFn);
+      }
+    }
+    return newObj;
+  }
+  return obj;
+}
+
+const SENSITIVE_KEYS = ['password', 'secret', 'token', 'key', 'apiKey'];
+
 export async function getConfig(): Promise<AppConfig> {
   try {
     const content = await fs.readFile(CONFIG_PATH, 'utf-8');
-    return { ...DEFAULT_CONFIG, ...JSON.parse(content) };
+    const rawConfig = JSON.parse(content);
+    // Decrypt sensitive fields
+    const config = transformConfig(rawConfig, SENSITIVE_KEYS, decrypt);
+    return { ...DEFAULT_CONFIG, ...config };
   } catch {
     return DEFAULT_CONFIG;
   }
@@ -98,5 +116,22 @@ export async function getConfig(): Promise<AppConfig> {
 
 export async function saveConfig(config: AppConfig): Promise<void> {
   await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
-  await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
+  // Encrypt sensitive fields before saving
+  const safeConfig = transformConfig(config, SENSITIVE_KEYS, encrypt);
+  await fs.writeFile(CONFIG_PATH, JSON.stringify(safeConfig, null, 2));
 }
+
+/**
+ * Reads the config and re-saves it to ensure all sensitive fields are encrypted.
+ * Should be called on application startup.
+ */
+export async function migrateConfig(): Promise<void> {
+  try {
+    const config = await getConfig();
+    // saveConfig automatically handles encryption of all sensitive keys
+    await saveConfig(config);
+  } catch (error) {
+    console.warn('Failed to migrate/encrypt config on startup:', error);
+  }
+}
+

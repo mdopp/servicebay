@@ -4,6 +4,8 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 
 ## [Unreleased]
 - **Ops**: Added sanitized FCOS template (`fedora-coreos.bu`) and interactive installer `install-fedora-coreos.sh` that prompts for SSH keys, hashes console passwords, renders Butane→Ignition, and serves it via a temporary HTTP server with the install command.
+- **Security**: Implemented transparent configuration encryption (AES-256-GCM). Passwords in `config.json` are now stored as `enc:v1:...` using a machine-local key (`data/secret.key`).
+- **Refactor**: Extracted `DATA_DIR` and `SSH_DIR` constants to `src/lib/dirs.ts` to prevent circular dependencies in the new security module.
 - **Server**: Enhanced Host Terminal robustness by defaulting shell to `process.env.SHELL` (or strict path) and validating `cwd` (Home directory) existence with a fallback to `/`. This prevents `execvp(3)` failure in restricted environments.
 - **Agent V4**: Implemented `get_cpu_info` to parse `/proc/cpuinfo` for detailed CPU model and core count. Updated `SystemResources` dataclass and `get_system_resources` to include this data.
 - **Frontend**: Updated `SystemInfoPlugin` to display CPU Model and Core count in the "Compute Resources" section.

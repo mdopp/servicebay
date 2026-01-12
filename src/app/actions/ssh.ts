@@ -1,7 +1,7 @@
 'use server';
 
 import { checkTcpConnection, setupSSHKey } from '@/lib/ssh';
-import { SSH_DIR } from '@/lib/config';
+import { SSH_DIR } from '@/lib/dirs';
 
 export async function checkConnection(host: string, port: number) {
     try {
@@ -30,6 +30,7 @@ export async function generateLocalKey() {
         const execAsync = promisify(exec);
 
         const sshDir = SSH_DIR;
+          
         const keyPath = path.join(sshDir, 'id_rsa');
 
         if (fs.existsSync(keyPath)) {

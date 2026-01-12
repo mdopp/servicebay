@@ -1,6 +1,7 @@
 'use server';
 
-import { getConfig, saveConfig, SSH_DIR } from '@/lib/config';
+import { getConfig, saveConfig } from '@/lib/config';
+import { SSH_DIR } from '@/lib/dirs';
 import { FritzBoxClient } from '@/lib/fritzbox/client';
 import fs from 'fs/promises';
 import path from 'path';

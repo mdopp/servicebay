@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { CheckConfig, CheckResult } from './types';
-import { DATA_DIR } from '../config';
+import { DATA_DIR } from '../dirs';
 
 const CONFIG_DIR = DATA_DIR;
 const CHECKS_FILE = path.join(CONFIG_DIR, 'checks.json');

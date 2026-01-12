@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { SSH_DIR } from './config';
+import { SSH_DIR } from './dirs';
 
 const execAsync = promisify(exec);
 
