@@ -24,6 +24,7 @@ class SystemResources:
     os: Optional[Dict[str, Any]] = None
     network: Optional[Dict[str, Any]] = None
     disks: Optional[List[Dict[str, Any]]] = None
+    cpu: Optional[Dict[str, Any]] = None
 
 @dataclass
 class NodeStateSnapshot:
@@ -871,6 +872,24 @@ def get_cpu_usage():
     except:
         return 0.0
 
+def get_cpu_info():
+    info = {'model': 'Unknown', 'cores': 1}
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            lines = f.readlines()
+            
+        processors = [l for l in lines if l.startswith('processor')]
+        if processors:
+            info['cores'] = len(processors)
+        
+        for line in lines:
+            if line.startswith('model name'):
+                info['model'] = line.split(':', 1)[1].strip()
+                break
+    except:
+        pass
+    return info
+
 def get_network_interfaces():
     try:
         # Use ip -j addr to get JSON output of network interfaces
@@ -946,6 +965,7 @@ def get_sys_resources():
         
     # 3. CPU
     res_cpu_usage = get_cpu_usage()
+    res_cpu_info = get_cpu_info()
 
     # 4. OS Static Info
     os_info = {
@@ -970,7 +990,8 @@ def get_sys_resources():
         diskUsage=res_disk_usage,
         os=os_info,
         disks=disks,
-        network=network_info
+        network=network_info,
+        cpu=res_cpu_info
     ))
 
 # --- Proxy Inspector ---

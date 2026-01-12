@@ -93,6 +93,23 @@ export default function SettingsPage() {
   const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
   const [sshModalDefaults, setSshModalDefaults] = useState({ host: '', port: 22, user: 'root' });
 
+  // Update sshModalDefaults when adding node inputs change, to have valid defaults if user clicks the sidebar button manually
+  useEffect(() => {
+    let host = '', port = 22, user = 'root';
+    try {
+        if (newNodeDest) {
+            const urlStr = newNodeDest.includes('://') ? newNodeDest : `ssh://${newNodeDest}`;
+            const url = new URL(urlStr);
+            host = url.hostname;
+            port = url.port ? parseInt(url.port) : 22;
+            user = url.username || 'root';
+            setSshModalDefaults({ host, port, user });
+        }
+    } catch {
+        // Ignore parse error
+    }
+  }, [newNodeDest]);
+
   const fetchConfig = useCallback(async () => {
     try {
       const [res, updateRes] = await Promise.all([
@@ -250,7 +267,7 @@ export default function SettingsPage() {
             const warning = (res as any).warning as string;
             
             // Check for common SSH issues
-            if (warning.includes('timed out') || warning.includes('Permission denied') || warning.includes('password')) {
+            if (warning.includes('timed out') || warning.includes('Permission denied') || warning.includes('password') || warning.includes('publickey')) {
                 addToast('warning', 'SSH Connection Failed', 
                     'The node was added, but we could not connect. It seems password-less SSH is not configured.'
                 );

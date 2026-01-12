@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+- **Fixed**: Resolved a crash in `ssh-copy-id` (used during "Setup SSH Keys") by forcing creation of `~/.ssh` inside the container before execution. This fixes the `mktemp` error on minimal environments like Fedora CoreOS.
+- **Fixed**: Resolved `execvp(3)` failure in Host Terminal sessions by ensuring a valid Shell path (from ENV) and a valid Working Directory (fallback to root if HOME is missing).
 - **Fixed**: Resolved an issue where stopped services would show no ports in the configuration view. The system now correctly parses the configuration files to display expected ports even when the service is offline.
 - **Fixed**: Fixed an issue where secondary listening ports (e.g., Nginx :81) were sometimes missing from the Service Monitor and Network Graph.
 - **Fixed**: Improved accuracy of "Raw Data" views by strictly adhering to the configured Single Source of Truth, eliminating discrepancies between the graph and the details panel.
@@ -13,6 +15,8 @@ All notable changes to this project will be documented in this file.
 - Improved Network Layout consistency.
 
 ### Added
+- **System Info**: "Compute Resources" card now displays CPU Model and Core Count for deeper hardware visibility.
+- **Installer**: Fixed permissions crash and missing Podman Socket activation in the new Fedora CoreOS installer.
 - **Installation**: New generic Fedora CoreOS installer script (`install-fedora-coreos.sh`) for rapid, rootless deployments.
 - **Settings**: New "Template Settings" section to configure global stack variables (e.g., `STACKS_DIR`), enabling portable and reusable service templates.
 - Added `LOGIN_REQUIRED` configuration option to allow passwordless access in development or trusted environments (Default: true).

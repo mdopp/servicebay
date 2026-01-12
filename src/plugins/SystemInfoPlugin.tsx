@@ -100,7 +100,7 @@ export default function SystemInfoPlugin() {
       );
   }
 
-  const { cpuUsage, memoryUsage, totalMemory, os, disks, network } = resources;
+  const { cpuUsage, memoryUsage, totalMemory, os, disks, network, cpu } = resources;
   
   const formatBytes = (bytes: number) => {
       if (bytes === 0) return '0 B';
@@ -207,6 +207,18 @@ export default function SystemInfoPlugin() {
                 </h3>
                 
                 <div className="space-y-6">
+                    {cpu && (
+                        <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded text-sm space-y-2 border border-gray-200 dark:border-gray-700">
+                             <div className="flex justify-between items-start gap-2">
+                                <span className="text-gray-500 whitespace-nowrap">Model</span>
+                                <span className="font-medium text-right break-words" title={cpu.model}>{cpu.model}</span>
+                             </div>
+                             <div className="flex justify-between">
+                                <span className="text-gray-500">Cores</span>
+                                <span className="font-medium">{cpu.cores}</span>
+                             </div>
+                        </div>
+                    )}
                     <div>
                         <div className="flex justify-between mb-1 text-sm">
                             <span>CPU Usage</span>

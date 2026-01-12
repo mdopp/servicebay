@@ -10,6 +10,10 @@ export interface SystemResources {
     arch: string;
     uptime: number;
   };
+  cpu?: {
+    model: string;
+    cores: number;
+  };
   disks?: {
     device: string;
     mountpoint: string;

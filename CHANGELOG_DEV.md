@@ -4,6 +4,9 @@ This file tracks architectural changes, refactors, and developer-facing improvem
 
 ## [Unreleased]
 - **Ops**: Added sanitized FCOS template (`fedora-coreos.bu`) and interactive installer `install-fedora-coreos.sh` that prompts for SSH keys, hashes console passwords, renders Butane→Ignition, and serves it via a temporary HTTP server with the install command.
+- **Server**: Enhanced Host Terminal robustness by defaulting shell to `process.env.SHELL` (or strict path) and validating `cwd` (Home directory) existence with a fallback to `/`. This prevents `execvp(3)` failure in restricted environments.
+- **Agent V4**: Implemented `get_cpu_info` to parse `/proc/cpuinfo` for detailed CPU model and core count. Updated `SystemResources` dataclass and `get_system_resources` to include this data.
+- **Frontend**: Updated `SystemInfoPlugin` to display CPU Model and Core count in the "Compute Resources" section.
 - **Templates**: Added global template settings schema (`templates/settings.json`) with required `STACKS_DIR` and exposed a Template Settings section in the UI to persist variables (defaults shown, custom vars allowed; changes apply to new deployments).
 - **Network Map**: Added support for "Virtual Nodes" for Nginx targets that do not match any managed container.
   - **Internal Services**: Targets pointing to localhost are shown as internal nodes with a warning status.

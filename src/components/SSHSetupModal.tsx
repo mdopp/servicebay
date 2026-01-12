@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Terminal, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { installSSHKey } from '@/app/actions/ssh';
 
@@ -19,6 +19,15 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [logs, setLogs] = useState<string[]>([]);
+  
+  // React to prop changes if modal re-opens with new defaults
+  useEffect(() => {
+    if (isOpen) {
+        setHost(initialHost);
+        setPort(initialPort);
+        setUser(initialUser);
+    }
+  }, [isOpen, initialHost, initialPort, initialUser]);
 
   if (!isOpen) return null;
 

@@ -58,6 +58,19 @@ export async function setupSSHKey(host: string, port: number, user: string, pass
     
     logs.push(`Running: ${cmd} ${args.join(' ')}`);
 
+    // Ensure HOME/.ssh exists because ssh-copy-id uses it for temporary files (mktemp -d ~/.ssh/...)
+    // In minimal containers running as root, /root/.ssh might not exist.
+    const homeDir = process.env.HOME || '/root';
+    const homeSshDir = path.join(homeDir, '.ssh');
+    try {
+        if (!fs.existsSync(homeSshDir)) {
+            fs.mkdirSync(homeSshDir, { recursive: true, mode: 0o700 });
+            logs.push(`Created missing directory: ${homeSshDir}`);
+        }
+    } catch (e) {
+        logs.push(`Warning: Could not create ${homeSshDir}: ${e}`);
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const env = { ...process.env } as any;
 

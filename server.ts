@@ -5,6 +5,7 @@ import next from 'next';
 import { Server } from 'socket.io';
 import * as pty from 'node-pty';
 import os from 'os';
+import fs from 'fs';
 import { setUpdaterIO } from './src/lib/updater';
 // Monitoring init moved to Agent logic in V4
 import { MonitoringService } from './src/lib/monitoring/service';
@@ -177,7 +178,7 @@ app.prepare().then(() => {
         return session;
     }
 
-    let shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
+    let shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || 'bash');
     let args: string[] = [];
 
     if (id.startsWith('container:')) {
@@ -267,11 +268,22 @@ app.prepare().then(() => {
     
     logger.info('Server', `Spawning PTY: ${shell} ${args.join(' ')}`);
 
+    let cwd = process.env.HOME;
+    try {
+        if (!cwd || !fs.existsSync(cwd)) {
+            logger.warn('Server', `Home directory ${cwd} invalid or missing. Defaulting terminal CWD to /`);
+            cwd = '/';
+        }
+    } catch {
+        // Fallback for strict permissions
+        cwd = '/';
+    }
+
     const ptyProcess = pty.spawn(shell, args, {
       name: 'xterm-256color',
       cols: cols || 80,
       rows: rows || 30,
-      cwd: process.env.HOME,
+      cwd: cwd,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       env: { ...process.env, TERM: 'xterm-256color' } as any
     });
