@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+- **Installer**: Added interactive version selection to `install.sh` and `install-fedora-coreos.sh`, allowing users to install specific versions of ServiceBay (defaults to `latest`).
 - **Security**: Sensitive data (passwords, tokens) in `config.json` is now automatically encrypted using AES-256-GCM.
 - **Fixed**: Resolved a crash in `ssh-copy-id` (used during "Setup SSH Keys") by forcing creation of `~/.ssh` inside the container before execution. This fixes the `mktemp` error on minimal environments like Fedora CoreOS.
 - **Fixed**: Resolved `execvp(3)` failure in Host Terminal sessions by ensuring a valid Shell path (from ENV) and a valid Working Directory (fallback to root if HOME is missing).
