@@ -1,9 +1,8 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -53,8 +52,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Create Release
+      - name: Upload Assets to Release
         uses: softprops/action-gh-release@v1
         with:
           files: install.sh
-          generate_release_notes: true
+          generate_release_notes: false

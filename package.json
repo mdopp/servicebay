@@ -1,6 +1,6 @@
 {
   "name": "servicebay",
-  "version": "2026.1.70",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "fuser -k 3000/tcp || true && tsx server.ts",
@@ -9,7 +9,6 @@
     "lint": "eslint",
     "test": "vitest run",
     "logs": "tsx scripts/logs.ts",
-    "release": "bash scripts/release.sh",
     "prepare": "husky || true"
   },
   "lint-staged": {
