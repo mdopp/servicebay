@@ -94,23 +94,25 @@ class PodmanMonitor(threading.Thread):
                 try:
                     event = json.loads(line)
                 
-                # Filter noisy events
-                # We ignore exec-related events which are frequent (e.g. healthchecks)
-                action = event.get('Action', '')
-                status = event.get('Status', '') # Some versions use Status
-                
-                # Normalize action/status
-                act = action if action else status
-                
-                if act in ['exec_create', 'exec_start', 'exec_die', 'bind_mount', 'cleanup']:
-                     continue
-                     
-                log_debug(f"Podman Event: {act} ({event.get('Type')})")
-                self.callback('event')
-            except Exception as e:
-                # Fallback: if json parsing fails or structure differs, trigger anyway to be safe,
-                # but limit it? No, safe to ignore parse errors usually means partial line.
-                pass
+                    # Filter noisy events
+                    # We ignore exec-related events which are frequent (e.g. healthchecks)
+                    action = event.get('Action', '')
+                    status = event.get('Status', '') # Some versions use Status
+                    
+                    # Normalize action/status
+                    act = action if action else status
+                    
+                    if act in ['exec_create', 'exec_start', 'exec_die', 'bind_mount', 'cleanup']:
+                         continue
+                         
+                    log_debug(f"Podman Event: {act} ({event.get('Type')})")
+                    self.callback('event')
+                except Exception as e:
+                    # Fallback: if json parsing fails or structure differs, trigger anyway to be safe,
+                    # but limit it? No, safe to ignore parse errors usually means partial line.
+                    pass
+        except Exception as e:
+            sys.stderr.write(f"Error in event loop: {e}\n")
 
 class SystemdMonitor(threading.Thread):
     def __init__(self, callback):
