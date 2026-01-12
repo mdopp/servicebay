@@ -76,6 +76,15 @@ storage:
     - path: /var/lib/systemd/linger/${HOST_USER}
       mode: 0644
 
+  links:
+    # Enable Podman Socket for the user (required for ServiceBay to control the host)
+    - path: /var/home/${HOST_USER}/.config/systemd/user/sockets.target.wants/podman.socket
+      target: /usr/lib/systemd/user/podman.socket
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+
     # ServiceBay Quadlet (rootless)
     - path: /var/home/${HOST_USER}/.config/containers/systemd/servicebay.container
       mode: 0644
@@ -100,6 +109,11 @@ storage:
           Environment=PORT=${SERVICEBAY_PORT}
           Environment=NODE_ENV=production
           SecurityLabelDisable=true
+
+          [Service]
+          # Retry restart if it fails (e.g. socket not ready)
+          Restart=always
+          RestartSec=5
 
           [Install]
           WantedBy=default.target
