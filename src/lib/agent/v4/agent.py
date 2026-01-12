@@ -692,23 +692,24 @@ def fetch_services(containers=None):
                     # (Quadlet default: container name = service name)
                     c_names = [n.lstrip('/') for n in c.get('names', [])]
                     
-            # Match clean_name OR systemd-clean_name (Quadlet Default)
-            is_match = False
-            if clean_name in c_names: is_match = True
-            if not is_match and f"systemd-{clean_name}" in c_names: is_match = True
-            
-            if is_match:
-                associated_ids.append(c['id'])
-                service_ports.extend(c.get('ports', []))
-                # Note: We rely on Frontend/Twin to enrich with these ports if found
-                continue 
+                    # Match clean_name OR systemd-clean_name (Quadlet Default)
+                    is_match = False
+                    if clean_name in c_names: is_match = True
+                    if not is_match and f"systemd-{clean_name}" in c_names: is_match = True
+                    
+                    if is_match:
+                        associated_ids.append(c['id'])
+                        service_ports.extend(c.get('ports', []))
+                        # Note: We rely on Frontend/Twin to enrich with these ports if found
+                        continue 
 
-            # Match Strategy 2: Pod Name Match
-            # (Kube Play: pod name = service name)
-            pod_name = c.get('podName', '')
-            if pod_name and pod_name == clean_name:
-                 associated_ids.append(c['id'])
-                 service_ports.extend(c.get('ports', []))
+                    # Match Strategy 2: Pod Name Match
+                    # (Kube Play: pod name = service name)
+                    pod_name = c.get('podName', '')
+                    if pod_name and pod_name == clean_name:
+                         associated_ids.append(c['id'])
+                         service_ports.extend(c.get('ports', []))
+
             
             # --- Result Construction ---
 
