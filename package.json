@@ -8,6 +8,7 @@
     "start": "NODE_ENV=production tsx server.ts",
     "lint": "eslint",
     "test": "vitest run",
+    "test:agent": "chmod +x scripts/test-agent.sh && ./scripts/test-agent.sh",
     "logs": "tsx scripts/logs.ts",
     "prepare": "husky || true"
   },

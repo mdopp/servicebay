@@ -30,3 +30,6 @@ jobs:
 
     - name: Test
       run: npm test
+
+    - name: Test Agent (Podman)
+      run: npm run test:agent
