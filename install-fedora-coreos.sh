@@ -45,6 +45,39 @@ storage:
         name: ${HOST_USER}
       group:
         name: ${HOST_USER}
+    
+    # Ensure intermediate directories are owned by user
+    - path: /var/home/${HOST_USER}/.config
+      mode: 0755
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+    - path: /var/home/${HOST_USER}/.config/containers
+      mode: 0755
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+    - path: /var/home/${HOST_USER}/.config/systemd
+      mode: 0755
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+    - path: /var/home/${HOST_USER}/.config/systemd/user
+      mode: 0755
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+    - path: /var/home/${HOST_USER}/.config/systemd/user/sockets.target.wants
+      mode: 0755
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+
     # Quadlet directory for the user
     - path: /var/home/${HOST_USER}/.config/containers/systemd
       mode: 0755
