@@ -70,6 +70,7 @@ COPY --from=builder /app/tsconfig.json ./
 
 # Copy production node_modules (with built native modules)
 COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
 
 # We run as root inside the container to ensure access to mapped volumes (ssh keys, docker socket)
 # When using UserNS=keep-id in Podman (standard for Quadlets), 'root' tracks to the host user.
