@@ -203,8 +203,8 @@ export default function SettingsPage() {
   const handleRemoveTemplateVariable = (key: string) => {
     const meta = templateSchema[key];
     if (meta?.required) return;
-    se 
-      tTemplateValues(prev => {
+    setTemplateValues(prev => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [key]: _removed, ...rest } = prev;
       return rest;
     });
