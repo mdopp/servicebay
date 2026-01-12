@@ -3,6 +3,7 @@
 This file tracks architectural changes, refactors, and developer-facing improvements.
 
 ## [Unreleased]
+- **CI**: Fixed incorrect `npm test` command in GitHub Actions workflow (removed redundant `run` argument).
 - **Ops**: Added sanitized FCOS template (`fedora-coreos.bu`) and interactive installer `install-fedora-coreos.sh` that prompts for SSH keys, hashes console passwords, renders Butane→Ignition, and serves it via a temporary HTTP server with the install command.
 - **Security**: Implemented transparent configuration encryption (AES-256-GCM). Passwords in `config.json` are now stored as `enc:v1:...` using a machine-local key (`data/secret.key`).
 - **Refactor**: Extracted `DATA_DIR` and `SSH_DIR` constants to `src/lib/dirs.ts` to prevent circular dependencies in the new security module.
