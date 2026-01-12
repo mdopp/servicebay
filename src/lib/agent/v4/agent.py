@@ -71,16 +71,28 @@ class PodmanMonitor(threading.Thread):
 
     def run(self):
         # Watch for events
+        # Use --stream=false to ensure the process exits if no events are immediately available, 
+        # but we WANT a stream.
+        # The leak comes from 'podman events' being spawned in a thread that might be restarted/orphaned 
+        # OR multiple spawned processes.
+        # Actually, if the agent restarts (e.g. via Next.js dev reload), the old python process dies, 
+        # and so should its children (Popen with default args doesn't automatically kill children but OS should cleanup)
+        # However, if 'podman events' is blocking, it might hang around?
+        
+        # FIX: Ensure we close the process on exit
         proc = subprocess.Popen(
             ['podman', 'events', '--format', 'json'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
         )
-        self.callback('init') # Initial fetch
-        for line in proc.stdout:
-            try:
-                event = json.loads(line)
+        self.proc = proc # Keep reference
+        
+        try:
+            self.callback('init') # Initial fetch
+            for line in proc.stdout:
+                try:
+                    event = json.loads(line)
                 
                 # Filter noisy events
                 # We ignore exec-related events which are frequent (e.g. healthchecks)
@@ -1228,7 +1240,9 @@ class Agent:
         
     def start(self):
         # Start monitors
-        PodmanMonitor(self.on_container_event).start()
+        self.podman_monitor = PodmanMonitor(self.on_container_event)
+        self.podman_monitor.start()
+        
         SystemdMonitor(self.on_service_event).start()
         ResourceMonitor(self.on_resource_tick).start()
         
@@ -1238,19 +1252,32 @@ class Agent:
         # Initial Full Sync
         self.refresh_all()
         
-        # Main Loop: Listen for stdin commands
-        while True:
-            try:
-                line = sys.stdin.readline()
-                if not line:
-                    break
-                
-                line = line.strip()
-                if not line:
-                    continue
+        try:
+             # Main Loop: Listen for stdin commands
+            while True:
+                try:
+                    line = sys.stdin.readline()
+                    if not line:
+                        break
                     
-                msg = json.loads(line)
-                self.handle_command(msg)
+                    line = line.strip()
+                    if not line:
+                        continue
+                        
+                    msg = json.loads(line)
+                    self.handle_command(msg)
+                except Exception:
+                    pass
+        finally:
+            self.shutdown()
+
+    def shutdown(self):
+        log_debug("Agent shutting down...")
+        if hasattr(self, 'podman_monitor') and hasattr(self.podman_monitor, 'proc'):
+            try:
+                log_debug("Terminating podman events process...")
+                self.podman_monitor.proc.terminate()
+                self.podman_monitor.proc.wait(timeout=1)
             except Exception:
                 pass
     
