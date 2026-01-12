@@ -698,6 +698,7 @@ def fetch_services(containers=None):
                     if not is_match and f"systemd-{clean_name}" in c_names: is_match = True
                     
                     if is_match:
+                        log_debug(f"Linking container {c['id']} to service {clean_name} (Names: {c_names}) Ports: {c.get('ports')}") 
                         associated_ids.append(c['id'])
                         service_ports.extend(c.get('ports', []))
                         # Note: We rely on Frontend/Twin to enrich with these ports if found
@@ -707,8 +708,10 @@ def fetch_services(containers=None):
                     # (Kube Play: pod name = service name)
                     pod_name = c.get('podName', '')
                     if pod_name and pod_name == clean_name:
+                         log_debug(f"Linking container {c['id']} to service {clean_name} via Pod {pod_name}")
                          associated_ids.append(c['id'])
                          service_ports.extend(c.get('ports', []))
+
 
             
             # --- Result Construction ---
@@ -726,7 +729,7 @@ def fetch_services(containers=None):
                 'isServiceBay': False,   # Backend Calculated
                 'isManaged': is_managed,
                 'associatedContainerIds': associated_ids,
-                'ports': [] # Backend Calculated (Static Parsing moved to ServiceManager)
+                'ports': service_ports
             })
         
         # Sort by Name
