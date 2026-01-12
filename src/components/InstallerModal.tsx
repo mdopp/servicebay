@@ -116,9 +116,10 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             for (const match of matches) {
                 vars.add(match[1]);
             }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (e: any) {
-            setError(e.message);
+         
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setError(msg);
             return;
         }
     }
@@ -165,9 +166,9 @@ WantedBy=default.target`;
                 throw new Error(err.error || 'Unknown error');
             }
             setLogs(prev => [...prev, `✅ ${item.name} installed successfully.`]);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (e: any) {
-            setLogs(prev => [...prev, `❌ Failed to install ${item.name}: ${e.message}`]);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setLogs(prev => [...prev, `❌ Failed to install ${item.name}: ${msg}`]);
         }
     }
     setStep('done');

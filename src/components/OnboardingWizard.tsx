@@ -396,8 +396,16 @@ export default function OnboardingWizard() {
 
 // -- Helper Components --
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function Toggle({ checked, onChange, icon: Icon, color, title, desc }: any) {
+interface ToggleProps {
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+    icon: React.ElementType;
+    color: string;
+    title: string;
+    desc: string;
+}
+
+function Toggle({ checked, onChange, icon: Icon, color, title, desc }: ToggleProps) {
     return (
         <div 
             onClick={() => onChange(!checked)}
@@ -423,8 +431,15 @@ function Toggle({ checked, onChange, icon: Icon, color, title, desc }: any) {
     )
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function Input({ label, value, onChange, placeholder, type = 'text' }: any) {
+interface InputProps {
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+    placeholder?: string;
+    type?: string;
+}
+
+function Input({ label, value, onChange, placeholder, type = 'text' }: InputProps) {
    return (
       <div>
         <label className="block text-xs font-medium text-gray-500 uppercase mb-1">{label}</label>

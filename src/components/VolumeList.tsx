@@ -5,18 +5,7 @@ import { Trash2, Plus, HardDrive, X } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import PluginHelp from './PluginHelp';
-
-interface Volume {
-  Name: string;
-  Driver: string;
-  Mountpoint: string;
-  Labels: Record<string, string>;
-  Options: Record<string, string>;
-  Scope: string;
-  Node?: string;
-  UsedBy: { id: string; name: string }[];
-  Anonymous?: boolean;
-}
+import { Volume } from '@/lib/agent/types';
 
 export default function VolumeList() {
   const [showAnonymous, setShowAnonymous] = useState(false);
@@ -40,7 +29,7 @@ export default function VolumeList() {
     const list: Volume[] = [];
     Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
         if (nodeState.volumes) {
-            nodeState.volumes.forEach((v: any) => {
+            nodeState.volumes.forEach((v) => {
                 list.push({
                     ...v,
                     Node: nodeName
@@ -52,7 +41,6 @@ export default function VolumeList() {
   }, [twin]);
 
   const loading = !twin; // Simple loading state
-  const refreshing = false; // Real-time updates don't show loading spinner usually
 
   const handleDelete = async (name: string, volumeNode?: string) => {
     if (!confirm(`Are you sure you want to delete volume ${name}?`)) return;
@@ -66,9 +54,9 @@ export default function VolumeList() {
       }
       addToast('success', 'Volume deleted');
       // No explicit refresh needed, Twin will update
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      addToast('error', e.message);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      addToast('error', msg);
     }
   };
 
@@ -105,9 +93,9 @@ export default function VolumeList() {
         setNewVolName('');
         setNewVolPath('');
         // No explicit refresh needed, Twin will update
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-        addToast('error', e.message);
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        addToast('error', msg);
     } finally {
         setCreating(false);
     }

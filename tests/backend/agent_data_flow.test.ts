@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DigitalTwinStore } from '../../src/lib/store/twin';
 import { EnrichedContainer, ServiceUnit } from '../../src/lib/agent/types';
@@ -66,12 +67,12 @@ describe('DigitalTwinStore Data Flow', () => {
     // Check Service Ports (Primary Path)
     const svc = node.services[0];
     expect(svc.ports!).toHaveLength(1);
-    expect(svc.ports![0].host_port).toBe(53);
+    expect(svc.ports![0].hostPort).toBe(53);
     
     // Check Container Ports (Secondary Path)
     const ctr = node.containers[0];
     expect(ctr.ports).toHaveLength(1);
-    expect(ctr.ports[0].host_port).toBe(53);
+    expect(ctr.ports[0].hostPort).toBe(53);
     
     // Check Linkage
     // agent.py sends associatedContainerIds, store might merge/dedupe

@@ -3,6 +3,13 @@
 This file tracks architectural changes, refactors, and developer-facing improvements.
 
 ## [Unreleased]
+- **Ops**: Added sanitized FCOS template (`fedora-coreos.bu`) and interactive installer `install-fedora-coreos.sh` that prompts for SSH keys, hashes console passwords, renders Butane→Ignition, and serves it via a temporary HTTP server with the install command.
+- **Templates**: Added global template settings schema (`templates/settings.json`) with required `STACKS_DIR` and exposed a Template Settings section in the UI to persist variables (defaults shown, custom vars allowed; changes apply to new deployments).
+- **Network Map**: Added support for "Virtual Nodes" for Nginx targets that do not match any managed container.
+  - **Internal Services**: Targets pointing to localhost are shown as internal nodes with a warning status.
+  - **External Services**: Targets pointing to external IPs are shown as device nodes.
+  - **Action**: Added "Add Link" button to missing external nodes to easily save them as External Link services.
+- **Network Map**: Improved Nginx target resolution to fallback to virtual nodes instead of ignoring unknown destinations.
 ### Known Issues
 - **Network Graph**: Currently not rendering correctly. FritzBox node is missing, and edges are displaying incorrect relationships.
 - **Unmanaged Services**: Search logic needs refactoring. Ideally, discovery should start from running services -> check for `.service` file -> confirm Podman container backing -> mark as Unmanaged.

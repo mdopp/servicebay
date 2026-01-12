@@ -3,26 +3,31 @@
 // V4 Update: Use Digital Twin data
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useMemo } from 'react';
+import { EnrichedContainer } from '@/lib/agent/types';
+
+interface ContainerItem extends Partial<EnrichedContainer> {
+  // Allow partial for legacy passed props, but prefer EnrichedContainer shape
+  nodeName?: string;
+}
 
 interface ContainerListProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  containers?: any[];
+  containers?: ContainerItem[];
 }
 
 export default function ContainerList({ containers }: ContainerListProps = {}) {
   const { data: twin } = useDigitalTwin();
 
-  const allContainers = useMemo(() => {
+  const allContainers = useMemo((): ContainerItem[] => {
      if (containers) return containers;
      if (!twin) return [];
-     const list: any[] = [];
+     const list: ContainerItem[] = [];
      Object.entries(twin.nodes).forEach(([nodeName, nodeData]) => {
          nodeData.containers.forEach(c => {
              list.push({ ...c, nodeName });
          });
      });
      return list;
-  }, [twin]);
+  }, [twin, containers]);
 
   if (!allContainers || allContainers.length === 0) {
     return (
@@ -47,9 +52,8 @@ export default function ContainerList({ containers }: ContainerListProps = {}) {
           </tr>
         </thead>
         <tbody>
-          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-          {allContainers.map((container: any) => (
-            <tr key={`${container.nodeName}-${container.id}`} className="border-b border-gray-700 last:border-0 hover:bg-gray-800">
+          {allContainers.map((container, index) => (
+            <tr key={`${container.nodeName || 'local'}-${container.id || `fallback-${index}`}`} className="border-b border-gray-700 last:border-0 hover:bg-gray-800">
               <td className="py-2 pr-4 text-purple-400 font-bold">{container.nodeName}</td>
               <td className="py-2 pr-4 text-blue-400 font-mono" title={container.id}>{container.id?.substring(0, 12)}</td>
               <td className="py-2 pr-4 text-green-400 truncate max-w-[200px]" title={container.image}>{container.image}</td>

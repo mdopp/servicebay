@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Activity, Plus, RefreshCw, CheckCircle, XCircle, AlertTriangle, Play, Edit, Trash2, X, History, Search } from 'lucide-react';
 import { useToast, ToastType } from '@/providers/ToastProvider';
-import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // Added
+import { Socket } from 'socket.io-client';
 import PageHeader from '@/components/PageHeader';
 import { Autocomplete } from '@/components/Autocomplete';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -38,7 +38,7 @@ export default function MonitoringPlugin() {
   const [containers, setContainers] = useState<Container[]>([]);
   const [systemServices, setSystemServices] = useState<string[]>([]);
   const [managedServices, setManagedServices] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  // const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [checkToDelete, setCheckToDelete] = useState<string | null>(null);
@@ -63,13 +63,14 @@ export default function MonitoringPlugin() {
   // Clean up socket listener logic to use the global socket hook if possible? 
   // Or just remove the toasts.
 
-  const [lastFetch, setLastFetch] = useState(0);
-
   // Still fetch from API because checks are server-side config
-  const fetchData = useCallback(async (silent = true) => {
+  const fetchData = useCallback(async () => {
     if (isFetchingRef.current) return;
+    
+    // Check cache (15s) unless forced
+    // if (Date.now() - lastFetch < 15000) return; // disabled cache for now
     isFetchingRef.current = true;
-    if (!silent) setLoading(true); // Only show spinner on initial load
+    // if (!silent) setLoading(true); // Only show spinner on initial load
     
     try {
       const [checksRes, nodeList] = await Promise.all([
@@ -83,7 +84,7 @@ export default function MonitoringPlugin() {
       console.error('Failed to fetch data', error);
       // addToast('error', 'Failed to fetch monitoring data'); // Suppress error toast on bg sync?
     } finally {
-      if (!silent) setLoading(false);
+      // if (!silent) setLoading(false);
       isFetchingRef.current = false;
     }
   }, []); // Dependencies removed
@@ -138,14 +139,14 @@ export default function MonitoringPlugin() {
   }, [isModalOpen, formData.nodeName]);
 
   useEffect(() => {
-    fetchData(false); // Initial load (not silent)
+    fetchData(); // Initial load (not silent)
 
     // Request notification permission
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission();
     }
 
-    let socket: any;
+    let socket: Socket;
 
     // Listen for updates via socket
     const initSocket = async () => {
@@ -163,12 +164,12 @@ export default function MonitoringPlugin() {
             }
             
             // Refresh data on alert
-            fetchData(true);
+            fetchData();
         });
 
         socket.on('monitoring:update', () => {
             // Silent update
-            fetchData(true);
+            fetchData();
         });
     };
     

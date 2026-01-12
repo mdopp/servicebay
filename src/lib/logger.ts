@@ -1,4 +1,5 @@
-// src/lib/logger.ts
+import type * as fs from 'fs';
+import type * as path from 'path';
 
 const isServer = typeof window === 'undefined';
 
@@ -18,17 +19,23 @@ const COLORS = {
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 class Logger {
-  private fs: any;
-  private path: any;
+  private fs: typeof fs | null = null;
+  private path: typeof path | null = null;
   private logDir: string = '';
 
   constructor() {
     if (isServer) {
         try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
             this.fs = require('fs');
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
             this.path = require('path');
-            this.logDir = this.path.join(process.cwd(), 'data', 'logs');
-            if (!this.fs.existsSync(this.logDir)) {
+            
+            if (this.path) {
+                this.logDir = this.path.join(process.cwd(), 'data', 'logs');
+            }
+
+            if (this.fs && !this.fs.existsSync(this.logDir)) {
                 this.fs.mkdirSync(this.logDir, { recursive: true });
             }
         } catch (e) {
@@ -42,12 +49,12 @@ class Logger {
   }
 
   private getLogFile() {
-    if (!this.fs) return null;
+    if (!this.fs || !this.path) return null;
     const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     return this.path.join(this.logDir, `servicebay-${date}.log`);
   }
 
-  private appendStats(level: string, tag: string, message: string, args: any[]) {
+  private appendStats(level: string, tag: string, message: string, args: unknown[]) {
       if (!this.fs) return;
       try {
           const file = this.getLogFile();
@@ -57,12 +64,12 @@ class Logger {
               const line = `${timestamp} [${level.toUpperCase()}] [${tag}] ${message}${argsStr}\n`;
               this.fs.appendFileSync(file, line);
           }
-      } catch (e) {
+      } catch {
           // Silent fail on file write to avoid loop
       }
   }
 
-  private format(level: LogLevel, tag: string, message: string, args: any[]) {
+  private format(level: LogLevel, tag: string, message: string, args: unknown[]) {
     if (!isServer) {
        // Browser fallback: Use native grouping or just simple prefix
        return [`[${tag}] ${message}`, ...args];
@@ -73,7 +80,7 @@ class Logger {
 
     const timestamp = `${COLORS.dim}${this.getTimestamp()}${COLORS.reset}`;
     let levelColor = COLORS.reset;
-    let levelLabel = level.toUpperCase().padEnd(5);
+    const levelLabel = level.toUpperCase().padEnd(5);
 
     switch(level) {
         case 'debug': levelColor = COLORS.blue; break;
@@ -85,28 +92,29 @@ class Logger {
     const coloredLevel = `${levelColor}${levelLabel}${COLORS.reset}`;
     const coloredTag = `${COLORS.magenta}[${tag}]${COLORS.reset}`;
     
-    // Check if args contains objects to print pretty
-    const rest = args.length > 0 ? args : '';
-    
     return [`${timestamp} ${coloredLevel} ${coloredTag} ${message}`, ...args];
   }
 
-  debug(tag: string, message: string, ...args: any[]) {
+  debug(tag: string, message: string, ...args: unknown[]) {
       if (process.env.NODE_ENV !== 'production' || process.env.DEBUG) {
-          console.debug(...this.format('debug', tag, message, args));
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          console.debug(...(this.format('debug', tag, message, args) as any[]));
       }
   }
 
-  info(tag: string, message: string, ...args: any[]) {
-      console.info(...this.format('info', tag, message, args));
+  info(tag: string, message: string, ...args: unknown[]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      console.info(...(this.format('info', tag, message, args) as any[]));
   }
 
-  warn(tag: string, message: string, ...args: any[]) {
-      console.warn(...this.format('warn', tag, message, args));
+  warn(tag: string, message: string, ...args: unknown[]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      console.warn(...(this.format('warn', tag, message, args) as any[]));
   }
 
-  error(tag: string, message: string, ...args: any[]) {
-      console.error(...this.format('error', tag, message, args));
+  error(tag: string, message: string, ...args: unknown[]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      console.error(...(this.format('error', tag, message, args) as any[]));
   }
 }
 

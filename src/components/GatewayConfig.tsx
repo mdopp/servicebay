@@ -49,7 +49,7 @@ export default function GatewayConfig() {
                 })
             });
             addToast('success', 'Internet Gateway configured');
-        } catch (_e) {
+        } catch {
             addToast('error', 'Failed to save gateway settings');
         } finally {
             setSaving(false);

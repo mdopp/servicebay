@@ -4,7 +4,6 @@ import { getConfig, saveConfig, SSH_DIR } from '@/lib/config';
 import { FritzBoxClient } from '@/lib/fritzbox/client';
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
 
 export interface OnboardingStatus {
   needsSetup: boolean;

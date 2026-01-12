@@ -30,7 +30,8 @@ export async function GET(
     }
     
     return NextResponse.json({ logs: 'Unknown error' }, { status: 500 });
-  } catch (error: any) {
-    return NextResponse.json({ logs: error.message || String(error) }, { status: 500 });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ logs: msg }, { status: 500 });
   }
 }

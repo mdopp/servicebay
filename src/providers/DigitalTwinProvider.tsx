@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { useSocket } from '@/hooks/useSocket';
 import type { NodeTwin, GatewayState, ProxyState } from '@/lib/store/twin';
 
@@ -24,6 +24,7 @@ export function DigitalTwinProvider({ children }: { children: ReactNode }) {
     const { socket, isConnected } = useSocket();
     const [data, setData] = useState<DigitalTwinSnapshot | null>(null);
     const [lastUpdate, setLastUpdate] = useState<number>(0);
+    const instanceIdRef = useRef<string | null>(null);
 
     // Persist data across unmounts is automatic because this Provider is at root.
 
@@ -34,8 +35,11 @@ export function DigitalTwinProvider({ children }: { children: ReactNode }) {
             // Option: If we want to optimize, we can merge diffs here if the server sends diffs.
             // But currently it seems to send full snapshots or we just replace common parts.
             // The previous hook just did setData(snapshot).
-            if (data && snapshot.instanceId && data.instanceId && snapshot.instanceId !== data.instanceId) {
-                console.warn(`[DigitalTwinProvider] CRITICAL: Backend Instance ID changed from ${data.instanceId} to ${snapshot.instanceId}. Possible server restart or split-brain.`);
+            if (instanceIdRef.current && snapshot.instanceId && snapshot.instanceId !== instanceIdRef.current) {
+                console.warn(`[DigitalTwinProvider] CRITICAL: Backend Instance ID changed from ${instanceIdRef.current} to ${snapshot.instanceId}. Possible server restart or split-brain.`);
+            }
+            if (snapshot.instanceId) {
+                instanceIdRef.current = snapshot.instanceId;
             }
             setData(snapshot);
             setLastUpdate(Date.now());
@@ -47,6 +51,7 @@ export function DigitalTwinProvider({ children }: { children: ReactNode }) {
             socket.off('twin:state', handleUpdate);
         };
     }, [socket]);
+
 
     const isNodeSynced = (nodeName?: string) => {
         if (!data) return false;

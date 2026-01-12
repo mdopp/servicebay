@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
+import { PortMapping } from '@/lib/agent/types';
+import { NetworkGraph } from '@/lib/network/types'; 
 
 import { 
   ReactFlow, 
@@ -12,6 +14,8 @@ import {
   useEdgesState,
   Node,
   Edge,
+  NodeProps,
+  EdgeProps,
   Connection,
   addEdge,
   Panel,
@@ -24,15 +28,71 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@/lib/network/layout';
-import { RefreshCw, X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid } from 'lucide-react';
+import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import Link from 'next/link';
 
+export interface GraphNodeData extends Record<string, unknown> {
+  id?: string;
+  type: string; 
+  label: string;
+  subLabel?: string;
+  node?: string; // Node name
+  hostname?: string;
+  targetHandlePosition?: Position;
+  sourceHandlePosition?: Position;
+  collapsed?: boolean;
+  onToggle?: (id: string, expanded?: boolean) => void;
+  onCreateExternalLink?: (node: GraphNodeData) => void; 
+  status?: string;
+  ip?: string;
+  parentId?: string;
+  summary?: {
+    portMap?: PortMapping[];
+    totalContainers?: number;
+    activeContainers?: number;
+    totalServices?: number;
+    activeServices?: number;
+    status?: string;
+    verifiedDomains?: string[];
+  };
+  metadata?: {
+    nodeIPs?: string[];
+    verifiedDomains?: string[];
+    externalTargetIp?: string;
+    externalTargetPort?: number;
+    description?: string;
+    link?: string;
+    stats?: {
+      externalIP?: string;
+      internalIP?: string;
+      dnsServers?: string[];
+    };
+    [key: string]: unknown;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rawData?: any;
+}
+
+interface LegacyPortMapping extends PortMapping {
+    IP?: string;
+    host?: number;
+    container?: number;
+}
+
+interface MonitoringData {
+    connected?: boolean;
+    externalIP?: string;
+    uptime?: number;
+    dnsServers?: string[];
+    deviceLog?: string;
+    [key: string]: unknown;
+}
+
 // Custom Edge Component
 const CustomEdge = ({
-  id: _id,
   sourceX,
   sourceY,
   targetX,
@@ -42,8 +102,7 @@ const CustomEdge = ({
   style = {},
   markerEnd,
   label,
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-}: any) => {
+}: EdgeProps) => {
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -80,14 +139,15 @@ const CustomEdge = ({
   );
 };
 
+type CustomNodeType = Node<GraphNodeData>;
+
 // Custom Node Component
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const CustomNode = ({ id, data }: { id: string, data: any }) => {
+const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   const isGroup = data.type === 'group';
   // Services, Pods, Proxies can also behave as groups (can be expanded/collapsed)
   const isExpandable = ['group', 'service', 'pod', 'proxy'].includes(data.type);
   const isCollapsed = data.collapsed;
-  const onToggle = data.onToggle as ((id: string) => void) | undefined;
+  const onToggle = data.onToggle;
   
   // Decide whether to render as the "Opened Group Frame" or the "Node Card"
   const renderAsExpandedGroup = isExpandable && !isCollapsed;
@@ -98,7 +158,7 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
   const isMissing = data.rawData?.type === 'missing';
   
   // Determine effective type: if group, try to use rawData.type (service, pod, proxy) to get correct label/color
-  const effectiveType = (data.type === 'group' && data.rawData?.type) ? data.rawData.type : data.type;
+  const effectiveType = ((data.type === 'group' && data.rawData?.type) ? data.rawData.type : data.type) as string;
   
   const typeLabels: Record<string, string> = {
       container: 'Container',
@@ -136,8 +196,7 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
       const directPorts = data.rawData?.ports;
       const rawPorts = (directPorts && directPorts.length > 0) 
           ? directPorts 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          : (summary.portMap?.map((p: any) => p) || []);
+          : (summary.portMap || []);
       
 
       // Helper to extract IP info from ports
@@ -160,8 +219,7 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
          if (parts.length >= 1) fallbackIp = parts[0];
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const parsedPorts = rawPorts.map((p: any) => {
+    const parsedPorts = rawPorts.map((p: unknown) => {
         const isObj = typeof p === 'object' && p !== null;
         // Check both camelCase (API) and snake_case (Agent) properties
         // Also handle the case where p is just a number (legacy/simple)
@@ -171,13 +229,15 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
         let containerPort: number | string | null = null;
         
         if (isObj) {
-            ip = p.host_ip || p.hostIp || p.IP; // IP is rarely on port obj in recent models, but check
-            hostPort = p.host || p.host_port || p.hostPort || p.PublicPort;
-            containerPort = p.container || p.container_port || p.containerPort || p.PrivatePort;
+            const portObj = p as LegacyPortMapping;
+            ip = portObj.hostIp || portObj.IP || null; // IP is rarely on port obj in recent models, but check
+            hostPort = portObj.host || portObj.hostPort || null;
+            containerPort = portObj.container || portObj.containerPort || null;
         } else {
             // p is number or string
-            hostPort = p;
-            containerPort = p; // Assume symmetry if simple number
+            const val = p as unknown as (string | number);
+            hostPort = val;
+            containerPort = val; // Assume symmetry if simple number
         }
 
         // Normalize IP: If missing, empty, or 0.0.0.0, use the Node IP (fallbackIp)
@@ -195,10 +255,8 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
     });
 
     // Deduplicate ports based on IP and Host Port
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const uniquePortsMap = new Map<string, any>();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    parsedPorts.forEach((p: any) => {
+    const uniquePortsMap = new Map<string, { host: number|string|null, container: number|string|null, ip: string|null }>();
+    parsedPorts.forEach((p: { host: number|string|null, container: number|string|null, ip: string|null }) => {
         const key = `${p.ip || '_'}:${p.host}`;
         // Keep the first one, or maybe prefer one with container info?
         // Usually first is fine.
@@ -209,7 +267,7 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
     
     const dedupedPorts = Array.from(uniquePortsMap.values());
 
-    const uniqueIps = Array.from(new Set(dedupedPorts.map((p: { ip: string | null }) => p.ip).filter(Boolean))) as string[];
+    const uniqueIps = Array.from(new Set(dedupedPorts.map((p) => p.ip).filter(Boolean))) as string[];
     // If exactly one unique IP is found across all ports, show it globally. 
     // Otherwise (0 or >1), show IPs on tags individually.
     const globalIp = uniqueIps.length === 1 ? uniqueIps[0] : null;
@@ -239,11 +297,12 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
   
   // No changes needed if backend metadata is correct, but let's ensure we prefer metadata over summary if expanded.
   const displayDomains = renderAsExpandedGroup ? [] : uniqueDomains;
-  type DetailItem = { label: string; value: any; full?: boolean };
+  type DetailItem = { label: string; value: string | number | React.ReactNode; full?: boolean };
 
   // Helper to get display details based on type
   const getDetails = (): DetailItem[] => {
-      const raw = data.rawData || {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = (data.rawData || {}) as any;
       const common: DetailItem[] = [];
 
       if (effectiveType === 'container') {
@@ -305,10 +364,8 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
   }
 
   // Dynamic Handle Positions
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const targetPos = (data as any).targetHandlePosition || Position.Left;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sourcePos = (data as any).sourceHandlePosition || Position.Right;
+  const targetPos = data.targetHandlePosition || Position.Left;
+  const sourcePos = data.sourceHandlePosition || Position.Right;
 
   return (
     <div className={`w-full ${(isGroup || renderAsExpandedGroup) ? 'h-full' : 'min-w-[320px] h-auto'}`}>
@@ -350,11 +407,11 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
                     )}
                     {data.label}
                     {/* Visual Tag for Pod/Service */}
-                    {(effectiveType === 'service' || effectiveType === 'pod') && (
+                    {(effectiveType === 'service' || effectiveType === 'pod') ? (
                         <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-white/50 dark:bg-black/20 border border-black/10 dark:border-white/10 uppercase tracking-wider font-extrabold opacity-80">
                             {effectiveType === 'service' ? 'Service' : 'Pod'}
                         </span>
-                    )}
+                    ) : null}
                     {data.node && data.node !== 'local' && (
                         <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
                             {data.node}
@@ -370,14 +427,13 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
                                 {globalIp}
                              </div>
                         )}
-                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                        {portMap.map((p: any, idx: number) => {
+                        {portMap.map((p, idx) => {
                             // Determine hostname
                             let hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
                             if (p.ip) {
                                 hostname = p.ip;
-                            } else if (data.metadata?.nodeHost && data.metadata.nodeHost !== 'localhost') {
-                                hostname = data.metadata.nodeHost;
+                            } else if (data.metadata?.nodeHost && typeof data.metadata.nodeHost === 'string' && data.metadata.nodeHost !== 'localhost') {
+                                hostname = data.metadata.nodeHost as string;
                             } else if (data.node && data.node !== 'local' && data.node !== 'Local') {
                                 hostname = data.node;
                             }
@@ -444,9 +500,9 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
                           {data.subLabel}
                       </div>
                   )}
-                  {data.metadata?.pod && (
+                  {!!data.metadata?.pod && (typeof data.metadata.pod === 'string' || typeof data.metadata.pod === 'number') && (
                      <div className="text-xs text-pink-600 dark:text-pink-400 font-mono bg-pink-50 dark:bg-pink-900/20 border border-pink-200 dark:border-pink-800/30 px-2 py-1 rounded break-all flex items-center gap-1">
-                        <span className="opacity-50 text-[10px]">POD:</span> {data.metadata.pod}
+                        <span className="opacity-50 text-[10px]">POD:</span> {data.metadata.pod as React.ReactNode}
                      </div>
                   )}
                 </div>
@@ -459,7 +515,7 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
                                 <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold">{d.label}</span>
                                 {d.label === 'URL' ? (
                                     <a 
-                                        href={d.value} 
+                                        href={String(d.value)} 
                                         target="_blank" 
                                         rel="noopener noreferrer" 
                                         className="text-sm text-blue-600 dark:text-blue-400 font-medium break-words hover:underline" 
@@ -515,16 +571,15 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
                 
                 <div className="mt-auto pt-3 flex items-center justify-between border-t border-gray-100 dark:border-gray-800/50">
                     <div className="flex flex-wrap gap-1.5 items-center">
-                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                        {portMap && portMap.map((p: any, idx: number) => {
+                        {portMap && portMap.map((p, idx) => {
                             // Determine hostname for link
                             let hostname = p.ip; // Start with the resolved IP
                             
                             // If IP is 0.0.0.0 or localhost, try to be smarter for the link 
                             // (though visual label uses p.ip which is now normalized)
                             if (hostname === '0.0.0.0' || hostname === '127.0.0.1' || hostname === 'localhost') {
-                                 if (data.metadata?.nodeHost && data.metadata.nodeHost !== 'localhost') {
-                                    hostname = data.metadata.nodeHost;
+                                 if (data.metadata?.nodeHost && typeof data.metadata.nodeHost === 'string' && data.metadata.nodeHost !== 'localhost') {
+                                    hostname = data.metadata.nodeHost as string;
                                 } else if (data.node && data.node !== 'local' && data.node !== 'Local') {
                                     hostname = data.node;
                                 }
@@ -565,6 +620,19 @@ const CustomNode = ({ id, data }: { id: string, data: any }) => {
                         <span className="text-[10px] font-semibold px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded border border-gray-200 dark:border-gray-700 uppercase tracking-wider whitespace-nowrap">
                             {isMissing ? 'Missing Node' : (typeLabels[effectiveType] || effectiveType)}
                         </span>
+                        
+                         {!!data.metadata?.isExternalMissing && (
+                            <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    data.onCreateExternalLink?.(data);
+                                }}
+                                className="mt-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold uppercase tracking-wider rounded transition-colors shadow-sm flex items-center gap-1"
+                            >
+                                <Plus size={10} />
+                                Add Link
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
@@ -583,11 +651,10 @@ const edgeTypes = {
 };
 
 export default function NetworkPlugin() {
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
+  const [selectedNodeData, setSelectedNodeData] = useState<GraphNodeData | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const rawGraphData = React.useRef<{ nodes: Node[], edges: Edge[] } | null>(null);
@@ -596,8 +663,7 @@ export default function NetworkPlugin() {
 
   // Monitoring Modal State
   const [showMonitoringModal, setShowMonitoringModal] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [monitoringData, setMonitoringData] = useState<any>(null);
+  const [monitoringData, setMonitoringData] = useState<MonitoringData | null>(null);
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -616,14 +682,16 @@ export default function NetworkPlugin() {
         
         // Find target node to get available ports
         const targetNode = nodes.find(n => n.id === params.target);
-        const rawData = targetNode?.data?.rawData as any;
+        const rawData = targetNode?.data?.rawData;
         if (targetNode && rawData?.ports && Array.isArray(rawData.ports)) {
             // Extract ports (handle both number and object format)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const ports = rawData.ports.map((p: any) => {
-                if (typeof p === 'object') return p.host || p.container;
-                return p;
-            }).filter((p: number) => p > 0);
+            const ports = (rawData.ports as unknown[]).map((p) => {
+                if (typeof p === 'object' && p !== null) {
+                    const portMap = p as LegacyPortMapping;
+                    return portMap.hostPort || portMap.host || portMap.containerPort || portMap.container;
+                }
+                return p as number;
+            }).filter((p) => Number(p) > 0) as number[];
             setAvailablePorts(ports);
             // If there's only one port, pre-select it? No, user might want generic link.
             // But user asked for default to be that port.
@@ -667,13 +735,11 @@ export default function NetworkPlugin() {
       }
   };
 
-  const matchesSearch = useCallback((node: Node, query: string) => {
+  const matchesSearch = useCallback((node: Node<GraphNodeData>, query: string) => {
     if (!query) return true;
     const q = query.toLowerCase();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = node.data as any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = (data.rawData || {}) as any;
+    const data = node.data;
+    const raw = data.rawData || {};
     
     // Check basic fields
     if (data.label && String(data.label).toLowerCase().includes(q)) return true;
@@ -683,17 +749,21 @@ export default function NetworkPlugin() {
     // Check ports (Prefer rawData)
     const ports = data.rawData?.ports;
     if (ports && Array.isArray(ports)) {
-        const portsStr = ports.map((p: any) => {
-            if (typeof p === 'object') return `${p.host || p.host_port} ${p.container || p.container_port}`;
+        const portsStr = (ports as unknown[]).map((p) => {
+            if (typeof p === 'object' && p !== null) {
+                const pm = p as LegacyPortMapping;
+                return `${pm.host || pm.hostPort} ${pm.container || pm.containerPort}`;
+            }
             return String(p);
         }).join(' ');
         if (portsStr.includes(q)) return true;
     }
     
     // Check raw data fields
-    if (raw.url && String(raw.url).toLowerCase().includes(q)) return true;
-    if (raw.externalIP && String(raw.externalIP).includes(q)) return true;
-    if (raw.internalIP && String(raw.internalIP).includes(q)) return true;
+    const r = raw as Record<string, unknown>;
+    if (r.url && String(r.url).toLowerCase().includes(q)) return true;
+    if (r.externalIP && String(r.externalIP).includes(q)) return true;
+    if (r.internalIP && String(r.internalIP).includes(q)) return true;
     
     // Check verified domains
     if (data.metadata?.verifiedDomains && Array.isArray(data.metadata.verifiedDomains)) {
@@ -703,7 +773,7 @@ export default function NetworkPlugin() {
     return false;
   }, []);
 
-  const applyFilter = useCallback((nodesToFilter: Node[], query: string) => {
+  const applyFilter = useCallback((nodesToFilter: Node<GraphNodeData>[], query: string) => {
     return nodesToFilter.map(node => {
         const isMatch = matchesSearch(node, query);
         const targetOpacity = isMatch ? 1 : 0.2;
@@ -731,25 +801,24 @@ export default function NetworkPlugin() {
       setNodes((nds) => applyFilter(nds, searchQuery));
   }, [searchQuery, applyFilter, setNodes]);
 
-  const processAndLayout = useCallback(async (nodes: Node[], edges: Edge[], collapsed: Set<string>, search: string) => {
+  const processAndLayout = useCallback(async (nodes: Node<GraphNodeData>[], edges: Edge[], collapsed: Set<string>, search: string) => {
     // 1. Prepare Nodes (Aggregation & toggles)
      
     const processedNodes = nodes.map(node => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (['group', 'service', 'pod', 'proxy'].includes((node.data as any).type)) {
+        if (['group', 'service', 'pod', 'proxy'].includes(node.data.type)) {
              const isCollapsed = collapsed.has(node.id);
              
              // Aggregate Summary
               
              const children = nodes.filter(n => n.parentId === node.id);
              let status = 'up';
-             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-             if (children.some(c => (c.data as any).status === 'down')) status = 'down';
+             if (children.some(c => c.data.status === 'down')) status = 'down';
              
-             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-             const verifiedDomains = Array.from(new Set(children.flatMap(c => (c.data as any).metadata?.verifiedDomains || []) as string[]));
-             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-             const portMap = children.flatMap(c => (c.data as any).rawData?.ports || []).map(p => typeof p === 'object' ? p : { host: p, container: p });
+             const verifiedDomains = Array.from(new Set(children.flatMap(c => c.data.metadata?.verifiedDomains || []) as string[]));
+             const portMap = children.flatMap(c => c.data.rawData?.ports || []).map((p) => {
+                 if (typeof p === 'object' && p !== null) return p;
+                 return { hostPort: Number(p), containerPort: Number(p), protocol: 'tcp' } as PortMapping;
+             });
              
              return {
                  ...node,
@@ -821,7 +890,7 @@ export default function NetworkPlugin() {
     
     // 4. Layout
     const layouted = await getLayoutedElements(visibleNodes, visibleEdges);
-    setNodes(applyFilter(layouted.nodes, search));
+    setNodes(applyFilter(layouted.nodes as Node<GraphNodeData>[], search));
     setEdges(layouted.edges);
   }, [setNodes, setEdges, applyFilter]);
 
@@ -852,8 +921,7 @@ export default function NetworkPlugin() {
   // Actually, for "Network Map loaded from digital twin", ideally the client builds it.
   // But let's stick to the "No Refresh Button" requirement first.
   
-  const [rawData, setRawData] = useState<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
-  const [loading, setLoading] = useState(true);
+  const [rawData, setRawData] = useState<NetworkGraph | null>(null);
 
   const fetchGraph = useCallback(async () => {
      try {
@@ -861,7 +929,7 @@ export default function NetworkPlugin() {
          if (res.ok) {
              const data = await res.json();
              setRawData(data);
-             setLoading(false);
+             // setLoading(false);
          }
      } catch (e) {
          console.error('Failed to fetch graph', e);
@@ -877,12 +945,28 @@ export default function NetworkPlugin() {
      return () => { clearTimeout(t); };
   }, [twin, fetchGraph]); 
 
-  const refreshing = false; // Hidden
+  // const refreshing = false; // Hidden
+
+  const handleCreateExternalLink = useCallback((nodeData: GraphNodeData) => {
+    if (!nodeData) return;
+    const { externalTargetIp, externalTargetPort } = nodeData.metadata || {};
+    const rawName = nodeData.rawData?.name || 'External Service';
+
+    // Pre-fill form
+    setLinkForm({
+        name: rawName,
+        url: externalTargetIp ? `http://${externalTargetIp}:${externalTargetPort}` : '',
+        description: `Imported from Nginx proxy target ${externalTargetIp}:${externalTargetPort}`,
+        monitor: true,
+        ip_targets: externalTargetIp || ''
+    });
+    setShowLinkModal(true);
+  }, []);
 
   const graphData = useMemo(() => {
       if (!rawData) return null;
       
-      const flowNodes: Node[] = rawData.nodes.map((n: any) => {
+      const flowNodes: Node<GraphNodeData>[] = rawData.nodes.map((n) => {
         const isGroup = n.type === 'group';
         
         return {
@@ -894,8 +978,12 @@ export default function NetworkPlugin() {
                 label: n.label,
                 type: n.type,
                 status: n.status,
-                subLabel: n.subLabel,
-                rawData: n.rawData
+                subLabel: n.subLabel ?? undefined,
+                hostname: n.hostname ?? undefined,
+                ip: n.ip ?? undefined,
+                rawData: n.rawData,
+                metadata: n.metadata,
+                onCreateExternalLink: handleCreateExternalLink
             },
             parentId: n.parentNode,
             extent: n.parentNode ? 'parent' : undefined,
@@ -908,7 +996,7 @@ export default function NetworkPlugin() {
         };
       });
 
-      const flowEdges: Edge[] = rawData.edges.map((e: any) => ({
+      const flowEdges: Edge[] = rawData.edges.map((e) => ({
         id: e.id,
         source: e.source,
         target: e.target,
@@ -926,7 +1014,7 @@ export default function NetworkPlugin() {
     }));
       
       return { nodes: flowNodes, edges: flowEdges };
-  }, [rawData]);
+  }, [rawData, handleCreateExternalLink]);
 
 
 
@@ -967,11 +1055,11 @@ export default function NetworkPlugin() {
   }, [updateToast]);
 
   const handleEditLink = () => {
-      if (!selectedNodeData) return;
+      if (!selectedNodeData || !selectedNodeData.rawData) return;
       const { name, url, description, monitor, ip_targets } = selectedNodeData.rawData;
       
       setLinkForm({
-          name: name,
+          name: name || '',
           url: url || '',
           description: description || '',
           monitor: monitor || false,
@@ -1009,7 +1097,7 @@ export default function NetworkPlugin() {
         setShowLinkModal(false);
         fetchGraph(); 
         
-        if (selectedNodeData && selectedNodeData.rawData.name === linkForm.name) {
+        if (selectedNodeData && selectedNodeData.rawData && selectedNodeData.rawData.name === linkForm.name) {
              setSelectedNodeData({
                  ...selectedNodeData,
                  rawData: {
@@ -1361,7 +1449,7 @@ export default function NetworkPlugin() {
                     {selectedNodeData.type === 'router' && (
                         <button 
                             onClick={() => {
-                                setMonitoringData(selectedNodeData.rawData);
+                                setMonitoringData((selectedNodeData.rawData as MonitoringData) || null);
                                 setShowMonitoringModal(true);
                             }}
                             className="w-full flex items-center justify-center gap-2 p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm font-medium"
@@ -1432,7 +1520,7 @@ export default function NetworkPlugin() {
 
                     {selectedNodeData.rawData?.metadata?.link && (
                         <Link 
-                            href={selectedNodeData.rawData.metadata.link}
+                            href={selectedNodeData.rawData?.metadata?.link || '#'}
                             target="_blank"
                             className="block w-full text-center p-2 bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium"
                         >
@@ -1462,14 +1550,14 @@ export default function NetworkPlugin() {
                               <div className="flex justify-between">
                                   <span className="text-gray-500">Ports</span>
                                   <span className="font-mono">
-                                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                    {selectedNodeData.rawData.ports.map((p: any) => {
-                                        if (typeof p === 'object') {
-                                            const h = p.host || p.host_port;
-                                            const c = p.container || p.container_port;
+                                    {(selectedNodeData.rawData.ports as unknown[]).map((p) => {
+                                        if (typeof p === 'object' && p !== null) {
+                                            const port = p as LegacyPortMapping;
+                                            const h = port.host || port.hostPort;
+                                            const c = port.container || port.containerPort;
                                             return h && c && h !== c ? `${h}:${c}` : (h || c);
                                         }
-                                        return p;
+                                        return String(p);
                                     }).join(', ')}
                                   </span>
                               </div>

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { render, screen } from '@testing-library/react';
 import ContainersPlugin from '../../src/plugins/ContainersPlugin';
 import { vi, describe, it, expect } from 'vitest';
@@ -52,7 +53,7 @@ describe('ContainersPlugin Port Rendering', () => {
                         isHostNetwork: true,
                         // This is the KEY format from Agent V4
                         ports: [
-                            { host_port: 8080, container_port: 8080, protocol: 'tcp' }
+                            { hostPort: 8080, containerPort: 8080, protocol: 'tcp' }
                         ],
                         pid: 123
                     }],
@@ -116,7 +117,7 @@ describe('ContainersPlugin Port Rendering', () => {
                         // If `p` has `host_port`, `p.hostPort` is undefined!
                         // This might be the bug!
                         ports: [
-                            { host_port: 80, container_port: 80, protocol: 'tcp' }
+                            { hostPort: 80, containerPort: 80, protocol: 'tcp' }
                         ],
                         pid: 123 
                     }],

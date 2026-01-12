@@ -59,10 +59,11 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
     if (!(await executor.exists(systemdDir))) {
         await executor.mkdir(systemdDir);
     }
-  } catch (e: any) {
+  } catch (e) {
       console.error('Failed to access systemd dir', e);
       // Determine if this is an Agent connection issue
-      if (e.message && e.message.includes('Agent not connected')) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Agent not connected')) {
           throw new Error(`Failed to communicate with ServiceBay Agent on ${connection?.Name || 'Remote Node'}.\nCheck if the node is online and the agent is running.`);
       }
       throw e;
@@ -158,9 +159,10 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
       if (stdout.includes('STATUS: inactive') || stdout.includes('STATUS: failed')) {
           console.log('[ServiceManager] Raw Batch Output:', stdout);
       }
-  } catch (e: any) {
+  } catch (e) {
       console.error('Failed to fetch services batch', e);
-      if (e.stdout && e.stdout.includes('ERROR_SYSTEMD_ACCESS_FAILED')) {
+      const err = e as { stdout?: string };
+      if (err.stdout && err.stdout.includes('ERROR_SYSTEMD_ACCESS_FAILED')) {
           throw new Error('Systemd User Session inaccessible. Check DBUS/XDG environment.');
       }
       // Propagate error to let the UI handle it properly
@@ -440,9 +442,10 @@ export async function getServiceFiles(name: string, connection?: PodmanConnectio
         serviceContent = '# Service unit not found or not generated yet.';
     }
 
-  } catch (e: any) {
+  } catch (e) {
     console.error(`Error reading service files for ${name}:`, e);
-    throw new Error(`Service ${name} not found: ${e.message}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Service ${name} not found: ${msg}`);
   }
 
   return { kubeContent, yamlContent, yamlPath, serviceContent, kubePath, servicePath };
@@ -637,7 +640,7 @@ export async function getEnrichedContainers(connection?: PodmanConnection) {
                 if (inspect?.State?.Pid) {
                     const ports = hostPorts.get(inspect.State.Pid);
                     if (ports && ports.length > 0) {
-                        console.log(`[Manager] Uses dynamic host ports for ${c.Names?.[0] || c.Id}: ${ports.map((p: any) => p.host_port).join(', ')}`);
+                        console.log(`[Manager] Uses dynamic host ports for ${c.Names?.[0] || c.Id}: ${ports.map((p: any) => p.hostPort).join(', ')}`);
                         
                         // 1. Update Ports (Podman PS format)
                         c.Ports = ports;
@@ -647,7 +650,7 @@ export async function getEnrichedContainers(connection?: PodmanConnection) {
                          
                         ports.forEach((p: any) => {
                             const protocol = p.protocol || 'tcp';
-                            exposed[`${p.host_port}/${protocol}`] = {};
+                            exposed[`${p.hostPort}/${protocol}`] = {};
                         });
                         c.ExposedPorts = exposed;
                         
@@ -656,11 +659,11 @@ export async function getEnrichedContainers(connection?: PodmanConnection) {
                         if (!c.NetworkSettings.Ports) c.NetworkSettings.Ports = {};
                          
                         ports.forEach((p: any) => {
-                            const key = `${p.host_port}/${p.protocol || 'tcp'}`;
+                            const key = `${p.hostPort}/${p.protocol || 'tcp'}`;
                             if (!c.NetworkSettings.Ports[key]) {
                                 c.NetworkSettings.Ports[key] = [{
-                                    HostIp: p.host_ip,
-                                    HostPort: String(p.host_port)
+                                    HostIp: p.hostIp,
+                                    HostPort: String(p.hostPort)
                                 }];
                             }
                         });
@@ -703,8 +706,9 @@ export async function getContainerLogs(containerId: string, connection?: PodmanC
   try {
     const { stdout, stderr } = await executor.exec(`podman logs --tail 100 ${containerId}`);
     return stdout + (stderr ? '\n' + stderr : '');
-  } catch (e: any) {
-    return (e.stdout || '') + (e.stderr ? '\n' + e.stderr : '');
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string };
+    return (err.stdout || '') + (err.stderr ? '\n' + err.stderr : '');
   }
 }
 
@@ -714,9 +718,10 @@ export async function getServiceStatus(name: string, connection?: PodmanConnecti
   try {
     const { stdout } = await executor.exec(`systemctl --user status ${serviceName}`);
     return stdout;
-  } catch (e: any) {
+  } catch (e) {
     // systemctl status returns non-zero exit code if service is not running, but we still want the output
-    return e.stdout || e.message;
+    const err = e as { stdout?: string; message: string };
+    return err.stdout || err.message;
   }
 }
 
@@ -777,8 +782,9 @@ export async function updateAndRestartService(name: string, connection?: PodmanC
         try {
             await executor.exec(`podman pull ${image}`);
             logs.push(`Successfully pulled ${image}`);
-        } catch (e: any) {
-            logs.push(`Failed to pull ${image}: ${e.message}`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            logs.push(`Failed to pull ${image}: ${msg}`);
         }
       }
 
@@ -803,8 +809,9 @@ export async function updateAndRestartService(name: string, connection?: PodmanC
   logs.push(`Starting service ${serviceName}...`);
   try {
     await executor.exec(`systemctl --user start ${serviceName}`);
-  } catch (e: any) {
-     logs.push(`Error starting service: ${e.message}`);
+  } catch (e) {
+     const msg = e instanceof Error ? e.message : String(e);
+     logs.push(`Error starting service: ${msg}`);
   }
 
   const status = await getServiceStatus(name, connection);
@@ -849,7 +856,7 @@ export async function renameService(oldName: string, newName: string, connection
     if (await executor.exists(newKubePath)) {
         throw new Error(`Service ${newName} already exists`);
     }
-  } catch (e: any) {
+  } catch (e) {
     // Ignore
   }
 
@@ -1040,16 +1047,16 @@ export async function getHostPortsForPids(pids: number[], connection?: PodmanCon
                      const hostIp = (ipStr === '*' || ipStr === '') ? '0.0.0.0' : ipStr;
 
                      const portInfo = {
-                         host_ip: hostIp,
-                         container_port: port,
-                         host_port: port,
+                         hostIp: hostIp,
+                         containerPort: port,
+                         hostPort: port,
                          protocol: protocol
                      };
 
                      const existing = map.get(assignedPid) || [];
                      // Avoid exact duplicates
                      const isDuplicate = existing.some(p => 
-                        p.host_port === port && p.protocol === protocol && p.host_ip === hostIp
+                        p.hostPort === port && p.protocol === protocol && p.hostIp === hostIp
                      );
                      
                      if (!isDuplicate) {

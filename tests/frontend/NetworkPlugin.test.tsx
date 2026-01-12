@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -14,7 +15,7 @@ vi.mock('@/providers/ToastProvider', () => ({
 
 // 2. Mock 'react-highlight-words' used by something imported (RegistryPlugin?) or just in case
 vi.mock('react-highlight-words', () => ({
-    default: ({ searchWords, textToHighlight }: any) => <>{textToHighlight}</>
+    default: ({ textToHighlight }: any) => <>{textToHighlight}</>
 }));
 
 // 3. IMPORTANT: Mock @xyflow/react (React Flow)

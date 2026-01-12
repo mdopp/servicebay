@@ -128,9 +128,9 @@ export class SSHConnectionPool {
     
     try {
         privateKey = readFileSync(node.Identity);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-        throw new Error(`Failed to read SSH key at ${node.Identity}: ${e.message}`);
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Failed to read SSH key at ${node.Identity}: ${msg}`);
     }
 
     return {

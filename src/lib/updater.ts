@@ -1,6 +1,5 @@
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
 import { spawn } from 'child_process';
 import semver from 'semver';
 import { Server } from 'socket.io';

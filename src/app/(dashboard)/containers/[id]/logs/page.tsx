@@ -12,8 +12,8 @@ interface Container {
   State: string;
   Status: string;
   Created: number;
-  Ports?: ({ IP?: string; PrivatePort: number; PublicPort?: number; Type: string } | { host_ip?: string; container_port: number; host_port?: number; protocol: string })[];
-  Mounts?: (string | { Source: string; Destination: string; Type: string })[] | any[];
+  Ports?: { hostIp?: string; containerPort: number; hostPort?: number; protocol: string }[];
+  Mounts?: (string | { Source: string; Destination: string; Type: string })[] | unknown[];
 }
 
 export default function ContainerLogsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -62,8 +62,8 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
             Status: found.status,
             Created: found.created,
             Ports: found.ports.map(p => ({
-                 host_port: p.host_port || p.hostPort,
-                 container_port: p.container_port || p.containerPort || 0,
+                 hostPort: p.hostPort,
+                 containerPort: p.containerPort || 0,
                  protocol: p.protocol
             })),
             Mounts: found.mounts,
@@ -126,7 +126,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
     return () => {
         abortController.abort();
     };
-  }, [container]);
+  }, [container, node]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-full text-gray-500">Loading...</div>;
@@ -195,11 +195,8 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                         <div>
                             <span className="block text-gray-500 text-xs">Ports</span>
                             <div className="space-y-1 mt-1">
-                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                {container.Ports.map((p: any, i) => {
-                                    const hostPort = p.PublicPort || p.host_port;
-                                    const containerPort = p.PrivatePort || p.container_port;
-                                    const protocol = p.Type || p.protocol;
+                                {container.Ports.map((p, i) => {
+                                    const { hostPort, containerPort, protocol } = p;
                                     return (
                                         <div key={i} className="font-mono text-xs bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded">
                                             {hostPort ? `${hostPort}:` : ''}{containerPort}/{protocol}

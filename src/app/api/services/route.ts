@@ -194,11 +194,11 @@ export async function GET(request: Request) {
     const mappedServices = services.map(s => ({ type: 'container', ...s }));
 
     return NextResponse.json([...mappedLinks, ...gatewayService, ...mappedServices]);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } catch (error: any) {
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
     console.error('Failed to list services:', error);
     return NextResponse.json(
-        { error: error.message || 'Internal Server Error' },
+        { error: msg || 'Internal Server Error' },
         { status: 500 }
     );
   }

@@ -5,6 +5,7 @@ A Next.js web interface to manage Podman Quadlet services (Systemd).
 ## Features
 
 - **Dashboard:** List and manage existing services in `~/.config/containers/systemd/`.
+- **Infrastructure-as-Code:** Supports generic, reusable stacks via `{{STACKS_DIR}}` and custom template variables.
 - **Network Map:** Interactive visualization of your service architecture with auto-layout and health status.
 - **Monitoring:** Real-time health checks (HTTP/TCP), history visualization, and smart notifications.
 - **Registry:** Install services from a GitHub template registry.
@@ -16,7 +17,29 @@ A Next.js web interface to manage Podman Quadlet services (Systemd).
 
 ## Installation
 
-You can install ServiceBay with a single command:
+### 1. Fedora CoreOS (Recommended / Production)
+This method installs a minimal, immutable OS where ServiceBay runs as a rootless system service (`servicebay.service`) and manages the entire node.
+
+**Prerequisites:**
+- `butane` (for transpiling config)
+- `envsubst` (gettext package)
+- `openssl`
+
+1. **Run the Interactive Installer:**
+   ```bash
+   curl -fsSL "https://raw.githubusercontent.com/mdopp/servicebay/main/install-fedora-coreos.sh" | bash
+   # Follow the prompts to configure IP, Secrets, and Data Paths.
+   ```
+   The script will generate an Ignition file (`install.ign`) in a `./build/fcos` directory and host it temporarily.
+
+2. **Boot FCOS Installer:**
+   Boot your target machine with the Fedora CoreOS installer ISO and run:
+   ```bash
+   coreos-installer install /dev/sda --ignition-url http://<YOUR_IP>:8000/install.ign
+   ```
+
+### 2. Standalone Container (Quick Start)
+You can install ServiceBay on any Linux machine with Podman installed.
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/mdopp/servicebay/main/install.sh?$(date +%s)" | bash
@@ -33,14 +56,18 @@ The web interface will be available at [http://localhost:3000](http://localhost:
 
 ## Data Persistence & File Structure
 
+ServiceBay is designed to separate **Application State** from **User Data**.
 
-ServiceBay is designed to be stateless regarding the application code, but stateful regarding your configuration and data. The installer automatically maps the following host directories to the container to ensure data persists across updates and container recreations:
+| Path Type | Location (FCOS Default) | Description |
+|-----------|-------------------------|-------------|
+| **Config** | `~/.servicebay` | Stores `config.json`, `checks.json`, logs. |
+| **Systemd** | `~/.config/containers/systemd` | Quadlet unit files (`.kube`, `.container`). |
+| **Data** | `/mnt/data` (Configurable) | Persistent volume data for your stacks. |
 
-| Host Path | Container Path | Description |
-|-----------|----------------|-------------|
-| `~/.servicebay` | `/app/data` | **Main Data Directory.** Stores `config.json` (settings), `checks.json` (monitoring), and `results/` (history logs). |
+**Template Settings:**
+You can configure global variables like `STACKS_DIR` in `Settings -> Template Settings`. These are automatically substituted in generic stack templates (e.g., `{{STACKS_DIR}}/immich`).
 
-**Backup Strategy:** To backup your entire ServiceBay setup, simply backup the `~/.servicebay` directory.
+**Backup Strategy:** To backup your entire ServiceBay setup, backup `~/.servicebay` and your defined **Data** directory.
 
 ## Reverse Proxy Configuration
 

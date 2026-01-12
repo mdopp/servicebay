@@ -13,6 +13,10 @@ ServiceBay is a Next.js application designed to manage containerized services us
 *   **Rootless Compatible**: All monitoring uses standard user-space tools available to the non-root user (`systemctl --user`, `podman`, `inotify`).
 *   **Abstracted Modularity**: Gateways and Proxies are "Peripheral Twins" that feed into a generic data model.
 
+### Deployment Models
+1.  **ServiceBay-First (FCOS)**: ServiceBay runs on Fedora CoreOS as a rootless user service (`core` user). It acts as the primary orchestrator for the node.
+2.  **Standalone**: ServiceBay runs as a container on an existing Linux distro (Debian, Ubuntu, etc.).
+
 ## Architecture Diagram
 
 ```mermaid
@@ -90,6 +94,11 @@ interface DigitalTwinStore {
       targetPort: number;
       ssl: boolean;
     }>;
+  };
+  
+  // App Configuration
+  config: {
+    templateSettings: Record<string, string>; // e.g. { STACKS_DIR: "/mnt/data" }
   };
 }
 ```

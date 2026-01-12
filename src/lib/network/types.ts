@@ -1,7 +1,9 @@
 export interface PortMapping {
   host: number;
   container: number;
-  host_ip?: string;
+  hostIp?: string;
+  protocol?: string;
+  source?: string;
 }
 
 export interface NetworkNode {

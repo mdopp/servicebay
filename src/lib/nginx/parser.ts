@@ -125,9 +125,9 @@ export class NginxParser {
         content = await fs.readFile(filePath, 'utf-8');
       }
       // console.log(`[NginxParser] File content length: ${content.length}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      if (e.message && (e.message.includes('container state improper') || e.message.includes('not running'))) {
+    } catch (e) {
+      const err = e as Error;
+      if (err.message && (err.message.includes('container state improper') || err.message.includes('not running'))) {
         return;
       }
       console.warn(`[NginxParser] Failed to read file ${filePath}:`, e);
@@ -204,9 +204,9 @@ export class NginxParser {
                 } else {
                     try {
                         files = await fs.readdir(dir);
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    } catch (e: any) {
-                        if (e.code !== 'ENOENT') {
+                    } catch (e) {
+                         const err = e as { code?: string };
+                        if (err.code !== 'ENOENT') {
                             console.warn(`[NginxParser] Failed to readdir ${dir}:`, e);
                         }
                         files = [];

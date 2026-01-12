@@ -11,8 +11,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ n
   try {
     await removeVolume(name, connection);
     return NextResponse.json({ success: true });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -28,9 +28,9 @@ export interface SystemResources {
 export interface PortMapping {
   hostPort?: number;
   containerPort?: number;
-  host_port?: number;
-  container_port?: number;
   protocol: string;
+  hostIp?: string; // Bind IP on host (usually 0.0.0.0)
+  targetIp?: string; // For Gateway: Internal IP the port is forwarded to
 }
 
 export interface Volume {
@@ -90,7 +90,7 @@ export interface ServiceUnit {
   ports?: PortMapping[];
   // Derived/Enriched Properties (calculated by TwinStore)
   effectiveHostNetwork?: boolean;
-  proxyConfiguration?: any; // Nginx/Traefik Routing Table (Enriched)
+  proxyConfiguration?: unknown; // Nginx/Traefik Routing Table (Enriched)
   verifiedDomains?: string[]; // Enriched by TwinStore (Nginx/Traefik Reverse Lookup)
 }
 

@@ -50,6 +50,7 @@ export interface AppConfig {
   domain?: string; // Optional domain for display
   gateway?: GatewayConfig;
   reverseProxy?: ReverseProxyConfig;
+  templateSettings?: Record<string, string>;
   autoUpdate: {
     enabled: boolean;
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight
@@ -77,6 +78,7 @@ export interface AppConfig {
 }
 
 const DEFAULT_CONFIG: AppConfig = {
+  templateSettings: {},
   autoUpdate: {
     enabled: false,
     schedule: '0 0 * * *', // Daily at midnight

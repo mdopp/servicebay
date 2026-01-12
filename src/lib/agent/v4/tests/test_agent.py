@@ -33,7 +33,7 @@ class TestAgent(unittest.TestCase):
         
         self.assertEqual(len(containers), 1)
         self.assertEqual(containers[0]['names'][0], "test-container")
-        self.assertEqual(containers[0]['ports'][0]['host_port'], 8080)
+        self.assertEqual(containers[0]['ports'][0]['hostPort'], 8080)
 
     @patch('agent.run_command')
     def test_fetch_services_parsing(self, mock_run_command):

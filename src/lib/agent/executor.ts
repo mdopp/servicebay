@@ -88,15 +88,15 @@ export class AgentExecutor implements Executor {
                 stderrStream.push(stderr);
             }
             stderrStream.push(null);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (e: any) {
-            if (e.stderr) {
-                stderrStream.push(e.stderr);
+        } catch (e) {
+            const err = e as { stderr?: string; message: string };
+            if (err.stderr) {
+                stderrStream.push(err.stderr);
             }
             stderrStream.push(null);
-            const err = new Error(e.message || 'Spawn failed');
-            stdoutStream.destroy(err);
-            throw err;
+            const wrappedErr = new Error(err.message || 'Spawn failed');
+            stdoutStream.destroy(wrappedErr);
+            throw wrappedErr;
         }
     })();
 

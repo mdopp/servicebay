@@ -5,9 +5,35 @@ import { RefreshCw, Terminal, Activity, Box, ArrowLeft, FileJson } from 'lucide-
 import { useRouter, useSearchParams } from 'next/navigation';
 import { logger } from '@/lib/logger';
 import ContainerList from './ContainerList';
+import { EnrichedContainer } from '@/lib/agent/types';
 
 interface ServiceMonitorProps {
   serviceName: string;
+}
+
+// Raw Podman API response shape (PascalCase)
+interface PodmanContainerRaw {
+    Id: string;
+    Names: string[];
+    Image: string;
+    State: string;
+    Status: string;
+    Labels?: Record<string, string>;
+    Ports?: { HostPort?: number; ContainerPort?: number; HostIp?: string; Protocol?: string; [key: string]: unknown }[];
+    Created?: number;
+    Pod?: string;
+    PodName?: string;
+    // Removed [key: string]: any to enforce strict typing
+}
+
+interface NetworkGraphNode {
+    id: string;
+    type: string;
+    node: string;
+    rawData?: {
+        name?: string;
+        [key: string]: unknown;
+    };
 }
 
 export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
@@ -15,13 +41,12 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
   const searchParams = useSearchParams();
   const node = searchParams?.get('node');
   const [activeTab, setActiveTab] = useState<'status' | 'service' | 'container-logs' | 'network'>('status');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [logs, setLogs] = useState<{ serviceLogs: string; podmanPs: any[] } | null>(null);
+  
+  const [logs, setLogs] = useState<{ serviceLogs: string; podmanPs: Partial<EnrichedContainer>[] } | null>(null);
   const [status, setStatus] = useState<string>('');
   const [containerLogs, setContainerLogs] = useState<string>('');
   const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [networkData, setNetworkData] = useState<any>(null);
+  const [networkData, setNetworkData] = useState<NetworkGraphNode | null>(null);
   const [loading, setLoading] = useState(false);
 
   const fetchLogs = async () => {
@@ -41,15 +66,14 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
         // Quadlet usually names containers like "systemd-<service>" or just uses the name from .container
         // We'll try to match loosely
         const startName = serviceName.replace('.service', '');
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const filteredPs = data.podmanPs.filter((c: any) => {
+        
+        const filteredPs: PodmanContainerRaw[] = (data.podmanPs || []).filter((c: PodmanContainerRaw) => {
             const names = Array.isArray(c.Names) ? c.Names : [c.Names];
             return names.some((n: string) => n.includes(startName));
         });
 
         // Normalize for ContainerList (expects lowercase id, nodeName, etc.)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const normalizedPs = filteredPs.map((c: any) => ({
+        const normalizedPs: Partial<EnrichedContainer>[] = filteredPs.map((c: PodmanContainerRaw) => ({
             ...c,
             id: c.Id,
             names: Array.isArray(c.Names) ? c.Names : [c.Names],
@@ -62,7 +86,7 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
         setLogs({ ...data, podmanPs: normalizedPs });
         
         if (normalizedPs.length > 0 && !selectedContainerId) {
-            setSelectedContainerId(normalizedPs[0].Id);
+            setSelectedContainerId(normalizedPs[0].id || null);
         }
       }
       if (statusRes.ok) {
@@ -76,8 +100,7 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
           // No fuzzy guessing, no hardcoded proxy checks.
           const cleanName = serviceName.replace('.service', '');
 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const targetNode = graph.nodes.find((n: any) => {
+          const targetNode = graph.nodes.find((n: NetworkGraphNode) => {
                // Normal Service Match
                if (n.rawData && n.rawData.name === cleanName && (node ? n.node === node : true)) {
                    return true;
@@ -209,8 +232,8 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
                                 <p>Troubleshooting:</p>
                                 <ul className="list-disc ml-4 space-y-1 mt-1">
                                     <li>If the service is inactive, it will not appear in the network graph.</li>
-                                    <li>Searched for node types: 'service', 'proxy', 'container'</li>
-                                    <li>Matched against label: "{serviceName}" or "{serviceName.replace('.service', '')}"</li>
+                                    <li>Searched for node types: &apos;service&apos;, &apos;proxy&apos;, &apos;container&apos;</li>
+                                    <li>Matched against label: &quot;{serviceName}&quot; or &quot;{serviceName.replace('.service', '')}&quot;</li>
                                 </ul>
                             </div>
                         </div>
@@ -234,10 +257,9 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
                                         value={selectedContainerId || ''}
                                         onChange={(e) => setSelectedContainerId(e.target.value)}
                                     >
-                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                        {logs.podmanPs.map((c: any) => (
-                                            <option key={c.Id} value={c.Id}>
-                                                {Array.isArray(c.Names) ? c.Names[0] : c.Names} ({c.Id.substring(0, 12)})
+                                        {logs.podmanPs.map((c) => (
+                                            <option key={c.id} value={c.id}>
+                                                {c.names?.[0]} ({c.id?.substring(0, 12)})
                                             </option>
                                         ))}
                                     </select>
@@ -255,7 +277,7 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
                                 <ul className="list-disc ml-4 space-y-1 mt-1">
                                     <li>The service has not started any containers yet.</li>
                                     <li>The containers have stopped or crashed.</li>
-                                    <li>Container names do not contain the service name "{serviceName.replace('.service', '')}".</li>
+                                    <li>Container names do not contain the service name &quot;{serviceName.replace('.service', '')}&quot;.</li>
                                 </ul>
                             </div>
                         </div>

@@ -33,7 +33,8 @@ export async function GET(
     
     return NextResponse.json({ error: 'Container not found or inspect failed', details: response }, { status: 404 });
 
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message || String(error) }, { status: 500 });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

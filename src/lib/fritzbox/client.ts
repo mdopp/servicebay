@@ -117,8 +117,8 @@ export class FritzBoxClient {
           // console.log(`[FritzBox] Success: Using ${this.serviceType}`);
           this.serviceDetected = true;
           return; // It works
-      } catch (e) {
-          // console.log(`[FritzBox] Failed ${this.serviceType}:`, e instanceof Error ? e.message : e);
+      } catch {
+        // console.log(`[FritzBox] Failed ${this.serviceType}:`, e instanceof Error ? e.message : e);
       }
 
       // Try WANPPPConnection
@@ -131,7 +131,7 @@ export class FritzBoxClient {
           // console.log(`[FritzBox] Success: Using ${this.serviceType}`);
           this.serviceDetected = true;
           return; // It works
-      } catch (e) {
+      } catch {
           // console.log(`[FritzBox] Failed ${this.serviceType}:`, e instanceof Error ? e.message : e);
           
           // Reset to IP if both fail, or handle error
@@ -302,7 +302,7 @@ ${argsXml}
                  }
              }
           }
-      } catch (e) {
+      } catch {
           // console.warn('[FritzBox] TR-064 GetDeviceLog failed:', e);
       }
 
@@ -420,7 +420,7 @@ ${argsXml}
                          if (v4) dnsServers.push(v4);
                          if (v4_2) dnsServers.push(v4_2);
                     }
-                } catch (e) {
+                } catch {
                     // Ignore
                 }
             }
@@ -446,7 +446,7 @@ ${argsXml}
                     });
                 }
             }
-        } catch (e) {
+        } catch {
              // console.warn('[FritzBox] Failed to get LAN DNS servers:', e);
         }
 
@@ -490,7 +490,7 @@ ${argsXml}
         index++;
         // Safety break
         if (index > 100) break;
-      } catch (_e) {
+      } catch {
         // console.warn('Error fetching mapping at index', index, e);
         break;
       }

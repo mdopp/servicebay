@@ -1,8 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
 import { DigitalTwinStore } from '../../src/lib/store/twin';
-import { execSync } from 'child_process';
-import path from 'path';
 
 describe('End-to-End Agent Data Flow', () => {
     
@@ -23,7 +21,7 @@ describe('End-to-End Agent Data Flow', () => {
                         "id": "cid1",
                         "names": ["/nginx-web"],
                         "ports": [
-                            { "host_port": 80, "container_port": 80, "protocol": "tcp" }
+                            { "hostPort": 80, "containerPort": 80, "protocol": "tcp" }
                         ],
                         "labels": { "PODMAN_SYSTEMD_UNIT": "nginx-web.service" },
                         "networks": ["host"]
@@ -35,7 +33,7 @@ describe('End-to-End Agent Data Flow', () => {
                         "active": true,
                         "subState": "running",
                         "ports": [
-                            { "host_port": 80, "container_port": 80, "protocol": "tcp" }
+                            { "hostPort": 80, "containerPort": 80, "protocol": "tcp" }
                         ],
                         "associatedContainerIds": ["cid1"],
                         "isManaged": true
@@ -50,8 +48,9 @@ describe('End-to-End Agent Data Flow', () => {
         // 2. Feed to Store
         const store = DigitalTwinStore.getInstance();
         
-        // @ts-ignore
-        store.updateNode('E2ENode', agentOutput.payload);
+        // Testing legacy payload
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        store.updateNode('E2ENode', agentOutput.payload as any);
         
         // 3. Verify
         const node = store.nodes['E2ENode'];
@@ -65,7 +64,6 @@ describe('End-to-End Agent Data Flow', () => {
         expect(svc.ports!.length).toBe(1);
         
         // Robustness check: TS Interface vs Runtime
-        // @ts-ignore
-        expect(svc.ports![0].host_port).toBe(80);
+        expect(svc.ports![0].hostPort).toBe(80);
     });
 });

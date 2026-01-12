@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -15,6 +14,35 @@ import { getNodes } from '@/app/actions/system';
 import { logger } from '@/lib/logger';
 import { PodmanConnection } from '@/lib/nodes';
 import { useToast } from '@/providers/ToastProvider';
+import { Volume } from '@/lib/agent/types';
+
+interface KubeContainerPort {
+    containerPort: number;
+    hostPort?: number;
+}
+interface KubeVolumeMount {
+    name: string;
+    mountPath: string;
+}
+interface KubeContainer {
+    name: string;
+    image: string;
+    ports?: KubeContainerPort[];
+    volumeMounts?: KubeVolumeMount[];
+}
+interface KubeVolume {
+    name: string;
+    hostPath?: { path: string };
+    persistentVolumeClaim?: { claimName: string };
+}
+interface KubeDoc {
+    kind?: string;
+    metadata?: { name?: string };
+    spec?: {
+        containers?: KubeContainer[];
+        volumes?: KubeVolume[];
+    };
+}
 
 interface ServiceFormProps {
   initialData?: {
@@ -50,7 +78,7 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
   const [extractedVolumes, setExtractedVolumes] = useState<{ host: string; container: string }[]>([]);
 
   // Volume Helpers
-  const [availableVolumes, setAvailableVolumes] = useState<any[]>([]); // { Name, Driver... }
+  const [availableVolumes, setAvailableVolumes] = useState<Volume[]>([]); 
   
   // Rename Modal State
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -93,8 +121,8 @@ export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
     }
   }, [initialData]);
 
-  const updateCursorPosition = (e: any) => {
-    const textarea = e.target;
+  const updateCursorPosition = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const textarea = e.currentTarget;
     if (textarea) {
         const val = textarea.value.substr(0, textarea.selectionStart);
         const line = val.split('\n').length;
@@ -114,16 +142,16 @@ ${autoUpd ? 'AutoUpdate=registry' : ''}
 WantedBy=default.target`;
   };
 
-  const extractInfo = (parsed: any) => {
+  const extractInfo = (parsed: KubeDoc) => {
     const ports: { host?: string; container: string }[] = [];
     const volumes: { host: string; container: string }[] = [];
 
     if (parsed && parsed.spec) {
         // Extract Ports
         if (parsed.spec.containers) {
-            parsed.spec.containers.forEach((container: any) => {
+            parsed.spec.containers.forEach((container) => {
                 if (container.ports) {
-                    container.ports.forEach((port: any) => {
+                    container.ports.forEach((port) => {
                         if (port.hostPort) {
                             ports.push({ host: String(port.hostPort), container: String(port.containerPort) });
                         } else {
@@ -138,7 +166,7 @@ WantedBy=default.target`;
         if (parsed.spec.volumes && parsed.spec.containers) {
             const volumeMap = new Map<string, string>(); // name -> hostPath
             
-            parsed.spec.volumes.forEach((vol: any) => {
+            parsed.spec.volumes.forEach((vol) => {
                 if (vol.hostPath && vol.hostPath.path) {
                     volumeMap.set(vol.name, vol.hostPath.path);
                 } else if (vol.persistentVolumeClaim) {
@@ -146,9 +174,9 @@ WantedBy=default.target`;
                 }
             });
 
-            parsed.spec.containers.forEach((container: any) => {
+            parsed.spec.containers.forEach((container) => {
                 if (container.volumeMounts) {
-                    container.volumeMounts.forEach((mount: any) => {
+                    container.volumeMounts.forEach((mount) => {
                         const hostPath = volumeMap.get(mount.name);
                         if (hostPath) {
                             volumes.push({ host: hostPath, container: mount.mountPath });
@@ -184,7 +212,7 @@ WantedBy=default.target`;
     setYamlError(null);
 
     try {
-      const parsed = yaml.load(content) as any;
+      const parsed = yaml.load(content) as KubeDoc;
       extractInfo(parsed);
       
       if (!isEdit && parsed && parsed.metadata && parsed.metadata.name) {
@@ -197,8 +225,9 @@ WantedBy=default.target`;
           setKubeContent(generateKubeContent(newFileName, autoUpdate, description));
         }
       }
-    } catch (e: any) {
-      setYamlError(e.message);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setYamlError(msg);
       setExtractedPorts([]);
       setExtractedVolumes([]);
     }
@@ -207,7 +236,7 @@ WantedBy=default.target`;
   useEffect(() => {
     if (initialData?.yamlContent) {
         try {
-            const parsed = yaml.load(initialData.yamlContent);
+            const parsed = yaml.load(initialData.yamlContent) as KubeDoc;
             extractInfo(parsed);
         } catch {}
     }
@@ -309,8 +338,9 @@ WantedBy=default.target`;
         // Redirect to the new service edit page
         router.push(`/edit/${newServiceName}`);
         router.refresh();
-    } catch (e: any) {
-        setRenameError(e.message);
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setRenameError(msg);
         setIsRenaming(false);
     }
   };
@@ -592,9 +622,12 @@ WantedBy=default.target`;
                         }}
                         textareaClassName="focus:outline-none"
                         placeholder="apiVersion: v1&#10;kind: Pod&#10;metadata:&#10;  name: my-service..."
-                        onSelect={updateCursorPosition}
-                        onClick={updateCursorPosition}
-                        onKeyUp={updateCursorPosition}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        onSelect={updateCursorPosition as any}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        onClick={updateCursorPosition as any}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        onKeyUp={updateCursorPosition as any}
                         />
                             </div>
                         </div>
@@ -613,7 +646,7 @@ WantedBy=default.target`;
                                 </p>
                             </div>
                             <div className="flex-1 overflow-y-auto p-4 space-y-2 max-h-[700px]">
-                                {availableVolumes.filter((v: any) => !v.Anonymous).map(vol => (
+                                {availableVolumes.filter((v: Volume) => !v.Anonymous).map(vol => (
                                     <div key={vol.Name} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 shadow-sm hover:border-blue-300 dark:hover:border-blue-700 transition-colors group">
                                         <div className="font-mono text-xs font-medium text-blue-700 dark:text-blue-300 mb-1 truncate" title={vol.Name}>
                                             {vol.Name}
@@ -705,11 +738,12 @@ WantedBy=default.target`;
                         setActiveTab('yaml');
                         // Trigger validation/extraction logic
                         try {
-                            const parsed = yaml.load(content);
+                            const parsed = yaml.load(content) as KubeDoc;
                             extractInfo(parsed);
                             setYamlError(null);
-                        } catch (e: any) {
-                            setYamlError(e.message);
+                        } catch (e) {
+                            const msg = e instanceof Error ? e.message : String(e);
+                            setYamlError(msg);
                         }
                     }}
                 />
@@ -741,7 +775,7 @@ WantedBy=default.target`;
                       </h3>
                   </div>
                   <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                       {availableVolumes.filter((v: any) => !v.Anonymous).map(vol => (
+                       {availableVolumes.filter((v: Volume) => !v.Anonymous).map(vol => (
                                     <div key={vol.Name} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 shadow-sm flex items-center justify-between gap-3">
                                         <div className="font-mono text-xs font-medium text-blue-700 dark:text-blue-300 truncate min-w-0" title={vol.Name}>
                                             {vol.Name}

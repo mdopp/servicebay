@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, use } from 'react';
+import { useRef, use, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Terminal as TerminalIcon, ArrowLeft, Eraser, RefreshCw } from 'lucide-react';
@@ -23,23 +23,13 @@ export default function ContainerTerminalPage({ params }: { params: Promise<{ id
   const searchParams = useSearchParams();
   const nodeNameParam = searchParams?.get('node') || 'local';
   
-  const { data: twin, isConnected } = useDigitalTwin();
-  const [container, setContainer] = useState<Container | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: twin } = useDigitalTwin();
   const terminalRef = useRef<TerminalRef>(null);
 
-  useEffect(() => {
+  const container = useMemo<Container | null>(() => {
     if (!twin || !twin.nodes) {
-        // If not connected yet, keep loading
-        if (isConnected) {
-             // Connected but maybe waiting for data?
-             // Should verify if empty
-             setLoading(false); 
-        }
-        return;
+        return null;
     }
-
-    setLoading(true);
     
     // Normalize Node Name
     // The param might be 'local' (lowercase) but twin uses 'Local' (Capital)
@@ -68,18 +58,17 @@ export default function ContainerTerminalPage({ params }: { params: Promise<{ id
     }
 
     if (found) {
-        setContainer({
+        return {
             Id: found.id,
             Names: found.names
-        });
+        };
     } else {
         console.error('Container not found in twin data');
+        return null;
     }
-    setLoading(false);
+  }, [id, nodeNameParam, twin]);
 
-  }, [id, nodeNameParam, twin, isConnected]);
-
-  if (loading) {
+  if (!twin) {
     return <div className="flex items-center justify-center h-screen text-gray-500 bg-gray-900">Loading...</div>;
   }
 

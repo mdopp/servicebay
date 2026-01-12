@@ -25,7 +25,6 @@ export async function generateLocalKey() {
     try {
         const fs = await import('fs');
         const path = await import('path');
-        const os = await import('os');
         const { exec } = await import('child_process');
         const { promisify } = await import('util');
         const execAsync = promisify(exec);

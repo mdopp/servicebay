@@ -5,7 +5,7 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { Template } from '@/lib/registry';
 import { fetchReadme } from '@/app/actions';
 import ReactMarkdown from 'react-markdown';
-import { Download, Loader2, Folder, Layers, Globe, Server, Link as LinkIcon, Shield } from 'lucide-react';
+import { Download, Loader2, Folder, Layers, Server, Link as LinkIcon, Shield } from 'lucide-react';
 import InstallerModal from './InstallerModal';
 import ExternalLinkConfig from './ExternalLinkConfig';
 import ManualServiceForm from './ManualServiceForm';

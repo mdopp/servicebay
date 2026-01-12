@@ -33,7 +33,8 @@ export class FritzBoxProvider implements GatewayProvider {
         portMappings: (status.portMappings || []).map(p => ({
             hostPort: p.externalPort,
             containerPort: p.internalPort,
-            protocol: p.protocol
+            protocol: p.protocol,
+            targetIp: p.internalClient // Capture destination IP
         })),
         lastUpdated: Date.now()
       };

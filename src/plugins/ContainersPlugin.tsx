@@ -20,9 +20,9 @@ interface Container {
   Pod?: string;
   PodName?: string;
   // Support both formats (standard Podman JSON vs Docker-like)
-  Ports?: ({ IP?: string; PrivatePort: number; PublicPort?: number; Type: string } | { host_ip?: string; container_port: number; host_port?: number; protocol: string })[];
+  Ports?: { hostIp?: string; containerPort: number; hostPort?: number; protocol: string }[];
   // Mounts?: (string | { Source: string; Destination: string; Type: string })[]; // Not strict check
-  Mounts?: any[];
+  Mounts?: unknown[];
   Labels?: { [key: string]: string };
   NetworkMode?: string;
   IsHostNetwork?: boolean;
@@ -58,9 +58,9 @@ export default function ContainersPlugin() {
                 nodeName: nodeName,
                 // Ports need mapping from {hostPort, containerPort, protocol} to UI format
                 Ports: (ec.ports || []).map(p => ({
-                    host_ip: '0.0.0.0', // Default
-                    host_port: p.host_port || p.hostPort,
-                    container_port: p.container_port || p.containerPort || 0,
+                    hostIp: p.hostIp || '0.0.0.0',
+                    hostPort: p.hostPort,
+                    containerPort: p.containerPort || 0,
                     protocol: p.protocol
                 })),
                 Mounts: ec.mounts || [],
@@ -79,9 +79,9 @@ export default function ContainersPlugin() {
   // If we are connected but no data yet, check sync status
   const waitingForSync = isConnected && !isNodeSynced() && containers.length === 0;
   
-  const validating = false;
-  const refreshing = false;
-  const refresh = () => {}; // No-op as twin updates auto
+  // const validating = false;
+  // const refreshing = false;
+  // const refresh = () => {}; // No-op as twin updates auto
 
   // Legacy SSE Removed
   /*
@@ -150,8 +150,6 @@ export default function ContainersPlugin() {
         } else {
             setShowActions(false);
             updateToast(toastId, 'success', 'Action initiated', `${action} command sent to container`);
-            // Wait a bit for the action to take effect
-            setTimeout(() => refresh(), 1000);
         }
     } catch (e) {
         logger.error('ContainersPlugin', 'Action failed', e);
@@ -302,11 +300,9 @@ export default function ContainersPlugin() {
                                         <div className="md:col-span-2">
                                             <span className="font-semibold block mb-1 text-xs uppercase text-gray-500">Ports</span>
                                             <div className="flex flex-wrap gap-1">
-                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                                {c.Ports.map((p: any, i) => {
-                                                    const hostPort = p.PublicPort || p.host_port;
-                                                    const containerPort = p.PrivatePort || p.container_port;
-                                                    const protocol = (p.Type || p.protocol || 'tcp').toLowerCase();
+                                                {c.Ports.map((p, i) => {
+                                                    const { hostPort, containerPort } = p;
+                                                    const protocol = (p.protocol || 'tcp').toLowerCase();
                                                     
                                                     // Display format: 
                                                     // With Host Map: 8080:80/tcp

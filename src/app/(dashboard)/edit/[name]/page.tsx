@@ -36,9 +36,9 @@ export default async function EditPage({
       yamlPath: files.yamlPath,
       servicePath: files.servicePath
     };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } catch (e: any) {
-    const isConnectionError = e.message && (e.message.includes('Agent not connected') || e.message.includes('ECONNREFUSED') || e.message.includes('timeout'));
+  } catch (e) {
+    const err = e as Error;
+    const isConnectionError = err.message && (err.message.includes('Agent not connected') || err.message.includes('ECONNREFUSED') || err.message.includes('timeout'));
 
     return (
       <div className="p-8 text-center bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 m-8">
@@ -48,7 +48,7 @@ export default async function EditPage({
         <div className="text-gray-600 dark:text-gray-400 mb-6 max-w-md mx-auto">
             {isConnectionError 
                 ? `Could not communicate with the node "${node || 'Local'}". The agent might be restarting or the node is unreachable.` 
-                : e.message
+                : (e instanceof Error ? e.message : String(e))
             }
         </div>
         

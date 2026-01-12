@@ -21,7 +21,7 @@ export async function POST(
   try {
       const body = await request.json();
       if (body.action) action = body.action;
-  } catch (e) {
+  } catch {
       // Ignore if body is empty/invalid, default to start (backward compatibility if needed)
   }
 
@@ -135,7 +135,7 @@ export async function POST(
               streamToWriter(stderr),
               promise
           ]);
-      } catch (_e) {
+      } catch {
           // systemctl status returns non-zero if service is stopped/failed, which causes spawn promise to reject.
           // We still want to show the output.
           // Our spawn implementation rejects on non-zero exit code.

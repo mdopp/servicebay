@@ -1,9 +1,9 @@
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import type { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { logger } from '@/lib/logger';
+// import { logger } from '@/lib/logger'; // Removed unused
 
 interface ActionProgressModalProps {
   isOpen: boolean;
@@ -19,6 +19,49 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const startAction = useCallback(async (signal: AbortSignal, term: Terminal) => {
+    try {
+      const query = nodeName && nodeName !== 'Local' ? `?node=${nodeName}` : '';
+      const response = await fetch(`/api/services/${serviceName}/action-stream${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+        signal
+      });
+
+      if (!response.body) {
+        term.writeln('\r\n\x1b[31;1mError: No response body\x1b[0m');
+        setStatus('error');
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        term.write(decoder.decode(value));
+      }
+      
+      term.writeln('\r\n\x1b[32;1mProcess exited.\x1b[0m');
+      // If we got here, we assume success or at least completion of stream
+      setStatus('completed');
+      if (onComplete) {
+         // Slight delay
+         setTimeout(onComplete, 1000);
+      }
+    } catch (err: unknown) {
+       if (signal.aborted) {
+           term.writeln('\r\n\x1b[33mAction Cancelled.\x1b[0m');
+           return;
+       }
+       const msg = err instanceof Error ? err.message : String(err);
+       term.writeln(`\r\n\x1b[31;1mConnection Error: ${msg}\x1b[0m`);
+       setStatus('error');
+    }
+  }, [action, nodeName, onComplete, serviceName]);
 
   useEffect(() => {
     if (isOpen && terminalRef.current) {
@@ -67,46 +110,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           xtermRef.current = null;
       };
     }
-  }, [isOpen]);
-
-  const startAction = async (signal: AbortSignal, term: Terminal) => {
-    try {
-      const query = nodeName && nodeName !== 'Local' ? `?node=${nodeName}` : '';
-      const response = await fetch(`/api/services/${serviceName}/action-stream${query}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-        signal
-      });
-
-      if (!response.body) {
-        throw new Error('No response body');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        term.write(chunk);
-      }
-      
-      setStatus('completed');
-      onComplete();
-
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-          console.log('Action aborted');
-          return;
-      }
-      console.error('Action failed', error);
-      setStatus('error');
-      term.write(`\r\n\x1b[31mError: ${error instanceof Error ? error.message : String(error)}\x1b[0m\r\n`);
-    }
-  };
+  }, [isOpen, startAction]);
 
   if (!isOpen) return null;
 

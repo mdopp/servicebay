@@ -6,7 +6,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { io, Socket } from 'socket.io-client';
 import { Eraser, RefreshCw } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
-import { logger } from '@/lib/logger';
 
 export interface TerminalRef {
     clear: () => void;

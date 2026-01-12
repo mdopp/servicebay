@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ServiceManager } from './ServiceManager';
 
@@ -6,7 +7,7 @@ const mockNodes = {
     'local': {
         services: [],
         containers: [],
-        files: {},
+        files: {} as Record<string, any>,
         volumes: [],
         systemInfo: {},
         lastUpdate: 0
@@ -49,7 +50,7 @@ spec:
 `;
         const kubeContent = `Yaml=test.yaml`;
         
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         mockNodes['local'].files = {
             '/path/to/test.kube': { path: '/path/to/test.kube', content: kubeContent, modified: 0 },
             '/path/to/test.yaml': { path: '/path/to/test.yaml', content: yamlContent, modified: 0 }
@@ -78,7 +79,7 @@ Network=host
 PublishPort=8080:80
 Label=foo=bar
 `;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         mockNodes['local'].files = {
             '/path/to/my-app.container': { path: '/path/to/my-app.container', content: containerContent, modified: 0 }
         } as any;
@@ -99,7 +100,7 @@ Label=foo=bar
 [Container]
 PublishPort=80
 `;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         mockNodes['local'].files = {
             '/path/to/simple.container': { path: '/path/to/simple.container', content: containerContent, modified: 0 }
         } as any;
@@ -119,7 +120,7 @@ spec:
     - containerPort: 80
 `; // No hostNetwork, no hostPort
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         mockNodes['local'].files = {
             '/path/to/iso.kube': { content: 'Yaml=iso.yml' },
             '/path/to/iso.yml': { content: yamlContent }
@@ -145,7 +146,7 @@ spec:
     hostPath:
       path: /mnt/data
 `;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         mockNodes['local'].files = {
             '/path/to/db.kube': { content: 'Yaml=db.yml' },
             '/path/to/db.yml': { content: yamlContent }
@@ -163,7 +164,7 @@ spec:
 Volume=/host/path:/container/path
 Volume=my-vol:/data:Z
 `;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         mockNodes['local'].files = {
             '/path/to/vol.container': { path: '/path/to/vol.container', content: containerContent, modified: 0 }
         } as any;

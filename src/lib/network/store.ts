@@ -9,6 +9,7 @@ export interface ManualEdge {
   source: string;
   target: string;
   label?: string;
+  port?: number;
   created_at: string;
 }
 

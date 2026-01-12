@@ -258,15 +258,15 @@ def get_host_ports_map():
                         # Deduplicate
                         exists = False
                         for p in pid_map[pid]:
-                             if str(p['host_port']) == str(port) and p['protocol'] == protocol:
+                             if str(p['hostPort']) == str(port) and p['protocol'] == protocol:
                                  exists = True; break
                         
                         if not exists:
                             # log_debug(f"Mapped PID {pid} to {host_ip}:{port}/{protocol}")
                             pid_map[pid].append({
-                                'host_ip': host_ip,
-                                'host_port': port,
-                                'container_port': port, # For host net, strict mapping
+                                'hostIp': host_ip,
+                                'hostPort': port,
+                                'containerPort': port, # For host net, strict mapping
                                 'protocol': protocol
                             })
                 except Exception:
@@ -462,47 +462,47 @@ def fetch_containers():
                 seen_det = set()
                 
                 # Sort to ensure consistent order (e.g. 80, 81, 443)
-                detected.sort(key=lambda x: (x['host_port'], x['protocol']))
+                detected.sort(key=lambda x: (x['hostPort'], x['protocol']))
                 
                 for dp in detected:
-                    key = f"{dp['host_port']}/{dp['protocol']}"
+                    key = f"{dp['hostPort']}/{dp['protocol']}"
                     if key not in seen_det:
                         seen_det.add(key)
                         unique_detected.append(dp)
                 
                 if not ports: 
                     ports = unique_detected
-                    log_debug(f"Assigned detected ports to {name}: {', '.join([str(p['host_port']) for p in ports])}")
+                    log_debug(f"Assigned detected ports to {name}: {', '.join([str(p['hostPort']) for p in ports])}")
                 else:
                     # Merge unique
                     for dp in unique_detected:
                         # Check against existing (some formats differ)
                         # Podman JSON Ports: [{hostPort, containerPort, protocol, range...}]
-                        # Our SS Ports: {host_port, container_port, protocol, host_ip}
+                        # Our SS Ports: {hostPort, containerPort, protocol, hostIp}
                         
                         # We use a loose check.
                         already_have = False
                         for ep in ports:
                             # Normalize
-                            e_host = ep.get('hostPort') or ep.get('host_port') or ep.get('PublicPort')
+                            e_host = ep.get('hostPort') or ep.get('PublicPort')
                             e_proto = ep.get('protocol') or ep.get('Type') # udp/tcp
                             
-                            if str(e_host) == str(dp['host_port']) and str(e_proto).lower() == str(dp['protocol']).lower():
+                            if str(e_host) == str(dp['hostPort']) and str(e_proto).lower() == str(dp['protocol']).lower():
                                 already_have = True; break
                         
                         if not already_have:
                             ports.append(dp)
-                            log_debug(f"Merged detected port {dp['host_port']} into {name}")
+                            log_debug(f"Merged detected port {dp['hostPort']} into {name}")
 
-            # Normalize ports to ensure frontend gets consistent keys ({host_port, container_port, protocol})
+            # Normalize ports to ensure frontend gets consistent keys ({hostPort, containerPort, protocol})
             normalized_ports = []
             if ports:
                 for p in ports:
                     # Handle primitive types (int/str) which can occur in some Podman versions or host-net scenarios
                     if isinstance(p, (int, str)):
                         normalized_ports.append({
-                            'host_port': p,
-                            'container_port': p,
+                            'hostPort': p,
+                            'containerPort': p,
                             'protocol': 'tcp' # Assume TCP for simple port list
                         })
                         continue
@@ -517,8 +517,8 @@ def fetch_containers():
                     # Ensure we have at least one port to display
                     if hp is not None or cp is not None:
                          normalized_ports.append({
-                             'host_port': hp,
-                             'container_port': cp,
+                             'hostPort': hp,
+                             'containerPort': cp,
                              'protocol': proto
                          })
             
@@ -677,130 +677,26 @@ def fetch_services(containers=None):
                     # (Quadlet default: container name = service name)
                     c_names = [n.lstrip('/') for n in c.get('names', [])]
                     
-                    # Match clean_name OR systemd-clean_name (Quadlet Default)
-                    is_match = False
-                    if clean_name in c_names: is_match = True
-                    if not is_match and f"systemd-{clean_name}" in c_names: is_match = True
-                    
-                    if is_match:
-                        associated_ids.append(c['id'])
-                        service_ports.extend(c.get('ports', []))
-                        continue # Found matches usually allow 1:1, but pod can be M:1
-
-                    # Match Strategy 2: Pod Name Match
-                    # (Kube Play: pod name = service name)
-                    pod_name = c.get('podName', '')
-                    if pod_name and pod_name == clean_name:
-                         # Append all containers in this pod
-                         associated_ids.append(c['id'])
-                         service_ports.extend(c.get('ports', []))
+            # Match clean_name OR systemd-clean_name (Quadlet Default)
+            is_match = False
+            if clean_name in c_names: is_match = True
+            if not is_match and f"systemd-{clean_name}" in c_names: is_match = True
             
-            # --- Fallback: Quadlet Port Parsing (Static Analysis) ---
-            # If no container is running/found to provide ports, try to parse 
-            # the definition file to show configured ports.
-            if not service_ports and is_managed:
-                # Use stored path instead of guessing
-                target_file = service_paths.get(name)
-                
-                # Check extension (managed should be .kube)
-                ext = service_sources.get(name)
-                
-                if target_file and os.path.exists(target_file):
-                    file_to_scan = target_file
-                    
-                    # If it's a .kube file, it likely points to a YAML file
-                    if ext == '.kube':
-                        try:
-                            # Parse INI to find Yaml=...
-                            # We manually scan to avoid deps
-                            with open(target_file, 'r') as f:
-                                ini_content = f.read()
-                                
-                            # 1. Check for Configured Ports in .kube (PublishPort)
-                            # PublishPort=8080:80
-                            import re
-                            pub_ports = re.findall(r'PublishPort=(?:(\d+):)?(\d+)', ini_content)
-                            for host_p, cont_p in pub_ports:
-                                # if host_p is missing (empty), it maps random port? or same? 
-                                # usually 80:80 is explicit. 
-                                hp = int(host_p) if host_p else 0 # 0 means random/missing?
-                                cp = int(cont_p)
-                                service_ports.append({
-                                    'host_port': hp or cp,
-                                    'container_port': cp,
-                                    'protocol': 'tcp'
-                                })
+            if is_match:
+                associated_ids.append(c['id'])
+                service_ports.extend(c.get('ports', []))
+                # Note: We rely on Frontend/Twin to enrich with these ports if found
+                continue 
 
-                            # 2. Resolve K8s YAML file
-                            yaml_match = re.search(r'^Yaml=(.*)$', ini_content, re.MULTILINE)
-                            if yaml_match:
-                                yaml_path_raw = yaml_match.group(1).strip()
-                                # Resolve path relative to .kube file
-                                base_dir_kf = os.path.dirname(target_file)
-                                resolved_yaml = os.path.join(base_dir_kf, yaml_path_raw)
-                                if os.path.exists(resolved_yaml):
-                                    file_to_scan = resolved_yaml
-                                    # log_debug(f"Resolved Kube YAML for {name}: {file_to_scan}")
-                        except:
-                            pass
+            # Match Strategy 2: Pod Name Match
+            # (Kube Play: pod name = service name)
+            pod_name = c.get('podName', '')
+            if pod_name and pod_name == clean_name:
+                 associated_ids.append(c['id'])
+                 service_ports.extend(c.get('ports', []))
+            
+            # --- Result Construction ---
 
-                    # Scan the file (either .kube or resolved .yaml) for K8s syntax
-                    # If we already found ports via PublishPort, we append/merge?
-                    # Kube yaml ports are definitive.
-                    
-                    try:
-                        with open(file_to_scan, 'r') as f:
-                            content = f.read()
-                            
-                            current_cp = None
-                            current_hp = None
-                            
-                            # Robust line scanner for K8s-style YAML lists
-                            for line in content.splitlines():
-                                s_line = line.strip()
-                                if not s_line: continue
-                                
-                                # New list item -> flush previous
-                                if s_line.startswith('-'):
-                                    if current_cp:
-                                         hp = current_hp if current_hp else current_cp
-                                         exists = any(p['container_port'] == current_cp and p['host_port'] == hp for p in service_ports)
-                                         if not exists:
-                                             service_ports.append({
-                                                 'host_port': hp,
-                                                 'container_port': current_cp,
-                                                 'protocol': 'tcp'
-                                             })
-                                    current_cp = None
-                                    current_hp = None
-
-                                # Content parsing
-                                clean_line = s_line.lstrip('- ').strip()
-
-                                if clean_line.startswith('containerPort:'):
-                                    try: 
-                                        current_cp = int(clean_line.split(':', 1)[1].strip())
-                                    except: pass
-                                elif clean_line.startswith('hostPort:'):
-                                    try: 
-                                        current_hp = int(clean_line.split(':', 1)[1].strip())
-                                    except: pass
-                            
-                            # Flush last
-                            if current_cp:
-                                 hp = current_hp if current_hp else current_cp
-                                 exists = any(p['container_port'] == current_cp and p['host_port'] == hp for p in service_ports)
-                                 if not exists:
-                                     service_ports.append({
-                                         'host_port': hp,
-                                         'container_port': current_cp,
-                                         'protocol': 'tcp'
-                                     })
-                                 
-                    except Exception as e:
-                        # log_debug(f"Failed to parse ports from {target_file}: {e}")
-                        pass
-                            
             services.append({
                 'name': clean_name,
                 'id': clean_name,
@@ -810,11 +706,11 @@ def fetch_services(containers=None):
                 'description': u.get('description'),
                 'path': u.get('fragment_path', ''),
                 'active': u.get('active') == 'active' or u.get('active') == 'reloading',
-                'isReverseProxy': is_proxy,
-                'isServiceBay': is_sb,
+                'isReverseProxy': False, # Backend Calculated
+                'isServiceBay': False,   # Backend Calculated
                 'isManaged': is_managed,
                 'associatedContainerIds': associated_ids,
-                'ports': service_ports
+                'ports': [] # Backend Calculated (Static Parsing moved to ServiceManager)
             })
         
         # Sort by Name

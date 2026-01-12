@@ -1,5 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import ServicesPlugin from '../../src/plugins/ServicesPlugin';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { DigitalTwinSnapshot } from '../../src/providers/DigitalTwinProvider';
@@ -50,7 +51,7 @@ describe('ServicesPlugin E2E Data Rendering', () => {
                         status: 'Up',
                         image: 'nginx',
                         created: 0,
-                        ports: [{ host_port: 8080, container_port: 80, protocol: 'tcp' }],
+                        ports: [{ hostPort: 8080, containerPort: 80, protocol: 'tcp' }],
                         mounts: [],
                         labels: {},
                         networks: ['host'],
@@ -69,7 +70,7 @@ describe('ServicesPlugin E2E Data Rendering', () => {
                         isReverseProxy: true, 
                         isServiceBay: false,
                         associatedContainerIds: ['cid-generated'], // LINKED!
-                        ports: [{ host_port: 8080, container_port: 80, protocol: 'tcp' }] // PROPAGATED!
+                        ports: [{ hostPort: 8080, containerPort: 80, protocol: 'tcp' }] // PROPAGATED!
                     }],
                     volumes: [],
                     files: {},

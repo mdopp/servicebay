@@ -11,7 +11,7 @@ import { MonitoringService } from './src/lib/monitoring/service';
 import { agentManager } from './src/lib/agent/manager';
 import { listNodes } from './src/lib/nodes';
 import { AgentEvent } from './src/lib/agent/handler';
-import { DigitalTwinStore } from './src/lib/store/twin';
+import { DigitalTwinStore, NodeTwin } from './src/lib/store/twin';
 import { AgentMessage } from './src/lib/agent/types';
 import { GatewayPoller } from './src/lib/gateway/poller';
 import { logger } from './src/lib/logger';
@@ -56,7 +56,7 @@ app.prepare().then(() => {
           const agent = agentManager.getAgent(nodeName);
           agent.setResourceMode(isActive);
           logger.info('Server', `Updated resource mode for ${nodeName}: ${isActive} (${viewers?.size || 0} viewers)`);
-      } catch (error) {
+      } catch {
           // Agent might not be connected
       }
   };
@@ -109,11 +109,11 @@ app.prepare().then(() => {
           logger.info('Server', logMsg);
           
           // TS "as any" is simplistic but TwinStore handles Partial<NodeTwin> safely.
-          twinStore.updateNode(nodeName, message.payload as any);
+          twinStore.updateNode(nodeName, message.payload as unknown as Partial<NodeTwin>);
       } else if (message.type === 'SYNC_DIFF') {
          logger.info('Server', `SYNC_DIFF from ${nodeName}`);
          // TODO: Implement diff patching
-         twinStore.updateNode(nodeName, message.payload as any);
+         twinStore.updateNode(nodeName, message.payload as unknown as Partial<NodeTwin>);
       }
   });
   

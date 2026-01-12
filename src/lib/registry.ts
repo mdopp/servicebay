@@ -24,6 +24,35 @@ export interface Template {
   source: string;
 }
 
+export interface TemplateSettingsSchemaEntry {
+    default: string;
+    description?: string;
+    required?: boolean;
+}
+
+const DEFAULT_TEMPLATE_SCHEMA: Record<string, TemplateSettingsSchemaEntry> = {
+    STACKS_DIR: {
+        default: '/mnt/data',
+        description: 'Base directory used by templates for persistent data',
+        required: true
+    }
+};
+
+export async function getTemplateSettingsSchema(): Promise<Record<string, TemplateSettingsSchemaEntry>> {
+    const settingsPath = path.join(TEMPLATES_PATH, 'settings.json');
+    try {
+        const raw = await fs.readFile(settingsPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        const variables = parsed?.variables || {};
+        return {
+            ...DEFAULT_TEMPLATE_SCHEMA,
+            ...variables
+        };
+    } catch {
+        return DEFAULT_TEMPLATE_SCHEMA;
+    }
+}
+
 async function fetchDir(dirPath: string, type: 'template' | 'stack', source: string): Promise<Template[]> {
   try {
     // Check if directory exists

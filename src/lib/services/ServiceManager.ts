@@ -24,6 +24,9 @@ export interface ServiceInfo {
 }
 
 export class ServiceManager {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private static fileParseCache = new Map<string, { hash: string, parsed: any[] }>();
+
     static async listServices(nodeName: string): Promise<ServiceInfo[]> {
         // V4: Use DigitalTwinStore
         const { DigitalTwinStore } = await import('../store/twin');
@@ -81,8 +84,22 @@ export class ServiceManager {
 
                      if (yamlContent) {
                          try {
-                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                             const docs = yaml.loadAll(yamlContent) as any[];
+                             // Use Cache if content matches
+                             const cacheKey = `${nodeName}:${yamlPath}`;
+                             const cached = ServiceManager.fileParseCache.get(cacheKey);
+                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                             let docs: any[] = [];
+
+                             if (cached && cached.hash === yamlContent) {
+                                 // Cache Hit
+                                 docs = cached.parsed;
+                             } else {
+                                 // Cache Miss or Stale
+                                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                 docs = yaml.loadAll(yamlContent) as any[];
+                                 ServiceManager.fileParseCache.set(cacheKey, { hash: yamlContent, parsed: docs });
+                             }
+
                              docs.forEach(doc => {
                                  // Add PodName explicitly if defined
                                  if (doc?.metadata?.name) {
@@ -110,7 +127,7 @@ export class ServiceManager {
                                      });
                                  }
                              });
-                         } catch (e) { /* ignore parse error here, handled below */ }
+                         } catch { /* ignore parse error here, handled below */ }
                      }
                  }
             }
@@ -140,9 +157,25 @@ export class ServiceManager {
                 if (container) logger.debug('ServiceManager', `Selected: ${container.names?.join(', ')}`);
             }
 
-            // Special logic for Nginx Proxy & ServiceBay identification (Source of Truth alignment)
-            const isProxy = (proxyState?.provider === 'nginx' && (baseName === 'nginx-web' || baseName === 'nginx')) || (serviceUnit?.isReverseProxy ?? false);
-            const isServiceBay = baseName === 'servicebay' || (serviceUnit?.isServiceBay ?? false);
+            // --- Server-Side Service Classification ---
+            const nameLower = baseName.toLowerCase();
+            const knownProxies = ['nginx', 'haproxy', 'traefik', 'caddy', 'envoy'];
+            
+            // Check 1: Known Proxy Software Names
+            let isProxy = knownProxies.some(kp => nameLower.includes(kp));
+            
+            // Check 2: "proxy" kw string (excluding system services like mpris-proxy)
+            if (!isProxy && nameLower.includes('proxy') && !nameLower.includes('mpris-proxy')) {
+                isProxy = true;
+            }
+
+            // Check 3: Digital Twin Provider override (Nginx Web)
+            if (proxyState?.provider === 'nginx' && (baseName === 'nginx-web' || baseName === 'nginx')) {
+                isProxy = true;
+            }
+
+            // Check 4: ServiceBay Detection
+            const isServiceBay = nameLower.includes('servicebay');
 
             // Find Verified Domains
             const verifiedDomains = (proxyState?.routes || [])
@@ -169,9 +202,9 @@ export class ServiceManager {
                 status: serviceUnit ? serviceUnit.activeState : 'inactive',
                 description: serviceUnit?.description || '',
                 labels: container?.labels || {},
-                ports: container ? container.ports.map(p => ({
-                   host: String(p.host_port || p.hostPort), // Handle V4 snake_case vs camelCase
-                   container: String(p.container_port || p.containerPort)
+                ports: container ? container.ports.map((p) => ({
+                   host: String(p.hostPort), // Handle V4 camelCase (Strict)
+                   container: String(p.containerPort)
                 })) : [],
                 volumes: [], // Populate if needed from twin.volumes
                 hostNetwork: false, // Infer
@@ -187,8 +220,12 @@ export class ServiceManager {
                  // Already parsed above broadly, now strictly for metadata
                      if (yamlContent) {
                          try {
-                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                             const docs = yaml.loadAll(yamlContent) as any[];
+                              // Use Cache (guaranteed populated from above block if yamlContent exists)
+                              const cacheKey = `${nodeName}:${yamlPath}`;
+                              const cached = ServiceManager.fileParseCache.get(cacheKey);
+                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                              const docs = (cached && cached.hash === yamlContent) ? cached.parsed : (yaml.loadAll(yamlContent) as any[]);
+
                              for (const doc of docs) {
                                  if (!doc) continue;
                                  
@@ -383,9 +420,9 @@ export class ServiceManager {
                 status: serviceUnit.activeState,
                 description: serviceUnit.description || '',
                 labels: container?.labels || {},
-                ports: container ? container.ports.map(p => ({
-                   host: String(p.host_port || p.hostPort),
-                   container: String(p.container_port || p.containerPort)
+                ports: container ? container.ports.map((p) => ({
+                   host: String(p.hostPort),
+                   container: String(p.containerPort)
                 })) : [],
                 volumes: [],
                 hostNetwork: false,

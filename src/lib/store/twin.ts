@@ -55,7 +55,7 @@ export class DigitalTwinStore {
     const globalStore = global as any;
     if (!globalStore.__DIGITAL_TWIN__) {
       const id = Math.random().toString(36).substring(7);
-      logger.info('TwinStore', `Creating NEW Singleton (PID: ${process.pid}) | Instance: ${id}`);
+      // logger.info('TwinStore', `Creating NEW Singleton (PID: ${process.pid}) | Instance: ${id}`);
       globalStore.__DIGITAL_TWIN__ = new DigitalTwinStore();
       globalStore.__DIGITAL_TWIN__.instanceId = id;
     }
@@ -108,6 +108,24 @@ export class DigitalTwinStore {
     if (data.files !== undefined && (typeof data.files !== 'object' || data.files === null || Array.isArray(data.files))) {
          logger.error('TwinStore', `Invalid files update for ${nodeId} (expected Object):`, typeof data.files);
          delete data.files;
+    }
+
+    // Normalization: Ensure ports are PortMapping objects
+    if (data.containers) {
+          data.containers.forEach(c => {
+              if (c.ports && Array.isArray(c.ports)) {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  c.ports = c.ports.map((p: any) => normalizePort(p));
+              }
+          });
+    }
+    if (data.services) {
+          data.services.forEach(s => {
+              if (s.ports && Array.isArray(s.ports)) {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  s.ports = s.ports.map((p: any) => normalizePort(p));
+              }
+          });
     }
 
     // CONSISTENCY ENFORCEMENT: Identify Authoritative Proxy Service
@@ -181,7 +199,8 @@ export class DigitalTwinStore {
     // APPLY UPDATE TO STORE
     this.nodes[nodeId] = {
         ...this.nodes[nodeId],
-        ...data
+        ...data,
+        lastSync: Date.now()
     };
 
     // ENRICHMENT: Calculate Derived Properties (Effective Ports, Host Network)
@@ -192,9 +211,9 @@ export class DigitalTwinStore {
     this.recalculateGlobalProxy();
 
     // Debug logging for updates
-    if (Object.keys(data).length > 0) {
-       logger.info('TwinStore', `Updated ${nodeId} | Keys: ${Object.keys(data).join(', ')} | Instance: ${this.instanceId}`);
-    }
+    // if (Object.keys(data).length > 0) {
+    //    logger.info('TwinStore', `Updated ${nodeId} | Keys: ${Object.keys(data).join(', ')} | Instance: ${this.instanceId}`);
+    // }
 
     this.notifyListeners();
   }
@@ -242,7 +261,7 @@ export class DigitalTwinStore {
       });
 
       // Iterate all Nodes -> Services/Containers to match targets
-      Object.entries(this.nodes).forEach(([nodeId, node]) => {
+      Object.values(this.nodes).forEach((node) => {
           const nodeIPs = new Set<string>();
           // Try to get Node IPs
           if (node.resources?.network) {
@@ -261,7 +280,7 @@ export class DigitalTwinStore {
                const matchedDomains = new Set<string>();
                
                entity.ports.forEach(p => {
-                    const hostPort = p.hostPort || p.host_port;
+                    const hostPort = p.hostPort;
                     if (!hostPort) return;
                     
                     // Possible targets for this service:
@@ -316,6 +335,9 @@ export class DigitalTwinStore {
           const linkedIds = svc.associatedContainerIds || [];
           const linkedContainers = linkedIds.map(id => containerMap.get(id)).filter((c): c is EnrichedContainer => !!c);
 
+          // Initialize Dynamic Ports (Will be populated by Proxy Logic and Container/PID Logic)
+          const dynamicPorts: PortMapping[] = [];
+
           // A. Effective Host Network
           // If ANY linked container is host network, the service is effectively host network
           const isContainerHostNetwork = linkedContainers.some(c => c.isHostNetwork || c.networks?.includes('host'));
@@ -339,25 +361,56 @@ export class DigitalTwinStore {
                   hostIp: '0.0.0.0'
               }));
               
-              // 3. MERGE with Runtime Ports (This is the critical fix)
-              // If the actual container has other listening ports (e.g. 81, 8080), we merge them in!
-              // We rely on the generic port gathering loop below to find them, BUT we need to make sure we don't return early.
+              // 3. MERGE with Runtime Ports
+              // Add assumed standard ports (80/443) to dynamicPorts. 
+              // Later logic (Deduplication) will prevent duplicates if the runtime also finds them.
+              derivedPorts.forEach(dp => {
+                  // We push directly here, assuming dynamicPorts is empty or we don't care about internal dupes yet.
+                  // (Real deduplication happens when merging other sources or at the end if needed)
+                  dynamicPorts.push(dp);
+              });
               
               // Enrich with Proxy Configuration (Nginx Routes)
               if (node.proxy) {
                   svc.proxyConfiguration = {
-                      servers: node.proxy.map((r: any) => ({
-                          server_name: [r.host],
-                          listen: r.ssl ? ['443 ssl', '80'] : ['80'],
-                          locations: [{
-                              path: '/',
-                              proxy_pass: typeof r.targetService === 'string' && r.targetService.startsWith('http') ? r.targetService : `http://${r.targetService}`
-                          }],
-                          // Metadata
-                          _agent_data: true, // Marker for Frontend
-                          _ssl: r.ssl,
-                          _targetPort: r.targetPort || 80
-                      }))
+                      servers: node.proxy.map((r) => {
+                           let targetService = typeof r.targetService === 'string' && r.targetService.startsWith('http') 
+                            ? r.targetService 
+                            : `http://${r.targetService}`;
+                          
+                          // Ensure port is in the URL if provided
+                          if (r.targetPort && !targetService.includes(`:${r.targetPort}`)) {
+                               // Be careful not to double add if it's implicit 80/443, 
+                               // but strictly `proxy_pass` needs port.
+                               // Check if targetService already has A port
+                               // Regex: colon followed by digits at end or before /
+                               if (!/:\d+(\/|$)/.test(targetService)) {
+                                   // No port found, append it
+                                   targetService = `${targetService}:${r.targetPort}`;
+                               }
+                          }
+
+                          // Clean Protocol for raw storage
+                          const rawHost = r.targetService.replace(/^https?:\/\//, '').split(':')[0];
+
+                          return {
+                            server_name: [r.host],
+                            listen: r.ssl ? ['443 ssl', '80'] : ['80'],
+                            locations: [{
+                                path: '/',
+                                proxy_pass: targetService
+                            }],
+                            // Metadata
+                            _agent_data: true, // Marker for Frontend
+                            _ssl: r.ssl,
+                            _targetPort: r.targetPort || 80,
+                            // CRITICAL FIX: Pass through the raw target host/port for Graph logic!
+                            variable_fields: {
+                                targetHost: rawHost, // Clean Host/IP only
+                                targetPort: r.targetPort || 80 // Explicit or default
+                            }
+                        };
+                      })
                   };
               }
               
@@ -382,15 +435,15 @@ export class DigitalTwinStore {
 
           // B. Effective Ports (Consolidated into 'ports')
           // Priority 1: Dynamic Ports from PID (if running & host network)
-          let dynamicPorts: PortMapping[] = [];
+          // let dynamicPorts: PortMapping[] = []; // MOVED UP
           
           // ALWAYS TRY TO ENRICH PORTS FROM LINKED CONTAINERS
           // Whether it is host network or not, if the container has ports, the service should have them.
           // The previous condition (svc.effectiveHostNetwork || linkedContainers.some(c => c.ports.length == 0)) was too restrictive.
           
           // Helper for robust key access (camelCase vs snake_case)
-          const getHP = (p: PortMapping) => p.hostPort || p.host_port;
-          const getCP = (p: PortMapping) => p.containerPort || p.container_port;
+          const getHP = (p: PortMapping) => p.hostPort;
+          const getCP = (p: PortMapping) => p.containerPort;
 
           // Case 1: Dynamic PID Ports (Host Network/Socket Activation)
           if (svc.active && (svc.effectiveHostNetwork || linkedContainers.some(c => c.ports && c.ports.length === 0))) {
@@ -466,4 +519,28 @@ export class DigitalTwinStore {
           proxy: this.proxy
       }
   }
+}
+
+// Helper: Ensure ports are strictly PortMapping objects
+function normalizePort(port: unknown): PortMapping {
+    if (typeof port === 'number') {
+        return { hostPort: port, containerPort: port, protocol: 'tcp' };
+    }
+    if (typeof port === 'string') {
+        // Handle "8080/tcp" or "80:80" common formats just in case
+        const p = parseInt(port as string, 10);
+        if (!isNaN(p)) return { hostPort: p, containerPort: p, protocol: 'tcp' };
+    }
+    if (typeof port === 'object' && port !== null) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const p = port as any;
+        return {
+            hostPort: p.hostPort || p.host || p.host_port,
+            containerPort: p.containerPort || p.container || p.container_port,
+            protocol: p.protocol || 'tcp',
+            hostIp: p.hostIp || p.host_ip || p.IP
+        };
+    }
+    // Fallback
+    return { protocol: 'tcp' };
 }

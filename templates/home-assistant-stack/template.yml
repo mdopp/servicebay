@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: home-assistant
+  labels:
+    app: home-assistant
+spec:
+  hostNetwork: true
+  containers:
+  # 1. Home Assistant
+  - name: homeassistant
+    image: ghcr.io/home-assistant/home-assistant:stable
+    env:
+    - name: TZ
+      value: "Europe/Berlin"
+    volumeMounts:
+    - mountPath: /config
+      name: ha-config
+    - mountPath: /run/dbus
+      name: dbus
+      readOnly: true
+    securityContext:
+      privileged: true # Often needed for discovery
+
+  # 2. Z-Wave JS UI
+  - name: zwave-js
+    image: ghcr.io/zwave-js/zwave-js-ui:latest
+    env:
+    - name: TZ
+      value: "Europe/Berlin"
+    - name: SESSION_SECRET
+      value: "{{ZWAVE_SECRET}}"
+    - name: ZWAVEJS_EXTERNAL_CONFIG
+      value: "/usr/src/app/store/.config-db"
+    volumeMounts:
+    - mountPath: /usr/src/app/store
+      name: zwave-config
+    - mountPath: /dev/serial-device
+      name: zwave-stick
+    securityContext:
+      # Required for USB access in Rootless
+      privileged: true
+
+  # 3. Matter Server
+  - name: matter-server
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    env:
+    - name: TZ
+      value: "Europe/Berlin"
+    volumeMounts:
+    - mountPath: /data
+      name: matter-config
+    - mountPath: /run/dbus
+      name: dbus
+      readOnly: true
+    securityContext:
+      privileged: true
+
+  volumes:
+  # Persistence (Mapped to Host directories)
+  - name: ha-config
+    hostPath:
+      path: {{STACKS_DIR}}/home-assistant/homeassistant
+      type: DirectoryOrCreate
+  - name: zwave-config
+    hostPath:
+      path: {{STACKS_DIR}}/home-assistant/zwave-js
+      type: DirectoryOrCreate
+  - name: matter-config
+    hostPath:
+      path: {{STACKS_DIR}}/home-assistant/matter-server
+      type: DirectoryOrCreate
+
+  # System Mounts
+  - name: dbus
+    hostPath:
+      path: /run/dbus
+      type: Directory
+  - name: zwave-stick
+    hostPath:
+      path: {{ZWAVE_DEVICE}}
+      type: CharDevice

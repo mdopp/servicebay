@@ -10,13 +10,14 @@ export interface DomainStatus {
     error?: string;
 }
 
-export async function checkDomains(nginxConfig: NginxConfig, fbStatus: FritzBoxStatus | null, validIPs: string[] = []): Promise<DomainStatus[]> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function checkDomains(nginxConfig: NginxConfig, fbStatus: FritzBoxStatus | null, _validIPs: string[] = []): Promise<DomainStatus[]> {
     if (!fbStatus || !fbStatus.externalIP) {
         return [];
     }
 
     const domains = new Set<string>();
-    const allowedIPs = new Set([fbStatus.externalIP, ...validIPs]);
+    // const allowedIPs = new Set([fbStatus.externalIP, ...validIPs]);
     
     // Collect all server_names
     for (const server of nginxConfig.servers) {

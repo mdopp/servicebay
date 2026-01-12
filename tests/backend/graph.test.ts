@@ -31,6 +31,7 @@ vi.mock('../../src/lib/store/twin', () => ({
                     proxy: []
                 }
             },
+            gateway: { upstreamStatus: 'up', publicIp: '1.2.3.4', internalIp: '192.168.1.1' },
             getSnapshot: () => ({ nodes: {}, gateway: {}, proxy: { routes: [] } })
         })
     }

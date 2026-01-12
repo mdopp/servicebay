@@ -30,7 +30,7 @@ export default function SystemInfoPlugin() {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const { addToast } = useToast();
 
-  const { data: twin, isConnected } = useDigitalTwin();
+  const { data: twin } = useDigitalTwin();
   const { socket } = useSocket();
 
   // High Frequency Monitoring Subscription

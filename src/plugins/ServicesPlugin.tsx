@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import yaml from 'js-yaml'; // Import YAML parser for Strict Matching
+// import yaml from 'js-yaml'; // Import YAML parser for Strict Matching
 import { logger } from '@/lib/logger';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import PluginLoading from '@/components/PluginLoading';
@@ -204,14 +204,14 @@ export default function ServicesPlugin() {
              let ports = [];
              if (unit.ports && unit.ports.length > 0) {
                  ports = unit.ports.map(p => ({
-                    host: p.host_port || p.hostPort ? String(p.host_port || p.hostPort) : '',
-                    container: p.container_port || p.containerPort ? String(p.container_port || p.containerPort) : ''
+                    host: p.hostPort ? String(p.hostPort) : '',
+                    container: p.containerPort ? String(p.containerPort) : ''
                  }));
              } else {
                  // Fallback to container linkage (Legacy)
-                 ports = rawContainer?.ports?.map((p: any) => ({
-                    host: p.host_port || p.hostPort || p.PublicPort ? String(p.host_port || p.hostPort || p.PublicPort) : '',
-                    container: p.container_port || p.containerPort || p.PrivatePort ? String(p.container_port || p.containerPort || p.PrivatePort) : ''
+                 ports = rawContainer?.ports?.map((p: { hostPort?: string | number, containerPort?: string | number }) => ({
+                    host: p.hostPort ? String(p.hostPort) : '',
+                    container: p.containerPort ? String(p.containerPort) : ''
                  })) || [];
              }
 

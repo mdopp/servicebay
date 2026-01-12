@@ -17,7 +17,8 @@ export async function GET(request: NextRequest) {
         // Use V4 'listContainers' command
         const list = await agent.sendCommand('listContainers');
         return NextResponse.json(list || []);
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }

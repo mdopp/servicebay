@@ -36,7 +36,7 @@ export async function saveSnapshot(filename: string, content: string, connection
         return; // Skip saving if identical
       }
     }
-  } catch (_e) {
+  } catch {
     // Ignore errors
   }
   

@@ -6,11 +6,24 @@ import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import SSHSetupModal from '@/components/SSHSetupModal';
-import GatewayConfig from '@/components/GatewayConfig';
 import { AppConfig } from '@/lib/config';
 import { getNodes, createNode, deleteNode, setNodeAsDefault } from '@/app/actions/nodes';
 import { checkConnection } from '@/app/actions/ssh';
 import { PodmanConnection } from '@/lib/nodes';
+
+type TemplateSettingsSchemaEntry = {
+  default: string;
+  description?: string;
+  required?: boolean;
+};
+
+const DEFAULT_TEMPLATE_SCHEMA: Record<string, TemplateSettingsSchemaEntry> = {
+  STACKS_DIR: {
+    default: '/mnt/data',
+    description: 'Base directory used by all templates for persistent data. Applies to new deployments.',
+    required: true
+  }
+};
 
 interface AppUpdateStatus {
   hasUpdate: boolean;
@@ -36,7 +49,6 @@ export default function SettingsPage() {
 
   // App Update State
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
-  const [updating, _setUpdating] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   
@@ -63,6 +75,12 @@ export default function SettingsPage() {
   const [newRegName, setNewRegName] = useState('');
   const [newRegUrl, setNewRegUrl] = useState('');
   const [newRegBranch, setNewRegBranch] = useState('');
+
+  // Template Settings
+  const [templateSchema, setTemplateSchema] = useState<Record<string, TemplateSettingsSchemaEntry>>(DEFAULT_TEMPLATE_SCHEMA);
+  const [templateValues, setTemplateValues] = useState<Record<string, string>>({ STACKS_DIR: DEFAULT_TEMPLATE_SCHEMA.STACKS_DIR.default });
+  const [newVarKey, setNewVarKey] = useState('');
+  const [newVarValue, setNewVarValue] = useState('');
 
   // Nodes State
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
@@ -107,6 +125,14 @@ export default function SettingsPage() {
             setRegistriesEnabled(data.registries.enabled);
         }
       }
+
+      const response = data as AppConfig & { templateSettingsSchema?: Record<string, TemplateSettingsSchemaEntry> };
+      const schema = response.templateSettingsSchema || DEFAULT_TEMPLATE_SCHEMA;
+      const defaults = Object.fromEntries(Object.entries(schema).map(([k, v]) => [k, v.default ?? ''])) as Record<string, string>;
+      const persisted = (data as AppConfig).templateSettings || {};
+      const merged = { ...defaults, ...persisted };
+      setTemplateSchema(schema);
+      setTemplateValues(merged);
 
       // Fetch nodes
       try {
@@ -161,6 +187,27 @@ export default function SettingsPage() {
 
   const handleRemoveRegistry = (name: string) => {
     setRegistries(registries.filter(r => r.name !== name));
+  };
+
+  const handleTemplateValueChange = (key: string, value: string) => {
+    setTemplateValues(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleAddTemplateVariable = () => {
+    if (!newVarKey.trim()) return;
+    setTemplateValues(prev => ({ ...prev, [newVarKey.trim()]: newVarValue }));
+    setNewVarKey('');
+    setNewVarValue('');
+  };
+
+  const handleRemoveTemplateVariable = (key: string) => {
+    const meta = templateSchema[key];
+    if (meta?.required) return;
+    se 
+      tTemplateValues(prev => {
+      const { [key]: _removed, ...rest } = prev;
+      return rest;
+    });
   };
 
   const handleAddNode = async () => {
@@ -349,8 +396,15 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const newConfig: Partial<AppConfig> = {
+      const enforcedTemplateValues = {
+        ...Object.fromEntries(
+          Object.entries(templateSchema).map(([k, v]) => [k, v.default ?? ''])
+        ),
+        ...templateValues
+      } as Record<string, string>;
 
+      const newConfig: Partial<AppConfig> = {
+        templateSettings: enforcedTemplateValues,
         registries: {
             enabled: registriesEnabled,
             items: registries
@@ -415,7 +469,7 @@ export default function SettingsPage() {
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
                     <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
-                        <RefreshCw size={20} className={updating || checkingUpdate ? 'animate-spin' : ''} />
+                        <RefreshCw size={20} className={(updateStatus === 'updating') || checkingUpdate ? 'animate-spin' : ''} />
                     </div>
                     <div>
                         <h3 className="font-bold text-gray-900 dark:text-white">ServiceBay Updates</h3>
@@ -424,7 +478,7 @@ export default function SettingsPage() {
                     <div className="ml-auto flex items-center gap-4">
                         <button
                             onClick={handleCheckUpdate}
-                            disabled={checkingUpdate || updating}
+                            disabled={checkingUpdate || (updateStatus === 'updating')}
                             className="text-xs text-purple-600 dark:text-purple-400 hover:underline disabled:opacity-50"
                         >
                             {checkingUpdate ? 'Checking...' : 'Check Now'}
@@ -464,11 +518,11 @@ export default function SettingsPage() {
                         {appUpdate.hasUpdate && appUpdate.latest && (
                             <button 
                                 onClick={handleAppUpdate}
-                                disabled={updating}
+                                disabled={updateStatus === 'updating'}
                                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <Download size={18} />
-                                {updating ? 'Updating...' : 'Update Now'}
+                                {updateStatus === 'updating' ? 'Updating...' : 'Update Now'}
                             </button>
                         )}
                     </div>
@@ -482,9 +536,88 @@ export default function SettingsPage() {
                 </div>
             </div>
         )}
+              {/* Template Settings Section */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
+                  <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+                    <Server size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-900 dark:text-white">Template Settings</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Environment variables for template rendering. Changes apply to new deployments.</p>
+                  </div>
+                </div>
+                <div className="p-6 space-y-6">
+                  <div className="space-y-4">
+                    {Object.keys(templateValues).sort().map(key => {
+                      const meta = templateSchema[key];
+                      const isRequired = meta?.required;
+                      return (
+                        <div key={key} className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 flex flex-col md:flex-row md:items-center md:gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-semibold text-gray-900 dark:text-white">{key}</span>
+                              {isRequired && (
+                                <span className="text-xs px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">Required</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                              {meta?.description || 'Template variable'}
+                              {meta?.default ? ` (default: ${meta.default})` : ''}
+                            </p>
+                            <input
+                              type="text"
+                              value={templateValues[key] || ''}
+                              onChange={e => handleTemplateValueChange(key, e.target.value)}
+                              className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                              placeholder={meta?.default || ''}
+                            />
+                          </div>
+                          {!isRequired && (
+                            <button
+                              onClick={() => handleRemoveTemplateVariable(key)}
+                              className="mt-3 md:mt-0 text-gray-400 hover:text-red-500 transition-colors"
+                              aria-label={`Remove ${key}`}
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
 
-        <GatewayConfig />
+                  <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Add custom variables to persist additional template settings. They will appear here after saving.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                      <input
+                        type="text"
+                        value={newVarKey}
+                        onChange={e => setNewVarKey(e.target.value)}
+                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="VAR_NAME"
+                      />
+                      <input
+                        type="text"
+                        value={newVarValue}
+                        onChange={e => setNewVarValue(e.target.value)}
+                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="value"
+                      />
+                      <button
+                        onClick={handleAddTemplateVariable}
+                        className="w-full md:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2 justify-center"
+                      >
+                        <Plus size={16} />
+                        Add Variable
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
+
+              {/* Email Notifications Section */}
         {/* System Connections (Nodes) */}
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">

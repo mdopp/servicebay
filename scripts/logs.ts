@@ -41,7 +41,7 @@ async function main() {
              hasLnav = code === 0;
              resolve(null);
         }));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch(e) { /* ignore */ }
 
     // If lnav is found, skip the menu and launch it directly

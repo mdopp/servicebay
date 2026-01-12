@@ -14,7 +14,7 @@ const defaultTwinData = {
       services: [
         { 
             name: 'nginx.service', activeState: 'active', subState: 'running', type: 'container', description: 'Nginx Web Server',
-            isManaged: true, isReverseProxy: true, associatedContainerIds: ['nginx-123']
+            isManaged: true, isReverseProxy: true, associatedContainerIds: ['nginx-123'], verifiedDomains: ['app.example.com']
         },
         { 
             name: 'redis.service', activeState: 'active', subState: 'running', type: 'container', description: 'Redis Cache',

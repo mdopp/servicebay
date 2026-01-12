@@ -1,9 +1,17 @@
 import { NextResponse } from 'next/server';
 import { getConfig, saveConfig, AppConfig } from '@/lib/config';
+import { getTemplateSettingsSchema } from '@/lib/registry';
 
 export async function GET() {
-  const config = await getConfig();
-  return NextResponse.json(config);
+  const [config, templateSettingsSchema] = await Promise.all([
+    getConfig(),
+    getTemplateSettingsSchema()
+  ]);
+
+  return NextResponse.json({
+    ...config,
+    templateSettingsSchema
+  });
 }
 
 export async function POST(request: Request) {
@@ -18,6 +26,7 @@ export async function POST(request: Request) {
     const newConfig: AppConfig = {
       ...currentConfig,
       ...body,
+      templateSettings: body.templateSettings ?? currentConfig.templateSettings,
       notifications: body.notifications ? {
         ...currentConfig.notifications,
         ...body.notifications

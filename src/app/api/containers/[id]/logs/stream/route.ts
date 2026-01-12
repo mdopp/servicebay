@@ -34,7 +34,8 @@ export async function GET(
     }
     
     return new NextResponse('Unknown error', { status: 500 });
-  } catch (error: any) {
-    return new NextResponse(error.message || String(error), { status: 500 });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return new NextResponse(msg, { status: 500 });
   }
 }

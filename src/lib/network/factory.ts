@@ -1,4 +1,4 @@
-import { NetworkNode, PortMapping } from './types';
+import { NetworkNode } from './types';
 
 /**
  * NodeFactory enforces the Single Source of Truth pattern.
@@ -15,11 +15,11 @@ export class NodeFactory {
      * @param metadata Additional metadata not present in rawData (e.g. source, links)
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    static createContainerNode(id: string, rawData: any, nodeName: string, metadata: Record<string, any> = {}, parentId?: string): NetworkNode {
+    static createContainerNode(id: string, rawData: any, nodeName: string, metadata: Record<string, unknown> = {}, parentId?: string): NetworkNode {
         // Enforce derivation
         const label = rawData.name || rawData.Names?.[0]?.replace(/^\//, '') || id.substring(0, 12);
         const subLabel = rawData.ip || (rawData.Networks ? Object.values(rawData.Networks)[0] : null) || null;
-        const finalIp: string | null = typeof subLabel === 'object' ? (subLabel as any)?.IPAddress : subLabel;
+        const finalIp: string | null = typeof subLabel === 'object' ? (subLabel as { IPAddress?: string })?.IPAddress : subLabel;
         
         // Status derivation strictly from rawData
         // Accept 'running' (Podman) or boolean active (Services) - but this is container node
