@@ -52,6 +52,9 @@ RUN apt-get update && \
     openssh-client \
     podman \
     python3 \
+    procps \
+    iproute2 \
+    systemd \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
