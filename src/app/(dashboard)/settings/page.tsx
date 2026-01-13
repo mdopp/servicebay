@@ -410,13 +410,17 @@ export default function SettingsPage() {
         if (res.ok) {
             const data = await res.json();
             setAppUpdate(data);
+            const latestVer = data.latest?.version || 'Unknown';
             if (data.hasUpdate) {
-                addToast('success', 'Update available', `Version ${data.latest.version} is available.`);
+                addToast('success', 'Update available', `Version ${latestVer} is available.`);
             } else {
-                addToast('info', 'No updates', 'You are on the latest version.');
+                addToast('info', 'System up to date', `You are using the latest version (${latestVer}).`);
             }
+        } else {
+             throw new Error('Update server returned ' + res.status);
         }
-    } catch {
+    } catch (e) {
+        console.error(e);
         addToast('error', 'Failed to check for updates');
     } finally {
         setCheckingUpdate(false);
