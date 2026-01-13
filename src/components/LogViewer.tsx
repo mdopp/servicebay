@@ -179,6 +179,12 @@ export default function LogViewer({ file }: LogViewerProps) {
 
   const hasActiveFilter = filter.level || filter.tag || filter.search;
 
+  // Extract time only from timestamp (HH:MM:SS.mmm)
+  const extractTime = (timestamp: string): string => {
+    const match = timestamp.match(/(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/);
+    return match ? match[1] : timestamp;
+  };
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800">
       {/* Header */}
@@ -335,22 +341,23 @@ export default function LogViewer({ file }: LogViewerProps) {
         {filteredLogs.map((log, idx) => (
           <div
             key={idx}
-            className={`p-2 rounded border-l-4 border-transparent ${LOG_LEVEL_BG[log.level]} ${LOG_LEVEL_COLORS[log.level]}`}
+            className={`px-2 py-1.5 rounded-sm border-l-2 ${LOG_LEVEL_BG[log.level]} hover:brightness-95 transition-all`}
+            style={{ borderLeftColor: log.level === 'error' ? '#dc2626' : log.level === 'warn' ? '#ca8a04' : log.level === 'info' ? '#2563eb' : '#6b7280' }}
           >
-            <div className="flex gap-2">
-              <span className="text-xs opacity-70 flex-shrink-0 w-20">
-                {log.timestamp}
+            <div className="flex gap-2 items-baseline text-xs leading-relaxed">
+              <span className="font-mono opacity-70 flex-shrink-0 w-24">
+                {extractTime(log.timestamp)}
               </span>
-              <span className="text-xs font-bold flex-shrink-0 w-12 uppercase">
+              <span className={`font-bold flex-shrink-0 w-14 uppercase ${LOG_LEVEL_COLORS[log.level]}`}>
                 {log.level}
               </span>
-              <span className="text-xs font-semibold flex-shrink-0 w-24">
+              <span className="font-semibold flex-shrink-0 text-slate-700 dark:text-slate-300">
                 [{log.tag}]
               </span>
-              <span className="flex-1 break-words">{log.message}</span>
+              <span className="flex-1 text-slate-800 dark:text-slate-200 break-words">{log.message}</span>
             </div>
             {log.args && Object.keys(log.args).length > 0 && (
-              <div className="text-xs opacity-75 mt-1 ml-2 pl-2 border-l border-current">
+              <div className="text-[10px] opacity-60 mt-1 ml-28 font-mono text-slate-600 dark:text-slate-400">
                 {JSON.stringify(log.args)}
               </div>
             )}
