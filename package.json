@@ -70,6 +70,7 @@
     "vitest": "^4.0.16"
   },
   "overrides": {
+    "ellipsize": "^0.7.0",
     "react-highlight-words": {
       "react": "$react"
     }
