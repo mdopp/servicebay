@@ -56,13 +56,24 @@ export async function checkForUpdates() {
   const current = await getCurrentVersion();
   const latest = await getLatestRelease();
 
-  if (!latest) return { hasUpdate: false, current, latest: null };
+  if (!latest || !latest.tag_name) {
+    if (latest && !latest.tag_name) {
+      console.warn('[Updater] Latest release found but missing tag_name:', latest);
+    }
+    return { hasUpdate: false, current, latest: null };
+  }
 
   // Remove 'v' prefix for semver comparison
   const currentClean = current.replace(/^v/, '');
   const latestClean = latest.tag_name.replace(/^v/, '');
 
-  const hasUpdate = semver.gt(latestClean, currentClean);
+  let hasUpdate = false;
+  try {
+      hasUpdate = semver.gt(latestClean, currentClean);
+  } catch (err) {
+      console.warn(`[Updater] Invalid version comparison: ${latestClean} vs ${currentClean}`, err);
+      return { hasUpdate: false, current, latest: null };
+  }
 
   return {
     hasUpdate,

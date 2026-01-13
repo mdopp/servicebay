@@ -8,6 +8,7 @@ export async function GET() {
     const config = await getConfig();
     return NextResponse.json({ ...status, config });
   } catch (e) {
+    console.error('[API] /update error:', e);
     const message = e instanceof Error ? e.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
   }

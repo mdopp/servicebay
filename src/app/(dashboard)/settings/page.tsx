@@ -417,11 +417,14 @@ export default function SettingsPage() {
                 addToast('info', 'System up to date', `You are using the latest version (${latestVer}).`);
             }
         } else {
-             throw new Error('Update server returned ' + res.status);
+             const errorData = await res.json().catch(() => ({}));
+             const errorMessage = errorData.error || `Server error (${res.status})`;
+             throw new Error(errorMessage);
         }
     } catch (e) {
         console.error(e);
-        addToast('error', 'Failed to check for updates');
+        const msg = e instanceof Error ? e.message : 'Unknown error';
+        addToast('error', 'Update Check Failed', msg);
     } finally {
         setCheckingUpdate(false);
     }
