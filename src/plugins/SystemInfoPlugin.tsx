@@ -9,6 +9,8 @@ import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // Migrated from useCac
 import { useSocket } from '@/hooks/useSocket';
 import PluginLoading from '@/components/PluginLoading';
 import PageHeader from '@/components/PageHeader';
+import LogViewer from '@/components/LogViewer';
+import AgentHealthMonitor from '@/components/AgentHealthMonitor';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 
@@ -28,6 +30,7 @@ export default function SystemInfoPlugin() {
   const [selectedNode, setSelectedNode] = useState<string>('Local');
   const [updates, setUpdates] = useState<UpdateInfo | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [activeTab, setActiveTab] = useState<'resources' | 'logs' | 'health'>('resources');
   const { addToast } = useToast();
 
   const { data: twin } = useDigitalTwin();
@@ -198,7 +201,42 @@ export default function SystemInfoPlugin() {
             </div>
         </div>
 
-        {/* Resources Charts */}
+        {/* Tab Navigation */}
+        <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700">
+          <button
+            onClick={() => setActiveTab('resources')}
+            className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${
+              activeTab === 'resources'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+            }`}
+          >
+            Resources
+          </button>
+          <button
+            onClick={() => setActiveTab('health')}
+            className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${
+              activeTab === 'health'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+            }`}
+          >
+            Agent Health
+          </button>
+          <button
+            onClick={() => setActiveTab('logs')}
+            className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${
+              activeTab === 'logs'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+            }`}
+          >
+            Logs
+          </button>
+        </div>
+
+        {/* Resources Tab */}
+        {activeTab === 'resources' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* CPU & Memory */}
             <div className="bg-white dark:bg-gray-800 p-5 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
@@ -308,6 +346,17 @@ export default function SystemInfoPlugin() {
                 </div>
             </div>
         </div>
+        )}
+
+        {/* Health Tab */}
+        {activeTab === 'health' && (
+          <AgentHealthMonitor refreshInterval={10000} />
+        )}
+
+        {/* Logs Tab */}
+        {activeTab === 'logs' && (
+          <LogViewer />
+        )}
       </div>
     </div>
   );
