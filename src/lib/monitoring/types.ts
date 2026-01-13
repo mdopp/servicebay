@@ -38,3 +38,12 @@ export interface CheckStatus {
   message: string | null;
   latency: number | null;
 }
+
+// Extended type for UI
+export interface Check extends CheckConfig {
+  status: 'ok' | 'fail' | 'unknown';
+  lastRun: string | null;
+  lastResult: string | null;
+  message?: string; 
+  history: { status: 'ok' | 'fail'; latency: number; timestamp: string }[];
+}
