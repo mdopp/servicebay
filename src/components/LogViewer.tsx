@@ -344,16 +344,18 @@ export default function LogViewer({ file }: LogViewerProps) {
             className={`px-2 py-1.5 rounded-sm border-l-2 ${LOG_LEVEL_BG[log.level]} hover:brightness-95 transition-all`}
             style={{ borderLeftColor: log.level === 'error' ? '#dc2626' : log.level === 'warn' ? '#ca8a04' : log.level === 'info' ? '#2563eb' : '#6b7280' }}
           >
-            <div className="flex gap-2 items-baseline text-xs leading-relaxed">
-              <span className="font-mono opacity-70 flex-shrink-0 w-24">
-                {extractTime(log.timestamp)}
-              </span>
-              <span className={`font-bold flex-shrink-0 w-14 uppercase ${LOG_LEVEL_COLORS[log.level]}`}>
-                {log.level}
-              </span>
-              <span className="font-semibold flex-shrink-0 w-40 text-slate-700 dark:text-slate-300 truncate" title={log.tag}>
-                [{log.tag}]
-              </span>
+            <div className="flex flex-col md:flex-row md:items-baseline gap-2 md:gap-2 text-xs leading-relaxed">
+              <div className="flex gap-2 items-baseline flex-shrink-0">
+                <span className="font-mono opacity-70 flex-shrink-0 w-24">
+                  {extractTime(log.timestamp)}
+                </span>
+                <span className={`font-bold flex-shrink-0 w-14 uppercase ${LOG_LEVEL_COLORS[log.level]}`}>
+                  {log.level}
+                </span>
+                <span className="font-semibold flex-shrink-0 w-40 text-slate-700 dark:text-slate-300 truncate" title={log.tag}>
+                  [{log.tag}]
+                </span>
+              </div>
               <span className="flex-1 text-slate-800 dark:text-slate-200 break-words">{log.message}</span>
             </div>
             {log.args && Object.keys(log.args).length > 0 && (
