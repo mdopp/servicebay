@@ -1,5 +1,6 @@
 import { EnrichedContainer, ServiceUnit, SystemResources, Volume, WatchedFile, ProxyRoute, PortMapping } from '../agent/types';
 import { logger } from '../logger';
+import type { AgentHealth } from '../agent/handler';
 
 export interface NodeTwin {
   connected: boolean;
@@ -11,6 +12,7 @@ export interface NodeTwin {
   volumes: Volume[];
   files: Record<string, WatchedFile>;
   proxy?: ProxyRoute[];
+  health?: AgentHealth;
 }
 
 export interface GatewayState {

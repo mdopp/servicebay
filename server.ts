@@ -113,12 +113,23 @@ app.prepare().then(() => {
 
           logger.info('Server', logMsg);
           
+          // Add health snapshot from agent
+          const agent = agentManager.getAgent(nodeName);
+          const health = agent.getHealth();
+          
           // TS "as any" is simplistic but TwinStore handles Partial<NodeTwin> safely.
-          twinStore.updateNode(nodeName, message.payload as unknown as Partial<NodeTwin>);
+          const update: Partial<NodeTwin> = { ...message.payload as unknown as Partial<NodeTwin>, health };
+          twinStore.updateNode(nodeName, update);
       } else if (message.type === 'SYNC_DIFF') {
          logger.info('Server', `SYNC_DIFF from ${nodeName}`);
+         
+         // Add health snapshot from agent
+         const agent = agentManager.getAgent(nodeName);
+         const health = agent.getHealth();
+         
          // TODO: Implement diff patching
-         twinStore.updateNode(nodeName, message.payload as unknown as Partial<NodeTwin>);
+         const update: Partial<NodeTwin> = { ...message.payload as unknown as Partial<NodeTwin>, health };
+         twinStore.updateNode(nodeName, update);
       }
   });
   
@@ -164,6 +175,16 @@ app.prepare().then(() => {
   GatewayPoller.getInstance().start().catch(err => {
       logger.error('Server', 'Failed to start Gateway Poller:', err);
   });
+
+  // Periodic Agent Health Sync (every 30 seconds)
+  setInterval(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const agents = (agentManager as any).agents as Map<string, { getHealth: () => any }>;
+      agents.forEach((agent, nodeName) => {
+          const health = agent.getHealth();
+          twinStore.updateNode(nodeName, { health });
+      });
+  }, 30000);
 
 
 
