@@ -124,11 +124,7 @@ export class AgentHandler extends EventEmitter {
              this.handleData(data);
         });
         child.stderr.on('data', (data) => {
-             const str = data.toString().trim();
-             this.health.errorCount++;
-             this.health.lastError = str;
-             // Log all stderr from agent
-             logger.error('Agent:Local:STDERR', str);
+             this.handleLog(data);
         });
         
         child.on('close', (code) => {
@@ -183,9 +179,7 @@ export class AgentHandler extends EventEmitter {
 
           stream.on('data', (data: Buffer) => this.handleData(data));
           stream.stderr.on('data', (data: Buffer) => {
-              const str = data.toString().trim();
-              this.health.errorCount++;
-              logger.error(`${this.nodeName}:STDERR`, str);
+              this.handleLog(data);
           });
         });
       });
@@ -193,6 +187,33 @@ export class AgentHandler extends EventEmitter {
       this.emit('error', error);
       throw error;
     }
+  }
+
+  private handleLog(data: Buffer | string) {
+      const str = data.toString().trim();
+      if (!str) return;
+
+      const lines = str.split('\n');
+      for (const line of lines) {
+          if (!line.trim()) continue;
+          
+          if (line.includes('[INFO]')) {
+              logger.info(`Agent:${this.nodeName}`, line.replace(/.*\[INFO\]\s*/, ''));
+          } else if (line.includes('[WARN]')) {
+              logger.warn(`Agent:${this.nodeName}`, line.replace(/.*\[WARN\]\s*/, ''));
+          } else if (line.includes('[ERROR]')) {
+              this.health.errorCount++;
+              this.health.lastError = line;
+              logger.error(`Agent:${this.nodeName}`, line.replace(/.*\[ERROR\]\s*/, ''));
+          } else if (line.includes('[DEBUG]')) {
+              logger.debug(`Agent:${this.nodeName}`, line.replace(/.*\[DEBUG\]\s*/, ''));
+          } else {
+              // Unclassified stderr (e.g. traceback, system tool output)
+              this.health.errorCount++;
+              this.health.lastError = line;
+              logger.error(`Agent:${this.nodeName}:STDERR`, line);
+          }
+      }
   }
 
   private handleDisconnect() {

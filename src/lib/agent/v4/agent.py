@@ -39,10 +39,23 @@ class NodeStateSnapshot:
 # --- Utilities ---
 DEBUG_MODE = False
 
+def log_message(level: str, msg: str):
+    # Format: [LEVEL] Message
+    sys.stderr.write(f"[{level}] {msg}\n")
+    sys.stderr.flush()
+
+def log_info(msg: str):
+    log_message("INFO", msg)
+
+def log_warn(msg: str):
+    log_message("WARN", msg)
+
+def log_error(msg: str):
+    log_message("ERROR", msg)
+
 def log_debug(msg: str):
     if DEBUG_MODE:
-        sys.stderr.write(f"[DEBUG] {msg}\n")
-        sys.stderr.flush()
+        log_message("DEBUG", msg)
 
 def run_command(cmd: List[str], check: bool = True) -> str:
     try:
@@ -50,15 +63,13 @@ def run_command(cmd: List[str], check: bool = True) -> str:
         result = subprocess.run(cmd, capture_output=True, text=True, check=check)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
-        sys.stderr.write(f"Command failed: {cmd}, {e}\n")
+        log_warn(f"Command failed: {cmd}, {e}") # Changed to warn, as might be expected
         return ""
     except FileNotFoundError:
-        sys.stderr.write(f"Binary not found for command: {cmd[0]}\n")
-        sys.stderr.flush()
+        log_error(f"Binary not found for command: {cmd[0]}")
         return ""
     except Exception as e:
-        sys.stderr.write(f"Unexpected error running {cmd}: {e}\n")
-        sys.stderr.flush()
+        log_error(f"Unexpected error running {cmd}: {e}")
         return ""
 
 # --- Monitors ---
@@ -112,7 +123,7 @@ class PodmanMonitor(threading.Thread):
                     # but limit it? No, safe to ignore parse errors usually means partial line.
                     pass
         except Exception as e:
-            sys.stderr.write(f"Error in event loop: {e}\n")
+            log_error(f"Error in event loop: {e}")
 
 class SystemdMonitor(threading.Thread):
     def __init__(self, callback):
@@ -167,7 +178,7 @@ def get_host_ports_map():
                 break
     
     if not ss_path:
-        sys.stderr.write("ERROR: 'ss' command not found on host. Host port detection will fail.\n")
+        log_error("'ss' command not found on host. Host port detection will fail.")
         return {}
 
     log_debug(f"Using ss path: {ss_path}")
@@ -287,7 +298,7 @@ def get_host_ports_map():
                 except Exception:
                     continue
     except Exception as e:
-        sys.stderr.write(f"Error in get_host_ports_map: {e}\n")
+        log_error(f"Error in get_host_ports_map: {e}")
         pass
     
     log_debug(f"Total PIDs with ports found: {len(pid_map.keys())}")
@@ -1101,7 +1112,7 @@ def fetch_proxy_routes():
         )
 
         if result.stderr:
-             sys.stderr.write(f"[Agent] Nginx Inspector Stderr: {result.stderr}\n")
+             log_warn(f"Nginx Inspector Stderr: {result.stderr}")
 
         if result.returncode == 0:
             routes = json.loads(result.stdout)
@@ -1112,7 +1123,7 @@ def fetch_proxy_routes():
             routes.sort(key=lambda x: (str(x.get('host', '')), str(x.get('targetService', ''))))
             return routes
     except Exception as e:
-        sys.stderr.write(f"[Agent] Proxy inspector failed: {e}\n")
+        log_error(f"Proxy inspector failed: {e}")
         # log(f"Proxy inspector failed: {e}")
         pass
         
@@ -1290,12 +1301,21 @@ class Agent:
     def handle_command(self, msg):
         cmd = msg.get('action')
         req_id = msg.get('id')
+        payload = msg.get('payload', {})
         
-        sys.stderr.write(f"[Agent] Received command: {cmd} (ID: {req_id})\n")
+        log_info(f"Received command: {cmd} (ID: {req_id}, Payload: {json.dumps(payload)})")
         sys.stderr.flush()
 
         # Fallback response helper
         def reply(result=None, error=None):
+            if error:
+                log_error(f"Command {cmd} (ID: {req_id}) failed: {error}")
+            else:
+                # Log success but truncate result if large (e.g. logs)
+                res_str = str(result)
+                if len(res_str) > 100: res_str = res_str[:100] + "..."
+                log_info(f"Command {cmd} (ID: {req_id}) completed. Result: {res_str}")
+
             resp = {
                 'type': 'response',
                 'payload': {
@@ -1334,6 +1354,7 @@ class Agent:
                 if not command_str:
                     reply(error="Missing command")
                 else:
+                    log_info(f"Executing shell command: {command_str}")
                     # execute
                     proc = subprocess.run(command_str, shell=True, capture_output=True, text=True)
                     reply(result={
@@ -1393,7 +1414,7 @@ class Agent:
             watcher = InotifyWatcher()
             log_debug("Inotify Watcher Initialized")
         except Exception as e:
-             sys.stderr.write(f"WARNING: Inotify init failed ({e}). Falling back to polling.\n")
+             log_warn(f"Inotify init failed ({e}). Falling back to polling.")
              pass
 
         while True:
@@ -1658,6 +1679,10 @@ class Agent:
         # If payload provided, use it. Otherwise use full state (legacy behavior, but we avoid calling it without payload now)
         out_payload = payload if payload is not None else self.state
         
+        if msg_type == 'SYNC_PARTIAL' and isinstance(out_payload, dict):
+            keys = list(out_payload.keys())
+            log_info(f"Pushing SYNC_PARTIAL updates for: {', '.join(keys)}")
+
         # Construct message
         msg = {
             'type': msg_type,
@@ -1677,7 +1702,7 @@ class Agent:
 
 if __name__ == "__main__":
     # Immediate startup signal for debugging
-    sys.stderr.write(f"[Agent] Process started (PID: {os.getpid()})\n")
+    log_info(f"Process started (PID: {os.getpid()})")
     sys.stderr.flush()
 
     try:
@@ -1692,6 +1717,6 @@ if __name__ == "__main__":
             agent.start()
     except Exception as e:
         import traceback
-        sys.stderr.write(f"CRITICAL AGENT CRASH:\n{traceback.format_exc()}\n")
+        log_error(f"CRITICAL AGENT CRASH:\n{traceback.format_exc()}")
         sys.stderr.flush()
         sys.exit(1)
