@@ -6,6 +6,7 @@ import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import SSHSetupModal from '@/components/SSHSetupModal';
+import LogLevelControl from '@/components/LogLevelControl';
 import { AppConfig } from '@/lib/config';
 import { getNodes, createNode, editNode, deleteNode, setNodeAsDefault, checkNodeStatus } from '@/app/actions/nodes';
 import { checkConnection, checkFullConnection } from '@/app/actions/ssh';
@@ -1168,6 +1169,9 @@ export default function SettingsPage() {
                 </div>
             )}
         </div>
+
+        {/* Log Level Control */}
+        <LogLevelControl />
       </div>
 
       {/* Update Progress Modal */}
