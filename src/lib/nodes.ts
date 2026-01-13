@@ -33,8 +33,12 @@ async function loadNodes(): Promise<PodmanConnection[]> {
     let nodes: PodmanConnection[] = JSON.parse(content);
 
     // V4 Auto-Migration: Convert legacy "Host" SSH config to "Local" spawn config
-    let migrated = false;
+    const migrated = false;
     nodes = nodes.map(node => {
+        // Disabled migration: We prefer SSH for Local node in containerized environments (Quadlet)
+        // unless explicitly set to 'local'.
+        // The previous logic forced 'local' URI which broke container->host management via SSH.
+        /*
         const isLegacyHost = (node.Name === 'Host' || node.Name === 'Local') && 
                              node.URI.startsWith('ssh://') && 
                              (node.Identity.includes('id_rsa') || node.URI.includes('@localhost') || node.URI.includes('@127.0.0.1'));
@@ -49,6 +53,7 @@ async function loadNodes(): Promise<PodmanConnection[]> {
                  Identity: ''
              };
         }
+        */
         return node;
     });
 
@@ -123,11 +128,12 @@ export async function verifyNodeConnection(name: string): Promise<{ success: boo
             throw new Error(`Node ${name} not found`);
         }
 
-        // Use Executor to verify connection
         // Dynamic import to avoid circular dependency (nodes -> executor -> agent -> handler -> nodes)
         const { getExecutor } = await import('./executor');
         const executor = getExecutor(node);
         // We run 'podman info' remotely to verify both SSH access and Podman installation
+        // For Local node (V4), this runs via local python agent which typically manages the host if configured correctly via SSH or Socket.
+        // If Local is using internal container scope (URI=local), 'podman info' returns info about the container's podman instance.
         await executor.exec('podman info'); 
         
         return { success: true };

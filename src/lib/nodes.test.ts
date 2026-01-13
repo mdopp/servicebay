@@ -72,7 +72,7 @@ describe('NodesManager', () => {
          expect(result.error).toContain('not found');
     });
 
-    it('loadNodes should auto-migrate legacy Host SSH configuration', async () => {
+    it('loadNodes should NOT auto-migrate legacy Host SSH configuration', async () => {
         const legacyNodes = [{
             Name: 'Host',
             URI: 'ssh://root@127.0.0.1:22',
@@ -84,15 +84,11 @@ describe('NodesManager', () => {
 
         const nodes = await listNodes();
 
-        // Should update in memory
-        expect(nodes[0].Name).toBe('Local');
-        expect(nodes[0].URI).toBe('local');
-        expect(nodes[0].Identity).toBe('');
+        // Should NOT update in memory
+        expect(nodes[0].Name).toBe('Host');
+        expect(nodes[0].URI).toBe('ssh://root@127.0.0.1:22');
 
-        // Should save to disk
-        expect(fs.writeFile).toHaveBeenCalled();
-        const args = vi.mocked(fs.writeFile).mock.calls[0];
-        const saved = JSON.parse(args[1] as string);
-        expect(saved[0].URI).toBe('local');
+        // Should NOT save to disk
+        expect(fs.writeFile).not.toHaveBeenCalled();
     });
 });
