@@ -182,19 +182,27 @@ class Logger {
   }
 
   private parseLogLine(line: string): LogEntry {
-    // Format: YYYY-MM-DD HH:MM:SS [LEVEL] [TAG] message [args]
-    const match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] \[([^\]]+)\] (.+?)(?:\s+(.+))?$/);
+    // Format: YYYY-MM-DD HH:MM:SS.mmm [LEVEL] [TAG] message [args]
+    // Also support format without milliseconds: YYYY-MM-DD HH:MM:SS [LEVEL] [TAG] message
+    const match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{3})?) \[(\w+)\] \[([^\]]+)\] (.+?)(?:\s+(\[.+\]))?$/);
     if (!match) {
       return { timestamp: new Date().toISOString(), level: 'info', tag: 'Unknown', message: line };
     }
     const [, timestamp, level, tag, message, argsStr] = match;
-    const args = argsStr ? [argsStr] : [];
+    let args: unknown[] = [];
+    if (argsStr) {
+      try {
+        args = JSON.parse(argsStr);
+      } catch {
+        args = [argsStr];
+      }
+    }
     return {
       timestamp,
       level: (level.toLowerCase() as LogLevel),
       tag,
       message,
-      args
+      args: args.length > 0 ? args : undefined
     };
   }
 
