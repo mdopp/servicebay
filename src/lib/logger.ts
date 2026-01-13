@@ -18,10 +18,20 @@ const COLORS = {
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
+export interface LogEntry {
+  timestamp: string;
+  level: LogLevel;
+  tag: string;
+  message: string;
+  args?: unknown[];
+}
+
 class Logger {
   private fs: typeof fs | null = null;
   private path: typeof path | null = null;
   private logDir: string = '';
+  private currentLogLevel: LogLevel = 'info';
+  private logLevelPriority: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
   constructor() {
     if (isServer) {
@@ -38,10 +48,31 @@ class Logger {
             if (this.fs && !this.fs.existsSync(this.logDir)) {
                 this.fs.mkdirSync(this.logDir, { recursive: true });
             }
+
+            // Load log level from environment or default to 'info'
+            const envLevel = process.env.LOG_LEVEL as LogLevel;
+            if (envLevel && this.logLevelPriority.hasOwnProperty(envLevel)) {
+                this.currentLogLevel = envLevel;
+            }
         } catch (e) {
             console.error('Failed to initialize file logging:', e);
         }
     }
+  }
+
+  setLogLevel(level: LogLevel): void {
+    this.currentLogLevel = level;
+    if (isServer) {
+      process.env.LOG_LEVEL = level;
+    }
+  }
+
+  getLogLevel(): LogLevel {
+    return this.currentLogLevel;
+  }
+
+  private shouldLog(level: LogLevel): boolean {
+    return this.logLevelPriority[level] >= this.logLevelPriority[this.currentLogLevel];
   }
 
   private getTimestamp() {
@@ -69,16 +100,22 @@ class Logger {
       }
   }
 
-  private format(level: LogLevel, tag: string, message: string, args: unknown[]) {
+  private format(level: LogLevel, tag: string, message: string, args: unknown[]): LogEntry {
     if (!isServer) {
-       // Browser fallback: Use native grouping or just simple prefix
-       return [`[${tag}] ${message}`, ...args];
+       // Browser fallback
+       return { timestamp: this.getTimestamp(), level, tag, message, args };
     }
 
     // Persist to file (without colors)
-    this.appendStats(level, tag, message, args);
+    if (this.shouldLog(level)) {
+      this.appendStats(level, tag, message, args);
+    }
 
-    const timestamp = `${COLORS.dim}${this.getTimestamp()}${COLORS.reset}`;
+    return { timestamp: this.getTimestamp(), level, tag, message, args };
+  }
+
+  private formatConsole(level: LogLevel, entry: LogEntry): unknown[] {
+    const timestamp = `${COLORS.dim}${entry.timestamp}${COLORS.reset}`;
     let levelColor = COLORS.reset;
     const levelLabel = level.toUpperCase().padEnd(5);
 
@@ -90,31 +127,87 @@ class Logger {
     }
 
     const coloredLevel = `${levelColor}${levelLabel}${COLORS.reset}`;
-    const coloredTag = `${COLORS.magenta}[${tag}]${COLORS.reset}`;
+    const coloredTag = `${COLORS.magenta}[${entry.tag}]${COLORS.reset}`;
     
-    return [`${timestamp} ${coloredLevel} ${coloredTag} ${message}`, ...args];
+    return [`${timestamp} ${coloredLevel} ${coloredTag} ${entry.message}`, ...(entry.args || [])];
   }
 
   debug(tag: string, message: string, ...args: unknown[]) {
-      if (process.env.NODE_ENV !== 'production' || process.env.DEBUG) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          console.debug(...(this.format('debug', tag, message, args) as any[]));
-      }
+      if (!this.shouldLog('debug')) return;
+      const entry = this.format('debug', tag, message, args);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      console.debug(...(this.formatConsole('debug', entry) as any[]));
   }
 
   info(tag: string, message: string, ...args: unknown[]) {
+      if (!this.shouldLog('info')) return;
+      const entry = this.format('info', tag, message, args);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      console.info(...(this.format('info', tag, message, args) as any[]));
+      console.info(...(this.formatConsole('info', entry) as any[]));
   }
 
   warn(tag: string, message: string, ...args: unknown[]) {
+      if (!this.shouldLog('warn')) return;
+      const entry = this.format('warn', tag, message, args);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      console.warn(...(this.format('warn', tag, message, args) as any[]));
+      console.warn(...(this.formatConsole('warn', entry) as any[]));
   }
 
   error(tag: string, message: string, ...args: unknown[]) {
+      // Always log errors
+      const entry = this.format('error', tag, message, args);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      console.error(...(this.format('error', tag, message, args) as any[]));
+      console.error(...(this.formatConsole('error', entry) as any[]));
+  }
+
+  /**
+   * Parse log file and return entries
+   */
+  readLogs(filename: string, filterLevel?: LogLevel, filterTag?: string, searchText?: string): LogEntry[] {
+    if (!this.fs) return [];
+    try {
+      const filepath = this.path!.join(this.logDir, filename);
+      const content = this.fs.readFileSync(filepath, 'utf-8');
+      const entries = content.split('\n').filter(Boolean).map(line => this.parseLogLine(line));
+      
+      return entries.filter(e => {
+        if (filterLevel && this.logLevelPriority[e.level] < this.logLevelPriority[filterLevel]) return false;
+        if (filterTag && e.tag !== filterTag) return false;
+        if (searchText && !e.message.toLowerCase().includes(searchText.toLowerCase())) return false;
+        return true;
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private parseLogLine(line: string): LogEntry {
+    // Format: YYYY-MM-DD HH:MM:SS [LEVEL] [TAG] message [args]
+    const match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] \[([^\]]+)\] (.+?)(?:\s+(.+))?$/);
+    if (!match) {
+      return { timestamp: new Date().toISOString(), level: 'info', tag: 'Unknown', message: line };
+    }
+    const [, timestamp, level, tag, message, argsStr] = match;
+    const args = argsStr ? [argsStr] : [];
+    return {
+      timestamp,
+      level: (level.toLowerCase() as LogLevel),
+      tag,
+      message,
+      args
+    };
+  }
+
+  /**
+   * List available log files
+   */
+  listLogFiles(): string[] {
+    if (!this.fs) return [];
+    try {
+      return this.fs.readdirSync(this.logDir).filter(f => f.startsWith('servicebay-') && f.endsWith('.log')).sort().reverse();
+    } catch {
+      return [];
+    }
   }
 }
 

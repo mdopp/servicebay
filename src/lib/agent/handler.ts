@@ -30,6 +30,15 @@ export interface AgentEvent {
   payload: any;
 }
 
+export interface AgentHealth {
+  nodeName: string;
+  isConnected: boolean;
+  lastSync: number; // timestamp
+  messageCount: number;
+  errorCount: number;
+  lastError?: string;
+}
+
 export class AgentHandler extends EventEmitter {
   public nodeName: string;
   private channel: ClientChannel | null = null;
@@ -40,10 +49,24 @@ export class AgentHandler extends EventEmitter {
   private isConnected: boolean = false;
   private consecutiveParseErrors = 0;
   private readonly MAX_PARSE_ERRORS = 5;
+  
+  // Health tracking
+  private health: AgentHealth = {
+    nodeName: '',
+    isConnected: false,
+    lastSync: 0,
+    messageCount: 0,
+    errorCount: 0,
+  };
 
   constructor(nodeName: string) {
     super();
     this.nodeName = nodeName;
+    this.health.nodeName = nodeName;
+  }
+
+  public getHealth(): AgentHealth {
+    return { ...this.health };
   }
 
   public async start() {
@@ -92,6 +115,8 @@ export class AgentHandler extends EventEmitter {
 
         this.process = child;
         this.isConnected = true;
+        this.health.isConnected = true;
+        this.health.lastSync = Date.now();
         this.emit('connected');
 
         child.stdout.on('data', (data) => {
@@ -99,11 +124,11 @@ export class AgentHandler extends EventEmitter {
              this.handleData(data);
         });
         child.stderr.on('data', (data) => {
-             // Suppress debug logs from agent if they slipped through
-             const str = data.toString();
-             if (!str.includes('[DEBUG]') && !str.includes('Process started') && !str.includes('Received command')) {
-                logger.error('Agent:Local', `STDERR: ${str}`);
-             }
+             const str = data.toString().trim();
+             this.health.errorCount++;
+             this.health.lastError = str;
+             // Log all stderr from agent
+             logger.error('Agent:Local:STDERR', str);
         });
         
         child.on('close', (code) => {
@@ -112,6 +137,8 @@ export class AgentHandler extends EventEmitter {
         });
         
         child.on('error', (err) => {
+            this.health.errorCount++;
+            this.health.lastError = err.message;
             logger.error('Agent:Local', 'Spawn Error:', err);
             this.emit('error', err);
         });
@@ -156,10 +183,9 @@ export class AgentHandler extends EventEmitter {
 
           stream.on('data', (data: Buffer) => this.handleData(data));
           stream.stderr.on('data', (data: Buffer) => {
-              const str = data.toString();
-              if (!str.includes('[DEBUG]') && !str.includes('Process started') && !str.includes('Received command')) {
-                  logger.error(this.nodeName, `STDERR: ${str}`);
-              }
+              const str = data.toString().trim();
+              this.health.errorCount++;
+              logger.error(`${this.nodeName}:STDERR`, str);
           });
         });
       });
@@ -171,14 +197,16 @@ export class AgentHandler extends EventEmitter {
 
   private handleDisconnect() {
       this.isConnected = false;
+      this.health.isConnected = false;
       this.channel = null;
       this.process = null;
+      logger.warn(this.nodeName, `Agent disconnected. Health: ${JSON.stringify(this.health)}`);
       this.emit('disconnected');
       this.cleanupPending();
   }
 
   private handleData(data: Buffer) {
-    // console.log(`[Agent:${this.nodeName}] Received ${data.length} bytes`);
+    this.health.lastSync = Date.now();
     this.buffer = Buffer.concat([this.buffer, data]);
     
     // Process null-terminated messages
@@ -192,17 +220,18 @@ export class AgentHandler extends EventEmitter {
       
       if (msgStr) {
         try {
-          // console.log(`[Agent:${this.nodeName}] Processing JSON: ${msgStr.substring(0, 50)}...`);
           const msg = JSON.parse(msgStr);
-          // console.log(`[Agent:${this.nodeName}] Parsed Message Type: ${msg.type}`);
+          this.health.messageCount++;
+          this.health.lastSync = Date.now();
           this.processMessage(msg);
           this.consecutiveParseErrors = 0; // Reset on success
         } catch (e: unknown) {
              this.consecutiveParseErrors++;
-             // Ignoring lint for 'e' to match eslint config for unused vars in catch blocks if necessary
+             this.health.errorCount++;
              const errorMsg = e instanceof Error ? e.message : String(e);
+             this.health.lastError = `Parse Error: ${errorMsg}`;
              logger.error(this.nodeName, `Invalid JSON error: ${errorMsg}`);
-             logger.error(this.nodeName, `Invalid JSON content (first 200 chars): ${msgStr.substring(0, 200)}...`);
+             logger.error(this.nodeName, `Invalid JSON content (first 200 chars): ${msgStr.substring(0, 200)}`);
 
              if (this.consecutiveParseErrors >= this.MAX_PARSE_ERRORS) {
                  logger.error(this.nodeName, `Too many consecutive parse errors (${this.consecutiveParseErrors}). Disconnecting for safety.`);
@@ -246,12 +275,15 @@ export class AgentHandler extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public async sendCommand(action: string, params: any = {}): Promise<any> {
     if (!this.isConnected) {
-        logger.info(this.nodeName, 'Not connected, attempting to reconnect...');
+        logger.warn(this.nodeName, 'Not connected, attempting to reconnect...');
         try {
             await this.start();
         } catch (e) {  
+            this.health.errorCount++;
+            const msg = e instanceof Error ? e.message : String(e);
+            this.health.lastError = `Reconnection failed: ${msg}`;
             logger.error(this.nodeName, 'Reconnection failed:', e);
-            throw new Error(`Agent not connected: ${e instanceof Error ? e.message : String(e)}`);
+            throw new Error(`Agent not connected: ${msg}`);
         }
     }
 
@@ -266,6 +298,9 @@ export class AgentHandler extends EventEmitter {
         setTimeout(() => {
             if (this.pendingRequests.has(id)) {
                 this.pendingRequests.delete(id);
+                this.health.errorCount++;
+                this.health.lastError = `Command timeout: ${action}`;
+                logger.warn(this.nodeName, `Command timeout for '${action}' (id: ${id})`);
                 reject(new Error('Agent request timeout'));
             }
         }, 10000);
@@ -276,6 +311,8 @@ export class AgentHandler extends EventEmitter {
         } else if (this.channel) {
             this.channel.write(payload);
         } else {
+             this.health.errorCount++;
+             this.health.lastError = 'No active channel/process';
              reject(new Error('No active channel/process'));
         }
     });
