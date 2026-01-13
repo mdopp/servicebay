@@ -165,6 +165,11 @@ storage:
               "username": "${SERVICEBAY_ADMIN_USER}",
               "password": "${SERVICEBAY_ADMIN_PASSWORD}"
             },
+            "autoUpdate": {
+              "enabled": true,
+              "schedule": "0 0 * * *",
+              "channel": "${SERVICEBAY_CHANNEL}"
+            },
             "templateSettings": {
               "STACKS_DIR": "${DATA_ROOT}/stacks"
             }
@@ -230,9 +235,18 @@ echo "  3) Dev    (dev)"
 read -r -p "Select channel [1]: " CHANNEL_OPT
 CHANNEL_OPT=${CHANNEL_OPT:-1}
 case $CHANNEL_OPT in
-    2) SERVICEBAY_VERSION="test" ;;
-    3) SERVICEBAY_VERSION="dev" ;;
-    *) SERVICEBAY_VERSION="latest" ;;
+    2) 
+        SERVICEBAY_VERSION="test" 
+        SERVICEBAY_CHANNEL="test"
+        ;;
+    3) 
+        SERVICEBAY_VERSION="dev" 
+        SERVICEBAY_CHANNEL="dev"
+        ;;
+    *) 
+        SERVICEBAY_VERSION="latest" 
+        SERVICEBAY_CHANNEL="stable"
+        ;;
 esac
 
 prompt SERVICEBAY_ADMIN_USER "ServiceBay admin user" "admin"
@@ -242,7 +256,7 @@ prompt_secret HOST_PASSWORD "Host user console password (will be hashed)"
 PASSWORD_HASH="$(printf '%s' "$HOST_PASSWORD" | openssl passwd -6 -stdin)"
 
 export HOST_USER SSH_AUTHORIZED_KEY PASSWORD_HASH NET_INTERFACE STATIC_IP STATIC_PREFIX GATEWAY DNS_SERVERS \
-       DATA_ROOT SERVICEBAY_PORT SERVICEBAY_VERSION SERVICEBAY_ADMIN_USER SERVICEBAY_ADMIN_PASSWORD
+       DATA_ROOT SERVICEBAY_PORT SERVICEBAY_VERSION SERVICEBAY_ADMIN_USER SERVICEBAY_ADMIN_PASSWORD SERVICEBAY_CHANNEL
 
 # Render Butane template
 envsubst < "$TEMPLATE" > "$RENDERED_BU"

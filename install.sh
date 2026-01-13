@@ -59,12 +59,22 @@ if [ -c /dev/tty ]; then
     read -p "Select channel [1]: " CHANNEL_OPT < /dev/tty
     
     case $CHANNEL_OPT in
-        2) INPUT_VERSION="test" ;;
-        3) INPUT_VERSION="dev" ;;
-        *) INPUT_VERSION="latest" ;;
+        2) 
+            INPUT_VERSION="test" 
+            CHANNEL_NAME="test"
+            ;;
+        3) 
+            INPUT_VERSION="dev" 
+            CHANNEL_NAME="dev"
+            ;;
+        *) 
+            INPUT_VERSION="latest" 
+            CHANNEL_NAME="stable"
+            ;;
     esac
 else
     log "No terminal detected. Using default port 3000 and channel 'stable' (latest)."
+    CHANNEL_NAME="stable"
 fi
 PORT=${INPUT_PORT:-3000}
 VERSION=${INPUT_VERSION:-latest}
@@ -114,6 +124,11 @@ if [ "$HAS_AUTH" = false ]; then
   "auth": {
     "username": "admin",
     "password": "$ADMIN_PASS"
+  },
+  "autoUpdate": {
+    "enabled": true,
+    "schedule": "0 0 * * *",
+    "channel": "$CHANNEL_NAME"
   }
 }
 EOF

@@ -48,7 +48,7 @@ export interface AppConfig {
   autoUpdate: {
     enabled: boolean;
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight
-    channel: 'stable' | 'beta';
+    channel: 'stable' | 'beta' | 'test' | 'dev';
   };
   registries?: RegistriesSettings;
   externalLinks?: ExternalLink[];
