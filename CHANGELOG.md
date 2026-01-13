@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.5.0...servicebay-v0.5.1) (2026-01-12)
+
+
+### Bug Fixes
+
+* **ci:** trigger release workflow on push and manual dispatch ([40c9ec6](https://github.com/mdopp/servicebay/commit/40c9ec6b4a5c6a24467cc8eb42794734a1f407cb))
+* **docker:** copy package.json to runtime image for version detection ([c56cdcb](https://github.com/mdopp/servicebay/commit/c56cdcbc4509311ee97d3246b99831bb042217ae))
+* **updater:** remove specific service argument from podman auto-update ([6f89ccb](https://github.com/mdopp/servicebay/commit/6f89ccbca0babb647201ff1ca322d17d6c347271))
+
 ## [0.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.4.0...servicebay-v0.5.0) (2026-01-12)
 
 
