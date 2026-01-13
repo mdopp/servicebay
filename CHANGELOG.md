@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.7.0...servicebay-v0.7.1) (2026-01-13)
+
+
+### Bug Fixes
+
+* **release:** generate latest and semver tags on Release-Please commits ([6fd918b](https://github.com/mdopp/servicebay/commit/6fd918b9999dd5ee3d98d7a33b6a059d0a8e3966))
+
 ## [0.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.6.0...servicebay-v0.7.0) (2026-01-13)
 
 
