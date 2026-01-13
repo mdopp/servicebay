@@ -50,7 +50,6 @@ jobs:
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=test,enable=${{ github.ref == 'refs/heads/test' }}
-            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5

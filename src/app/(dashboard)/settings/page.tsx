@@ -38,7 +38,7 @@ interface AppUpdateStatus {
     autoUpdate: {
       enabled: boolean;
       schedule: string;
-      channel?: 'stable' | 'beta' | 'test' | 'dev';
+      channel?: 'stable' | 'test' | 'dev';
     }
   };
 }
@@ -596,7 +596,7 @@ export default function SettingsPage() {
                             <select 
                                 value={appUpdate.config.autoUpdate.channel || 'stable'}
                                 onChange={async (e) => {
-                                    const newChannel = e.target.value as 'stable' | 'beta' | 'test' | 'dev';
+                                    const newChannel = e.target.value as 'stable' | 'test' | 'dev';
                                     try {
                                         const res = await fetch('/api/system/update', {
                                             method: 'POST',
@@ -621,7 +621,6 @@ export default function SettingsPage() {
                                 className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded px-2 py-1 text-xs focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none cursor-pointer"
                             >
                                 <option value="stable">Stable</option>
-                                <option value="beta">Beta</option>
                                 <option value="test">Test</option>
                                 <option value="dev">Dev</option>
                             </select>
