@@ -80,7 +80,15 @@ export class AgentHandler extends EventEmitter {
         const script = getAgentScript();
         const args = ['-u', '-c', `import base64, sys; exec(base64.b64decode("${script}"))`];
         logger.info('Agent:Local', 'Spawning python3...');
-        const child = spawn('python3', args);
+        
+        // Ensure XDG_RUNTIME_DIR is set for systemctl --user
+        const env = { ...process.env };
+        if (!env.XDG_RUNTIME_DIR) {
+            const uid = process.getuid ? process.getuid() : 0;
+            env.XDG_RUNTIME_DIR = `/run/user/${uid}`;
+        }
+
+        const child = spawn('python3', args, { env });
 
         this.process = child;
         this.isConnected = true;
