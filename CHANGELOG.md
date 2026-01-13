@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.6.0...servicebay-v0.7.0) (2026-01-13)
+
+
+### Features
+
+* **config:** persist selected release channel in local config ([10e8fa9](https://github.com/mdopp/servicebay/commit/10e8fa99c6009606673975c4b890d5f27398c53b))
+* **release:** add dev/test release channels and installer selection ([eb24d48](https://github.com/mdopp/servicebay/commit/eb24d4843d40f24f4a2fda34de5dd608ad73cda8))
+* **settings:** add release channel selector to UI ([47207a4](https://github.com/mdopp/servicebay/commit/47207a4f53db5e47892d5c3527383b14c4f2f347))
+
+
+### Bug Fixes
+
+* **agent:** inject XDG_RUNTIME_DIR for local agent spawn to support systemctl ([6781629](https://github.com/mdopp/servicebay/commit/678162910e41fcf459adc15c0496661bfbccd348))
+* **docker:** install missing runtime dependencies (iproute2, procps, systemd) ([578a07b](https://github.com/mdopp/servicebay/commit/578a07bd64d5d45421a46da65c7bdad4768f37e7))
+* **nodes:** disable auto-migration and fix circular dependency ([d1a8e02](https://github.com/mdopp/servicebay/commit/d1a8e02adc2ce82a05670ba6b7207b965e7e7db1))
+* **ssh:** provide descriptive error message on authentication failure ([5509425](https://github.com/mdopp/servicebay/commit/5509425984b2d940b81109f2484365aee74064fc))
+* **updater:** harden version parsing and add beta channel to release workflow ([25cfb9e](https://github.com/mdopp/servicebay/commit/25cfb9eb5479aec419cbf030bc5f588abf976107))
+* **updater:** robust error handling for update checks and better UI feedback ([697b70d](https://github.com/mdopp/servicebay/commit/697b70d14b1ae63f4ba5d491bedf4edec1cbfa3d))
+
 ## [0.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.5.1...servicebay-v0.6.0) (2026-01-13)
 
 
