@@ -81,7 +81,12 @@ export class SSHConnectionPool {
         logger.error('SSH', `Error on ${nodeName}:`, err);
         this.removeConnection(nodeName);
         if (conn.listenerCount('ready') > 0) {
-            reject(err);
+            // Enhance common errors for better UI feedback
+            if (err.message && err.message.includes('All configured authentication methods failed')) {
+                reject(new Error(`Authentication failed for ${nodeName}. Please check your Username, Password, or SSH Identity File.`));
+            } else {
+                reject(err);
+            }
         }
       });
 
