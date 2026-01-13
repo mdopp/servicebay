@@ -64,8 +64,11 @@ export async function checkForUpdates() {
   }
 
   // Remove 'v' prefix for semver comparison
+  // Also handle cases where tag might be prefixed with package name (e.g. servicebay-v0.6.0)
   const currentClean = current.replace(/^v/, '');
-  const latestClean = latest.tag_name.replace(/^v/, '');
+  // Extract version part from tag: removes 'v', 'servicebay-v', etc. matches x.y.z
+  const versionMatch = latest.tag_name.match(/(\d+\.\d+\.\d+.*)/);
+  const latestClean = versionMatch ? versionMatch[0] : latest.tag_name.replace(/^v/, '');
 
   let hasUpdate = false;
   try {
