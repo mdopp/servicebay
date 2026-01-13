@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.5.1...servicebay-v0.6.0) (2026-01-13)
+
+
+### Features
+
+* **settings:** add node status diagnostics and edit capability ([8764c4a](https://github.com/mdopp/servicebay/commit/8764c4ae5ae3d00b09273ee56e9b7c0fe7daa01d))
+
+
+### Bug Fixes
+
+* **ui:** ensure update check notification always displays result or error ([a86db79](https://github.com/mdopp/servicebay/commit/a86db79b7d13c671465019567008c6d06bc32923))
+
 ## [0.5.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.5.0...servicebay-v0.5.1) (2026-01-12)
 
 
