@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldCheck, ShieldAlert, Wifi, WifiOff, Globe } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import SSHSetupModal from '@/components/SSHSetupModal';
 import { AppConfig } from '@/lib/config';
-import { getNodes, createNode, deleteNode, setNodeAsDefault } from '@/app/actions/nodes';
-import { checkConnection } from '@/app/actions/ssh';
+import { getNodes, createNode, editNode, deleteNode, setNodeAsDefault, checkNodeStatus } from '@/app/actions/nodes';
+import { checkConnection, checkFullConnection } from '@/app/actions/ssh';
 import { PodmanConnection } from '@/lib/nodes';
 
 type TemplateSettingsSchemaEntry = {
@@ -88,6 +88,8 @@ export default function SettingsPage() {
   const [newNodeDest, setNewNodeDest] = useState('');
   const [newNodeIdentity, setNewNodeIdentity] = useState('/app/data/ssh/id_rsa');
   const [addingNode, setAddingNode] = useState(false);
+  const [editingNode, setEditingNode] = useState<string | null>(null);
+  const [nodeHealth, setNodeHealth] = useState<Record<string, { loading: boolean; online: boolean; auth: boolean; error?: string }>>({});
 
   // SSH Setup Modal
   const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
@@ -227,7 +229,7 @@ export default function SettingsPage() {
     });
   };
 
-  const handleAddNode = async () => {
+  const handleSaveNode = async () => {
     if (!newNodeName || !newNodeDest || !newNodeIdentity) return;
 
     // Parse URL for pre-check
@@ -255,21 +257,30 @@ export default function SettingsPage() {
     }
 
     try {
-      const res = await createNode(newNodeName, newNodeDest, newNodeIdentity);
+      let res;
+      if (editingNode) {
+          res = await editNode(editingNode, newNodeName, newNodeDest, newNodeIdentity);
+      } else {
+          res = await createNode(newNodeName, newNodeDest, newNodeIdentity);
+      }
+
       if (res.success) {
         setNodes(await getNodes());
         setNewNodeName('');
         setNewNodeDest('');
         setNewNodeIdentity('/app/data/ssh/id_rsa');
+        setEditingNode(null);
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if ((res as any).warning) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const warning = (res as any).warning as string;
+        const resultAny = res as any;
+        if (resultAny.warning) {
+             
+            const warning = resultAny.warning as string;
             
             // Check for common SSH issues
             if (warning.includes('timed out') || warning.includes('Permission denied') || warning.includes('password') || warning.includes('publickey')) {
                 addToast('warning', 'SSH Connection Failed', 
-                    'The node was added, but we could not connect. It seems password-less SSH is not configured.'
+                    'The node was saved, but we could not connect. It seems password-less SSH is not configured.'
                 );
                 // Pre-fill and open modal
                 if (host) {
@@ -277,21 +288,100 @@ export default function SettingsPage() {
                     setIsSSHModalOpen(true);
                 }
             } else {
-                addToast('warning', 'Node added with warning', warning);
+                addToast('warning', editingNode ? 'Node updated with warning' : 'Node added with warning', warning);
             }
         } else {
-            addToast('success', 'Node added');
+            addToast('success', editingNode ? 'Node updated' : 'Node added');
         }
+        
+        // Retrigger health check
+        await new Promise(r => setTimeout(r, 1000));
+        // We can't easily re-call checkHealth specifically for the new node because of closure, 
+        // but useEffect will pick it up or we can force it.
+        // Actually, just let the user see the status.
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        addToast('error', 'Failed to add node', (res as any).error);
+        addToast('error', editingNode ? 'Failed to update node' : 'Failed to add node', (res as any).error);
       }
     } catch (e) {
-        addToast('error', 'Failed to add node', String(e));
+        addToast('error', editingNode ? 'Failed to save node' : 'Failed to add node', String(e));
     } finally {
       setAddingNode(false);
     }
   };
+
+  const handleEditClick = (node: PodmanConnection) => {
+    setNewNodeName(node.Name);
+    setNewNodeDest(node.URI);
+    setNewNodeIdentity(node.Identity);
+    setEditingNode(node.Name);
+    // Scroll to top or form (simple approach)
+    const form = document.getElementById('node-form');
+    if (form) form.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  const handleCancelEdit = () => {
+    setNewNodeName('');
+    setNewNodeDest('');
+    setNewNodeIdentity('/app/data/ssh/id_rsa');
+    setEditingNode(null);
+  };
+ 
+  const checkHealth = useCallback(async (nodeName: string) => {
+    setNodeHealth(prev => ({ ...prev, [nodeName]: { loading: true, online: false, auth: false } }));
+    
+    const node = nodes.find(n => n.Name === nodeName);
+    if (!node) return;
+    
+    // Quick local check
+    if (node.URI === 'local') {
+         setNodeHealth(prev => ({ ...prev, [nodeName]: { loading: false, online: true, auth: true } }));
+         return;
+    }
+
+    try {
+      let host = '', port = 22, user = 'root';
+      
+      if (node.URI.startsWith('ssh://')) {
+          const url = new URL(node.URI);
+          host = url.hostname;
+          port = url.port ? parseInt(url.port) : 22;
+          user = url.username || 'root';
+      } else {
+           const parts = node.URI.split('@');
+           if (parts.length === 2) {
+               user = parts[0];
+               host = parts[1];
+           } else {
+               host = node.URI;
+           }
+      }
+
+      const res = await checkFullConnection(host, port, user, node.Identity);
+      
+      setNodeHealth(prev => ({ 
+         ...prev, 
+         [nodeName]: { 
+             loading: false, 
+             online: res.success || (res.stage === 'auth'), 
+             auth: res.success,
+             error: res.error 
+         } 
+      }));
+    } catch (e) {
+       setNodeHealth(prev => ({ ...prev, [nodeName]: { loading: false, online: false, auth: false, error: String(e) } }));
+    }
+  }, [nodes]);
+
+  useEffect(() => {
+    if (nodes.length > 0) {
+        nodes.forEach(n => {
+            // Only check if not already checked or if previously failed/loading (optional)
+            // Ideally only check on mount or when nodes change
+            if (!nodeHealth[n.Name]) checkHealth(n.Name);
+        });
+    }
+  }, [nodes, checkHealth, nodeHealth]);
 
   const handleDeleteNode = async (name: string) => {
     const res = await deleteNode(name);
@@ -672,14 +762,15 @@ export default function SettingsPage() {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end mb-6" id="node-form">
                     <div className="md:col-span-3">
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
                         <input 
                             type="text" 
                             value={newNodeName}
                             onChange={e => setNewNodeName(e.target.value)}
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            disabled={!!editingNode} 
+                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
                             placeholder="my-node"
                         />
                     </div>
@@ -706,26 +797,60 @@ export default function SettingsPage() {
                             />
                         </div>
                     </div>
-                    <div className="md:col-span-1">
+                    <div className="md:col-span-1 flex gap-2">
                         <button 
-                            onClick={handleAddNode}
+                            onClick={handleSaveNode}
                             disabled={!newNodeName || !newNodeDest || !newNodeIdentity || addingNode}
-                            className="w-full p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center"
+                            className={`w-full p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2`}
+                            title={editingNode ? 'Update Node' : 'Add Node'}
                         >
-                            {addingNode ? <Loader2 className="animate-spin" size={20} /> : <Plus size={20} />}
+                            {addingNode ? <Loader2 className="animate-spin" size={20} /> : (editingNode ? <Save size={20} /> : <Plus size={20} />)}
                         </button>
+                        {editingNode && (
+                            <button 
+                                onClick={handleCancelEdit}
+                                className="p-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                                title="Cancel Edit"
+                            >
+                                <XCircle size={20} />
+                            </button>
+                        )}
                     </div>
                 </div>
 
                 <div className="space-y-2">
-                    {nodes.map(node => (
-                        <div key={node.Name} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                    {nodes.map(node => {
+                        const health = nodeHealth[node.Name] || { loading: false, online: false, auth: false };
+                        return (
+                        <div key={node.Name} className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${editingNode === node.Name ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800' : 'bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-700'}`}>
                             <div className="flex items-center gap-3">
                                 <div className={`w-2 h-2 rounded-full ${node.Default ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} title={node.Default ? 'Default Node' : ''} />
                                 <div>
                                     <div className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
                                         {node.Name}
                                         {node.Default && <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded uppercase font-bold">Default</span>}
+                                        
+                                        {/* Health Status */}
+                                        <div className="flex items-center gap-1 ml-2" title={health.error || (health.online ? (health.auth ? 'Online & Authenticated' : 'Online but Auth Failed') : 'Unreachable')}>
+                                            {health.loading ? (
+                                                <Loader2 size={14} className="animate-spin text-gray-400" />
+                                            ) : health.online && health.auth ? (
+                                                <div className="flex items-center text-green-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm">
+                                                    <Globe size={10} />
+                                                    <span>Connected</span>
+                                                </div>
+                                            ) : health.online && !health.auth ? (
+                                                <div className="flex items-center text-yellow-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm cursor-help">
+                                                    <ShieldAlert size={10} />
+                                                    <span>Auth Failed</span>
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center text-red-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm cursor-help">
+                                                    <WifiOff size={10} />
+                                                    <span>Offline</span>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{node.URI}</div>
                                 </div>
@@ -741,6 +866,13 @@ export default function SettingsPage() {
                                     </button>
                                 )}
                                 <button 
+                                    onClick={() => handleEditClick(node)}
+                                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                                    title="Edit Node settings"
+                                >
+                                    <Edit2 size={16} />
+                                </button>
+                                <button 
                                     onClick={() => handleDeleteNode(node.Name)}
                                     className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                                     title="Remove Node"
@@ -749,7 +881,8 @@ export default function SettingsPage() {
                                 </button>
                             </div>
                         </div>
-                    ))}
+                    );
+                    })}
                     {nodes.length === 0 && (
                         <div className="text-center py-4 text-gray-500 dark:text-gray-400 text-sm italic">
                             No remote nodes configured. ServiceBay is running in local mode.

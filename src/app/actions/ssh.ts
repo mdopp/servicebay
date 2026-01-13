@@ -1,12 +1,26 @@
 'use server';
 
-import { checkTcpConnection, setupSSHKey } from '@/lib/ssh';
+import { checkTcpConnection, setupSSHKey, verifySSHConnection } from '@/lib/ssh';
 import { SSH_DIR } from '@/lib/dirs';
 
 export async function checkConnection(host: string, port: number) {
     try {
         const isOpen = await checkTcpConnection(host, port);
         return { success: true, isOpen };
+    } catch (e) {
+        return { success: false, error: String(e) };
+    }
+}
+
+export async function checkFullConnection(host: string, port: number, user: string, identity: string) {
+    try {
+        const isOpen = await checkTcpConnection(host, port);
+        if (!isOpen) return { success: false, stage: 'tcp', error: 'TCP Connection Failed' };
+
+        const auth = await verifySSHConnection(host, port, user, identity);
+        if (!auth) return { success: false, stage: 'auth', error: 'SSH Authentication Failed' };
+
+        return { success: true };
     } catch (e) {
         return { success: false, error: String(e) };
     }

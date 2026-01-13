@@ -92,6 +92,29 @@ export async function addNode(name: string, destination: string, identity?: stri
   await saveNodes(nodes);
 }
 
+export async function updateNode(oldName: string, newNode: Partial<PodmanConnection>): Promise<void> {
+  const nodes = await loadNodes();
+  const index = nodes.findIndex(n => n.Name === oldName);
+  
+  if (index === -1) {
+    throw new Error(`Node ${oldName} not found`);
+  }
+
+  // Check name collision if name is changing
+  if (newNode.Name && newNode.Name !== oldName && nodes.some(n => n.Name === newNode.Name)) {
+      throw new Error(`Node name ${newNode.Name} already taken`);
+  }
+
+  nodes[index] = {
+      ...nodes[index],
+      ...newNode,
+      // Ensure we don't accidentally unset Default if not provided
+      Default: newNode.Default !== undefined ? newNode.Default : nodes[index].Default
+  };
+  
+  await saveNodes(nodes);
+}
+
 export async function verifyNodeConnection(name: string): Promise<{ success: boolean; error?: string }> {
     try {
         const nodes = await loadNodes();

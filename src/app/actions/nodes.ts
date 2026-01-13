@@ -1,6 +1,6 @@
 'use server';
 
-import { listNodes, addNode, removeNode, setDefaultNode, verifyNodeConnection, PodmanConnection } from '@/lib/nodes';
+import { listNodes, addNode, updateNode, removeNode, setDefaultNode, verifyNodeConnection, PodmanConnection } from '@/lib/nodes';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import { revalidatePath } from 'next/cache';
 import * as fs from 'fs';
@@ -49,6 +49,45 @@ export async function createNode(name: string, destination: string, identity: st
     console.error('Failed to create node:', error);
     return { success: false, error: 'Failed to create node: ' + (error instanceof Error ? error.message : String(error)) };
   }
+}
+
+export async function editNode(oldName: string, newName: string, destination: string, identity: string) {
+  try {
+     // Verify identity file exists
+     const resolvedIdentity = identity.replace(/^~(?=$|\/|\\)/, os.homedir());
+     if (!fs.existsSync(resolvedIdentity)) {
+         return { success: false, error: `Identity file not found at ${resolvedIdentity}` };
+     }
+
+     const newNode: Partial<PodmanConnection> = {
+         Name: newName,
+         URI: destination,
+         Identity: identity
+     };
+
+     await updateNode(oldName, newNode);
+     
+     // Verify connection
+     const verification = await verifyNodeConnection(newName);
+     
+     revalidatePath('/settings');
+     
+     if (!verification.success) {
+         return { 
+             success: true, 
+             warning: `Node updated, but connection check failed: ${verification.error || 'Unknown error'}` 
+         };
+     }
+
+     return { success: true };
+  } catch (error) {
+     console.error('Failed to update node:', error);
+     return { success: false, error: 'Failed to update node: ' + (error instanceof Error ? error.message : String(error)) };
+  }
+}
+
+export async function checkNodeStatus(name: string) {
+    return verifyNodeConnection(name);
 }
 
 export async function deleteNode(name: string) {

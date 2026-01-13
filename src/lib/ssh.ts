@@ -8,6 +8,16 @@ import { SSH_DIR } from './dirs';
 
 const execAsync = promisify(exec);
 
+export async function verifySSHConnection(host: string, port: number, user: string, identityFile: string): Promise<boolean> {
+  try {
+    const cmd = `ssh -i "${identityFile}" -p ${port} -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 ${user}@${host} exit`;
+    await execAsync(cmd);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 export async function checkTcpConnection(host: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
