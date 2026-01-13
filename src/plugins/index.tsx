@@ -3,7 +3,7 @@ import { Plugin } from './types';
 import ServicesPlugin from './ServicesPlugin';
 import ContainersPlugin from './ContainersPlugin';
 import MonitoringPlugin from './MonitoringPlugin';
-import SystemInfoPlugin from './SystemInfoPlugin';
+
 import NetworkPlugin from './NetworkPlugin';
 import dynamic from 'next/dynamic';
 
@@ -37,12 +37,7 @@ export const plugins: Plugin[] = [
     icon: Activity,
     component: <MonitoringPlugin />,
   },
-  {
-    id: 'system',
-    name: 'System Info',
-    icon: Activity, // Or HardDrive, but Activity covers CPU/Net too
-    component: <SystemInfoPlugin />,
-  },
+
   {
     id: 'terminal',
     name: 'SSH Terminal',
