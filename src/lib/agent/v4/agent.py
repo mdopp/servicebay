@@ -1680,8 +1680,7 @@ class Agent:
         out_payload = payload if payload is not None else self.state
         
         if msg_type == 'SYNC_PARTIAL' and isinstance(out_payload, dict):
-            keys = list(out_payload.keys())
-            log_info(f"Pushing SYNC_PARTIAL updates for: {', '.join(keys)}")
+            log_info(f"Pushing SYNC_PARTIAL payload: {json.dumps(out_payload)}")
 
         # Construct message
         msg = {
