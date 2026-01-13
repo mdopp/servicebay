@@ -351,7 +351,7 @@ export default function LogViewer({ file }: LogViewerProps) {
               <span className={`font-bold flex-shrink-0 w-14 uppercase ${LOG_LEVEL_COLORS[log.level]}`}>
                 {log.level}
               </span>
-              <span className="font-semibold flex-shrink-0 text-slate-700 dark:text-slate-300">
+              <span className="font-semibold flex-shrink-0 w-40 text-slate-700 dark:text-slate-300 truncate" title={log.tag}>
                 [{log.tag}]
               </span>
               <span className="flex-1 text-slate-800 dark:text-slate-200 break-words">{log.message}</span>
