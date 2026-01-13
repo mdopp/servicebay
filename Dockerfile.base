@@ -1,9 +1,0 @@
-# Base image for Production (Runtime)
-# Contains only what is needed to RUN the app
-FROM node:20-alpine AS prod
-RUN apk add --no-cache libc6-compat libstdc++ openssh-client
-
-# Base image for Development/Build (Extended)
-# Contains compilers needed for npm install (native modules)
-FROM prod AS dev
-RUN apk add --no-cache python3 make g++
