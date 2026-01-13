@@ -62,10 +62,15 @@ export default function LogViewer({ file }: LogViewerProps) {
     loadLogFiles();
   }, []);
 
-  // Auto-scroll to bottom when logs update
+  // Auto-scroll to bottom when logs update (only if auto-refresh is on)
   useEffect(() => {
     if (autoRefresh && logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+      // Always scroll to the newest entry
+      setTimeout(() => {
+        if (logContainerRef.current) {
+          logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+      }, 0);
     }
   }, [filteredLogs, autoRefresh]);
 
@@ -119,7 +124,6 @@ export default function LogViewer({ file }: LogViewerProps) {
   const loadLogs = async (filename: string) => {
     if (!filename) return;
 
-    setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filter.level) params.append('level', filter.level);
@@ -131,7 +135,27 @@ export default function LogViewer({ file }: LogViewerProps) {
       const data = await response.json();
 
       if (data.success) {
-        setLogs(data.logs);
+        // Smart merge: only update if logs have changed
+        setLogs(prevLogs => {
+          const newLogs = data.logs;
+          
+          // If completely different or first load, replace
+          if (prevLogs.length === 0 || newLogs.length === 0) {
+            return newLogs;
+          }
+          
+          // Check if we have new logs by comparing last few entries
+          // If new logs have more entries or different content, use new logs
+          // This handles additions gracefully
+          if (newLogs.length > prevLogs.length || 
+              (newLogs.length > 0 && prevLogs.length > 0 && 
+               newLogs[newLogs.length - 1].timestamp !== prevLogs[prevLogs.length - 1].timestamp)) {
+            return newLogs;
+          }
+          
+          // Otherwise keep the existing logs (no update needed)
+          return prevLogs;
+        });
       } else {
         addToast('error', 'Failed to load logs', data.error);
       }
