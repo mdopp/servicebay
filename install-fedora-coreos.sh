@@ -222,7 +222,19 @@ prompt GATEWAY "Gateway" "192.168.178.1"
 prompt DNS_SERVERS "DNS servers (semicolon separated)" "192.168.178.1;8.8.8.8;"
 prompt DATA_ROOT "Data root" "/mnt/data"
 prompt SERVICEBAY_PORT "ServiceBay port" "5888"
-prompt SERVICEBAY_VERSION "ServiceBay version" "latest"
+
+echo "Select ServiceBay Channel:"
+echo "  1) Stable (latest)"
+echo "  2) Test   (test)"
+echo "  3) Dev    (dev)"
+read -r -p "Select channel [1]: " CHANNEL_OPT
+CHANNEL_OPT=${CHANNEL_OPT:-1}
+case $CHANNEL_OPT in
+    2) SERVICEBAY_VERSION="test" ;;
+    3) SERVICEBAY_VERSION="dev" ;;
+    *) SERVICEBAY_VERSION="latest" ;;
+esac
+
 prompt SERVICEBAY_ADMIN_USER "ServiceBay admin user" "admin"
 prompt_secret SERVICEBAY_ADMIN_PASSWORD "ServiceBay admin password"
 prompt_secret HOST_PASSWORD "Host user console password (will be hashed)"

@@ -51,9 +51,20 @@ mkdir -p "$CONFIG_DIR"
 # We must read from /dev/tty to get user input.
 if [ -c /dev/tty ]; then
     read -p "Enter the port to run ServiceBay on [3000]: " INPUT_PORT < /dev/tty
-    read -p "Enter the version to install [latest]: " INPUT_VERSION < /dev/tty
+    
+    echo "Select Update Channel:"
+    echo "  1) Stable (latest) - Recommended for production"
+    echo "  2) Test   (test)   - Release candidates"
+    echo "  3) Dev    (dev)    - Bleeding edge (latest main)"
+    read -p "Select channel [1]: " CHANNEL_OPT < /dev/tty
+    
+    case $CHANNEL_OPT in
+        2) INPUT_VERSION="test" ;;
+        3) INPUT_VERSION="dev" ;;
+        *) INPUT_VERSION="latest" ;;
+    esac
 else
-    log "No terminal detected. Using default port 3000 and version latest."
+    log "No terminal detected. Using default port 3000 and channel 'stable' (latest)."
 fi
 PORT=${INPUT_PORT:-3000}
 VERSION=${INPUT_VERSION:-latest}
