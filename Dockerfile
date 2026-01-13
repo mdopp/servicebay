@@ -1,9 +1,14 @@
-# Use our pre-built base image with build tools (python3, make, g++)
-FROM ghcr.io/mdopp/servicebay/base:dev AS base
+# Use node:20-slim for better compatibility
+FROM node:20-slim AS base
+
+# Install build tools (python3, make, g++) required for native modules like node-pty
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install dependencies only when needed
 FROM base AS deps
-# Base image already has libc6-compat python3 make g++
+# Base image already has python3 make g++
 WORKDIR /app
 
 # Install dependencies based on the preferred package manager
@@ -27,27 +32,33 @@ RUN npm run build
 # This stage builds native modules (like node-pty) and installs runtime tools
 FROM base AS prod-deps
 WORKDIR /app
-# Base image already has libc6-compat python3 make g++
+# Base image already has python3 make g++
 COPY package.json package-lock.json* ./
 # Install prod deps (builds native modules) AND tsx/typescript
 RUN npm ci --omit=dev && npm install tsx typescript
 
 # Production image, copy all the files and run next
-# Use clean alpine image for runner to keep size down
-FROM ghcr.io/mdopp/servicebay/base:prod AS runner
+# Use clean slim image for runner
+FROM node:20-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV PATH="/app/node_modules/.bin:$PATH"
 
-# Install ssh-keygen and podman
-RUN apk add --no-cache openssh-client openssh-keygen podman
+# Install ssh-keygen, podman, and python3 (required for Agent V4)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    openssh-client \
+    podman \
+    python3 \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs
+RUN useradd --system --uid 1001 nextjs
 
-# Runtime dependencies (libstdc++) are already in base:prod
+# Runtime dependencies (libc) are standard in debian
 
 COPY --from=builder /app/public ./public
 
