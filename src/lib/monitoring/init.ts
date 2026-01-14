@@ -38,29 +38,7 @@ export async function initializeDefaultChecks() {
     logger.error('Monitoring', 'Failed to add configured gateway check', e);
   }
 
-  // 1. Auto-detected Gateway Check
-  try {
-    // ip route show default usually outputs: "default via 192.168.1.1 dev eth0 ..."
-    const { stdout } = await execAsync("ip route show default");
-    const match = stdout.match(/via\s+([0-9.]+)/);
-    if (match && match[1]) {
-      const gateway = match[1];
-      if (!exists('ping', gateway)) {
-          logger.info('Monitoring', `Adding Gateway check for ${gateway}`);
-          MonitoringStore.saveCheck({
-              id: crypto.randomUUID(),
-              name: 'Gateway',
-              type: 'ping',
-              target: gateway,
-              interval: 60,
-              enabled: true,
-              created_at: new Date().toISOString()
-          });
-      }
-    }
-  } catch (e) {
-    logger.error('Monitoring', 'Failed to detect gateway', e);
-  }
+  // 1. Auto-detected Gateway Check - REMOVED (Redundant with Configured Gateway & Agent Checks)
 
   // 2. Podman Socket (more reliable than service for API availability)
   if (!exists('systemd', 'podman.socket')) {

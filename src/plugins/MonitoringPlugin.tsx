@@ -595,7 +595,6 @@ export default function MonitoringPlugin() {
                   <option value="podman">Podman Container</option>
                   <option value="service">Managed Service</option>
                   <option value="systemd">System Service</option>
-                  <option value="node">Remote Node Connection</option>
                   <option value="agent">Agent Health</option>
                   <option value="script">Custom Script (JS)</option>
                   <option value="fritzbox">Fritz!Box Internet</option>
@@ -618,9 +617,6 @@ export default function MonitoringPlugin() {
                     {formData.type === 'systemd' && (
                         <p>Checks a system-wide systemd unit (e.g., sshd, docker). Verifies that the unit is &apos;active&apos;. Fails if the unit is inactive or failed.</p>
                     )}
-                    {formData.type === 'node' && (
-                        <p>Verifies the connection to a remote Podman node. Checks SSH connectivity and the Podman socket availability. Fails if the node is unreachable or Podman is not responding.</p>
-                    )}
                     {formData.type === 'agent' && (
                         <p>Monitors the ServiceBay Agent on a node. Verifies connection status, heartbeat, and error rates. Fails if the agent disconnects or stops reporting.</p>
                     )}
@@ -632,7 +628,6 @@ export default function MonitoringPlugin() {
                     )}
                 </div>
               </div>
-              {formData.type !== 'node' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Node</label>
                 <select 
@@ -648,10 +643,9 @@ export default function MonitoringPlugin() {
                 </select>
                 <p className="text-xs text-gray-500 mt-1">Select the node where this check should run.</p>
               </div>
-              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : formData.type === 'node' ? 'Node Name' : 'Target'}
+                    {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
                 </label>
                 {formData.type === 'script' ? (
                     <textarea
@@ -700,20 +694,6 @@ export default function MonitoringPlugin() {
                         loading={resourcesLoading}
                         disabled={resourcesLoading || isSystemCheck()}
                     />
-                ) : formData.type === 'node' ? (
-                    <select
-                        value={formData.target}
-                        onChange={e => setFormData({...formData, target: e.target.value})}
-                        disabled={isSystemCheck()}
-                        className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
-                    >
-                        <option value="">Select a node...</option>
-                        {nodes.map((n) => (
-                            <option key={n.Name} value={n.Name}>
-                                {n.Name} ({n.URI})
-                            </option>
-                        ))}
-                    </select>
                 ) : (
                     <input 
                       type="text" 

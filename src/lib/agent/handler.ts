@@ -170,6 +170,7 @@ export class AgentHandler extends EventEmitter {
           this.channel = stream;
           this.isConnected = true;
           this.health.isConnected = true;
+          this.health.lastSync = Date.now();
           this.emit('connected');
           resolve();
 

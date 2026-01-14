@@ -288,7 +288,19 @@ export class CheckRunner {
 
   private static async runAgentCheck(nodeName: string): Promise<string> {
     const agent = agentManager.getAgent(nodeName);
-    const health = agent.getHealth();
+    let health = agent.getHealth();
+    
+    // Auto-connect / heal if disconnected
+    if (!health.isConnected) {
+        try {
+            await agent.start();
+            health = agent.getHealth();
+        } catch (e) {
+            // Keep original error handling if start fails
+             const msg = e instanceof Error ? e.message : String(e);
+             throw new Error(`Agent disconnected & restart failed: ${msg}`);
+        }
+    }
     
     if (!health.isConnected) {
         throw new Error(`Agent is disconnected (Last error: ${health.lastError || 'None'})`);

@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { DATA_DIR } from './dirs';
 import { decrypt, encrypt } from './secrets';
+import { LogLevel } from './logger';
 
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -41,6 +42,7 @@ export interface ReverseProxyConfig {
 }
 
 export interface AppConfig {
+  logLevel?: LogLevel;
   domain?: string; // Optional domain for display
   gateway?: GatewayConfig;
   reverseProxy?: ReverseProxyConfig;
@@ -73,6 +75,7 @@ export interface AppConfig {
 
 const DEFAULT_CONFIG: AppConfig = {
   templateSettings: {},
+  logLevel: 'info',
   autoUpdate: {
     enabled: false,
     schedule: '0 0 * * *', // Daily at midnight
@@ -133,5 +136,13 @@ export async function migrateConfig(): Promise<void> {
   } catch (error) {
     console.warn('Failed to migrate/encrypt config on startup:', error);
   }
+}
+
+export async function updateConfig(updates: Partial<AppConfig>): Promise<AppConfig> {
+  const current = await getConfig();
+  // TODO: Deep merge would be safer, but for now top-level merge is sufficient if used carefully
+  const updated = { ...current, ...updates };
+  await saveConfig(updated);
+  return updated;
 }
 

@@ -16,7 +16,7 @@ import { DigitalTwinStore, NodeTwin } from './src/lib/store/twin';
 import { AgentMessage } from './src/lib/agent/types';
 import { GatewayPoller } from './src/lib/gateway/poller';
 import { logger } from './src/lib/logger';
-import { migrateConfig } from './src/lib/config';
+import { migrateConfig, getConfig } from './src/lib/config';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -37,7 +37,19 @@ const sessions = new Map<string, PtySession>();
 const resourceViewers = new Map<string, Set<string>>(); // nodeName -> Set<socketId>
 
 // Ensure configuration is encrypted on startup (migration)
-migrateConfig().catch(e => logger.error('Server', 'Config migration failed', e));
+// and apply initial configuration
+(async () => {
+  try {
+    await migrateConfig();
+    const config = await getConfig();
+    if (config.logLevel) {
+      logger.setLogLevel(config.logLevel);
+      logger.info('Server', `Log level set to ${config.logLevel}`);
+    }
+  } catch (e) {
+    logger.error('Server', 'Config initialization failed', e);
+  }
+})();
 
 app.prepare().then(() => {
   const server = createServer(async (req, res) => {

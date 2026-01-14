@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
+import { updateConfig } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,8 +32,12 @@ export async function PUT(req: Request) {
       }, { status: 400 });
     }
     
+    // Update in-memory logger
     logger.setLogLevel(logLevel);
     logger.info('API', `Log level changed to: ${logLevel}`);
+
+    // Persist to config
+    await updateConfig({ logLevel });
     
     return NextResponse.json({
       success: true,

@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Download, ChevronRight, ChevronDown, Info } from 'lucide-react';
+import { RefreshCw, Download, ChevronRight, ChevronDown, Info, Settings } from 'lucide-react';
+import Link from 'next/link';
 import { useToast } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
 import { MultiSelect } from './MultiSelect';
@@ -153,6 +154,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
   const [selectedDate, setSelectedDate] = useState<string>(file || 'live');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [currentSystemLogLevel, setCurrentSystemLogLevel] = useState<string>('info');
   const [filter, setFilter] = useState<Omit<LogFilter, 'date'>>({
     level: undefined,
     tags: [],
@@ -167,7 +169,20 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
   useEffect(() => {
     loadLogDates();
     loadTags();
+    loadSystemLogLevel();
   }, []);
+
+  const loadSystemLogLevel = async () => {
+      try {
+          const res = await fetch('/api/settings/logLevel');
+          const data = await res.json();
+          if (data.success && data.logLevel) {
+              setCurrentSystemLogLevel(data.logLevel);
+          }
+      } catch (e) {
+          console.error('Failed to fetch system log level', e);
+      }
+  };
 
   const loadTags = async () => {
     try {
@@ -322,7 +337,6 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
         {/* Filters Group */}
         <div className="flex gap-2 min-w-0">
-          {/* Level Filter */}
           <div className="w-24 shrink-0">
             <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
               Level
@@ -370,6 +384,11 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
         {/* Actions */}
         <div className="flex items-center gap-2 ml-auto pb-1">
+          <Link href="/settings" title="Change max Log Level" className="hidden xl:flex items-center gap-2 px-2 py-1.5 text-xs text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 rounded border border-transparent hover:border-slate-300 dark:hover:border-slate-700 transition-all">
+             <Settings className="w-3 h-3" />
+             <span>Max Level: <span className="font-semibold uppercase">{currentSystemLogLevel}</span></span>
+          </Link>
+
           <button
             onClick={handleRefresh}
             disabled={loading || selectedDate === 'live'}
