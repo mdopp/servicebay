@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Github, Settings } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import { plugins } from './Sidebar';
+import pkg from '../../package.json';
 
 export function MobileTopBar() {
   const router = useRouter();
@@ -13,8 +14,10 @@ export function MobileTopBar() {
        <div className="flex items-center gap-2">
           <ServiceBayLogo size={24} className="text-blue-600 dark:text-blue-400" />
           <div className="flex flex-col">
-             <span className="font-bold text-gray-900 dark:text-white text-sm leading-none">ServiceBay</span>
-             <span className="text-[10px] text-gray-500 dark:text-gray-400">by Korgraph.io</span>
+             <span className="font-bold text-gray-900 dark:text-white text-sm leading-none">
+                ServiceBay
+             </span>
+             <span className="text-[10px] text-gray-500 dark:text-gray-400">by Korgraph - v{pkg.version}</span>
           </div>
        </div>
        {/* Right: Icons */}

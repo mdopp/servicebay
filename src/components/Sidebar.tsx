@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Server, Network, HardDrive } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
+import pkg from '../../package.json';
 
 export const plugins = [
     { id: 'services', name: 'Services', icon: Box, path: '/services' },
@@ -41,7 +42,7 @@ export default function Sidebar() {
                             ServiceBay
                         </h3>
                         <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap">
-                            by Korgraph.io
+                            by Korgraph - v{pkg.version}
                         </span>
                     </div>
                 </div>
