@@ -1,6 +1,7 @@
 import { MonitoringStore } from './store';
 import { ServiceManager } from '../services/ServiceManager';
 import { getConfig } from '../config';
+import { listNodes } from '../nodes';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import crypto from 'crypto';
@@ -100,5 +101,31 @@ export async function initializeDefaultChecks() {
     }
   } catch (e) {
     console.error('Failed to list managed services for auto-discovery', e);
+  }
+
+  // 4. Agent Health Checks
+  try {
+      const nodes = await listNodes();
+      // Ensure specific Agent checks for all nodes + Local
+      const nodeNames = new Set(nodes.map(n => n.Name));
+      nodeNames.add('Local');
+
+      for (const nodeName of nodeNames) {
+          if (!exists('agent', nodeName)) {
+              logger.info('Monitoring', `Adding Agent Health check for ${nodeName}`);
+              MonitoringStore.saveCheck({
+                  id: crypto.randomUUID(),
+                  name: `Agent: ${nodeName}`,
+                  type: 'agent',
+                  target: nodeName,
+                  interval: 30, // Frequent check for agent health
+                  enabled: true,
+                  created_at: new Date().toISOString(),
+                  nodeName: 'Local' // The check runs locally (checking the manager state)
+              });
+          }
+      }
+  } catch (e) {
+      logger.error('Monitoring', 'Failed to add agent checks', e);
   }
 }

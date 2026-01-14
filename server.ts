@@ -54,6 +54,11 @@ app.prepare().then(() => {
   const io = new Server(server);
   const twinStore = DigitalTwinStore.getInstance();
 
+  // Logging: Broadcast new logs to 'logs:live' room
+  logger.onLog((entry) => {
+      io.to('logs:live').emit('log:entry', entry);
+  });
+
   const updateResourceMonitoring = (nodeName: string) => {
       const viewers = resourceViewers.get(nodeName);
       const isActive = viewers ? viewers.size > 0 : false;
@@ -376,6 +381,15 @@ app.prepare().then(() => {
             logger.error('Server', 'Failed to join terminal:', e);
             socket.emit('output', '\r\n\x1b[31m>>> Failed to join terminal session.\x1b[0m\r\n');
         }
+    });
+
+    // Logging Subscription
+    socket.on('logs:subscribe', () => {
+        socket.join('logs:live');
+    });
+
+    socket.on('logs:unsubscribe', () => {
+        socket.leave('logs:live');
     });
 
     socket.on('input', ({ id, data }: { id: string, data: string }) => {

@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import vm from 'vm';
 import { getExecutor, Executor } from '../executor';
 import { listNodes, verifyNodeConnection } from '../nodes';
+import { agentManager } from '../agent/manager';
 
 export class CheckRunner {
   static async run(check: CheckConfig): Promise<CheckResult> {
@@ -46,6 +47,11 @@ export class CheckRunner {
           break;
         case 'node':
           await this.runNodeCheck(check.target);
+          status = 'ok';
+          break;
+        case 'agent':
+          const agentMsg = await this.runAgentCheck(check.target);
+          if (agentMsg) message = agentMsg;
           status = 'ok';
           break;
         case 'fritzbox':
@@ -191,7 +197,8 @@ export class CheckRunner {
     
     try {
         const result = vm.runInContext(code, context, { timeout: 5000 });
-        if (result instanceof Promise) {
+        // Check if result is thenable (Promise-like) since VM Promise != Host Promise
+        if (result && typeof result.then === 'function') {
             await result;
         }
     } catch (e: unknown) {
@@ -277,5 +284,32 @@ export class CheckRunner {
     } finally {
         clearTimeout(timeout);
     }
+  }
+
+  private static async runAgentCheck(nodeName: string): Promise<string> {
+    const agent = agentManager.getAgent(nodeName);
+    const health = agent.getHealth();
+    
+    if (!health.isConnected) {
+        throw new Error(`Agent is disconnected (Last error: ${health.lastError || 'None'})`);
+    }
+
+    // Check for stale heartbeat
+    // "Last Sync" is updated on any data received. 
+    // If agent is connected but silent for too long, it might be zombie.
+    // However, if no events happen, it might be silent.
+    // Ideally agents send periodic heartbeats (e.g. status updates).
+    // Let's assume > 5 minutes silence is suspicious if we expect keepalives.
+    const silence = Date.now() - health.lastSync;
+    if (silence > 300000) { 
+        // 5 minutes
+        throw new Error(`Agent connection stalled? No data for ${Math.floor(silence/1000)}s`);
+    }
+
+    let status = `Connected.`;
+    if (health.messageCount > 0) status += ` Msgs: ${health.messageCount}`;
+    if (health.errorCount > 0) status += ` Errs: ${health.errorCount}`;
+    
+    return status;
   }
 }

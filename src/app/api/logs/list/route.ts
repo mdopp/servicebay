@@ -5,17 +5,19 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const files = logger.listLogFiles();
+    const dates = logger.listLogDates();
     return NextResponse.json({
       success: true,
-      files: files.map(file => ({
-        name: file,
-        path: `/api/logs/${encodeURIComponent(file)}`
+      // Map to structure expected by frontend (name/path) or just array of dates
+      files: dates.map(date => ({
+        name: date,
+        // No path needed really, but keeping shape for now
+        path: date
       }))
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error('API', 'Failed to list log files:', err);
+    logger.error('API', 'Failed to list log dates:', err);
     return NextResponse.json({
       success: false,
       error: message

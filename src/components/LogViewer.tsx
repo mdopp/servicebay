@@ -1,20 +1,24 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { RefreshCw, Download, Filter, X, AlertCircle, Info } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { RefreshCw, Download, ChevronRight, ChevronDown, Info } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { useSocket } from '@/hooks/useSocket';
+import { MultiSelect } from './MultiSelect';
 
 interface LogEntry {
+  id: number;
   timestamp: string;
   level: 'debug' | 'info' | 'warn' | 'error';
   tag: string;
   message: string;
-  args?: Record<string, unknown>;
+  args?: unknown[];
 }
 
 interface LogFilter {
+  date: string; // 'live' or YYYY-MM-DD
   level?: string;
-  tag?: string;
+  tags?: string[];
   search?: string;
   limit: number;
 }
@@ -33,131 +37,185 @@ const LOG_LEVEL_BG: Record<string, string> = {
   error: 'bg-red-50 dark:bg-red-900/20'
 };
 
+const formatBytes = (bytes: number, decimals = 1) => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+};
+
+const LogMessage = ({ message }: { message: string }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  // Try to parse the message as JSON if it looks like one
+  const trimmed = message.trim();
+  const isJsonLike = (trimmed.startsWith('{') && trimmed.endsWith('}')) || 
+                     (trimmed.startsWith('[') && trimmed.endsWith(']'));
+
+  let parsedJson = null;
+  let jsonSize = 0;
+  let isParsed = false;
+
+  if (isJsonLike) {
+    try {
+      parsedJson = JSON.parse(trimmed);
+      jsonSize = new TextEncoder().encode(trimmed).length;
+      isParsed = true;
+    } catch {
+      // Failed to parse
+    }
+  }
+
+  if (isParsed) {
+      return (
+        <div className="mt-1">
+          <button 
+            onClick={() => setExpanded(!expanded)} 
+            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors select-none"
+          >
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <span className="font-mono">JSON Payload <span className="text-slate-400">({formatBytes(jsonSize)})</span> {expanded ? '' : '(click to expand)'}</span>
+          </button>
+          
+          {expanded && (
+            <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700 animate-in fade-in slide-in-from-top-1 duration-200">
+              <code>{JSON.stringify(parsedJson, null, 2)}</code>
+            </pre>
+          )}
+        </div>
+      );
+  }
+
+  // Check for JSON embedded after a prefix (e.g. "Payload: {...}")
+  const jsonStart = message.search(/[{\[]/);
+  
+  let prefix = '';
+  let embeddedJson = null;
+  let embeddedSize = 0;
+  let hasEmbedded = false;
+
+  if (jsonStart > 0) {
+    const potentialJson = message.slice(jsonStart).trim();
+    if ((potentialJson.startsWith('{') && potentialJson.endsWith('}')) || 
+        (potentialJson.startsWith('[') && potentialJson.endsWith(']'))) {
+      try {
+        embeddedJson = JSON.parse(potentialJson);
+        embeddedSize = new TextEncoder().encode(potentialJson).length;
+        prefix = message.slice(0, jsonStart);
+        hasEmbedded = true;
+      } catch {
+        // Failed to parse
+      }
+    }
+  }
+
+  if (hasEmbedded) {
+        return (
+          <div className="flex flex-col gap-1">
+            <span className="whitespace-pre-wrap">{prefix}</span>
+            <div className="mt-0.5">
+              <button 
+                onClick={() => setExpanded(!expanded)} 
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors select-none"
+              >
+                {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span className="font-mono">JSON Data <span className="text-slate-400">({formatBytes(embeddedSize)})</span></span>
+              </button>
+              
+              {expanded && (
+                <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <code>{JSON.stringify(embeddedJson, null, 2)}</code>
+                </pre>
+              )}
+            </div>
+          </div>
+        );
+  }
+
+  // Use whitespace-pre-wrap to respect newlines in non-JSON messages (like stack traces or pre-formatted text)
+  return <span className="whitespace-pre-wrap">{message}</span>;
+};
+
 export interface LogViewerProps {
   file?: string;
+  searchQuery?: string;
 }
 
 /**
  * LogViewer Component
  * Real-time log viewer with filtering capabilities
  */
-export default function LogViewer({ file }: LogViewerProps) {
-  const [logFiles, setLogFiles] = useState<Array<{ name: string; path: string }>>([]);
-  const [selectedFile, setSelectedFile] = useState<string>(file || '');
+export default function LogViewer({ file, searchQuery }: LogViewerProps) {
+  const [logDates, setLogDates] = useState<string[]>([]);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
+  const [selectedDate, setSelectedDate] = useState<string>(file || 'live');
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [filteredLogs, setFilteredLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState<LogFilter>({
+  const [filter, setFilter] = useState<Omit<LogFilter, 'date'>>({
     level: undefined,
-    tag: undefined,
+    tags: [],
     search: undefined,
-    limit: 500
+    limit: 100
   });
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const logContainerRef = useRef<HTMLDivElement>(null);
+  
+  const { socket, isConnected } = useSocket();
   const { addToast } = useToast();
 
-  // Load log files on mount
+  // Load available log dates and tags
   useEffect(() => {
-    loadLogFiles();
+    loadLogDates();
+    loadTags();
   }, []);
 
-  // Auto-scroll to bottom when logs update (only if auto-refresh is on)
-  useEffect(() => {
-    if (autoRefresh && logContainerRef.current) {
-      // Always scroll to the newest entry
-      setTimeout(() => {
-        if (logContainerRef.current) {
-          logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+  const loadTags = async () => {
+    try {
+        const response = await fetch('/api/logs/tags');
+        const data = await response.json();
+        if (data.success) {
+            setAvailableTags(data.tags);
         }
-      }, 0);
+    } catch (err) {
+        console.error('Failed to load tags:', err);
     }
-  }, [filteredLogs, autoRefresh]);
+  };
 
-  // Auto-refresh logs periodically
-  useEffect(() => {
-    if (!autoRefresh || !selectedFile) return;
-
-    const interval = setInterval(() => {
-      loadLogs(selectedFile);
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [autoRefresh, selectedFile]);
-
-  // Apply filters when logs or filter changes
-  useEffect(() => {
-    let filtered = logs;
-
-    if (filter.level) {
-      filtered = filtered.filter(log => log.level === filter.level);
-    }
-    if (filter.tag) {
-      filtered = filtered.filter(log => log.tag.toLowerCase().includes(filter.tag!.toLowerCase()));
-    }
-    if (filter.search) {
-      filtered = filtered.filter(log =>
-        log.message.toLowerCase().includes(filter.search!.toLowerCase()) ||
-        log.tag.toLowerCase().includes(filter.search!.toLowerCase())
-      );
-    }
-
-    setFilteredLogs(filtered.slice(-filter.limit));
-  }, [logs, filter]);
-
-  const loadLogFiles = async () => {
+  const loadLogDates = async () => {
     try {
       const response = await fetch('/api/logs/list');
       const data = await response.json();
       if (data.success) {
-        setLogFiles(data.files);
-        if (data.files.length > 0 && !selectedFile) {
-          setSelectedFile(data.files[0].name);
-        }
+        // API returns dates directly
+        setLogDates(data.files.map((f: {name: string}) => f.name));
       }
     } catch (err) {
-      console.error('Failed to load log files:', err);
-      addToast('error', 'Failed to load log files', String(err));
+        console.error('Failed to load log dates:', err);
     }
   };
 
-  const loadLogs = async (filename: string) => {
-    if (!filename) return;
-
+  const fetchLogs = useCallback(async () => {
+    setLoading(true);
     try {
       const params = new URLSearchParams();
+      params.append('date', selectedDate);
       if (filter.level) params.append('level', filter.level);
-      if (filter.tag) params.append('tag', filter.tag);
-      if (filter.search) params.append('search', filter.search);
+      if (filter.tags && filter.tags.length > 0) {
+          filter.tags.forEach(t => params.append('tag', t));
+      }
+      
+      const effectiveSearch = searchQuery || filter.search;
+      if (effectiveSearch) params.append('search', effectiveSearch);
+      
       params.append('limit', String(filter.limit));
 
-      const response = await fetch(`/api/logs/${encodeURIComponent(filename)}?${params}`);
+      const response = await fetch(`/api/logs/query?${params}`);
       const data = await response.json();
 
       if (data.success) {
-        // Smart merge: only update if logs have changed
-        setLogs(prevLogs => {
-          const newLogs = data.logs;
-          
-          // If completely different or first load, replace
-          if (prevLogs.length === 0 || newLogs.length === 0) {
-            return newLogs;
-          }
-          
-          // Check if we have new logs by comparing last few entries
-          // If new logs have more entries or different content, use new logs
-          // This handles additions gracefully
-          if (newLogs.length > prevLogs.length || 
-              (newLogs.length > 0 && prevLogs.length > 0 && 
-               newLogs[newLogs.length - 1].timestamp !== prevLogs[prevLogs.length - 1].timestamp)) {
-            return newLogs;
-          }
-          
-          // Otherwise keep the existing logs (no update needed)
-          return prevLogs;
-        });
+        setLogs(data.logs);
       } else {
-        addToast('error', 'Failed to load logs', data.error);
+        setLogs([]);
       }
     } catch (err) {
       console.error('Failed to load logs:', err);
@@ -165,21 +223,50 @@ export default function LogViewer({ file }: LogViewerProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedDate, filter, searchQuery, addToast]);
 
-  const handleFileChange = (filename: string) => {
-    setSelectedFile(filename);
-    loadLogs(filename);
-  };
+  // Fetch logs when date, filter, or search changes
+  useEffect(() => {
+    fetchLogs();
+  }, [fetchLogs]);
+
+  // Live streaming logic
+  useEffect(() => {
+    if (selectedDate !== 'live' || !socket || !isConnected) return;
+
+    socket.emit('logs:subscribe');
+
+    const handleLogEntry = (entry: LogEntry) => {
+        // Apply frontend filters to stream
+        if (filter.level && entry.level !== filter.level) return; // Simple check, exact match
+        if (filter.tags && filter.tags.length > 0) {
+            const matches = filter.tags.some(t => entry.tag.includes(t));
+            if (!matches) return;
+        }
+        
+        const effectiveSearch = searchQuery || filter.search;
+        if (effectiveSearch) {
+             const term = effectiveSearch.toLowerCase();
+             if (!entry.message.toLowerCase().includes(term) && !entry.tag.toLowerCase().includes(term)) return;
+        }
+
+        setLogs(prev => [entry, ...prev].slice(0, filter.limit));
+    };
+
+    socket.on('log:entry', handleLogEntry);
+
+    return () => {
+        socket.emit('logs:unsubscribe');
+        socket.off('log:entry', handleLogEntry);
+    };
+  }, [selectedDate, socket, isConnected, filter, searchQuery]);
 
   const handleRefresh = () => {
-    if (selectedFile) {
-      loadLogs(selectedFile);
-    }
+    fetchLogs();
   };
 
   const handleDownload = () => {
-    const text = filteredLogs
+    const text = logs
       .map(log => `${log.timestamp} [${log.level.toUpperCase()}] [${log.tag}] ${log.message}`)
       .join('\n');
 
@@ -187,7 +274,7 @@ export default function LogViewer({ file }: LogViewerProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `logs-${Date.now()}.txt`;
+    a.download = `logs-${selectedDate}-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -195,13 +282,13 @@ export default function LogViewer({ file }: LogViewerProps) {
   const handleClearFilter = () => {
     setFilter({
       level: undefined,
-      tag: undefined,
+      tags: [],
       search: undefined,
-      limit: 500
+      limit: 100
     });
   };
 
-  const hasActiveFilter = filter.level || filter.tag || filter.search;
+  const hasActiveFilter = filter.level || (filter.tags && filter.tags.length > 0) || filter.search || searchQuery;
 
   // Extract time only from timestamp (HH:MM:SS.mmm)
   const extractTime = (timestamp: string): string => {
@@ -211,160 +298,132 @@ export default function LogViewer({ file }: LogViewerProps) {
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800">
-      {/* Header */}
-      <div className="p-4 border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">System Logs</h2>
-          <div className="flex gap-2">
-            <button
-              onClick={handleRefresh}
-              disabled={loading || !selectedFile}
-              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded disabled:opacity-50"
-              title="Refresh logs"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleDownload}
-              disabled={filteredLogs.length === 0}
-              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded disabled:opacity-50"
-              title="Download logs"
-            >
-              <Download className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+      {/* Toolbar */}
+      <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex flex-col lg:flex-row lg:items-end gap-3 z-10 bg-inherit">
 
-        {/* File Selection */}
-        <div className="mb-3">
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-            Log File
+        {/* Date Selection */}
+        <div className="w-full lg:w-40 shrink-0">
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+            Date
           </label>
           <select
-            value={selectedFile}
-            onChange={e => handleFileChange(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+            value={selectedDate}
+            onChange={e => setSelectedDate(e.target.value)}
+            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer"
           >
-            <option value="">Select a log file...</option>
-            {logFiles.map(f => (
-              <option key={f.name} value={f.name}>
-                {f.name}
+            <option value="live">Live Log Stream</option>
+            {logDates.map(date => (
+              <option key={date} value={date}>
+                {date}
               </option>
             ))}
           </select>
         </div>
 
-        {/* Filters */}
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Filters</span>
-            {hasActiveFilter && (
-              <button
-                onClick={handleClearFilter}
-                className="ml-auto text-xs px-2 py-1 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600"
-              >
-                Clear
-              </button>
-            )}
+        {/* Filters Group */}
+        <div className="flex gap-2 min-w-0">
+          {/* Level Filter */}
+          <div className="w-24 shrink-0">
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+              Level
+            </label>
+            <select
+              value={filter.level || ''}
+              onChange={e => setFilter({ ...filter, level: e.target.value || undefined })}
+              className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer"
+            >
+              <option value="">All</option>
+              <option value="debug">Debug</option>
+              <option value="info">Info</option>
+              <option value="warn">Warn</option>
+              <option value="error">Error</option>
+            </select>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                Level
-              </label>
-              <select
-                value={filter.level || ''}
-                onChange={e => setFilter({ ...filter, level: e.target.value || undefined })}
-                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-              >
-                <option value="">All Levels</option>
-                <option value="debug">Debug</option>
-                <option value="info">Info</option>
-                <option value="warn">Warn</option>
-                <option value="error">Error</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                Tag
-              </label>
-              <input
-                type="text"
-                value={filter.tag || ''}
-                onChange={e => setFilter({ ...filter, tag: e.target.value || undefined })}
-                placeholder="e.g., Agent"
-                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                Limit
-              </label>
-              <input
-                type="number"
-                value={filter.limit}
-                onChange={e => setFilter({ ...filter, limit: parseInt(e.target.value) || 100 })}
-                min="10"
-                max="5000"
-                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-              />
-            </div>
+          {/* Tag Filter */}
+          <div className="w-64 shrink-1 min-w-0">
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+              Tag
+            </label>
+            <MultiSelect
+              options={availableTags}
+              value={filter.tags || []}
+              onChange={(tags) => setFilter({ ...filter, tags })}
+              placeholder="Tag..."
+              className="w-full"
+            />
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-              Search
+          {/* Limit */}
+          <div className="w-20 shrink-0">
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+              Limit
             </label>
             <input
-              type="text"
-              value={filter.search || ''}
-              onChange={e => setFilter({ ...filter, search: e.target.value || undefined })}
-              placeholder="Search in message or tag..."
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              type="number"
+              value={filter.limit}
+              onChange={e => setFilter({ ...filter, limit: parseInt(e.target.value) || 100 })}
+              className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
             />
           </div>
+        </div>
 
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={e => setAutoRefresh(e.target.checked)}
-              className="w-4 h-4"
-            />
-            <span className="text-slate-700 dark:text-slate-300">Auto-refresh</span>
-          </label>
+        {/* Actions */}
+        <div className="flex items-center gap-2 ml-auto pb-1">
+          <button
+            onClick={handleRefresh}
+            disabled={loading || selectedDate === 'live'}
+            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+            title="Refresh logs"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          
+          <button
+            onClick={handleDownload}
+            disabled={logs.length === 0}
+            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
+            title="Download logs"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+          
+          {hasActiveFilter && (
+            <button
+               onClick={handleClearFilter}
+               className="ml-1 text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 hover:bg-slate-200"
+               title="Clear filters"
+            >
+              Clear
+            </button>
+          )}
         </div>
       </div>
 
       {/* Log Container */}
       <div
-        ref={logContainerRef}
         className="flex-1 overflow-auto p-4 space-y-1 font-mono text-sm"
       >
-        {filteredLogs.length === 0 && !loading && (
+        {logs.length === 0 && !loading && (
           <div className="flex items-center justify-center h-full text-slate-500 dark:text-slate-400">
             <div className="text-center">
               <Info className="w-8 h-8 mx-auto mb-2 opacity-50" />
               <p>No logs to display</p>
-              {selectedFile && <p className="text-xs mt-1">Try adjusting your filters</p>}
+              {selectedDate === 'live' && <p className="text-xs mt-1">Waiting for new logs...</p>}
             </div>
           </div>
         )}
 
-        {loading && (
+        {loading && logs.length === 0 && (
           <div className="flex items-center justify-center h-full text-slate-500 dark:text-slate-400">
             <RefreshCw className="w-4 h-4 animate-spin mr-2" />
             <span>Loading logs...</span>
           </div>
         )}
 
-        {filteredLogs.map((log, idx) => (
+        {logs.map((log) => (
           <div
-            key={idx}
+            key={log.id || log.timestamp} // Fallback for transition
             className={`px-2 py-1.5 rounded-sm border-l-2 ${LOG_LEVEL_BG[log.level]} hover:brightness-95 transition-all`}
             style={{ borderLeftColor: log.level === 'error' ? '#dc2626' : log.level === 'warn' ? '#ca8a04' : log.level === 'info' ? '#2563eb' : '#6b7280' }}
           >
@@ -380,7 +439,9 @@ export default function LogViewer({ file }: LogViewerProps) {
                   [{log.tag}]
                 </span>
               </div>
-              <span className="flex-1 text-slate-800 dark:text-slate-200 break-words">{log.message}</span>
+              <div className="flex-1 text-slate-800 dark:text-slate-200 break-words min-w-0">
+                <LogMessage message={log.message} />
+              </div>
             </div>
             {log.args && Object.keys(log.args).length > 0 && (
               <div className="text-[10px] opacity-60 mt-1 ml-28 font-mono text-slate-600 dark:text-slate-400">
@@ -389,12 +450,13 @@ export default function LogViewer({ file }: LogViewerProps) {
             )}
           </div>
         ))}
+        {/* Helper for auto-scroll if needed, though usually top is better for live stream reading */}
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-2 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400">
-        Showing {filteredLogs.length} of {logs.length} logs
-        {hasActiveFilter && <span> (filtered)</span>}
+      <div className="px-4 py-2 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex justify-between">
+        <span>Showing {logs.length} logs</span>
+        <span>{selectedDate === 'live' ? 'Live Stream Active' : 'Historical View'}</span>
       </div>
     </div>
   );

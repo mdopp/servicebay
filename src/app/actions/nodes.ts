@@ -43,6 +43,18 @@ export async function createNode(name: string, destination: string, identity: st
         enabled: true,
         created_at: new Date().toISOString()
     });
+
+    // Create Agent Check
+    MonitoringStore.saveCheck({
+        id: crypto.randomUUID(),
+        name: `Agent: ${name}`,
+        type: 'agent',
+        target: name,
+        interval: 30, // Frequent checks for agent
+        enabled: true,
+        created_at: new Date().toISOString(),
+        nodeName: 'Local'
+    });
     
     return { success: true };
   } catch (error) {
@@ -96,7 +108,11 @@ export async function deleteNode(name: string) {
     
     // Remove associated health checks
     const checks = MonitoringStore.getChecks();
-    const nodeChecks = checks.filter(c => c.nodeName === name || c.name === `Node Health: ${name}`);
+    const nodeChecks = checks.filter(c => 
+        c.nodeName === name || 
+        c.name === `Node Health: ${name}` ||
+        c.name === `Agent: ${name}`
+    );
     nodeChecks.forEach(c => MonitoringStore.deleteCheck(c.id));
 
     revalidatePath('/settings');

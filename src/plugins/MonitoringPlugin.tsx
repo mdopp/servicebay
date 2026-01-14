@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, RefreshCw, X, Search } from 'lucide-react';
 import { useToast, ToastType } from '@/providers/ToastProvider';
-import { Socket } from 'socket.io-client';
+import { useSocket } from '@/hooks/useSocket';
 import PageHeader from '@/components/PageHeader';
 import { Autocomplete } from '@/components/Autocomplete';
 import ConfirmModal from '@/components/ConfirmModal';
 import LogViewer from '@/components/LogViewer';
-import AgentHealthMonitor from '@/components/AgentHealthMonitor';
 import MonitoringChecks from '@/components/MonitoringChecks';
+import CheckHistoryModal from '@/components/CheckHistoryModal';
 import { CheckConfig, CheckType, Check } from '@/lib/monitoring/types';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
@@ -47,6 +47,7 @@ export default function MonitoringPlugin() {
   const [activeTab, setActiveTab] = useState<'checks' | 'health' | 'logs'>('checks');
   const isFetchingRef = useRef(false);
   const { addToast, updateToast } = useToast();
+  const { socket } = useSocket();
   // Using Digital Twin hook to trigger re-fetches when state changes?
   // Monitoring data is stored in `data/checks.json` in backend, NOT in twin directly.
   // HOWEVER, the backend runs the checks and emits events.
@@ -141,39 +142,33 @@ export default function MonitoringPlugin() {
         Notification.requestPermission();
     }
 
-    let socket: Socket;
+    if (!socket) return;
 
-    // Listen for updates via socket
-    const initSocket = async () => {
-        const { io } = await import('socket.io-client');
-        socket = io();
+    const onAlert = (data: { title: string, message: string, type: string }) => {
+        addToast(data.type as ToastType, data.title, data.message);
         
-        socket.on('monitoring:alert', (data: { title: string, message: string, type: string }) => {
-            // Toast removed/kept? "no notifications for updating data"
-            // Alerts are important, keeping them.
-            addToast(data.type as ToastType, data.title, data.message);
-            
-            // Only show native notification if page is hidden
-            if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
-                new Notification(data.title, { body: data.message });
-            }
-            
-            // Refresh data on alert
-            fetchData();
-        });
-
-        socket.on('monitoring:update', () => {
-            // Silent update
-            fetchData();
-        });
+        // Only show native notification if page is hidden
+        if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification(data.title, { body: data.message });
+        }
+        
+        // Refresh data on alert
+        fetchData();
     };
-    
-    initSocket();
+
+    const onUpdate = () => {
+        // Silent update
+        fetchData();
+    };
+
+    socket.on('monitoring:alert', onAlert);
+    socket.on('monitoring:update', onUpdate);
 
     return () => {
-        if (socket) socket.disconnect();
+        socket.off('monitoring:alert', onAlert);
+        socket.off('monitoring:update', onUpdate);
     };
-  }, [fetchData, addToast]);
+  }, [fetchData, addToast, socket]);
 
   const handleOpenModal = (check?: Check) => {
     if (check) {
@@ -200,6 +195,11 @@ export default function MonitoringPlugin() {
       });
     }
     setIsModalOpen(true);
+  };
+  
+  const isSystemCheck = (type?: CheckType) => {
+      const t = type || formData.type;
+      return t === 'agent' || t === 'node';
   };
 
   const handleSave = async () => {
@@ -330,16 +330,6 @@ export default function MonitoringPlugin() {
           Monitoring
         </button>
         <button 
-          onClick={() => setActiveTab('health')} 
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            activeTab === 'health' 
-              ? 'border-blue-600 text-blue-600 dark:text-blue-400' 
-              : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-          }`}
-        >
-          Agent Health
-        </button>
-        <button 
           onClick={() => setActiveTab('logs')} 
           className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
             activeTab === 'logs' 
@@ -366,15 +356,9 @@ export default function MonitoringPlugin() {
         />
       )}
 
-      {activeTab === 'health' && (
-        <div className="px-2">
-          <AgentHealthMonitor refreshInterval={10000} />
-        </div>
-      )}
-
       {activeTab === 'logs' && (
         <div className="px-2">
-          <LogViewer />
+          <LogViewer searchQuery={searchQuery} />
         </div>
       )}
       </div>
@@ -580,7 +564,7 @@ export default function MonitoringPlugin() {
           <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800">
             <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                {editingCheck ? 'Edit Check' : 'New Check'}
+                {editingCheck ? (isSystemCheck() ? 'View Check Config' : 'Edit Check') : 'New Check'}
               </h3>
               <button onClick={() => setIsModalOpen(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
                 <X size={20} />
@@ -593,7 +577,8 @@ export default function MonitoringPlugin() {
                   type="text" 
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
-                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  disabled={isSystemCheck()}
+                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                   placeholder="e.g. Production API"
                 />
               </div>
@@ -602,7 +587,8 @@ export default function MonitoringPlugin() {
                 <select 
                   value={formData.type}
                   onChange={e => setFormData({...formData, type: e.target.value as CheckType})}
-                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  disabled={isSystemCheck()}
+                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                 >
                   <option value="http">HTTP Request</option>
                   <option value="ping">Ping</option>
@@ -610,6 +596,7 @@ export default function MonitoringPlugin() {
                   <option value="service">Managed Service</option>
                   <option value="systemd">System Service</option>
                   <option value="node">Remote Node Connection</option>
+                  <option value="agent">Agent Health</option>
                   <option value="script">Custom Script (JS)</option>
                   <option value="fritzbox">Fritz!Box Internet</option>
                 </select>
@@ -634,6 +621,9 @@ export default function MonitoringPlugin() {
                     {formData.type === 'node' && (
                         <p>Verifies the connection to a remote Podman node. Checks SSH connectivity and the Podman socket availability. Fails if the node is unreachable or Podman is not responding.</p>
                     )}
+                    {formData.type === 'agent' && (
+                        <p>Monitors the ServiceBay Agent on a node. Verifies connection status, heartbeat, and error rates. Fails if the agent disconnects or stops reporting.</p>
+                    )}
                     {formData.type === 'script' && (
                         <p>Executes a custom JavaScript snippet in a sandboxed environment. Use <code>fetch()</code> for custom logic. Throw an error to fail the check.</p>
                     )}
@@ -648,7 +638,8 @@ export default function MonitoringPlugin() {
                 <select 
                   value={formData.nodeName || ''}
                   onChange={e => setFormData({...formData, nodeName: e.target.value})}
-                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  disabled={isSystemCheck()}
+                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                 >
                   <option value="">Local (ServiceBay Host)</option>
                   {nodes.map(node => (
@@ -666,7 +657,8 @@ export default function MonitoringPlugin() {
                     <textarea
                         value={formData.target}
                         onChange={e => setFormData({...formData, target: e.target.value})}
-                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm h-32"
+                        disabled={isSystemCheck()}
+                        className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm h-32 ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                         placeholder="if (1 !== 1) throw new Error('Math broken')"
                     />
                 ) : formData.type === 'podman' ? (
@@ -674,8 +666,8 @@ export default function MonitoringPlugin() {
                         <select
                             value={formData.target}
                             onChange={e => setFormData({...formData, target: e.target.value})}
-                            disabled={resourcesLoading}
-                            className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${resourcesLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            disabled={resourcesLoading || isSystemCheck()}
+                            className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${resourcesLoading || isSystemCheck() ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                             <option value="">{resourcesLoading ? 'Loading containers...' : 'Select a container...'}</option>
                             {!resourcesLoading && containers.map((c) => (
@@ -697,7 +689,7 @@ export default function MonitoringPlugin() {
                         onChange={val => setFormData({...formData, target: val})}
                         placeholder="Select a managed service..."
                         loading={resourcesLoading}
-                        disabled={resourcesLoading}
+                        disabled={resourcesLoading || isSystemCheck()}
                     />
                 ) : formData.type === 'systemd' ? (
                     <Autocomplete
@@ -706,13 +698,14 @@ export default function MonitoringPlugin() {
                         onChange={val => setFormData({...formData, target: val})}
                         placeholder="Search system services..."
                         loading={resourcesLoading}
-                        disabled={resourcesLoading}
+                        disabled={resourcesLoading || isSystemCheck()}
                     />
                 ) : formData.type === 'node' ? (
                     <select
                         value={formData.target}
                         onChange={e => setFormData({...formData, target: e.target.value})}
-                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        disabled={isSystemCheck()}
+                        className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                     >
                         <option value="">Select a node...</option>
                         {nodes.map((n) => (
@@ -726,7 +719,8 @@ export default function MonitoringPlugin() {
                       type="text" 
                       value={formData.target}
                       onChange={e => setFormData({...formData, target: e.target.value})}
-                      className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                      disabled={isSystemCheck()}
+                      className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                       placeholder={
                         formData.type === 'http' ? 'https://example.com' : 
                         formData.type === 'fritzbox' ? 'fritz.box' :
@@ -755,7 +749,8 @@ export default function MonitoringPlugin() {
                                 ...formData, 
                                 httpConfig: { ...formData.httpConfig, expectedStatus: parseInt(e.target.value) }
                             })}
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                            disabled={isSystemCheck()}
+                            className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                         />
                     </div>
                     <div>
@@ -767,7 +762,8 @@ export default function MonitoringPlugin() {
                                     ...formData, 
                                     httpConfig: { ...formData.httpConfig, bodyMatchType: e.target.value as 'contains' | 'regex' }
                                 })}
-                                className="p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                disabled={isSystemCheck()}
+                                className={`p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                             >
                                 <option value="contains">Contains</option>
                                 <option value="regex">Regex</option>
@@ -779,7 +775,8 @@ export default function MonitoringPlugin() {
                                     ...formData, 
                                     httpConfig: { ...formData.httpConfig, bodyMatch: e.target.value }
                                 })}
-                                className="flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                disabled={isSystemCheck()}
+                                className={`flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 placeholder={formData.httpConfig?.bodyMatchType === 'regex' ? '^Hello.*World$' : 'Success'}
                             />
                         </div>
@@ -793,7 +790,8 @@ export default function MonitoringPlugin() {
                   type="number" 
                   value={formData.interval}
                   onChange={e => setFormData({...formData, interval: parseInt(e.target.value)})}
-                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  disabled={isSystemCheck()}
+                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                   min="10"
                 />
               </div>
@@ -803,14 +801,16 @@ export default function MonitoringPlugin() {
                 onClick={() => setIsModalOpen(false)}
                 className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
               >
-                Cancel
+                {isSystemCheck() ? 'Close' : 'Cancel'}
               </button>
+              {!isSystemCheck() && (
               <button 
                 onClick={handleSave}
                 className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium"
               >
                 Save Check
               </button>
+              )}
             </div>
           </div>
         </div>
@@ -824,6 +824,16 @@ export default function MonitoringPlugin() {
         isDestructive={true}
         onConfirm={confirmDelete}
         onCancel={() => setIsDeleteModalOpen(false)}
+      />
+
+      <CheckHistoryModal
+        isOpen={!!historyCheck}
+        check={historyCheck}
+        data={historyData}
+        onClose={() => {
+            setHistoryCheck(null);
+            setHistoryData([]);
+        }}
       />
     </div>
   );

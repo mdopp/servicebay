@@ -1,4 +1,4 @@
-export type CheckType = 'http' | 'ping' | 'script' | 'podman' | 'service' | 'systemd' | 'fritzbox' | 'node';
+export type CheckType = 'http' | 'ping' | 'script' | 'podman' | 'service' | 'systemd' | 'fritzbox' | 'node' | 'agent';
 
 export interface CheckConfig {
   id: string;

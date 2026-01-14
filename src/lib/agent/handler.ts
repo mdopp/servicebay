@@ -44,6 +44,7 @@ export class AgentHandler extends EventEmitter {
   private channel: ClientChannel | null = null;
   private process: ChildProcess | null = null;
   private buffer: Buffer = Buffer.alloc(0);
+  private logBuffer: string = '';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private pendingRequests: Map<string, { resolve: (val: any) => void; reject: (err: any) => void }> = new Map();
   private isConnected: boolean = false;
@@ -168,6 +169,7 @@ export class AgentHandler extends EventEmitter {
 
           this.channel = stream;
           this.isConnected = true;
+          this.health.isConnected = true;
           this.emit('connected');
           resolve();
 
@@ -190,12 +192,14 @@ export class AgentHandler extends EventEmitter {
   }
 
   private handleLog(data: Buffer | string) {
-      const str = data.toString().trim();
-      if (!str) return;
-
-      const lines = str.split('\n');
-      for (const line of lines) {
-          if (!line.trim()) continue;
+      this.logBuffer += data.toString();
+      
+      let newlineIndex;
+      while ((newlineIndex = this.logBuffer.indexOf('\n')) !== -1) {
+          const line = this.logBuffer.substring(0, newlineIndex).trim();
+          this.logBuffer = this.logBuffer.substring(newlineIndex + 1);
+          
+          if (!line) continue;
           
           if (line.includes('[INFO]')) {
               logger.info(`Agent:${this.nodeName}`, line.replace(/.*\[INFO\]\s*/, ''));
@@ -213,6 +217,14 @@ export class AgentHandler extends EventEmitter {
               this.health.lastError = line;
               logger.error(`Agent:${this.nodeName}:STDERR`, line);
           }
+      }
+      
+      // Safety: Prevent unlimited buffer growth if no newline ever comes (unlikely but safe)
+      if (this.logBuffer.length > 1024 * 1024) {
+          // Log what we have and clear
+          logger.error(`Agent:${this.nodeName}`, 'Log buffer exceeded 1MB, flushing raw content');
+          logger.error(`Agent:${this.nodeName}:STDERR`, this.logBuffer);
+          this.logBuffer = '';
       }
   }
 

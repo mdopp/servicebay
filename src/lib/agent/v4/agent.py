@@ -74,6 +74,21 @@ def run_command(cmd: List[str], check: bool = True) -> str:
 
 # --- Monitors ---
 
+class HeartbeatMonitor(threading.Thread):
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+        self.daemon = True
+
+    def run(self):
+        log_debug("HeartbeatMonitor started")
+        while True:
+            time.sleep(60)
+            try:
+                self.callback()
+            except Exception as e:
+                log_error(f"HeartbeatMonitor crash: {e}")
+
 class PodmanMonitor(threading.Thread):
     def __init__(self, callback):
         super().__init__()
@@ -1262,6 +1277,7 @@ class Agent:
         
         SystemdMonitor(self.on_service_event).start()
         ResourceMonitor(self.on_resource_tick).start()
+        HeartbeatMonitor(self.on_heartbeat).start()
         
         # File watcher loop
         threading.Thread(target=self.file_watcher_loop, daemon=True).start()
@@ -1564,6 +1580,11 @@ class Agent:
                                 if dst.startswith('/etc/nginx') or dst.startswith('/config') or dst.startswith('/data/nginx'):
                                     host_dirs.append(src)
         return list(set(host_dirs))
+
+    def on_heartbeat(self):
+        # Sends a heartbeat to keep the connection alive (avoid 5min timeout)
+        log_debug("Sending heartbeat...")
+        self.push_state('HEARTBEAT', {})
 
     def on_container_event(self, _type):
         """

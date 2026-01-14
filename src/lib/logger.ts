@@ -1,5 +1,6 @@
 import type * as fs from 'fs';
 import type * as path from 'path';
+import type { Database } from 'better-sqlite3';
 
 const isServer = typeof window === 'undefined';
 
@@ -19,6 +20,7 @@ const COLORS = {
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogEntry {
+  id?: number;
   timestamp: string;
   level: LogLevel;
   tag: string;
@@ -26,12 +28,23 @@ export interface LogEntry {
   args?: unknown[];
 }
 
+export interface LogFilter {
+  level?: LogLevel;
+  tags?: string[];
+  search?: string;
+  date?: string; // YYYY-MM-DD or 'live'
+  limit?: number;
+  offset?: number;
+}
+
 class Logger {
   private fs: typeof fs | null = null;
   private path: typeof path | null = null;
+  private db: Database | null = null;
   private logDir: string = '';
   private currentLogLevel: LogLevel = 'info';
   private logLevelPriority: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
+  private onLogCallbacks: Set<(entry: LogEntry) => void> = new Set();
 
   constructor() {
     if (isServer) {
@@ -42,11 +55,39 @@ class Logger {
             this.path = require('path');
             
             if (this.path) {
-                this.logDir = this.path.join(process.cwd(), 'data', 'logs');
+                this.logDir = this.path.join(process.cwd(), 'data');
             }
 
             if (this.fs && !this.fs.existsSync(this.logDir)) {
                 this.fs.mkdirSync(this.logDir, { recursive: true });
+            }
+            
+            // Initialize SQLite
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const Database = require('better-sqlite3');
+                const dbPath = this.path!.join(this.logDir, 'logs.db');
+                this.db = new Database(dbPath);
+                
+                // Enable WAL mode for better concurrency
+                this.db!.pragma('journal_mode = WAL');
+                
+                // Create table
+                this.db!.exec(`
+                    CREATE TABLE IF NOT EXISTS logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT NOT NULL,
+                        level TEXT NOT NULL,
+                        tag TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        args TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
+                    CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
+                    CREATE INDEX IF NOT EXISTS idx_logs_tag ON logs(tag);
+                `);
+            } catch (e) {
+                console.error('Failed to initialize SQLite logger:', e);
             }
 
             // Load log level from environment or default to 'info'
@@ -58,6 +99,11 @@ class Logger {
             console.error('Failed to initialize file logging:', e);
         }
     }
+  }
+  
+  onLog(callback: (entry: LogEntry) => void) {
+      this.onLogCallbacks.add(callback);
+      return () => this.onLogCallbacks.delete(callback);
   }
 
   setLogLevel(level: LogLevel): void {
@@ -79,25 +125,35 @@ class Logger {
     return new Date().toISOString().replace('T', ' ').replace('Z', '');
   }
 
-  private getLogFile() {
-    if (!this.fs || !this.path) return null;
-    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    return this.path.join(this.logDir, `servicebay-${date}.log`);
-  }
-
-  private appendStats(level: string, tag: string, message: string, args: unknown[]) {
-      if (!this.fs) return;
-      try {
-          const file = this.getLogFile();
-          if (file) {
-              const timestamp = this.getTimestamp();
-              const argsStr = args.length > 0 ? ' ' + JSON.stringify(args) : '';
-              const line = `${timestamp} [${level.toUpperCase()}] [${tag}] ${message}${argsStr}\n`;
-              this.fs.appendFileSync(file, line);
+  private insertLog(level: LogLevel, tag: string, message: string, args: unknown[]): LogEntry {
+      const timestamp = this.getTimestamp();
+      const entry: LogEntry = {
+          timestamp,
+          level,
+          tag,
+          message,
+          args: args.length > 0 ? args : undefined
+      };
+      
+      if (isServer && this.db) {
+          try {
+              const stmt = this.db.prepare('INSERT INTO logs (timestamp, level, tag, message, args) VALUES (?, ?, ?, ?, ?)');
+              const info = stmt.run(
+                  timestamp,
+                  level,
+                  tag,
+                  message,
+                  args.length > 0 ? JSON.stringify(args) : null
+              );
+              entry.id = Number(info.lastInsertRowid);
+              
+              // Emit event
+              this.onLogCallbacks.forEach(cb => cb(entry));
+          } catch (e) {
+              console.error('Failed to write log to DB:', e);
           }
-      } catch {
-          // Silent fail on file write to avoid loop
       }
+      return entry;
   }
 
   private format(level: LogLevel, tag: string, message: string, args: unknown[]): LogEntry {
@@ -106,11 +162,12 @@ class Logger {
        return { timestamp: this.getTimestamp(), level, tag, message, args };
     }
 
-    // Persist to file (without colors)
+    // Persist to DB (without colors)
     if (this.shouldLog(level)) {
-      this.appendStats(level, tag, message, args);
+       return this.insertLog(level, tag, message, args);
     }
-
+    
+    // Even if not persisted, return entry structure
     return { timestamp: this.getTimestamp(), level, tag, message, args };
   }
 
@@ -161,60 +218,119 @@ class Logger {
   }
 
   /**
-   * Parse log file and return entries
+   * Get all unique tags (split by :)
    */
-  readLogs(filename: string, filterLevel?: LogLevel, filterTag?: string, searchText?: string): LogEntry[] {
-    if (!this.fs) return [];
+  getTags(): string[] {
+    if (!this.db) return [];
     try {
-      const filepath = this.path!.join(this.logDir, filename);
-      const content = this.fs.readFileSync(filepath, 'utf-8');
-      const entries = content.split('\n').filter(Boolean).map(line => this.parseLogLine(line));
-      
-      return entries.filter(e => {
-        if (filterLevel && this.logLevelPriority[e.level] < this.logLevelPriority[filterLevel]) return false;
-        if (filterTag && e.tag !== filterTag) return false;
-        if (searchText && !e.message.toLowerCase().includes(searchText.toLowerCase())) return false;
-        return true;
-      });
+        const rows = this.db.prepare('SELECT DISTINCT tag FROM logs').all() as { tag: string }[];
+        const tagSet = new Set<string>();
+        rows.forEach(row => {
+            if (row.tag) {
+                row.tag.split(':').forEach(t => t && tagSet.add(t));
+            }
+        });
+        return Array.from(tagSet).sort();
     } catch {
-      return [];
+        return [];
     }
-  }
-
-  private parseLogLine(line: string): LogEntry {
-    // Format: YYYY-MM-DD HH:MM:SS.mmm [LEVEL] [TAG] message [args]
-    // Also support format without milliseconds: YYYY-MM-DD HH:MM:SS [LEVEL] [TAG] message
-    const match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{3})?) \[(\w+)\] \[([^\]]+)\] (.+?)(?:\s+(\[.+\]))?$/);
-    if (!match) {
-      return { timestamp: new Date().toISOString(), level: 'info', tag: 'Unknown', message: line };
-    }
-    const [, timestamp, level, tag, message, argsStr] = match;
-    let args: unknown[] = [];
-    if (argsStr) {
-      try {
-        args = JSON.parse(argsStr);
-      } catch {
-        args = [argsStr];
-      }
-    }
-    return {
-      timestamp,
-      level: (level.toLowerCase() as LogLevel),
-      tag,
-      message,
-      args: args.length > 0 ? args : undefined
-    };
   }
 
   /**
-   * List available log files
+   * Query logs from DB
    */
-  listLogFiles(): string[] {
-    if (!this.fs) return [];
+  queryLogs(filter: LogFilter): LogEntry[] {
+    if (!this.db) return [];
+    
+    let query = 'SELECT * FROM logs WHERE 1=1';
+    const params: unknown[] = [];
+    
+    if (filter.date && filter.date !== 'live') {
+        // Date format in DB: YYYY-MM-DD HH:MM:SS.mmm
+        // Filter by day prefix
+        query += ' AND timestamp LIKE ?';
+        params.push(`${filter.date}%`);
+    }
+    
+    if (filter.level) {
+        // Support equality, or maybe priority? 
+        // For now strict equality as implied by UI, or we can look up priority map
+        // If UI sends 'warn', user typically expects warn and error.
+        // Let's implement >= level logic
+        const priority = this.logLevelPriority[filter.level];
+        // This is tricky in SQL directly without mapping text to int. 
+        // Let's stick to simple filtering or IN clause for now to match file implementation
+        // File implementation: if (filterLevel && this.logLevelPriority[e.level] < this.logLevelPriority[filterLevel]) return false;
+        // So it returns all logs >= filterLevel.
+        const levels = Object.entries(this.logLevelPriority)
+            .filter(([, p]) => p >= priority)
+            .map(([l]) => l);
+            
+        if (levels.length > 0) {
+            query += ` AND level IN (${levels.map(() => '?').join(',')})`;
+            params.push(...levels);
+        }
+    }
+    
+    if (filter.tags && filter.tags.length > 0) {
+        const conditions = filter.tags.map(() => 'tag LIKE ?').join(' OR ');
+        query += ` AND (${conditions})`;
+        params.push(...filter.tags.map(t => `%${t}%`));
+    }
+    
+    if (filter.search) {
+        query += ' AND (message LIKE ? OR tag LIKE ?)';
+        const term = `%${filter.search}%`;
+        params.push(term, term);
+    }
+    
+    // Order: Newest on top
+    query += ' ORDER BY timestamp DESC';
+    
+    if (filter.limit) {
+        query += ' LIMIT ?';
+        params.push(filter.limit);
+    }
+    
+    if (filter.offset) {
+        query += ' OFFSET ?';
+        params.push(filter.offset);
+    }
+    
     try {
-      return this.fs.readdirSync(this.logDir).filter(f => f.startsWith('servicebay-') && f.endsWith('.log')).sort().reverse();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rows = this.db.prepare(query).all(...params) as any[];
+        return rows.map(row => ({
+            id: row.id,
+            timestamp: row.timestamp,
+            level: row.level as LogLevel,
+            tag: row.tag,
+            message: row.message,
+            args: row.args ? JSON.parse(row.args) : undefined
+        }));
+    } catch (e) {
+        console.error('Failed to query logs:', e);
+        return [];
+    }
+  }
+
+  /**
+   * List available log dates
+   */
+  listLogDates(): string[] {
+    if (!this.db) return [];
+    try {
+        // Extract YYYY-MM-DD from timestamp
+         
+        const rows = this.db.prepare(`
+            SELECT DISTINCT substr(timestamp, 1, 10) as date 
+            FROM logs 
+            ORDER BY date DESC
+        `).all() as { date: string }[];
+        
+        return rows.map(r => r.date);
     } catch {
-      return [];
+        return [];
     }
   }
 }

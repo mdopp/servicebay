@@ -167,6 +167,36 @@ export default function MonitoringChecks({
                                 </p>
                             </div>
                         </div>
+
+                        {/* Sparkline Graph */}
+                        {check.history && check.history.length > 0 && (
+                            <div className="hidden md:flex flex-col items-end justify-center mr-4 h-full self-center">
+                                <div className="h-10 w-32 flex items-end gap-[2px]">
+                                    {/* Reverse history so oldest is left */}
+                                    {(() => {
+                                        const trend = [...check.history].slice(0, 20).reverse(); // API sends newest first
+                                        const maxLat = Math.max(...trend.map(h => h.latency || 0), 100);
+                                        return trend.map((h, i) => {
+                                            // Scale 0-100% of height (100% = maxLat)
+                                            // Min height 20%
+                                            const hPercent = Math.max((h.latency / maxLat) * 100, 20);
+                                            return (
+                                                <div 
+                                                    key={i} 
+                                                    className={`w-1.5 rounded-sm ${h.status === 'ok' ? 'bg-green-200 dark:bg-green-900' : 'bg-red-400'}`}
+                                                    style={{ height: `${hPercent}%` }}
+                                                    title={`${h.latency}ms - ${new Date(h.timestamp).toLocaleTimeString()}`}
+                                                ></div>
+                                            );
+                                        });
+                                    })()}
+                                </div>
+                                <div className="text-[10px] text-gray-400 mt-1 font-mono">
+                                    {check.history[0]?.latency || 0}ms
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex items-center gap-1 ml-4">
                             <button
                                 onClick={() => handleRun(check.id)}
