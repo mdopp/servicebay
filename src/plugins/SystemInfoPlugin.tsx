@@ -131,22 +131,36 @@ export default function SystemInfoPlugin() {
         helpId="system-info"
         actions={
             <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 mr-2">
-                    <Server size={16} className="text-gray-500" />
-                    <select 
-                        value={selectedNode} 
-                        onChange={(e) => {
-                            const val = e.target.value;
-                            setSelectedNode(val);
-                            localStorage.setItem('podcli-selected-node', val);
+                <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+                    <button
+                        onClick={() => {
+                            setSelectedNode('Local');
+                            localStorage.setItem('podcli-selected-node', 'Local');
                         }}
-                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        className={`px-3 py-1 text-sm rounded-md transition-all ${
+                            selectedNode === 'Local'
+                            ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm font-medium'
+                            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                        }`}
                     >
-                        <option value="Local">Local (Default)</option>
-                        {nodes.map(node => (
-                            <option key={node.Name} value={node.Name}>{node.Name}</option>
-                        ))}
-                    </select>
+                        Local
+                    </button>
+                    {nodes.map(node => (
+                        <button
+                            key={node.Name}
+                            onClick={() => {
+                                setSelectedNode(node.Name);
+                                localStorage.setItem('podcli-selected-node', node.Name);
+                            }}
+                            className={`px-3 py-1 text-sm rounded-md transition-all ${
+                                selectedNode === node.Name
+                                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm font-medium'
+                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                            }`}
+                        >
+                            {node.Name}
+                        </button>
+                    ))}
                 </div>
             </div>
         }

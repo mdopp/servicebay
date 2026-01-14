@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import PageHeader from '@/components/PageHeader';
-import { Eraser, RefreshCw, Server } from 'lucide-react';
+import { Eraser, RefreshCw } from 'lucide-react';
 import { TerminalRef } from '@/components/Terminal';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
@@ -31,8 +31,7 @@ export default function TerminalPlugin() {
      getNodes().then(setNodes).catch(console.error);
   }, []);
 
-  const handleNodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const newVal = e.target.value;
+  const handleNodeChange = (newVal: string) => {
       setSelectedNode(newVal);
       
       // Save selection
@@ -48,18 +47,30 @@ export default function TerminalPlugin() {
         helpId="terminal"
         actions={
             <div className="flex gap-2 items-center">
-                <div className="flex items-center gap-2 mr-2">
-                    <Server size={16} className="text-gray-500" />
-                    <select 
-                        value={selectedNode} 
-                        onChange={handleNodeChange}
-                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg mr-2">
+                    <button
+                        onClick={() => handleNodeChange('host')}
+                        className={`px-3 py-1 text-sm rounded-md transition-all ${
+                            selectedNode === 'host'
+                                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm font-medium'
+                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                        }`}
                     >
-                        <option value="host">Local (Default)</option>
-                        {nodes.map(node => (
-                            <option key={node.Name} value={`node:${node.Name}`}>{node.Name}</option>
-                        ))}
-                    </select>
+                        Local
+                    </button>
+                    {nodes.map(node => (
+                        <button
+                            key={node.Name}
+                            onClick={() => handleNodeChange(`node:${node.Name}`)}
+                            className={`px-3 py-1 text-sm rounded-md transition-all ${
+                                selectedNode === `node:${node.Name}`
+                                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm font-medium'
+                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                            }`}
+                        >
+                            {node.Name}
+                        </button>
+                    ))}
                 </div>
                 <button 
                     onClick={() => terminalRef.current?.clear()}
