@@ -38,6 +38,7 @@ interface NetworkAddr {
 export default function SystemInfoPlugin() {
   const [copied, setCopied] = useState(false);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  // Initialize with consistent default for SSR
   const [selectedNode, setSelectedNode] = useState<string>('Local');
   const [updates, setUpdates] = useState<UpdateInfo | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
@@ -45,6 +46,21 @@ export default function SystemInfoPlugin() {
 
   const { data: twin } = useDigitalTwin();
   const { socket } = useSocket();
+
+  // Load available nodes and restore selection
+  useEffect(() => {
+    getNodes().then(nodeList => {
+        setNodes(nodeList);
+        // Restore saved node selection after hydration
+        const saved = localStorage.getItem('podcli-selected-node');
+        if (saved) {
+            if (saved === 'Local' || nodeList.find(n => n.Name === saved)) {
+                setSelectedNode(saved);
+            }
+            // If saved node doesn't exist, keep 'Local' default
+        }
+    }).catch(e => logger.error('SystemInfoPlugin', 'Failed to fetch nodes', e));
+  }, []);
 
   // High Frequency Monitoring Subscription
   useEffect(() => {
@@ -57,21 +73,6 @@ export default function SystemInfoPlugin() {
         socket.emit('monitor:resources:stop', { node: selectedNode });
     };
   }, [socket, selectedNode]);
-
-  // Load available nodes
-  useEffect(() => {
-    getNodes().then(nodeList => {
-        setNodes(nodeList);
-        const saved = localStorage.getItem('podcli-selected-node');
-        if (saved) {
-            if (saved === 'Local' || nodeList.find(n => n.Name === saved)) {
-                setSelectedNode(saved);
-            } else {
-                setSelectedNode('Local');
-            }
-        }
-    }).catch(e => logger.error('SystemInfoPlugin', 'Failed to fetch nodes', e));
-  }, []);
 
   // Fetch updates separately
   useEffect(() => {

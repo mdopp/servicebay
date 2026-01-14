@@ -16,18 +16,21 @@ const Terminal = dynamic(() => import('@/components/Terminal'), {
 export default function TerminalPlugin() {
   const terminalRef = useRef<TerminalRef>(null);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [selectedNode, setSelectedNode] = useState<string>(() => {
-    if (typeof window === 'undefined') return 'host';
-    const saved = localStorage.getItem('podcli-selected-node');
-    if (saved) {
-        if (saved === 'Local') return 'host';
-        return `node:${saved}`;
-    }
-    return 'host';
-  });
+  const [selectedNode, setSelectedNode] = useState<string>('host');
 
   useEffect(() => {
-     // No-op for restoration now, handled in initializer
+     // Restore saved selection - this is intentional setState in effect for hydration
+     const saved = localStorage.getItem('podcli-selected-node');
+     if (saved) {
+         if (saved === 'Local') {
+             // eslint-disable-next-line react-hooks/set-state-in-effect
+             setSelectedNode('host');
+         } else {
+              
+             setSelectedNode(`node:${saved}`);
+         }
+     }
+     
      getNodes().then(setNodes).catch(console.error);
   }, []);
 
@@ -50,6 +53,7 @@ export default function TerminalPlugin() {
                 <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg mr-2">
                     <button
                         onClick={() => handleNodeChange('host')}
+                        suppressHydrationWarning
                         className={`px-3 py-1 text-sm rounded-md transition-all ${
                             selectedNode === 'host'
                                 ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm font-medium'
