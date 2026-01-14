@@ -148,9 +148,11 @@ export class AgentHandler extends EventEmitter {
 
   private async startSSH() {
     try {
+      logger.info(this.nodeName, 'Establishing SSH connection...');
       const pool = SSHConnectionPool.getInstance();
       const conn = await pool.getConnection(this.nodeName);
       
+      logger.info(this.nodeName, 'SSH connection established, starting Python agent...');
       const script = getAgentScript();
       
       // Ensure systemd environment variables are set for the agent process
@@ -162,8 +164,12 @@ export class AgentHandler extends EventEmitter {
       return new Promise<void>((resolve, reject) => {
         conn.exec(cmd, (err, stream) => {
           if (err) {
+              const errorMsg = `Failed to execute agent command on ${this.nodeName}: ${err.message}`;
+              logger.error(this.nodeName, errorMsg);
+              this.health.lastError = errorMsg;
+              this.health.errorCount++;
               this.emit('error', err);
-              reject(err);
+              reject(new Error(errorMsg));
               return;
           }
 
@@ -171,6 +177,8 @@ export class AgentHandler extends EventEmitter {
           this.isConnected = true;
           this.health.isConnected = true;
           this.health.lastSync = Date.now();
+          this.health.lastError = '';
+          logger.info(this.nodeName, '✓ Python agent started successfully via SSH');
           this.emit('connected');
           resolve();
 
@@ -187,6 +195,11 @@ export class AgentHandler extends EventEmitter {
         });
       });
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(this.nodeName, `SSH agent startup failed: ${errorMsg}`);
+      this.health.lastError = `SSH startup failed: ${errorMsg}`;
+      this.health.errorCount++;
+      this.health.isConnected = false;
       this.emit('error', error);
       throw error;
     }

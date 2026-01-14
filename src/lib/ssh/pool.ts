@@ -58,35 +58,67 @@ export class SSHConnectionPool {
     const node = nodes.find(n => n.Name === nodeName);
 
     if (!node) {
-      throw new Error(`Node '${nodeName}' not found.`);
+      const error = `Node '${nodeName}' not found in nodes.json`;
+      logger.error('SSH', error);
+      throw new Error(error);
     }
 
+    logger.info('SSH', `Establishing connection to ${nodeName} (${node.URI})...`);
     const config = await this.parseConnectionConfig(node);
 
     return new Promise((resolve, reject) => {
       const conn = new Client();
+      let resolved = false;
+      
+      // Add connection timeout
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          const error = `SSH connection timeout for ${nodeName} (${node.URI})`;
+          logger.error('SSH', error);
+          this.removeConnection(nodeName);
+          reject(new Error(error));
+        }
+      }, 15000); // 15 second timeout
 
       conn.on('ready', () => {
-        this.clients.set(nodeName, {
-          client: conn,
-          nodeName,
-          connected: true,
-          lastUsed: Date.now()
-        });
-        logger.info('SSH', `Connected to ${nodeName}`);
-        resolve(conn);
+        if (!resolved) {
+          clearTimeout(timeout);
+          resolved = true;
+          this.clients.set(nodeName, {
+            client: conn,
+            nodeName,
+            connected: true,
+            lastUsed: Date.now()
+          });
+          logger.info('SSH', `✓ Successfully connected to ${nodeName} (${node.URI})`);
+          resolve(conn);
+        }
       });
 
       conn.on('error', (err) => {
-        logger.error('SSH', `Error on ${nodeName}:`, err);
-        this.removeConnection(nodeName);
-        if (conn.listenerCount('ready') > 0) {
-            // Enhance common errors for better UI feedback
-            if (err.message && err.message.includes('All configured authentication methods failed')) {
-                reject(new Error(`Authentication failed for ${nodeName}. Please check your Username, Password, or SSH Identity File.`));
+        if (!resolved) {
+          clearTimeout(timeout);
+          resolved = true;
+          logger.error('SSH', `✗ Connection error for ${nodeName} (${node.URI}):`, err.message || err);
+          this.removeConnection(nodeName);
+          
+          // Enhance common errors for better UI feedback
+          let errorMsg = `SSH connection failed for ${nodeName}`;
+          if (err.message) {
+            if (err.message.includes('All configured authentication methods failed')) {
+              errorMsg = `Authentication failed for ${nodeName}. Check your SSH key or credentials.`;
+            } else if (err.message.includes('ENOTFOUND') || err.message.includes('getaddrinfo')) {
+              errorMsg = `Cannot resolve hostname for ${nodeName}. Check the URI in nodes.json.`;
+            } else if (err.message.includes('ECONNREFUSED')) {
+              errorMsg = `Connection refused by ${nodeName}. Check if SSH server is running.`;
+            } else if (err.message.includes('ETIMEDOUT')) {
+              errorMsg = `Connection timeout for ${nodeName}. Check network connectivity.`;
             } else {
-                reject(err);
+              errorMsg = `${errorMsg}: ${err.message}`;
             }
+          }
+          reject(new Error(errorMsg));
         }
       });
 
@@ -101,8 +133,11 @@ export class SSHConnectionPool {
       });
 
       try {
+        logger.info('SSH', `Connecting with config: host=${config.host}, port=${config.port || 22}, user=${config.username}`);
         conn.connect(config);
       } catch (err) {
+        clearTimeout(timeout);
+        logger.error('SSH', `Failed to initiate connection to ${nodeName}:`, err);
         reject(err);
       }
     });
