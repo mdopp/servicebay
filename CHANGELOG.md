@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.7.1...servicebay-v0.8.0) (2026-01-14)
+
+
+### Features
+
+* add fixed-width column for log tags ([e32e9c3](https://github.com/mdopp/servicebay/commit/e32e9c367ac6d43b925babcc3632fe5bfdb27da2))
+* add log level control to settings page ([a68d983](https://github.com/mdopp/servicebay/commit/a68d983fb288625358b3f91122695889ea5cdeaf))
+* add responsive layout for mobile logs ([884dc40](https://github.com/mdopp/servicebay/commit/884dc40c87d60905b7feecd20b173d6d5c63343e))
+* **agent:** Enhance agent logging for syncs and commands ([206a7fb](https://github.com/mdopp/servicebay/commit/206a7fbf423c351fc6135e8a31e9dd424a5ea53f))
+* **agent:** Log full payload for SYNC_PARTIAL events ([1080b13](https://github.com/mdopp/servicebay/commit/1080b13c75181c79eb43d12af5c20a1c18cbcb86))
+* build log viewer and health monitor frontend components ([ecccd40](https://github.com/mdopp/servicebay/commit/ecccd404f5e8bb20e0c44c3674be23ce1a87737a))
+* create log management and health API endpoints ([e00cc68](https://github.com/mdopp/servicebay/commit/e00cc68d812b6d0a6b1b12add10529490084ded0))
+* enhance agent health tracking with connection status and error metrics ([f15ef15](https://github.com/mdopp/servicebay/commit/f15ef1538a04bfc675344556a62ba11a015f4f13))
+* implement smart auto-refresh to reduce flickering ([df5c750](https://github.com/mdopp/servicebay/commit/df5c7508ffaee3e27ea6b9bf3662346cf3f71b2e))
+* integrate agent health into DigitalTwinStore ([7509d3c](https://github.com/mdopp/servicebay/commit/7509d3cb93a9800506572813995d3fc19db7a49a))
+* monitoring and logging improvements ([1aa78e7](https://github.com/mdopp/servicebay/commit/1aa78e72f0acc5592877fc6653a0ac5c7a47c734))
+* **monitoring:** enhance agent reliability and monitoring UI ([4896008](https://github.com/mdopp/servicebay/commit/4896008cab7a203bd8fe2631787ace2964e831ce))
+* **ui:** fix mobile layout and add version info ([61f0b9d](https://github.com/mdopp/servicebay/commit/61f0b9d96dc9ea6664afc95029e9e83cc44cc3f3))
+* **ui:** replace node selection dropdown with tabs ([b6b3ee3](https://github.com/mdopp/servicebay/commit/b6b3ee344c5adcf8a1fa68c992ee1562664569ee))
+
+
+### Bug Fixes
+
+* correct log parser regex to handle milliseconds ([ced0f50](https://github.com/mdopp/servicebay/commit/ced0f508352713c2314b07b77a4fb16d1dc768d9))
+
 ## [0.7.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.7.0...servicebay-v0.7.1) (2026-01-13)
 
 
