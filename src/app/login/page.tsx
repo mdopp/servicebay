@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
 import { Github, ArrowRight, Loader2 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import pkg from '../../../package.json';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -52,7 +53,7 @@ export default function LoginPage() {
             </div>
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">ServiceBay</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">by Korgraph.io</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">by Korgraph.io - v{pkg.version}</p>
         </div>
 
         {/* Content */}

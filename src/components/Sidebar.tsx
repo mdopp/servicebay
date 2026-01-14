@@ -42,7 +42,7 @@ export default function Sidebar() {
                             ServiceBay
                         </h3>
                         <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap">
-                            by Korgraph - v{pkg.version}
+                            by Korgraph.io - v{pkg.version}
                         </span>
                     </div>
                 </div>
