@@ -12,7 +12,20 @@ import ctypes
 import struct
 import select
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
+
+# Container detection (must be done early, before using logger)
+IS_CONTAINERIZED = os.path.exists('/.containerenv') or os.path.exists('/.dockerenv')
+HOST_SSH = os.getenv('HOST_SSH', 'host.containers.internal')
+HOST_USER = os.getenv('HOST_USER', '')
+
+# Import paramiko only if containerized
+if IS_CONTAINERIZED:
+    try:
+        import paramiko
+    except ImportError:
+        sys.stderr.write("[ERROR] paramiko not found but required for container mode\n")
+        sys.exit(1)
 
 # --- types.py equivalent ---
 @dataclass
@@ -57,20 +70,165 @@ def log_debug(msg: str):
     if DEBUG_MODE:
         log_message("DEBUG", msg)
 
+# Log container mode detection after logger is available
+if IS_CONTAINERIZED:
+    log_info("Container mode detected - agent will execute commands via SSH to host")
+    if not HOST_USER:
+        log_error("WARNING: HOST_USER environment variable not set. SSH execution will fail.")
+        log_error("Please set -e HOST_USER=$(whoami) when running container")
+
+# --- Command Executor (SSH abstraction for containers) ---
+class CommandExecutor:
+    """Executes commands locally or via SSH depending on containerization context."""
+    
+    def __init__(self):
+        self.ssh_client = None
+        if IS_CONTAINERIZED:
+            self._setup_ssh_connection()
+    
+    def _setup_ssh_connection(self):
+        """Establish persistent SSH connection to host."""
+        try:
+            self.ssh_client = paramiko.SSHClient()
+            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            ssh_key_path = os.getenv('SSH_KEY_PATH', '/root/.ssh/id_rsa')
+            log_info(f"Container mode: Connecting to host via SSH: {HOST_USER}@{HOST_SSH}")
+            
+            self.ssh_client.connect(
+                hostname=HOST_SSH,
+                username=HOST_USER,
+                key_filename=ssh_key_path,
+                timeout=10
+            )
+            log_info("SSH connection to host established successfully")
+        except Exception as e:
+            log_error(f"Failed to establish SSH connection to host: {e}")
+            log_error("Agent will not function properly in container mode without SSH access")
+            # Don't exit - let agent startup continue, but commands will fail
+    
+    def execute(self, command: List[str], check: bool = True) -> Tuple[str, str, int]:
+        """Execute command locally or via SSH.
+        
+        Returns: (stdout, stderr, returncode)
+        """
+        if IS_CONTAINERIZED:
+            return self._execute_ssh(command, check)
+        else:
+            return self._execute_local(command, check)
+    
+    def _execute_local(self, command: List[str], check: bool) -> Tuple[str, str, int]:
+        """Direct local execution."""
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=check
+            )
+            return result.stdout.strip(), result.stderr.strip(), result.returncode
+        except subprocess.CalledProcessError as e:
+            return e.stdout.strip() if e.stdout else "", e.stderr.strip() if e.stderr else "", e.returncode
+        except FileNotFoundError:
+            log_error(f"Binary not found: {command[0]}")
+            return "", f"Binary not found: {command[0]}", 127
+        except Exception as e:
+            log_error(f"Unexpected error running {command}: {e}")
+            return "", str(e), 1
+    
+    def _execute_ssh(self, command: List[str], check: bool) -> Tuple[str, str, int]:
+        """Execute via SSH on host."""
+        if not self.ssh_client:
+            log_error("SSH client not available - cannot execute command")
+            return "", "SSH not connected", 1
+        
+        try:
+            # Properly escape command arguments for shell
+            from shlex import quote
+            cmd_str = ' '.join(quote(arg) for arg in command)
+            
+            log_debug(f"SSH exec: {cmd_str}")
+            stdin, stdout, stderr = self.ssh_client.exec_command(cmd_str)
+            
+            stdout_data = stdout.read().decode('utf-8', errors='replace').strip()
+            stderr_data = stderr.read().decode('utf-8', errors='replace').strip()
+            exit_code = stdout.channel.recv_exit_status()
+            
+            if check and exit_code != 0:
+                log_warn(f"SSH command failed (exit {exit_code}): {cmd_str}")
+            
+            return stdout_data, stderr_data, exit_code
+        except Exception as e:
+            log_error(f"SSH execution error: {e}")
+            return "", str(e), 1
+    
+    def execute_streaming(self, command: List[str]):
+        """Execute command with streaming output (for monitors).
+        
+        Returns: file-like object that yields lines, or None if failed
+        """
+        if IS_CONTAINERIZED:
+            return self._execute_ssh_streaming(command)
+        else:
+            return self._execute_local_streaming(command)
+    
+    def _execute_local_streaming(self, command: List[str]):
+        """Start local subprocess with streaming output."""
+        try:
+            proc = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            return proc.stdout
+        except Exception as e:
+            log_error(f"Failed to start streaming command {command}: {e}")
+            return None
+    
+    def _execute_ssh_streaming(self, command: List[str]):
+        """Execute command via SSH with streaming output."""
+        if not self.ssh_client:
+            log_error("SSH client not available - cannot execute streaming command")
+            return None
+        
+        try:
+            from shlex import quote
+            cmd_str = ' '.join(quote(arg) for arg in command)
+            
+            log_debug(f"SSH exec (streaming): {cmd_str}")
+            stdin, stdout, stderr = self.ssh_client.exec_command(cmd_str, get_pty=False)
+            return stdout
+        except Exception as e:
+            log_error(f"SSH streaming execution error: {e}")
+            return None
+    
+    def __del__(self):
+        """Cleanup SSH connection on shutdown."""
+        if self.ssh_client:
+            try:
+                self.ssh_client.close()
+            except:
+                pass
+
+# Global executor instance
+_executor = CommandExecutor()
+
 def run_command(cmd: List[str], check: bool = True) -> str:
-    try:
-        # Check if executable exists (simple check) to avoid FileNotFoundError crash
-        result = subprocess.run(cmd, capture_output=True, text=True, check=check)
-        return result.stdout.strip()
-    except subprocess.CalledProcessError as e:
-        log_warn(f"Command failed: {cmd}, {e}") # Changed to warn, as might be expected
+    """Execute command and return stdout.
+    
+    Uses SSH when running in container, local subprocess otherwise.
+    """
+    stdout, stderr, returncode = _executor.execute(cmd, check=False)
+    
+    if returncode != 0:
+        if check:
+            log_warn(f"Command failed: {cmd}, exit code {returncode}")
+        if stderr:
+            log_debug(f"stderr: {stderr}")
         return ""
-    except FileNotFoundError:
-        log_error(f"Binary not found for command: {cmd[0]}")
-        return ""
-    except Exception as e:
-        log_error(f"Unexpected error running {cmd}: {e}")
-        return ""
+    
+    return stdout
 
 # --- Monitors ---
 
@@ -96,36 +254,24 @@ class PodmanMonitor(threading.Thread):
         self.daemon = True
 
     def run(self):
-        # Watch for events
-        # Use --stream=false to ensure the process exits if no events are immediately available, 
-        # but we WANT a stream.
-        # The leak comes from 'podman events' being spawned in a thread that might be restarted/orphaned 
-        # OR multiple spawned processes.
-        # Actually, if the agent restarts (e.g. via Next.js dev reload), the old python process dies, 
-        # and so should its children (Popen with default args doesn't automatically kill children but OS should cleanup)
-        # However, if 'podman events' is blocking, it might hang around?
+        # Watch for events - use CommandExecutor for SSH support
+        stream = _executor.execute_streaming(['podman', 'events', '--format', 'json'])
         
-        # FIX: Ensure we close the process on exit
-        proc = subprocess.Popen(
-            ['podman', 'events', '--format', 'json'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        self.proc = proc # Keep reference
+        if not stream:
+            log_error("Failed to start podman events stream")
+            return
+        
+        self.stream = stream # Keep reference
         
         try:
             self.callback('init') # Initial fetch
-            for line in proc.stdout:
+            for line in stream:
                 try:
                     event = json.loads(line)
                 
                     # Filter noisy events
-                    # We ignore exec-related events which are frequent (e.g. healthchecks)
                     action = event.get('Action', '')
-                    status = event.get('Status', '') # Some versions use Status
-                    
-                    # Normalize action/status
+                    status = event.get('Status', '')
                     act = action if action else status
                     
                     if act in ['exec_create', 'exec_start', 'exec_die', 'bind_mount', 'cleanup']:
@@ -134,11 +280,10 @@ class PodmanMonitor(threading.Thread):
                     log_debug(f"Podman Event: {act} ({event.get('Type')})")
                     self.callback('event')
                 except Exception as e:
-                    # Fallback: if json parsing fails or structure differs, trigger anyway to be safe,
-                    # but limit it? No, safe to ignore parse errors usually means partial line.
+                    # Ignore parse errors (partial lines)
                     pass
         except Exception as e:
-            log_error(f"Error in event loop: {e}")
+            log_error(f"Error in podman event loop: {e}")
 
 class SystemdMonitor(threading.Thread):
     def __init__(self, callback):
@@ -1118,19 +1263,49 @@ def fetch_proxy_routes():
     # 2. Exec inspector script
     # We pass the script via stdin to sh
     try:
-        result = subprocess.run(
+        # Use executor for container/SSH support
+        stdout, stderr, returncode = _executor.execute(
             ['podman', 'exec', '-i', container_name, 'sh'],
-            input=INSPECTOR_SCRIPT,
-            capture_output=True,
-            text=True,
-            timeout=5
+            check=False
         )
+        
+        # For podman exec with stdin, we need to handle it differently
+        # In SSH mode, this won't work with stdin. Let's write script to temp file instead.
+        if IS_CONTAINERIZED:
+            # Write script to temp file and execute
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                f.write(INSPECTOR_SCRIPT)
+                temp_path = f.name
+            
+            try:
+                # Copy to container
+                _executor.execute(['podman', 'cp', temp_path, f'{container_name}:/tmp/inspector.sh'])
+                stdout, stderr, returncode = _executor.execute(
+                    ['podman', 'exec', container_name, 'sh', '/tmp/inspector.sh']
+                )
+                # Cleanup
+                _executor.execute(['podman', 'exec', container_name, 'rm', '/tmp/inspector.sh'])
+            finally:
+                os.unlink(temp_path)
+        else:
+            # Local mode - use stdin as before
+            result = subprocess.run(
+                ['podman', 'exec', '-i', container_name, 'sh'],
+                input=INSPECTOR_SCRIPT,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            stdout = result.stdout
+            stderr = result.stderr
+            returncode = result.returncode
 
-        if result.stderr:
-             log_warn(f"Nginx Inspector Stderr: {result.stderr}")
+        if stderr:
+             log_warn(f"Nginx Inspector Stderr: {stderr}")
 
-        if result.returncode == 0:
-            routes = json.loads(result.stdout)
+        if returncode == 0:
+            routes = json.loads(stdout)
             log_debug(f"Parsed Nginx Routes (Container: {container_name}): {json.dumps(routes)}")
             
             # Sort routes for deduplication stability
@@ -1371,12 +1546,15 @@ class Agent:
                     reply(error="Missing command")
                 else:
                     log_info(f"Executing shell command: {command_str}")
-                    # execute
-                    proc = subprocess.run(command_str, shell=True, capture_output=True, text=True)
+                    # Execute via executor (supports SSH in container mode)
+                    stdout, stderr, returncode = _executor.execute(
+                        ['sh', '-c', command_str],
+                        check=False
+                    )
                     reply(result={
-                        "code": proc.returncode,
-                        "stdout": proc.stdout,
-                        "stderr": proc.stderr
+                        "code": returncode,
+                        "stdout": stdout,
+                        "stderr": stderr
                     })
             elif cmd == 'write_file':
                 path = msg.get('payload', {}).get('path')

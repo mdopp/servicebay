@@ -46,16 +46,17 @@ ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV PATH="/app/node_modules/.bin:$PATH"
 
-# Install ssh-keygen, podman, and python3 (required for Agent V4)
+# Install SSH client and Python (required for Agent V4 in container mode)
+# Removed podman and systemd - agent uses SSH to execute commands on host
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     openssh-client \
-    podman \
     python3 \
+    python3-pip \
     procps \
     iproute2 \
-    systemd \
     ca-certificates && \
+    pip3 install --no-cache-dir paramiko && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1001 nodejs
@@ -86,7 +87,7 @@ COPY --from=builder /app/tsconfig.json ./
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
-# We run as root inside the container to ensure access to mapped volumes (ssh keys, docker socket)
+# We run as root inside the container to ensure access to mapped volumes (ssh keys)
 # When using UserNS=keep-id in Podman (standard for Quadlets), 'root' tracks to the host user.
 # RUN chown -R nextjs:nodejs /app
 # USER nextjs
@@ -95,5 +96,8 @@ EXPOSE 3000
 
 ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
+# Container mode defaults - agent will SSH to host
+ENV HOST_SSH="host.containers.internal"
+ENV SSH_KEY_PATH="/root/.ssh/id_rsa"
 
 CMD ["tsx", "server.ts"]
