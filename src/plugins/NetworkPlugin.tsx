@@ -1058,12 +1058,8 @@ export default function NetworkPlugin() {
 
   const handleEditLink = () => {
       if (!selectedNodeData || !selectedNodeData.rawData) return;
-      const { name, url, description, monitor, ipTargets, ip_targets } = selectedNodeData.rawData;
-      const targetsArray = Array.isArray(ipTargets)
-          ? ipTargets
-          : Array.isArray(ip_targets)
-              ? ip_targets
-              : [];
+      const { name, url, description, monitor, ipTargets } = selectedNodeData.rawData;
+      const targetsArray = Array.isArray(ipTargets) ? ipTargets : [];
       
       setLinkForm({
           name: name || '',

@@ -87,8 +87,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
         const newName = body.name || oldLink.name;
         
         let updatedIpTargets = oldLink.ipTargets || [];
-        if (body.ipTargets !== undefined || body.ip_targets !== undefined) {
-            updatedIpTargets = parseIpTargets(body.ipTargets ?? body.ip_targets, updatedIpTargets);
+        if (body.ipTargets !== undefined) {
+          updatedIpTargets = parseIpTargets(body.ipTargets, updatedIpTargets);
         }
         const updatedPorts = updatedIpTargets.length > 0 ? buildExternalLinkPorts(updatedIpTargets) : (oldLink.ports || []);
 
@@ -144,7 +144,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
         // Link does not exist, create it (Promote Virtual Node to External Link)
         if (!config.externalLinks) config.externalLinks = [];
         
-        const parsedTargets = parseIpTargets(body.ipTargets ?? body.ip_targets);
+        const parsedTargets = parseIpTargets(body.ipTargets);
         const portMappings = buildExternalLinkPorts(parsedTargets);
 
         const newLink: ExternalLink = {

@@ -1309,7 +1309,7 @@ export class NetworkService {
                             const normalizedHost = targetHost?.toLowerCase();
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             const matchedLink = config.externalLinks.find((l: any) => {
-                                const targets = normalizeExternalTargets(l.ipTargets || l.ip_targets);
+                                const targets = normalizeExternalTargets(l.ipTargets || []);
                                 if (targets.length === 0 || !normalizedHost) return false;
                                 return targets.some(entry => {
                                     const parsed = parseTargetHostPort(entry);

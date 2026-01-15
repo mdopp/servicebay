@@ -17,6 +17,7 @@ const parseIpTargets = (input: unknown, fallback: string[] = []) => {
     return fallback;
 };
 
+
 const mapExternalLinks = (links: ExternalLink[]) => {
     const checks = MonitoringStore.getChecks();
 
@@ -247,13 +248,13 @@ export async function POST(request: Request) {
   
   // Handle Link Creation
   if (body.type === 'link') {
-    const { name, url, description, monitor, ipTargets: ipTargetsBody, ip_targets } = body;
+    const { name, url, description, monitor } = body;
     if (!name || !url) {
         return NextResponse.json({ error: 'Name and URL required' }, { status: 400 });
     }
 
     const config = await getConfig();
-    const parsedTargets = parseIpTargets(ipTargetsBody ?? ip_targets);
+    const parsedTargets = parseIpTargets(body.ipTargets);
     const portMappings = buildExternalLinkPorts(parsedTargets);
 
     const newLink: ExternalLink = {

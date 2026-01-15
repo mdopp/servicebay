@@ -83,7 +83,7 @@ describe('Network Graph Generation', () => {
         (getConfig as any).mockResolvedValue({
             gateway: { host: 'fritz.box', type: 'fritzbox' },
             externalLinks: [
-                { id: 'link1', name: 'Google', url: 'https://google.com', monitor: true, ip_targets: ['192.168.1.50:443'] }
+                { id: 'link1', name: 'Google', url: 'https://google.com', monitor: true, ipTargets: ['192.168.1.50:443'] }
             ]
         });
 
@@ -223,7 +223,7 @@ describe('Network Graph Generation', () => {
         (getConfig as any).mockResolvedValueOnce({
             gateway: { host: 'fritz.box', type: 'fritzbox' },
             externalLinks: [
-                { id: 'ha', name: 'Home Assistant', url: 'https://home.dopp.cloud', monitor: false, ip_targets: ['192.168.178.98:8123'] }
+                { id: 'ha', name: 'Home Assistant', url: 'https://home.dopp.cloud', monitor: false, ipTargets: ['192.168.178.98:8123'] }
             ]
         });
 

@@ -74,7 +74,6 @@ type ApiLinkPayload = {
     url?: string;
     labels?: Record<string, string>;
     verifiedDomains?: string[];
-    ip_targets?: string[];
     ipTargets?: string[];
 };
 
@@ -182,11 +181,7 @@ export default function ServicesPlugin() {
               const status = typeof link.status === 'string' ? link.status : (link.active ? 'active' : 'inactive');
               const activeState = typeof link.activeState === 'string' ? link.activeState : status;
               const subState = typeof link.subState === 'string' ? link.subState : status;
-              const ipTargets: string[] = Array.isArray(link.ipTargets)
-                  ? link.ipTargets
-                  : Array.isArray(link.ip_targets)
-                      ? link.ip_targets
-                      : [];
+              const ipTargets = Array.isArray(link.ipTargets) ? link.ipTargets : [];
 
               return {
                   id: link.id || link.name,

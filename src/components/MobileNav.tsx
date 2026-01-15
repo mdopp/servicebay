@@ -17,7 +17,7 @@ export function MobileTopBar() {
              <span className="font-bold text-gray-900 dark:text-white text-sm leading-none">
                 ServiceBay
              </span>
-             <span className="text-[10px] text-gray-500 dark:text-gray-400">by Korgraph - v{pkg.version}</span>
+             <span className="text-[10px] text-gray-500 dark:text-gray-400">by Korgraph.io - v{pkg.version}</span>
           </div>
        </div>
        {/* Right: Icons */}

@@ -5,6 +5,7 @@ import { decrypt, encrypt } from './secrets';
 import { LogLevel } from './logger';
 import { PortMapping as GraphPortMapping } from './network/types';
 import { normalizeExternalTargets } from './network/externalLinks';
+import { ConfigTransformer } from './config/transformer';
 
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -76,18 +77,15 @@ export interface AppConfig {
   setupCompleted?: boolean;
 }
 
-type ExternalLinkInput = ExternalLink & { ip_targets?: string[] };
-
-const normalizeExternalLinkEntry = (link: ExternalLinkInput): ExternalLink => {
-  const normalizedTargets = normalizeExternalTargets(link.ipTargets ?? link.ip_targets ?? []);
-  const { ip_targets, ...rest } = link;
+const normalizeExternalLinkEntry = (link: ExternalLink): ExternalLink => {
+  const normalizedTargets = normalizeExternalTargets(link.ipTargets ?? []);
   return {
-    ...rest,
+    ...link,
     ipTargets: normalizedTargets,
   };
 };
 
-const normalizeExternalLinks = (links?: ExternalLinkInput[]): ExternalLink[] | undefined => {
+const normalizeExternalLinks = (links?: ExternalLink[]): ExternalLink[] | undefined => {
   if (!Array.isArray(links)) return links;
   return links.map(normalizeExternalLinkEntry);
 };
@@ -155,6 +153,8 @@ export async function saveConfig(config: AppConfig): Promise<void> {
  */
 export async function migrateConfig(): Promise<void> {
   try {
+    const transformer = new ConfigTransformer(CONFIG_PATH);
+    await transformer.run();
     const config = await getConfig();
     // saveConfig automatically handles encryption of all sensitive keys
     await saveConfig(config);

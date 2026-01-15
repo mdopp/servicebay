@@ -5,15 +5,15 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { RefreshCw, Box, ArrowLeft } from 'lucide-react';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
-interface Container {
-  Id: string;
-  Names: string[];
-  Image: string;
-  State: string;
-  Status: string;
-  Created: number;
-  Ports?: { hostIp?: string; containerPort: number; hostPort?: number; protocol: string }[];
-  Mounts?: (string | { Source: string; Destination: string; Type: string })[] | unknown[];
+interface ContainerSummary {
+    id: string;
+    names: string[];
+    image?: string;
+    state?: string;
+    status?: string;
+    created?: number;
+    ports?: { hostIp?: string; containerPort: number; hostPort?: number; protocol: string }[];
+    mounts?: (string | { Source: string; Destination: string; Type: string })[] | unknown[];
 }
 
 export default function ContainerLogsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -23,7 +23,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
   const node = searchParams?.get('node');
   
   const { data: twin, isConnected } = useDigitalTwin();
-  const [container, setContainer] = useState<Container | null>(null);
+    const [container, setContainer] = useState<ContainerSummary | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [details, setDetails] = useState<any>(null);
   const [logs, setLogs] = useState('');
@@ -53,21 +53,20 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
     }
 
     if (found) {
-        // Map EnrichedContainer to UI Container
         setContainer({
-            Id: found.id,
-            Names: found.names,
-            Image: found.image,
-            State: found.state,
-            Status: found.status,
-            Created: found.created,
-            Ports: found.ports.map(p => ({
+            id: found.id,
+            names: found.names ?? [],
+            image: found.image,
+            state: found.state,
+            status: found.status,
+            created: found.created,
+            ports: (found.ports || []).map(p => ({
                  hostPort: p.hostPort,
                  containerPort: p.containerPort || 0,
-                 protocol: p.protocol
+                 protocol: p.protocol,
+                 hostIp: p.hostIp
             })),
-            Mounts: found.mounts,
-            // Mounts might need adjustment
+            mounts: found.mounts
         });
     } else {
         console.error('Container not found');
@@ -92,7 +91,7 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
 
     const streamLogs = async () => {
         try {
-            const response = await fetch(`/api/containers/${container.Id}/logs/stream${node ? `?node=${node}` : ''}`, {
+            const response = await fetch(`/api/containers/${container.id}/logs/stream${node ? `?node=${node}` : ''}`, {
                 signal: abortController.signal
             });
             
@@ -146,8 +145,8 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                 </button>
                 <h3 className="text-xl font-bold flex items-center gap-2">
                     <Box size={20} />
-                    {container.Names[0].replace(/^\//, '')}
-                    <span className="text-xs font-normal text-gray-500 font-mono ml-2">{container.Id.substring(0, 12)}</span>
+                    {container.names[0]?.replace(/^\//, '')}
+                    <span className="text-xs font-normal text-gray-500 font-mono ml-2">{container.id.substring(0, 12)}</span>
                 </h3>
             </div>
         </div>
@@ -158,21 +157,21 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                 <div className="space-y-3 text-sm">
                     <div>
                         <span className="block text-gray-500 text-xs">Image</span>
-                        <span className="break-all">{container.Image}</span>
+                        <span className="break-all">{container.image}</span>
                     </div>
                     <div>
                         <span className="block text-gray-500 text-xs">State</span>
                         <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium mt-1 ${
-                            container.State === 'running' 
+                            container.state === 'running' 
                             ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300' 
                             : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-300'
                         }`}>
-                            {container.State}
+                            {container.state}
                         </span>
                     </div>
                     <div>
                         <span className="block text-gray-500 text-xs">Created</span>
-                        <span>{new Date(container.Created * 1000).toLocaleString()}</span>
+                        <span>{container.created ? new Date(container.created * 1000).toLocaleString() : 'Unknown'}</span>
                     </div>
                     
                     {details?.Config?.Env && (
@@ -191,11 +190,11 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                         </div>
                     )}
 
-                    {container.Ports && container.Ports.length > 0 && (
+                    {container.ports && container.ports.length > 0 && (
                         <div>
                             <span className="block text-gray-500 text-xs">Ports</span>
                             <div className="space-y-1 mt-1">
-                                {container.Ports.map((p, i) => {
+                                {container.ports.map((p, i) => {
                                     const { hostPort, containerPort, protocol } = p;
                                     return (
                                         <div key={i} className="font-mono text-xs bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded">
@@ -206,12 +205,12 @@ export default function ContainerLogsPage({ params }: { params: Promise<{ id: st
                             </div>
                         </div>
                     )}
-                    {container.Mounts && container.Mounts.length > 0 && (
+                    {container.mounts && container.mounts.length > 0 && (
                         <div>
                             <span className="block text-gray-500 text-xs">Mounts</span>
                             <div className="space-y-1 mt-1">
                                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                {container.Mounts.map((m: any, i) => (
+                                {container.mounts.map((m: any, i) => (
                                     <div key={i} className="text-xs bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded break-all">
                                         {typeof m === 'string' ? (
                                             <span>{m}</span>

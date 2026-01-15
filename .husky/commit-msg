@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+commit_file="$1"
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\(.+\))?!?: .+'
+
+if ! grep -Eq "$pattern" "$commit_file"; then
+  cat <<'EOF'
+Commit message must follow Conventional Commits, e.g.:
+  feat: add gateway sync
+  fix(graph): handle duplicate edges
+  chore!: drop deprecated API
+EOF
+  exit 1
+fi
