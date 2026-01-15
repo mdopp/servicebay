@@ -28,7 +28,7 @@ const mapExternalLinks = (links: ExternalLink[]) => {
         const statusLabel: LinkStatus = lastResult ? lastResult.status : 'external';
         const isActive = statusLabel === 'ok' || statusLabel === 'external';
         const activeState = isActive ? 'active' : 'inactive';
-        const ipTargets = normalizeExternalTargets(link.ip_targets || link.ipTargets);
+        const ipTargets = normalizeExternalTargets(link.ipTargets || []);
         const graphPorts = (link.ports && link.ports.length > 0) ? link.ports : buildExternalLinkPorts(ipTargets);
         const ports = graphPorts.map(port => ({
             host: port.host !== undefined ? String(port.host) : '',
@@ -53,7 +53,6 @@ const mapExternalLinks = (links: ExternalLink[]) => {
             description: link.description,
             id: link.id,
             monitor: Boolean(link.monitor),
-            ip_targets: link.ip_targets ?? ipTargets,
             ipTargets,
             labels: {},
             nodeName: 'Global'
@@ -248,13 +247,13 @@ export async function POST(request: Request) {
   
   // Handle Link Creation
   if (body.type === 'link') {
-    const { name, url, description, monitor, ip_targets } = body;
+    const { name, url, description, monitor, ipTargets: ipTargetsBody, ip_targets } = body;
     if (!name || !url) {
         return NextResponse.json({ error: 'Name and URL required' }, { status: 400 });
     }
 
     const config = await getConfig();
-    const parsedTargets = parseIpTargets(ip_targets);
+    const parsedTargets = parseIpTargets(ipTargetsBody ?? ip_targets);
     const portMappings = buildExternalLinkPorts(parsedTargets);
 
     const newLink: ExternalLink = {
@@ -263,7 +262,6 @@ export async function POST(request: Request) {
         url,
         description,
         monitor,
-        ip_targets: parsedTargets,
         ipTargets: parsedTargets,
         ports: portMappings
     };

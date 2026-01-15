@@ -23,7 +23,14 @@ export class NodeFactory {
         
         // Status derivation strictly from rawData
         // Accept 'running' (Podman) or boolean active (Services) - but this is container node
-        const status = (rawData.State === 'running' || rawData.State?.Running === true) ? 'up' : 'down';
+        const dockerStateObj = rawData.State || rawData.state;
+        const booleanRunning = dockerStateObj?.Running ?? dockerStateObj?.running ?? rawData.Running ?? rawData.running;
+        const stringStates = [rawData.State, rawData.state, rawData.Status, rawData.status]
+            .filter((value): value is string => typeof value === 'string')
+            .map((value) => value.toLowerCase());
+        const status = (booleanRunning === true || stringStates.some((value) => value === 'running' || value.startsWith('up')))
+            ? 'up'
+            : 'down';
 
         return {
             id,

@@ -48,6 +48,14 @@ interface Service {
   dnsServers?: string[];
 }
 
+type LinkFormState = {
+    name: string;
+    url: string;
+    description: string;
+    monitor: boolean;
+    ipTargetsText?: string;
+};
+
 type ApiLinkPayload = {
     id?: string;
     name: string;
@@ -155,10 +163,10 @@ export default function ServicesPlugin() {
   const [currentAction, setCurrentAction] = useState<'start' | 'stop' | 'restart'>('start');
 
   // Link Modal State
-  const [showLinkModal, setShowLinkModal] = useState(false);
-  const [isEditingLink, setIsEditingLink] = useState(false);
-  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
-  const [linkForm, setLinkForm] = useState<{ name: string; url: string; description: string; monitor: boolean; ip_targets?: string }>({ name: '', url: '', description: '', monitor: false, ip_targets: '' });
+    const [showLinkModal, setShowLinkModal] = useState(false);
+    const [isEditingLink, setIsEditingLink] = useState(false);
+    const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
+    const [linkForm, setLinkForm] = useState<LinkFormState>({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
   
   const { data: twin, isConnected, lastUpdate } = useDigitalTwin();
   
@@ -174,10 +182,10 @@ export default function ServicesPlugin() {
               const status = typeof link.status === 'string' ? link.status : (link.active ? 'active' : 'inactive');
               const activeState = typeof link.activeState === 'string' ? link.activeState : status;
               const subState = typeof link.subState === 'string' ? link.subState : status;
-              const ipTargets: string[] = Array.isArray(link.ip_targets)
-                  ? link.ip_targets
-                  : Array.isArray(link.ipTargets)
-                      ? link.ipTargets
+              const ipTargets: string[] = Array.isArray(link.ipTargets)
+                  ? link.ipTargets
+                  : Array.isArray(link.ip_targets)
+                      ? link.ip_targets
                       : [];
 
               return {
@@ -669,7 +677,7 @@ export default function ServicesPlugin() {
         url: service.url || '',
         description: service.description || '',
                 monitor: service.monitor || false,
-                ip_targets: service.ipTargets && service.ipTargets.length > 0 ? service.ipTargets.join(', ') : ''
+                                ipTargetsText: service.ipTargets && service.ipTargets.length > 0 ? service.ipTargets.join(', ') : ''
     });
     setIsEditingLink(true);
         setEditingLinkId(service.id || service.name);
@@ -686,17 +694,28 @@ export default function ServicesPlugin() {
         const method = isEditingLink ? 'PUT' : 'POST';
         const url = isEditingLink ? `/api/services/${editingLinkId}` : '/api/services';
 
+        const ipTargets = linkForm.ipTargetsText
+            ? linkForm.ipTargetsText.split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+
         const res = await fetch(url, {
             method,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...linkForm, type: 'link' })
+            body: JSON.stringify({
+                name: linkForm.name,
+                url: linkForm.url,
+                description: linkForm.description,
+                monitor: linkForm.monitor,
+                ipTargets,
+                type: 'link'
+            })
         });
 
         if (!res.ok) throw new Error('Failed to save link');
 
         addToast('success', isEditingLink ? 'Link updated successfully' : 'Link added successfully');
         setShowLinkModal(false);
-        setLinkForm({ name: '', url: '', description: '', monitor: false, ip_targets: '' });
+        setLinkForm({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
         setIsEditingLink(false);
         setEditingLinkId(null);
         fetchData();

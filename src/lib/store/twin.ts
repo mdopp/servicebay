@@ -1,3 +1,5 @@
+import path from 'path';
+import yaml from 'js-yaml';
 import { EnrichedContainer, ServiceUnit, SystemResources, Volume, WatchedFile, ProxyRoute, PortMapping } from '../agent/types';
 import { logger } from '../logger';
 import type { AgentHealth } from '../agent/handler';
@@ -13,6 +15,7 @@ export interface NodeTwin {
   files: Record<string, WatchedFile>;
   proxy?: ProxyRoute[];
   health?: AgentHealth;
+    nodeIPs: string[];
 }
 
 export interface GatewayState {
@@ -77,7 +80,8 @@ export class DigitalTwinStore {
         services: [],
         volumes: [],
         files: {},
-        proxy: []
+                proxy: [],
+                nodeIPs: []
       };
       this.notifyListeners();
     }
@@ -133,11 +137,13 @@ export class DigitalTwinStore {
     // CONSISTENCY ENFORCEMENT: Identify Authoritative Proxy Service
     // We do this ONCE during the update to establish the Single Source of Truth
     if (data.services) {
-        // Simple logic: Active & Standard preferred. But once picked, it is THE proxy.
-        // We inject a property `isPrimaryProxy` into the service object so consumers don't have to guess.
-        
-        // 1. Reset existing flags in incoming data
-        data.services.forEach(s => delete s.isPrimaryProxy);
+        const containerSnapshot = data.containers ?? this.nodes[nodeId]?.containers ?? [];
+
+        data.services.forEach(s => {
+            s.isReverseProxy = this.isReverseProxyService(s, containerSnapshot);
+            s.isServiceBay = this.isServiceBayService(s, containerSnapshot);
+            delete s.isPrimaryProxy;
+        });
 
         // 2. Select the winner
         const primary = data.services
@@ -319,7 +325,139 @@ export class DigitalTwinStore {
       });
   }
 
+    private static readonly KNOWN_PROXY_KEYWORDS = ['nginx', 'nginx-web', 'haproxy', 'traefik', 'caddy', 'envoy'];
+    private static readonly PROXY_EXCLUDE_KEYWORDS = ['mpris-proxy'];
+    private static readonly SERVICEBAY_KEYWORDS = ['servicebay', 'service-bay', 'service_bay'];
+
+    private isReverseProxyService(service: ServiceUnit, containers: EnrichedContainer[]): boolean {
+          const nameCandidates = this.buildServiceNameCandidates(service);
+          const descriptionCandidate = service.description?.toLowerCase();
+
+          if (this.isProxyNameMatch(nameCandidates) || this.isProxyName(descriptionCandidate)) {
+              return true;
+          }
+
+          const linkedContainers = this.resolveLinkedContainers(service, containers, nameCandidates);
+
+          if (linkedContainers.some(c => c.labels?.['servicebay.role'] === 'reverse-proxy')) {
+              return true;
+          }
+
+          if (linkedContainers.some(c => this.isProxyName(c.image?.toLowerCase()))) {
+              return true;
+          }
+
+          if (linkedContainers.some(c => (c.names || []).some(name => this.isProxyName(name.replace(/^\//, '').toLowerCase())))) {
+              return true;
+          }
+
+          return false;
+      }
+
+    private isServiceBayService(service: ServiceUnit, containers: EnrichedContainer[]): boolean {
+          const nameCandidates = this.buildServiceNameCandidates(service);
+
+          if (this.hasServiceBayKeyword(nameCandidates)) {
+              return true;
+          }
+          if (this.matchesServiceBayKeyword(service.description) || this.matchesServiceBayKeyword(service.path) || this.matchesServiceBayKeyword(service.fragmentPath)) {
+              return true;
+          }
+
+          const linkedContainers = this.resolveLinkedContainers(service, containers, nameCandidates);
+
+          if (linkedContainers.some(c => this.containerHasServiceBayLabel(c))) {
+              return true;
+          }
+          if (linkedContainers.some(c => this.matchesServiceBayKeyword(c.image))) {
+              return true;
+          }
+          if (linkedContainers.some(c => (c.names || []).some(name => this.matchesServiceBayKeyword(name)))) {
+              return true;
+          }
+
+          return false;
+      }
+
+    private isProxyName(value?: string): boolean {
+          if (!value) return false;
+          const normalized = value.toLowerCase();
+          if (DigitalTwinStore.PROXY_EXCLUDE_KEYWORDS.some(ex => normalized.includes(ex))) {
+              return false;
+          }
+          if (DigitalTwinStore.KNOWN_PROXY_KEYWORDS.some(keyword => normalized.includes(keyword))) {
+              return true;
+          }
+          return normalized.includes('proxy');
+      }
+
+    private isProxyNameMatch(candidates: Set<string>): boolean {
+          for (const name of candidates) {
+              if (this.isProxyName(name)) {
+                  return true;
+              }
+          }
+          return false;
+      }
+
+    private buildServiceNameCandidates(service: ServiceUnit): Set<string> {
+          const candidates = new Set<string>();
+          if (service.name) {
+              candidates.add(service.name.toLowerCase());
+              if (service.name.endsWith('.service')) {
+                  candidates.add(service.name.replace(/\.service$/, '').toLowerCase());
+              }
+          }
+          return candidates;
+      }
+
+    private resolveLinkedContainers(service: ServiceUnit, containers: EnrichedContainer[], nameCandidates: Set<string>): EnrichedContainer[] {
+          const normalizedCandidates = Array.from(nameCandidates);
+          return containers.filter(c => {
+              if (service.associatedContainerIds?.includes(c.id)) return true;
+              const normalizedNames = (c.names || []).map(n => n.replace(/^\//, '').toLowerCase());
+              return normalizedCandidates.some(candidate =>
+                  normalizedNames.includes(candidate) || normalizedNames.includes(`systemd-${candidate}`)
+              );
+          });
+      }
+
+    private matchesServiceBayKeyword(value?: string): boolean {
+          if (!value) return false;
+          const normalized = value.toLowerCase();
+          return DigitalTwinStore.SERVICEBAY_KEYWORDS.some(keyword => normalized.includes(keyword));
+      }
+
+    private hasServiceBayKeyword(candidates: Set<string>): boolean {
+          for (const value of candidates) {
+              if (this.matchesServiceBayKeyword(value)) {
+                  return true;
+              }
+          }
+          return false;
+      }
+
+    private containerHasServiceBayLabel(container: EnrichedContainer): boolean {
+          const role = container.labels?.['servicebay.role'];
+          const protectedLabel = container.labels?.['servicebay.protected'];
+          return role === 'system' || protectedLabel === 'true';
+      }
+
   private enrichNode(nodeId: string, node: NodeTwin) {
+      const nodeIPs = this.collectNodeIPv4Addresses(node);
+      node.nodeIPs = nodeIPs;
+
+      if (node.containers && node.containers.length > 0) {
+          node.containers.forEach(container => {
+              if (container.ports && container.ports.length > 0) {
+                  container.ports = container.ports.map(port => ({
+                      ...port,
+                      hostIp: this.resolveHostIpForPort(port.hostIp, nodeIPs)
+                  }));
+              }
+          });
+      }
+
       if (!node.services || !node.containers) return;
 
       // 1. Build Metrics for Dynamic Port Lookup
@@ -478,13 +616,183 @@ export class DigitalTwinStore {
           });
 
           if (dynamicPorts.length > 0) {
-              svc.ports = dynamicPorts;
+              const resolvedPorts = dynamicPorts.map(port => ({
+                  ...port,
+                  hostIp: this.resolveHostIpForPort(port.hostIp, nodeIPs)
+              }));
+              svc.ports = resolvedPorts;
               // logger.debug('TwinStore', `Enriched ${svc.name} with dynamic ports: ${dynamicPorts.length}`);
-          } else { 
-              // Priority 3: Keep existing 'ports' (Static Service Definition)
-              // No action needed as svc.ports is already set from agent data
+          } else if (!svc.ports || svc.ports.length === 0) {
+              const staticPorts = this.extractStaticPortsForService(svc, node, nodeIPs);
+              if (staticPorts.length > 0) {
+                  svc.ports = staticPorts;
+              }
           }
       });
+  }
+
+  private collectNodeIPv4Addresses(node: NodeTwin): string[] {
+      if (!node.resources?.network) return [];
+      const seen = new Set<string>();
+      Object.values(node.resources.network).forEach(entries => {
+          entries.forEach(entry => {
+              if (entry.family === 'IPv4' && !entry.internal && entry.address) {
+                  seen.add(entry.address);
+              }
+          });
+      });
+      return Array.from(seen);
+  }
+
+  private resolveHostIpForPort(currentHostIp: string | undefined, nodeIPs: string[]): string | undefined {
+      if (currentHostIp && !this.isWildcardHostIp(currentHostIp)) {
+          return currentHostIp;
+      }
+      return nodeIPs[0] || currentHostIp || undefined;
+  }
+
+  private isWildcardHostIp(value?: string): boolean {
+      if (!value) return true;
+      const normalized = value.trim();
+      return normalized === '' || normalized === '0.0.0.0' || normalized === '::' || normalized === '::0' || normalized === '*';
+  }
+
+  private extractStaticPortsForService(service: ServiceUnit, node: NodeTwin, nodeIPs: string[]): PortMapping[] {
+      if (!node.files) return [];
+      const baseName = service.name?.replace(/\.service$/, '') || service.name;
+      if (!baseName) return [];
+
+      const ports: PortMapping[] = [];
+      const pushPort = (hostPort?: number, containerPort?: number, protocol?: string, hostIp?: string) => {
+          const normalizedContainer = containerPort ?? hostPort;
+          if (!normalizedContainer) return;
+          const resolvedHost = hostPort ?? normalizedContainer;
+          ports.push({
+              hostPort: resolvedHost,
+              containerPort: normalizedContainer,
+              protocol: (protocol || 'tcp').toLowerCase(),
+              hostIp: this.resolveHostIpForPort(hostIp, nodeIPs)
+          });
+      };
+
+      const files = node.files;
+      const kubeEntry = this.findFileBySuffix(files, `/${baseName}.kube`);
+      if (kubeEntry) {
+          const [kubePath, kubeFile] = kubeEntry;
+          if (kubeFile.content) {
+              const match = kubeFile.content.match(/^Yaml=(.+)$/m);
+              if (match) {
+                  const yamlRef = match[1].trim();
+                  const yamlContent = this.getYamlContent(files, kubePath, yamlRef);
+                  if (yamlContent) {
+                      try {
+                          const docs = yaml.loadAll(yamlContent) as unknown[];
+                          docs.forEach(doc => {
+                              if (!doc || typeof doc !== 'object') return;
+                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                              const spec = (doc as any).spec;
+                              if (!spec) return;
+                              const hostNetwork = Boolean(spec.hostNetwork);
+                              const containers = Array.isArray(spec.containers) ? spec.containers : [];
+                              containers.forEach((containerDoc: unknown) => {
+                                  if (!containerDoc || typeof containerDoc !== 'object') return;
+                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                  const portsDef = Array.isArray((containerDoc as any).ports) ? (containerDoc as any).ports : [];
+                                  portsDef.forEach((portDef: unknown) => {
+                                      if (!portDef || typeof portDef !== 'object') return;
+                                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                      const descriptor = portDef as any;
+                                      const containerPort = this.safeParsePort(descriptor.containerPort ?? descriptor.container_port ?? descriptor.port);
+                                      if (!containerPort) return;
+                                      let hostPort = this.safeParsePort(descriptor.hostPort ?? descriptor.host_port);
+                                      if (!hostPort && hostNetwork) hostPort = containerPort;
+                                      pushPort(hostPort, containerPort, descriptor.protocol);
+                                  });
+                              });
+                          });
+                      } catch (err) {
+                          logger.warn('TwinStore', `Failed to parse YAML for ${service.name}`, err);
+                      }
+                  }
+              }
+          }
+          if (ports.length > 0) {
+              return ports;
+          }
+      }
+
+      const containerEntry = this.findFileBySuffix(files, `/${baseName}.container`);
+      if (containerEntry) {
+          const [, containerFile] = containerEntry;
+          if (containerFile.content) {
+              let hostNetwork = false;
+              const lines = containerFile.content.split('\n');
+              for (const line of lines) {
+                  const trimmed = line.trim();
+                  if (trimmed.length === 0) continue;
+                  if (trimmed.startsWith('Network=')) {
+                      hostNetwork = trimmed.split('=')[1]?.trim() === 'host';
+                      continue;
+                  }
+                  if (trimmed.startsWith('PublishPort=')) {
+                      const definition = trimmed.substring('PublishPort='.length);
+                      const [portPart, protoPart] = definition.split('/');
+                      const segments = portPart.split(':').filter(Boolean);
+                      let ip: string | undefined;
+                      let hostStr: string | undefined;
+                      let containerStr: string | undefined;
+
+                      if (segments.length === 3) {
+                          [ip, hostStr, containerStr] = segments;
+                      } else if (segments.length === 2) {
+                          [hostStr, containerStr] = segments;
+                      } else if (segments.length === 1) {
+                          hostStr = segments[0];
+                          containerStr = segments[0];
+                      }
+
+                      const containerPort = this.safeParsePort(containerStr);
+                      let hostPort = this.safeParsePort(hostStr);
+                      if (!hostPort && hostNetwork && containerPort) {
+                          hostPort = containerPort;
+                      }
+
+                      if (containerPort || hostPort) {
+                          pushPort(hostPort, containerPort ?? hostPort, protoPart, ip);
+                      }
+                  }
+              }
+          }
+      }
+
+      return ports;
+  }
+
+  private findFileBySuffix(files: Record<string, WatchedFile>, suffix: string): [string, WatchedFile] | undefined {
+      const key = Object.keys(files).find((filePath) => filePath.endsWith(suffix));
+      return key ? [key, files[key]] : undefined;
+  }
+
+  private getYamlContent(files: Record<string, WatchedFile>, basePath: string, relative: string): string | null {
+      const directPath = path.join(path.dirname(basePath), relative);
+      if (files[directPath]?.content) {
+          return files[directPath].content;
+      }
+      const fallbackKey = Object.keys(files).find((filePath) => filePath.endsWith(`/${relative}`));
+      return fallbackKey ? files[fallbackKey].content : null;
+  }
+
+  private safeParsePort(value: unknown): number | undefined {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+          return value;
+      }
+      if (typeof value === 'string') {
+          const parsed = parseInt(value, 10);
+          if (!Number.isNaN(parsed)) {
+              return parsed;
+          }
+      }
+      return undefined;
   }
 
   public updateGateway(data: Partial<GatewayState>) {

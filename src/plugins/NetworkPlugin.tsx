@@ -204,21 +204,6 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
     
     if (!rawPorts || rawPorts.length === 0) return { globalIp: null, portMap: [] };
     
-    // Fallback IP (Node IP or Link Targets)
-    let fallbackIp = '0.0.0.0';
-    
-    // Special handling for Router: Prefer subLabel (Internal IP) over NodeIP if valid
-    if (data.type === 'router' && data.subLabel && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(data.subLabel)) {
-        fallbackIp = data.subLabel;
-    } else if (data.metadata?.nodeIPs && data.metadata.nodeIPs.length > 0) {
-        fallbackIp = data.metadata.nodeIPs[0];
-    } else if (data.type === 'link' && data.rawData?.ip_targets && data.rawData.ip_targets.length > 0) {
-         // Try to parse IP from the first target (IP:PORT)
-         const target = data.rawData.ip_targets[0];
-         const parts = target.split(':');
-         if (parts.length >= 1) fallbackIp = parts[0];
-    }
-
     const parsedPorts = rawPorts.map((p: unknown) => {
         const isObj = typeof p === 'object' && p !== null;
         // Check both camelCase (API) and snake_case (Agent) properties
@@ -230,7 +215,7 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
         
         if (isObj) {
             const portObj = p as LegacyPortMapping;
-            ip = portObj.hostIp || portObj.IP || null; // IP is rarely on port obj in recent models, but check
+            ip = portObj.hostIp || portObj.IP || null;
             hostPort = portObj.host || portObj.hostPort || null;
             containerPort = portObj.container || portObj.containerPort || null;
         } else {
@@ -238,13 +223,6 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
             const val = p as unknown as (string | number);
             hostPort = val;
             containerPort = val; // Assume symmetry if simple number
-        }
-
-        // Normalize IP: If missing, empty, or 0.0.0.0, use the Node IP (fallbackIp)
-        // This ensures containers (empty IP) and services (0.0.0.0) look the same
-        // and show the actual reachable IP of the node.
-        if (!ip || ip === '0.0.0.0' || ip === '') {
-            ip = fallbackIp;
         }
 
         return {
@@ -650,6 +628,14 @@ const edgeTypes = {
   custom: CustomEdge,
 };
 
+type LinkFormState = {
+    name: string;
+    url: string;
+    description: string;
+    monitor: boolean;
+    ipTargetsText?: string;
+};
+
 export default function NetworkPlugin() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -667,13 +653,18 @@ export default function NetworkPlugin() {
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
-  const [linkForm, setLinkForm] = useState<{ name: string; url: string; description: string; monitor: boolean; ip_targets?: string }>({ name: '', url: '', description: '', monitor: false, ip_targets: '' });
+    const [linkForm, setLinkForm] = useState<LinkFormState>({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
 
   // Connection Modal State
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [pendingConnection, setPendingConnection] = useState<Connection | null>(null);
   const [connectionPort, setConnectionPort] = useState('');
   const [availablePorts, setAvailablePorts] = useState<number[]>([]);
+    const selectedEdgeDetails = useMemo(() => {
+        if (!selectedEdge) return null;
+        return edges.find(edge => edge.id === selectedEdge) || null;
+    }, [edges, selectedEdge]);
+    const selectedEdgeMeta = selectedEdgeDetails?.data as { isManual?: boolean; state?: string; port?: number } | undefined;
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -880,11 +871,17 @@ export default function NetworkPlugin() {
         if (edgeSignatures.has(signature)) return;
         edgeSignatures.add(signature);
 
+        const originalId = (e.data as { originalId?: string })?.originalId || e.id;
+
         visibleEdges.push({
             ...e,
             id: `e-${source}-${target}`, // Generate new stable ID for the layout
             source,
-            target
+            target,
+            data: {
+                ...e.data,
+                originalId
+            }
         });
     });
     
@@ -958,7 +955,7 @@ export default function NetworkPlugin() {
         url: externalTargetIp ? `http://${externalTargetIp}:${externalTargetPort}` : '',
         description: `Imported from Nginx proxy target ${externalTargetIp}:${externalTargetPort}`,
         monitor: true,
-        ip_targets: externalTargetIp || ''
+                ipTargetsText: externalTargetIp || ''
     });
     setShowLinkModal(true);
   }, []);
@@ -996,22 +993,27 @@ export default function NetworkPlugin() {
         };
       });
 
-      const flowEdges: Edge[] = rawData.edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        label: e.label,
-        type: 'smoothstep',
-        markerEnd: {
-            type: MarkerType.ArrowClosed,
-        },
-        style: e.style,
-        data: {
-            isManual: e.isManual,
-            state: e.state
-        },
-        animated: e.state === 'active'
-    }));
+      const flowEdges: Edge[] = rawData.edges.map((e) => {
+        const fallbackLabel = Number.isFinite(e.port) && e.port > 0 ? `:${e.port}` : undefined;
+
+        return {
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            label: e.label ?? fallbackLabel,
+            type: 'smoothstep',
+            markerEnd: {
+                type: MarkerType.ArrowClosed,
+            },
+            style: e.style,
+            data: {
+                isManual: e.isManual,
+                state: e.state,
+                port: e.port
+            },
+            animated: e.state === 'active'
+        };
+      });
       
       return { nodes: flowNodes, edges: flowEdges };
   }, [rawData, handleCreateExternalLink]);
@@ -1056,14 +1058,19 @@ export default function NetworkPlugin() {
 
   const handleEditLink = () => {
       if (!selectedNodeData || !selectedNodeData.rawData) return;
-      const { name, url, description, monitor, ip_targets } = selectedNodeData.rawData;
+      const { name, url, description, monitor, ipTargets, ip_targets } = selectedNodeData.rawData;
+      const targetsArray = Array.isArray(ipTargets)
+          ? ipTargets
+          : Array.isArray(ip_targets)
+              ? ip_targets
+              : [];
       
       setLinkForm({
           name: name || '',
           url: url || '',
           description: description || '',
           monitor: monitor || false,
-          ip_targets: Array.isArray(ip_targets) ? ip_targets.join(', ') : ''
+          ipTargetsText: targetsArray.join(', ')
       });
       setShowLinkModal(true);
   };
@@ -1075,8 +1082,8 @@ export default function NetworkPlugin() {
     }
 
     try {
-        const ipTargets = linkForm.ip_targets 
-            ? linkForm.ip_targets.split(',').map(s => s.trim()).filter(Boolean) 
+        const ipTargets = linkForm.ipTargetsText 
+            ? linkForm.ipTargetsText.split(',').map(s => s.trim()).filter(Boolean) 
             : [];
 
         const res = await fetch(`/api/services/${encodeURIComponent(linkForm.name)}`, {
@@ -1086,7 +1093,7 @@ export default function NetworkPlugin() {
                 url: linkForm.url,
                 description: linkForm.description,
                 monitor: linkForm.monitor,
-                ip_targets: ipTargets,
+                ipTargets,
                 type: 'link'
             })
         });
@@ -1095,6 +1102,7 @@ export default function NetworkPlugin() {
         
         addToast('success', 'Link updated successfully');
         setShowLinkModal(false);
+        setLinkForm({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
         fetchGraph(); 
         
         if (selectedNodeData && selectedNodeData.rawData && selectedNodeData.rawData.name === linkForm.name) {
@@ -1105,7 +1113,7 @@ export default function NetworkPlugin() {
                      url: linkForm.url,
                      description: linkForm.description,
                      monitor: linkForm.monitor,
-                     ip_targets: ipTargets
+                     ipTargets
                  }
              });
         }
@@ -1119,8 +1127,14 @@ export default function NetworkPlugin() {
 
   const handleDeleteEdge = async () => {
       if (!selectedEdge) return;
+      const edgeInfo = edges.find(edge => edge.id === selectedEdge);
+      if (!(edgeInfo?.data as { isManual?: boolean })?.isManual) {
+          addToast('error', 'Only manual connections can be removed');
+          return;
+      }
+      const originalId = (edgeInfo?.data as { originalId?: string })?.originalId || selectedEdge;
       try {
-          const res = await fetch(`/api/network/edges?id=${selectedEdge}`, {
+          const res = await fetch(`/api/network/edges?id=${encodeURIComponent(originalId)}`, {
               method: 'DELETE'
           });
           if (!res.ok) throw new Error('Failed to delete edge');
@@ -1613,16 +1627,34 @@ export default function NetworkPlugin() {
                       <X size={16} />
                   </button>
               </div>
-              <p className="text-sm text-gray-500 mb-4">
-                  Manual connection between nodes.
+              <p className="text-sm text-gray-500 mb-3">
+                  {selectedEdgeMeta?.isManual
+                      ? 'Manual connection between nodes.'
+                      : 'Auto-discovered link inferred from real traffic.'}
               </p>
-              <button 
-                  onClick={handleDeleteEdge}
-                  className="w-full flex items-center justify-center gap-2 p-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors text-sm font-medium"
-              >
-                  <Trash2 size={14} />
-                  Remove Connection
-              </button>
+              <div className="space-y-2 text-xs font-mono text-gray-600 dark:text-gray-400 mb-3">
+                  <div className="flex justify-between">
+                      <span>Port</span>
+                      <span>{selectedEdgeMeta?.port ? `:${selectedEdgeMeta.port}` : 'unassigned'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                      <span>Status</span>
+                      <span className="uppercase">{selectedEdgeMeta?.state || 'UNKNOWN'}</span>
+                  </div>
+              </div>
+              {selectedEdgeMeta?.isManual ? (
+                  <button 
+                      onClick={handleDeleteEdge}
+                      className="w-full flex items-center justify-center gap-2 p-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors text-sm font-medium"
+                  >
+                      <Trash2 size={14} />
+                      Remove Connection
+                  </button>
+              ) : (
+                  <p className="text-xs text-gray-500">
+                      Auto-discovered edges cannot be removed manually.
+                  </p>
+              )}
           </div>
       )}
     </div>

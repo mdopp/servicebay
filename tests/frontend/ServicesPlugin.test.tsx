@@ -137,7 +137,7 @@ describe('ServicesPlugin', () => {
                         { 
                              name: 'nginx-web', // Agent V4 format
                              activeState: 'active', subState: 'running', type: 'container', description: 'Nginx Web Server',
-                             isReverseProxy: true // Agent sets this
+                             isReverseProxy: true // Digital Twin sets this
                         }
                     ],
                     containers: [],

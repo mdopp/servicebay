@@ -4,6 +4,7 @@ import { DATA_DIR } from './dirs';
 import { decrypt, encrypt } from './secrets';
 import { LogLevel } from './logger';
 import { PortMapping as GraphPortMapping } from './network/types';
+import { normalizeExternalTargets } from './network/externalLinks';
 
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -14,7 +15,6 @@ export interface ExternalLink {
   description?: string;
   icon?: string;
   monitor?: boolean;
-  ip_targets?: string[]; // e.g. ["192.168.1.10:8123", "10.0.0.5:80"]
   ipTargets?: string[];
   ports?: GraphPortMapping[];
 }
@@ -76,6 +76,22 @@ export interface AppConfig {
   setupCompleted?: boolean;
 }
 
+type ExternalLinkInput = ExternalLink & { ip_targets?: string[] };
+
+const normalizeExternalLinkEntry = (link: ExternalLinkInput): ExternalLink => {
+  const normalizedTargets = normalizeExternalTargets(link.ipTargets ?? link.ip_targets ?? []);
+  const { ip_targets, ...rest } = link;
+  return {
+    ...rest,
+    ipTargets: normalizedTargets,
+  };
+};
+
+const normalizeExternalLinks = (links?: ExternalLinkInput[]): ExternalLink[] | undefined => {
+  if (!Array.isArray(links)) return links;
+  return links.map(normalizeExternalLinkEntry);
+};
+
 const DEFAULT_CONFIG: AppConfig = {
   templateSettings: {},
   logLevel: 'info',
@@ -113,8 +129,10 @@ export async function getConfig(): Promise<AppConfig> {
     const content = await fs.readFile(CONFIG_PATH, 'utf-8');
     const rawConfig = JSON.parse(content);
     // Decrypt sensitive fields
-    const config = transformConfig(rawConfig, SENSITIVE_KEYS, decrypt);
-    return { ...DEFAULT_CONFIG, ...config };
+    const config = transformConfig(rawConfig, SENSITIVE_KEYS, decrypt) as AppConfig;
+    const merged = { ...DEFAULT_CONFIG, ...config };
+    merged.externalLinks = normalizeExternalLinks(merged.externalLinks);
+    return merged;
   } catch {
     return DEFAULT_CONFIG;
   }
@@ -123,7 +141,11 @@ export async function getConfig(): Promise<AppConfig> {
 export async function saveConfig(config: AppConfig): Promise<void> {
   await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
   // Encrypt sensitive fields before saving
-  const safeConfig = transformConfig(config, SENSITIVE_KEYS, encrypt);
+  const normalizedConfig: AppConfig = {
+    ...config,
+    externalLinks: normalizeExternalLinks(config.externalLinks),
+  };
+  const safeConfig = transformConfig(normalizedConfig, SENSITIVE_KEYS, encrypt);
   await fs.writeFile(CONFIG_PATH, JSON.stringify(safeConfig, null, 2));
 }
 

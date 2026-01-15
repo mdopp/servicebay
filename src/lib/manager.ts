@@ -256,15 +256,6 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
       const volumes: { host: string; container: string }[] = [];
       let labels: Record<string, string> = {};
       let hostNetwork = false;
-      let isReverseProxy = false;
-      let isServiceBay = false;
-
-      // Identify special services
-      // 1. Reverse Proxy (Nginx)
-      if (name === 'nginx' || name === 'nginx-web') isReverseProxy = true;
-      
-      // 2. ServiceBay (Self)
-      if (name === 'servicebay' || name === 'ServiceBay') isServiceBay = true;
 
       if (yamlContent) {
         try {
@@ -273,9 +264,6 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
                 if (parsed) {
                     if (parsed.metadata && parsed.metadata.labels) {
                         labels = { ...labels, ...parsed.metadata.labels };
-                        // Detect Roles by Label (Best Practice)
-                        if (labels['servicebay.role'] === 'reverse-proxy') isReverseProxy = true;
-                        if (labels['servicebay.protected'] === 'true') isServiceBay = true;
                     }
                     if (parsed.spec) {
                         if (parsed.spec.hostNetwork) {
@@ -356,10 +344,6 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
                }
           }
           
-          // Re-evaluate Identify Logic based on new labels
-          if (labels['servicebay.role'] === 'reverse-proxy') isReverseProxy = true;
-          if (labels['servicebay.protected'] === 'true') isServiceBay = true;
-
           // Parse Host Network
           if (content.match(/Network=host/)) {
               hostNetwork = true;
@@ -391,8 +375,6 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
         volumes,
         labels,
         hostNetwork,
-        isReverseProxy,
-        isServiceBay, // <--- Added field
         node: connection?.Name || 'Local'
       });
   }

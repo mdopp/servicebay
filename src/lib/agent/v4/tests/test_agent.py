@@ -57,7 +57,6 @@ class TestAgent(unittest.TestCase):
 
         self.assertEqual(len(services), 1)
         self.assertEqual(services[0]['name'], "nginx-web")
-        self.assertTrue(services[0]['isReverseProxy'])
 
     @patch('os.path.isdir')
     def test_get_nginx_config_dirs(self, mock_isdir):

@@ -157,26 +157,6 @@ export class ServiceManager {
                 if (container) logger.debug('ServiceManager', `Selected: ${container.names?.join(', ')}`);
             }
 
-            // --- Server-Side Service Classification ---
-            const nameLower = baseName.toLowerCase();
-            const knownProxies = ['nginx', 'haproxy', 'traefik', 'caddy', 'envoy'];
-            
-            // Check 1: Known Proxy Software Names
-            let isProxy = knownProxies.some(kp => nameLower.includes(kp));
-            
-            // Check 2: "proxy" kw string (excluding system services like mpris-proxy)
-            if (!isProxy && nameLower.includes('proxy') && !nameLower.includes('mpris-proxy')) {
-                isProxy = true;
-            }
-
-            // Check 3: Digital Twin Provider override (Nginx Web)
-            if (proxyState?.provider === 'nginx' && (baseName === 'nginx-web' || baseName === 'nginx')) {
-                isProxy = true;
-            }
-
-            // Check 4: ServiceBay Detection
-            const isServiceBay = nameLower.includes('servicebay');
-
             // Find Verified Domains
             const verifiedDomains = (proxyState?.routes || [])
                 .filter(r => {
@@ -209,10 +189,13 @@ export class ServiceManager {
                 volumes: [], // Populate if needed from twin.volumes
                 hostNetwork: false, // Infer
                 node: nodeName,
-                isReverseProxy: isProxy,
-                isServiceBay: isServiceBay,
                 verifiedDomains: verifiedDomains
             };
+
+            if (serviceUnit) {
+                info.isReverseProxy = serviceUnit.isReverseProxy;
+                info.isServiceBay = serviceUnit.isServiceBay;
+            }
 
             // Parse File Content for metadata like Yaml path
             // (We re-use yamlContent from above if parsed)
@@ -233,7 +216,6 @@ export class ServiceManager {
                                  if (doc.metadata?.labels) {
                                      info.labels = { ...info.labels, ...doc.metadata.labels };
                                      // Check role labels
-                                     if (doc.metadata.labels['servicebay.role'] === 'reverse-proxy') info.isReverseProxy = true;
                                  }
                                  
                                  // Spec
@@ -393,8 +375,8 @@ export class ServiceManager {
             });
             const container = candidates[0]; // Simple best match
 
-            const isProxy = (proxyState?.provider === 'nginx' && (baseName === 'nginx-web' || baseName === 'nginx')) || (serviceUnit?.isReverseProxy ?? false);
-            const isServiceBay = baseName === 'servicebay' || (serviceUnit?.isServiceBay ?? false);
+            const isProxy = serviceUnit?.isReverseProxy ?? (proxyState?.provider === 'nginx' && (baseName === 'nginx-web' || baseName === 'nginx'));
+            const isServiceBay = serviceUnit?.isServiceBay ?? (baseName === 'servicebay');
 
             // Find Verified Domains
             const verifiedDomains = (proxyState?.routes || [])

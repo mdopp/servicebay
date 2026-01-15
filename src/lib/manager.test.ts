@@ -69,7 +69,6 @@ CONTENT_END
       
       // Verify Port Parsing and Identity
       expect(svc.ports).toEqual([{ host: '8080', container: '80' }]);
-      expect(svc.isReverseProxy).toBe(true);
     });
 
     it('should parse kube service with yaml correctly', async () => {

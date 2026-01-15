@@ -86,9 +86,9 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
         const oldLink = config.externalLinks[linkIndex];
         const newName = body.name || oldLink.name;
         
-        let updatedIpTargets = oldLink.ip_targets || oldLink.ipTargets || [];
-        if (body.ip_targets !== undefined) {
-            updatedIpTargets = parseIpTargets(body.ip_targets, updatedIpTargets);
+        let updatedIpTargets = oldLink.ipTargets || [];
+        if (body.ipTargets !== undefined || body.ip_targets !== undefined) {
+            updatedIpTargets = parseIpTargets(body.ipTargets ?? body.ip_targets, updatedIpTargets);
         }
         const updatedPorts = updatedIpTargets.length > 0 ? buildExternalLinkPorts(updatedIpTargets) : (oldLink.ports || []);
 
@@ -98,7 +98,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
           url: body.url || oldLink.url,
           description: body.description || oldLink.description,
           monitor: body.monitor !== undefined ? body.monitor : oldLink.monitor,
-          ip_targets: updatedIpTargets,
           ipTargets: updatedIpTargets,
           ports: updatedPorts
         };
@@ -145,7 +144,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
         // Link does not exist, create it (Promote Virtual Node to External Link)
         if (!config.externalLinks) config.externalLinks = [];
         
-        const parsedTargets = parseIpTargets(body.ip_targets);
+        const parsedTargets = parseIpTargets(body.ipTargets ?? body.ip_targets);
         const portMappings = buildExternalLinkPorts(parsedTargets);
 
         const newLink: ExternalLink = {
@@ -154,7 +153,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
           url: body.url,
           description: body.description || '',
           monitor: body.monitor || false,
-          ip_targets: parsedTargets,
           ipTargets: parsedTargets,
           ports: portMappings
         };

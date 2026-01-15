@@ -26,7 +26,6 @@ describe('DigitalTwinStore Data Flow', () => {
       associatedContainerIds: ['cid1'],
       isManaged: true,
       activeState: 'active',
-      isReverseProxy: false,
       isServiceBay: false,
       path: '/path/to/kube',
       loadState: 'loaded',
@@ -91,7 +90,6 @@ describe('DigitalTwinStore Data Flow', () => {
          activeState: 'active',
          subState: 'running',
          isManaged: true,
-         isReverseProxy: false,
          isServiceBay: false,
          path: '',
          loadState: 'loaded',
@@ -141,7 +139,6 @@ describe('DigitalTwinStore Data Flow', () => {
           loadState: 'loaded',
           description: 'Nginx Proxy',
           path: '/etc/systemd/system/nginx-web.service',
-          isReverseProxy: true,
           isManaged: true,
           // Initially empty
           ports: [],
@@ -162,6 +159,7 @@ describe('DigitalTwinStore Data Flow', () => {
 
       // A. Check Primary Proxy Selection
       expect(enrichedService.isPrimaryProxy).toBe(true);
+      expect(enrichedService.isReverseProxy).toBe(true);
 
       // B. Check Proxy Configuration (The new source of truth)
       expect(enrichedService.proxyConfiguration).toBeDefined();
@@ -188,6 +186,65 @@ describe('DigitalTwinStore Data Flow', () => {
       expect(store.proxy.routes.find(r => r.host === 'app.example.com')).toBeDefined();
   });
 
+      it('should classify ServiceBay services inside the Digital Twin', () => {
+        const serviceBayUnit: ServiceUnit = {
+          name: 'ServiceBay',
+          active: true,
+          activeState: 'active',
+          subState: 'running',
+          loadState: 'loaded',
+          description: 'ServiceBay Container Management Interface',
+          path: '/etc/systemd/system/servicebay.service',
+          isManaged: false,
+          ports: []
+        };
+
+        store.updateNode('ServiceBayNode', {
+          services: [serviceBayUnit],
+          containers: []
+        });
+
+        expect(store.nodes['ServiceBayNode'].services[0].isServiceBay).toBe(true);
+
+        const labeledService: ServiceUnit = {
+          name: 'control-plane',
+          active: true,
+          activeState: 'active',
+          subState: 'running',
+          loadState: 'loaded',
+          description: 'Internal control plane',
+          path: '/etc/systemd/system/control-plane.service',
+          isManaged: true,
+          associatedContainerIds: ['sb-container'],
+          ports: []
+        };
+
+        const serviceBayContainer: EnrichedContainer = {
+          id: 'sb-container',
+          names: ['/systemd-control-plane'],
+          image: 'ghcr.io/servicebay/core:latest',
+          state: 'running',
+          status: 'Up',
+          created: 0,
+          ports: [],
+          mounts: [],
+          labels: { 'servicebay.role': 'system' },
+          networks: ['host'],
+          isHostNetwork: true,
+          podId: '',
+          podName: '',
+          isInfra: false,
+          pid: 777
+        };
+
+        store.updateNode('ServiceBayLabelNode', {
+          services: [labeledService],
+          containers: [serviceBayContainer]
+        });
+
+        expect(store.nodes['ServiceBayLabelNode'].services[0].isServiceBay).toBe(true);
+      });
+
   it('should back-link Verified Domains to Services based on Target IP:Port', () => {
       // 1. Setup Proxy Node (Defines Route)
       const proxyRoutes = [
@@ -208,9 +265,8 @@ describe('DigitalTwinStore Data Flow', () => {
           description: 'My App',
           path: '',
           active: true,
-          ports: [{ host_port: 8080, container_port: 8080, protocol: 'tcp' }],
-          isManaged: true,
-          isReverseProxy: false,
+            ports: [{ host_port: 8080, container_port: 8080, protocol: 'tcp' }],
+            isManaged: true,
           isServiceBay: false
       };
       

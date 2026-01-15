@@ -10,6 +10,7 @@ import { setUpdaterIO } from './src/lib/updater';
 // Monitoring init moved to Agent logic in V4
 import { MonitoringService } from './src/lib/monitoring/service';
 import { agentManager } from './src/lib/agent/manager';
+import { AgentHandler } from './src/lib/agent/handler';
 import { listNodes } from './src/lib/nodes';
 import { AgentEvent } from './src/lib/agent/handler';
 import { DigitalTwinStore, NodeTwin } from './src/lib/store/twin';
@@ -24,6 +25,12 @@ const port = parseInt(process.env.PORT || '3000', 10);
 // when using middleware `hostname` and `port` must be provided below
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
+
+const formatAgentIdSuffix = (agent?: AgentHandler) => {
+    if (!agent) return '';
+    const id = agent.getCurrentRunId?.();
+    return id ? ` [id=${id}]` : '';
+};
 
 
 // Global PTY state
@@ -77,7 +84,7 @@ app.prepare().then(() => {
       try {
           const agent = agentManager.getAgent(nodeName);
           agent.setResourceMode(isActive);
-          logger.info('Server', `Updated resource mode for ${nodeName}: ${isActive} (${viewers?.size || 0} viewers)`);
+          logger.info('Server', `Updated resource mode for ${nodeName}${formatAgentIdSuffix(agent)}: ${isActive} (${viewers?.size || 0} viewers)`);
       } catch {
           // Agent might not be connected
       }
@@ -101,7 +108,8 @@ app.prepare().then(() => {
   
   // --- V4 Agent Event Bus Integration ---
   agentManager.on('agent:connected', (nodeName: string) => {
-      logger.info('Server', `Agent connected: ${nodeName}`);
+      const agent = agentManager.getAgent(nodeName);
+      logger.info('Server', `Agent connected: ${nodeName}${formatAgentIdSuffix(agent)}`);
       twinStore.setNodeConnection(nodeName, true);
       io.emit('node:status', { node: nodeName, status: 'connected' });
       
@@ -111,7 +119,8 @@ app.prepare().then(() => {
       }
   });
   agentManager.on('agent:disconnected', (nodeName: string) => {
-      logger.info('Server', `Agent disconnected: ${nodeName}`);
+      const agent = agentManager.getAgent(nodeName);
+      logger.info('Server', `Agent disconnected: ${nodeName}${formatAgentIdSuffix(agent)}`);
       twinStore.setNodeConnection(nodeName, false);
       io.emit('node:status', { node: nodeName, status: 'disconnected' });
   });
@@ -128,20 +137,20 @@ app.prepare().then(() => {
               logMsg += ` | Services: ${serviceNames}`;
           }
 
-          logger.info('Server', logMsg);
+          const agent = agentManager.getAgent(nodeName);
+          logger.info('Server', `${logMsg}${formatAgentIdSuffix(agent)}`);
           
           // Add health snapshot from agent
-          const agent = agentManager.getAgent(nodeName);
           const health = agent.getHealth();
           
           // TS "as any" is simplistic but TwinStore handles Partial<NodeTwin> safely.
           const update: Partial<NodeTwin> = { ...message.payload as unknown as Partial<NodeTwin>, health };
           twinStore.updateNode(nodeName, update);
-      } else if (message.type === 'SYNC_DIFF') {
-         logger.info('Server', `SYNC_DIFF from ${nodeName}`);
+        } else if (message.type === 'SYNC_DIFF') {
+            const agent = agentManager.getAgent(nodeName);
+            logger.info('Server', `SYNC_DIFF from ${nodeName}${formatAgentIdSuffix(agent)}`);
          
          // Add health snapshot from agent
-         const agent = agentManager.getAgent(nodeName);
          const health = agent.getHealth();
          
          // TODO: Implement diff patching

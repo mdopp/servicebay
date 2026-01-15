@@ -172,11 +172,15 @@ export class NetworkService {
                     const hasIP = n.metadata?.nodeIPs?.includes(dnsIP) || n.ip === dnsIP;
                     if (!hasIP) return false;
 
-                    // Check if node exposes port 53
-                    const rawPorts = (n.rawData?.ports || []) as PortMapping[];
-                    // Check mixed types: PortMapping[] or number[]
-                    const exposesDNS = rawPorts.some(p => p.hostPort === 53);
-                    
+                    // Check if node exposes port 53 (handle both PortMapping + GraphPortMapping shapes)
+                    const rawPorts = (n.rawData?.ports || []) as PortLike[];
+                    const exposesDNS = rawPorts.some(portLike => {
+                        const hostPort = typeof portLike === 'number'
+                            ? portLike
+                            : resolvePortNumber(portLike.hostPort ?? portLike.host ?? portLike.port ?? portLike.containerPort);
+                        return hostPort === 53;
+                    });
+
                     return exposesDNS;
                 });
 
@@ -421,8 +425,18 @@ export class NetworkService {
     if (config.externalLinks) {
         for (const link of config.externalLinks) {
             const nodeId = getExternalLinkNodeId(link);
-            const ipTargets = normalizeExternalTargets(link.ip_targets || link.ipTargets);
+            const ipTargets = normalizeExternalTargets(link.ipTargets || []);
             const parsedPorts = buildExternalLinkPorts(ipTargets);
+
+            let inferredPort: number | undefined = parsedPorts[0]?.host;
+            if (!inferredPort && link.url) {
+                try {
+                    const parsed = new URL(link.url);
+                    inferredPort = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === 'https:' ? 443 : 80);
+                } catch {
+                    inferredPort = undefined;
+                }
+            }
 
             nodes.push({
                 id: nodeId,
@@ -444,14 +458,6 @@ export class NetworkService {
                 }
             });
 
-            edges.push({
-                id: `edge-gateway-${nodeId}`,
-                source: 'gateway',
-                target: nodeId,
-                protocol: 'http',
-                port: 80,
-                state: 'active'
-            });
         }
     }
 
@@ -1303,7 +1309,7 @@ export class NetworkService {
                             const normalizedHost = targetHost?.toLowerCase();
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             const matchedLink = config.externalLinks.find((l: any) => {
-                                const targets = normalizeExternalTargets(l.ip_targets);
+                                const targets = normalizeExternalTargets(l.ipTargets || l.ip_targets);
                                 if (targets.length === 0 || !normalizedHost) return false;
                                 return targets.some(entry => {
                                     const parsed = parseTargetHostPort(entry);

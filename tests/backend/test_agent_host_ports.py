@@ -2,7 +2,7 @@ import unittest
 import sys
 import os
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Ensure we can import agent.py. 
 # We assume agent.py is in the same directory or PYTHONPATH includes it.
@@ -51,10 +51,9 @@ udp UNCONN 0 0 *:53 *:* users:(("adguard",pid=12345,fd=6))
         # Define side effects for run_command
         def run_command_side_effect(cmd, check=True):
             cmd_str = ' '.join(cmd)
-            # print(f"DEBUG MOCK: {cmd_str}") 
             if 'podman ps -a --format json' in cmd_str:
                 return json.dumps(container_data)
-            if 'ss -tulpnH' in cmd_str:
+            if 'ss -tulpn' in cmd_str:
                 return ss_output.strip()
             if 'podman ps -a --no-trunc --format' in cmd_str:
                 return "test-container-id|adguard-pod" # Mock pod name
@@ -72,38 +71,20 @@ udp UNCONN 0 0 *:53 *:* users:(("adguard",pid=12345,fd=6))
         # Assertions
         self.assertEqual(len(containers), 1)
         c = containers[0]
-        # In agent.py, names is a list, but fetch_containers maps 'Names' to 'names'.
-        # Actually agent.py:321 name = names[0]... then detects...
-        # Wait, what does fetch_containers return? It returns a list of DICTs.
-        # But looking at agent.py, it constructs `enriched` list.
-        # I need to see the structure of the returned dict.
-        
-        # Checking agent.py again...
-        # It doesn't seem to explicitly map to a new dict structure for EVERYTHING, 
-        # but it keeps most original fields and ADDS things.
-        # Let's verify if it overwrites 'Ports' or 'ports'.
-        
-        # agent.py doesn't show the final assignment to `enriched` list in the snippet I read.
-        # I'll assume it modifies the container dict or creates a new one.
-        # I'll check assertions gently.
-        
-        # Check for specific ports in the returned data
-        # We assume the key is 'Ports' (original) or 'ports' (new convention?).
-        # Looking at agent.py source, it calculates `detected` list.
-        # I need to verify where `detected` goes.
-        # I'll read the agent.py file again in a separate step if this test fails or before I run it.
-        # But for now I'll check both 'Ports' and 'ports' and `detected`.
-        
-        # Assuming agent.py updates the container dict with detected ports.
-        
-        # Note: In the snippet I read, it did `detected.extend(...)` but I didn't see where `detected` was attached to the container object.
-        # I will assume it's attached.
-        
-        # For the test, I will print the keys if it fails.
-        pass
-        
-        # I need to know the output structure to write correct assertions.
-        # I will read the rest of fetch_containers first.
+
+        self.assertTrue(c['isHostNetwork'])
+        self.assertIn('host', c['networks'])
+        self.assertEqual(c['id'], 'test-container-id')
+
+        ports = {(p['hostPort'], p['protocol']) for p in c['ports']}
+        self.assertEqual(
+            ports,
+            {
+                (53, 'tcp'),
+                (53, 'udp'),
+                (3000, 'tcp')
+            }
+        )
 
 if __name__ == '__main__':
     unittest.main()

@@ -15,7 +15,6 @@ echo "=== Running Agent Logic Verification ==="
 podman run --rm \
     --name servicebay-agent-test-run \
     -v "$PROJECT_ROOT/src/lib/agent/v4/agent.py:/home/podmanuser/agent.py:Z" \
-    -v "$PROJECT_ROOT/tests/backend/test_agent_host_ports.py:/home/podmanuser/test_agent_ports.py:Z" \
-    -v "$PROJECT_ROOT/tests/backend/test_agent_service_linking.py:/home/podmanuser/test_agent_linking.py:Z" \
+    -v "$PROJECT_ROOT/tests/backend:/home/podmanuser/tests/backend:Z" \
     "$IMAGE_NAME" \
-    bash -c "python3 test_agent_ports.py && echo '---' && python3 test_agent_linking.py"
+    bash -c "cd /home/podmanuser && python3 -m unittest discover tests/backend 'test_agent_*.py'"

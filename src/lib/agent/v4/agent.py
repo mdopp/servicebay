@@ -939,7 +939,6 @@ def fetch_services(containers=None):
                 'description': u.get('description'),
                 'path': u.get('fragment_path', ''),
                 'active': u.get('active') == 'active' or u.get('active') == 'reloading',
-                'isReverseProxy': False, # Backend Calculated
                 'isServiceBay': False,   # Backend Calculated
                 'isManaged': is_managed,
                 'associatedContainerIds': associated_ids,
