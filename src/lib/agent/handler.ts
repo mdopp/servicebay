@@ -9,11 +9,30 @@ import { logger } from '@/lib/logger';
 
 type AgentLogLevel = 'info' | 'warn' | 'error' | 'debug';
 
-const loggerMethods: Record<AgentLogLevel, (scope: string, msg: string, ...rest: unknown[]) => void> = {
-  info: logger.info.bind(logger),
-  warn: logger.warn.bind(logger),
-  error: logger.error.bind(logger),
-  debug: logger.debug.bind(logger)
+type AgentLoggerMethod = (scope: string, msg: string, ...rest: unknown[]) => void;
+type AgentLogger = Record<AgentLogLevel, AgentLoggerMethod>;
+
+const fallbackLogger: AgentLogger = {
+  info: console.info.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+  debug: (console.debug ?? console.log).bind(console)
+};
+
+const bindLoggerMethod = (level: AgentLogLevel): AgentLoggerMethod => {
+  const source = logger as unknown as Partial<Record<AgentLogLevel, AgentLoggerMethod>>;
+  const candidate = source[level];
+  if (typeof candidate === 'function') {
+    return candidate.bind(logger);
+  }
+  return fallbackLogger[level];
+};
+
+const loggerMethods: AgentLogger = {
+  info: bindLoggerMethod('info'),
+  warn: bindLoggerMethod('warn'),
+  error: bindLoggerMethod('error'),
+  debug: bindLoggerMethod('debug')
 };
 
 // Cache the agent script content
@@ -235,8 +254,8 @@ export class AgentHandler extends EventEmitter {
           this.emit('connected');
           resolve();
 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
-          stream.on('close', (code: any, signal: any) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          stream.on('close', (code: any) => {
             this.log(this.nodeName, 'info', `Agent Closed. Code: ${code}`);
             this.handleDisconnect();
           });
@@ -476,8 +495,7 @@ export class AgentHandler extends EventEmitter {
   }
 
   private cleanupPending() {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for (const [id, req] of this.pendingRequests) {
+      for (const [, req] of this.pendingRequests) {
           req.reject(new Error('Agent disconnected'));
       }
       this.pendingRequests.clear();

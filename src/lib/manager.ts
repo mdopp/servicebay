@@ -655,6 +655,23 @@ export async function getEnrichedContainers(connection?: PodmanConnection) {
     return [enriched, inspects];
 }
 
+async function getAllContainersInspect(connection?: PodmanConnection) {
+  if (!connection) {
+      return [];
+  }
+  const executor = getExecutor(connection);
+  try {
+    const { stdout: ids } = await executor.exec('podman ps -a -q');
+    if (!ids.trim()) return [];
+
+    const { stdout } = await executor.exec(`podman inspect ${ids.split('\n').join(' ')}`);
+    return JSON.parse(stdout);
+  } catch (e) {
+    console.error('Error inspecting all containers:', e);
+    return [];
+  }
+}
+
 export async function getPodmanPs(connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   try {
