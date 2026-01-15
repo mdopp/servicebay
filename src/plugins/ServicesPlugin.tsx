@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 // import yaml from 'js-yaml'; // Import YAML parser for Strict Matching
 import { logger } from '@/lib/logger';
@@ -13,6 +13,14 @@ import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Powe
 
 // Define/Import UI Service Type locally or keep using legacy type if compatible
 // Let's redefine locally to be explicit about V4 structure or map to it.
+type ServicePort = {
+    host?: string;
+    container: string;
+    hostIp?: string;
+    protocol?: string;
+    source?: string;
+};
+
 interface Service {
   name: string;
   id?: string;
@@ -22,7 +30,7 @@ interface Service {
   subState: string;
   kubePath: string; // path
   yamlPath: string | null;
-  ports: { host?: string; container: string }[];
+    ports: ServicePort[];
   volumes: { host: string; container: string }[];
   type?: 'container' | 'link' | 'gateway' | 'kube' | 'pod';
   url?: string;
@@ -31,13 +39,51 @@ interface Service {
   labels?: Record<string, string>;
   verifiedDomains?: string[];
   hostNetwork?: boolean;
-  nodeName?: string;
+    nodeName?: string;
+    ipTargets?: string[];
   // Gateway specific
   externalIP?: string;
   uptime?: number;
   internalIP?: string;
   dnsServers?: string[];
 }
+
+type ApiLinkPayload = {
+    id?: string;
+    name: string;
+    nodeName?: string;
+    description?: string;
+    active?: boolean;
+    status?: string;
+    activeState?: string;
+    subState?: string;
+    kubePath?: string;
+    yamlPath?: string | null;
+    type?: string;
+    ports?: RawLinkPort[];
+    volumes?: RawLinkVolume[];
+    monitor?: boolean;
+    url?: string;
+    labels?: Record<string, string>;
+    verifiedDomains?: string[];
+    ip_targets?: string[];
+    ipTargets?: string[];
+};
+
+type RawLinkPort = {
+    host?: string | number;
+    hostPort?: string | number;
+    container?: string | number;
+    containerPort?: string | number;
+    hostIp?: string;
+    protocol?: string;
+    source?: string;
+};
+
+type RawLinkVolume = {
+    host?: string;
+    container?: string;
+};
 
 import { useRouter } from 'next/navigation';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -99,6 +145,7 @@ export default function ServicesPlugin() {
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [hasDiscovered, setHasDiscovered] = useState(false);
   const [migrating, setMigrating] = useState(false);
+    const [externalLinks, setExternalLinks] = useState<Service[]>([]);
   // removed refreshing, isFetchingRef
   const { addToast, updateToast } = useToast();
 
@@ -115,15 +162,76 @@ export default function ServicesPlugin() {
   
   const { data: twin, isConnected, lastUpdate } = useDigitalTwin();
   
+  const loadExternalLinks = useCallback(async () => {
+      try {
+          const res = await fetch('/api/services?scope=links', { cache: 'no-store' });
+          if (!res.ok) {
+              throw new Error('Failed to load external links');
+          }
+
+          const payload = await res.json();
+          const parsed: Service[] = Array.isArray(payload) ? payload.map((link: ApiLinkPayload) => {
+              const status = typeof link.status === 'string' ? link.status : (link.active ? 'active' : 'inactive');
+              const activeState = typeof link.activeState === 'string' ? link.activeState : status;
+              const subState = typeof link.subState === 'string' ? link.subState : status;
+              const ipTargets: string[] = Array.isArray(link.ip_targets)
+                  ? link.ip_targets
+                  : Array.isArray(link.ipTargets)
+                      ? link.ipTargets
+                      : [];
+
+              return {
+                  id: link.id || link.name,
+                  name: link.name,
+                  nodeName: link.nodeName || 'Global',
+                  description: link.description,
+                  active: typeof link.active === 'boolean' ? link.active : true,
+                  status,
+                  activeState,
+                  subState,
+                  kubePath: link.kubePath || '',
+                  yamlPath: link.yamlPath ?? null,
+                  type: 'link',
+                  ports: Array.isArray(link.ports) ? link.ports.map((p: RawLinkPort) => ({
+                      host: p?.host !== undefined ? String(p.host) : p?.hostPort !== undefined ? String(p.hostPort) : '',
+                      container: p?.container !== undefined ? String(p.container) : p?.containerPort !== undefined ? String(p.containerPort) : '',
+                      hostIp: p?.hostIp,
+                      protocol: p?.protocol,
+                      source: p?.source
+                  })) : [],
+                  volumes: Array.isArray(link.volumes) ? link.volumes.map((v: RawLinkVolume) => ({
+                      host: v?.host ? String(v.host) : '',
+                      container: v?.container ? String(v.container) : ''
+                  })) : [],
+                  monitor: Boolean(link.monitor),
+                  url: link.url,
+                  labels: link.labels || {},
+                  verifiedDomains: link.verifiedDomains || [],
+                  hostNetwork: false,
+                  ipTargets
+              };
+          }) : [];
+
+          setExternalLinks(parsed);
+      } catch (error) {
+          logger.error('ServicesPlugin', 'Failed to load external links', error);
+      }
+  }, []);
+
+  useEffect(() => {
+      loadExternalLinks();
+  }, [loadExternalLinks]);
+
+  const fetchData = useCallback(() => {
+      loadExternalLinks();
+  }, [loadExternalLinks]);
+  
   // Replaced Legacy Hooks with Twin Logic
   // const { data: servicesData, loading: servicesLoading, validating: servicesValidating, refresh: refreshServices } = useServicesList();
   // const { data: graphData, loading: graphLoading, validating: graphValidating, refresh: refreshGraph } = useNetworkGraph();
   
-  const { services } = useMemo(() => {
-    if (!twin || !twin.nodes) return { services: [], nodes: [] };
-
-    console.log("twin:", twin);
-    logger.debug('ServicesPlugin', 'Computing services from Twin', { nodeCount: Object.keys(twin.nodes).length });
+    const { services } = useMemo(() => {
+        if (!twin || !twin.nodes) return { services: [...externalLinks], nodes: [] };
 
     // 1. Extract Nodes
     const nodeList = Object.keys(twin.nodes).map(name => ({ Name: name, Addr: '0.0.0.0' }));
@@ -314,16 +422,15 @@ export default function ServicesPlugin() {
     };
     
     const finalServices = Array.from(uniqueServices.values());
-    finalServices.push(gatewayService);
+        finalServices.push(gatewayService);
+        if (externalLinks.length > 0) {
+                finalServices.push(...externalLinks);
+        }
 
     return { services: finalServices, nodes: nodeList };
-  }, [twin]);
+    }, [twin, externalLinks]);
 
   const loading = !isConnected && services.length === 0;
-
-  const fetchData = () => {
-     // Twin updates automatically
-  };
 
   const discoverUnmanaged = async () => {
     if (!twin || !twin.nodes) return;
@@ -561,10 +668,11 @@ export default function ServicesPlugin() {
         name: service.name,
         url: service.url || '',
         description: service.description || '',
-        monitor: service.monitor || false
+                monitor: service.monitor || false,
+                ip_targets: service.ipTargets && service.ipTargets.length > 0 ? service.ipTargets.join(', ') : ''
     });
     setIsEditingLink(true);
-    setEditingLinkId(service.name); // Or service.id if available and consistent
+        setEditingLinkId(service.id || service.name);
     setShowLinkModal(true);
   };
 
@@ -588,7 +696,7 @@ export default function ServicesPlugin() {
 
         addToast('success', isEditingLink ? 'Link updated successfully' : 'Link added successfully');
         setShowLinkModal(false);
-        setLinkForm({ name: '', url: '', description: '', monitor: false });
+        setLinkForm({ name: '', url: '', description: '', monitor: false, ip_targets: '' });
         setIsEditingLink(false);
         setEditingLinkId(null);
         fetchData();
@@ -610,7 +718,11 @@ export default function ServicesPlugin() {
 
     try {
         const serviceName = serviceToDelete.id || serviceToDelete.name;
-        const nodeParam = serviceToDelete.nodeName === 'Local' ? '' : serviceToDelete.nodeName;
+        const nodeParam = serviceToDelete.type === 'link' || serviceToDelete.type === 'gateway'
+            ? ''
+            : serviceToDelete.nodeName && serviceToDelete.nodeName !== 'Local'
+                ? serviceToDelete.nodeName
+                : '';
         const query = nodeParam ? `?node=${nodeParam}` : '';
         const res = await fetch(`/api/services/${serviceName}${query}`, { method: 'DELETE' });
         if (res.ok) {
@@ -773,7 +885,7 @@ export default function ServicesPlugin() {
                 {filteredServices.map((service) => {
                     // Pre-calculate deduped ports similar to Network Plugin
                     const dedupedPorts = (() => {
-                        const uniquePortsMap = new Map<string, any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+                        const uniquePortsMap = new Map<string, ServicePort>();
                         service.ports.forEach(p => {
                             const key = `${p.host || '_'}:${p.container}`;
                             if (!uniquePortsMap.has(key)) {
@@ -907,6 +1019,18 @@ export default function ServicesPlugin() {
                                          <a href={service.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
                                             {service.url}
                                         </a>
+                                        {service.ipTargets && service.ipTargets.length > 0 && (
+                                            <div className="mt-3">
+                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold block">IP Targets</span>
+                                                <div className="flex flex-wrap gap-1.5 mt-1">
+                                                    {service.ipTargets.map(target => (
+                                                        <span key={target} className="px-2 py-0.5 rounded text-xs font-mono border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300">
+                                                            {target}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <>

@@ -10,6 +10,24 @@ import { DigitalTwinStore } from '../store/twin'; // Import Twin Store
 import { logger } from '../logger';
 import yaml from 'js-yaml'; // Helper: YAML parser
 import { EnrichedContainer, PortMapping, ServiceUnit, WatchedFile } from '../agent/types';
+import { buildExternalLinkPorts, getExternalLinkNodeId, normalizeExternalTargets, parseTargetHostPort } from './externalLinks';
+
+const resolvePortNumber = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+        return value;
+    }
+
+    if (typeof value === 'string') {
+        const parsed = parseInt(value, 10);
+        if (!Number.isNaN(parsed) && parsed > 0) {
+            return parsed;
+        }
+    }
+
+    return undefined;
+};
+
+// Helper functions for external links are defined in ./externalLinks
 
 interface KubePodSpec {
     spec?: {
@@ -22,6 +40,27 @@ interface KubePodSpec {
             }[];
         }[];
     };
+}
+
+type PortLike = number | {
+    host?: number | string;
+    hostPort?: number | string;
+    port?: number | string;
+    containerPort?: number | string;
+    hostIp?: string;
+    ip?: string;
+};
+
+interface FritzPortMapping {
+    enabled?: boolean;
+    targetIp?: string;
+    internalClient?: string;
+    internalPort?: number | string;
+    externalPort?: number | string;
+    hostPort?: number | string;
+    port?: number | string;
+    containerPort?: number | string;
+    targetPort?: number | string;
 }
 
 export class NetworkService {
@@ -312,12 +351,27 @@ export class NetworkService {
     const gw = twin.gateway;
 
     // Map Twin State to legacy fbStatus format for compatibility
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const normalizedPortMappings = (gw.portMappings || []).map((mapping: any) => {
+        const externalPort = resolvePortNumber(mapping.externalPort ?? mapping.hostPort ?? mapping.port);
+        const internalPort = resolvePortNumber(mapping.internalPort ?? mapping.containerPort ?? mapping.targetPort);
+        const targetIp = mapping.targetIp || mapping.internalClient || undefined;
+
+        return {
+            ...mapping,
+            externalPort,
+            internalPort,
+            targetIp,
+            internalClient: mapping.internalClient || targetIp
+        };
+    });
+
     const fbStatus = {
         connected: gw.upstreamStatus === 'up',
         externalIP: gw.publicIp,
         internalIP: gw.internalIp,
         uptime: gw.uptime || 0,
-        portMappings: gw.portMappings || [],
+        portMappings: normalizedPortMappings,
         dnsServers: gw.dnsServers,
         upstreamStatus: gw.upstreamStatus
     };
@@ -366,26 +420,34 @@ export class NetworkService {
     // External Links (Bookmarks)
     if (config.externalLinks) {
         for (const link of config.externalLinks) {
+            const nodeId = getExternalLinkNodeId(link);
+            const ipTargets = normalizeExternalTargets(link.ip_targets || link.ipTargets);
+            const parsedPorts = buildExternalLinkPorts(ipTargets);
+
             nodes.push({
-                id: `ext-${link.name}`,
+                id: nodeId,
                 label: link.name,
                 type: 'service',
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                status: 'active' as any,
+                status: 'up',
                 node: 'global',
                 metadata: {
                     url: link.url,
                     icon: link.icon,
                     description: link.description,
-                    isExternal: true
+                    isExternal: true,
+                    ipTargets
+                },
+                rawData: {
+                    ...link,
+                    ipTargets,
+                    ports: parsedPorts
                 }
             });
-            // If they are local LAN links, connect to Gateway? Or just floating?
-            // Usually connected to Gateway/LAN
+
             edges.push({
-                id: `edge-gateway-ext-${link.name}`,
+                id: `edge-gateway-${nodeId}`,
                 source: 'gateway',
-                target: `ext-${link.name}`,
+                target: nodeId,
                 protocol: 'http',
                 port: 80,
                 state: 'active'
@@ -583,6 +645,46 @@ export class NetworkService {
     let nginxConfig = { servers: [] as any[] }; // eslint-disable-line @typescript-eslint/no-explicit-any
     let verifiedDomains: string[] = [];
     const containerUrlMapping = new Map<string, Set<string>>();
+
+    const isLocalTargetHost = (host?: string): boolean => {
+        if (!host) return false;
+        const normalized = host.trim();
+        if (!normalized) return false;
+        const loopbacks = ['localhost', '127.0.0.1', '::1', '0.0.0.0'];
+        return loopbacks.includes(normalized) || nodeIPs.includes(normalized);
+    };
+
+    const findServiceByHostPort = (host: string | undefined, port: number): ServiceUnit | undefined => {
+        if (!Number.isFinite(port) || port <= 0) return undefined;
+        const hostIsLocal = isLocalTargetHost(host);
+
+        return services.find(svc => {
+            if (svc === proxyService) return false;
+            if (!svc.ports || svc.ports.length === 0) return false;
+            return svc.ports.some(p => {
+                if (!p.hostPort) return false;
+                if (p.hostPort !== port) return false;
+
+                if (!host) return true;
+
+                if (!p.hostIp || p.hostIp === '0.0.0.0' || p.hostIp === '::' || p.hostIp === '::0') {
+                    return hostIsLocal;
+                }
+
+                return p.hostIp === host;
+            });
+        });
+    };
+
+    const findServiceByDomain = (domains: string[]): ServiceUnit | undefined => {
+        if (!domains || domains.length === 0) return undefined;
+        const domainSet = new Set(domains);
+        return services.find(svc => {
+            if (svc === proxyService) return false;
+            if (!svc.verifiedDomains || svc.verifiedDomains.length === 0) return false;
+            return svc.verifiedDomains.some(domain => domainSet.has(domain));
+        });
+    };
 
     // V4.1: Prioritize Twin Data Enrichment (Single Source of Truth)
     // The DigitalTwinStore now constructs the 'proxyConfiguration' directly on the service object.
@@ -852,8 +954,8 @@ export class NetworkService {
     // A) Explicit Port Forwarding (FritzBox Port Mapping -> Service Host Port)
     // B) Verified Domain (DNS points to Gateway IP -> Implicitly forwarded 80/443 to Service)
     
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const relevantMappings = fbStatus?.portMappings?.filter((m: any) => 
+     
+    const relevantMappings: FritzPortMapping[] = fbStatus?.portMappings?.filter((m: FritzPortMapping) => 
         m.enabled !== false && // Assume enabled if undefined
         ( (m.targetIp && nodeIPs.includes(m.targetIp)) || (m.internalClient && nodeIPs.includes(m.internalClient)) )
     ) || [];
@@ -865,16 +967,27 @@ export class NetworkService {
         
         // Strict Type for ports w/ Bind IP check
         // We normalize everything to { host: number, hostIp: string } to simplify downstream checks
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const targetPortObjs = targetNode.rawData.ports.map((p: any) => {
-            if (typeof p === 'number') return { host: p, hostIp: '0.0.0.0' };
-            return { host: p.hostPort, hostIp: p.hostIp || '0.0.0.0' };
-        });
+        const targetPortObjs = (targetNode.rawData.ports as PortLike[])
+            .map((p) => {
+                if (typeof p === 'number') {
+                    return { host: p, hostIp: '0.0.0.0' };
+                }
+
+                const hostPort = resolvePortNumber(p.host ?? p.hostPort ?? p.port ?? p.containerPort);
+                if (!hostPort) {
+                    return undefined;
+                }
+
+                return {
+                    host: hostPort,
+                    hostIp: p.hostIp || p.ip || '0.0.0.0'
+                };
+            })
+            .filter((entry): entry is { host: number; hostIp: string } => typeof entry?.host === 'number');
 
         // 3a. Check Port Forwardings
         // We filter out any mappings where the target service is bound strictly to loopback
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const matchingMappings = relevantMappings.filter((m: any) => {
+        const matchingMappings = relevantMappings.filter((m) => {
             // STRICT IP CHECK: Does this node/container own the target IP?
             // If targetNode has a specific IP (e.g. CNI), use it. Otherwise use Node IPs.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -889,7 +1002,8 @@ export class NetworkService {
             // but strict IP match is safer if we have it.
 
             // Find corresponding port on the container/service side
-            const matchingPort = targetPortObjs.find((p: { host: number; }) => p.host === m.internalPort);
+            const internalPort = resolvePortNumber(m.internalPort);
+            const matchingPort = internalPort ? targetPortObjs.find((p) => p.host === internalPort) : undefined;
             
             if (!matchingPort) return false;
             
@@ -910,27 +1024,36 @@ export class NetworkService {
         // Combine
         if (matchingMappings.length > 0 || handlesDomains) {
                 const labels = new Set<string>();
-                
+                const portValues: number[] = [];
+
+                const addLabel = (text: string, portValue?: number) => {
+                    labels.add(text);
+                    if (typeof portValue === 'number' && Number.isFinite(portValue) && portValue > 0 && !portValues.includes(portValue)) {
+                        portValues.push(portValue);
+                    }
+                };
+
+                 
+                const getExternalPort = (mapping: FritzPortMapping) => resolvePortNumber(mapping?.externalPort ?? mapping?.hostPort ?? mapping?.port);
+                const getInternalPort = (mapping: FritzPortMapping) => resolvePortNumber(mapping?.internalPort ?? mapping?.containerPort ?? mapping?.targetPort);
+
                 // Add forwardings
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                matchingMappings.forEach((m:any) => labels.add(`:${m.externalPort}`));
+                matchingMappings.forEach((m) => {
+                    const labelPort = getExternalPort(m) ?? getInternalPort(m);
+                    if (labelPort) {
+                        addLabel(`:${labelPort}`, labelPort);
+                    }
+                });
                 
                 if (handlesDomains) {
-                    // Only imply 80/443 if matching mappings confirm it OR strictly if the node exposes them (0.0.0.0)
-                    // Users want correct "associated with ports" logic.
-                    // Ideally, we should check if 80/443 are actually mapped.
-                    // But if UPnP or "Exposed Host" is used, specific mappings might be missing.
-                    // Compatibility: If logic assumes 80/443 are open, just label them.
-                    
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const has80 = matchingMappings.some((m:any) => m.externalPort === 80);
-                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const has443 = matchingMappings.some((m:any) => m.externalPort === 443);
-                    
-                    // If strictly strict, we would only add labels if (has80 || has443).
-                    // But currently we add them implicitly.
-                    if (!has80) labels.add(':80 (implicit)');
-                    if (!has443) labels.add(':443 (implicit)');
+                    const hasPort = (targetPort: number) => matchingMappings.some((m) => {
+                        const ext = getExternalPort(m);
+                        const int = getInternalPort(m);
+                        return ext === targetPort || int === targetPort;
+                    });
+
+                    if (!hasPort(80)) addLabel(':80 (implicit)', 80);
+                    if (!hasPort(443)) addLabel(':443 (implicit)', 443);
                 }
 
                 if (labels.size === 0) continue;
@@ -939,6 +1062,7 @@ export class NetworkService {
                 const label = Array.from(labels)
                     .sort((a,b) => parseInt(a.replace(':','').replace(' (implicit)', '')) - parseInt(b.replace(':','').replace(' (implicit)', '')))
                     .join(', ');
+                const firstPort = portValues[0] ?? 0;
                 
                 // Create Edge
                 // Only create edge if we have actual mappings OR verified domains
@@ -949,7 +1073,7 @@ export class NetworkService {
                 target: targetNode.id,
                 label: label,
                 protocol: handlesDomains ? 'https' : 'tcp',
-                port: 0, // Visual only
+                port: firstPort,
                 state: 'active'
             });
         }
@@ -1155,22 +1279,43 @@ export class NetworkService {
 
                         let targetId = targetContainer ? prefix(targetContainer.id) : null;
 
+                        if (!targetId && targetHost) {
+                            const serviceMatch = findServiceByHostPort(targetHost, targetPort);
+                            if (serviceMatch) {
+                                targetId = prefix(`service-${serviceMatch.name}`);
+                            }
+                        }
+
                         // Fallback to Pod if no container found but we have a pod
                         if (!targetId && podName) {
                              targetId = prefix(`pod-${podName}`);
                         }
 
+                        if (!targetId && serverDomains.length > 0) {
+                            const domainMatch = findServiceByDomain(serverDomains);
+                            if (domainMatch) {
+                                targetId = prefix(`service-${domainMatch.name}`);
+                            }
+                        }
+
                         // 4. Check External Links (IP Targets)
                         if (!targetId && config.externalLinks) {
+                            const normalizedHost = targetHost?.toLowerCase();
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const matchedLink = config.externalLinks.find((l: any) => 
-                                l.ip_targets && (
-                                    l.ip_targets.includes(`${targetHost}:${targetPort}`) || 
-                                    l.ip_targets.includes(targetHost) // Allow just IP match? simpler.
-                                )
-                            );
+                            const matchedLink = config.externalLinks.find((l: any) => {
+                                const targets = normalizeExternalTargets(l.ip_targets);
+                                if (targets.length === 0 || !normalizedHost) return false;
+                                return targets.some(entry => {
+                                    const parsed = parseTargetHostPort(entry);
+                                    if (!parsed.host) return false;
+                                    if (parsed.host.toLowerCase() !== normalizedHost) return false;
+                                    if (parsed.port && targetPort && parsed.port !== targetPort) return false;
+                                    if (parsed.port && !targetPort) return false;
+                                    return true;
+                                });
+                            });
                             if (matchedLink) {
-                                targetId = `link-${matchedLink.id}`; // Global ID (no prefix)
+                                targetId = getExternalLinkNodeId(matchedLink);
                             }
                         }
 

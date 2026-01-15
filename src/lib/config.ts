@@ -3,6 +3,7 @@ import path from 'path';
 import { DATA_DIR } from './dirs';
 import { decrypt, encrypt } from './secrets';
 import { LogLevel } from './logger';
+import { PortMapping as GraphPortMapping } from './network/types';
 
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -14,6 +15,8 @@ export interface ExternalLink {
   icon?: string;
   monitor?: boolean;
   ip_targets?: string[]; // e.g. ["192.168.1.10:8123", "10.0.0.5:80"]
+  ipTargets?: string[];
+  ports?: GraphPortMapping[];
 }
 
 export interface RegistryConfig {

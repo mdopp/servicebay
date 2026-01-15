@@ -1,9 +1,18 @@
 import { NextResponse } from 'next/server';
 import { getServiceFiles, deleteService, saveService, updateServiceDescription } from '@/lib/manager';
-import { getConfig, saveConfig } from '@/lib/config';
+import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import { listNodes } from '@/lib/nodes';
+import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
 import crypto from 'crypto';
+
+const parseIpTargets = (input: unknown, fallback: string[] = []) => {
+  const parsed = normalizeExternalTargets(input);
+  if (parsed.length > 0) {
+    return parsed;
+  }
+  return fallback;
+};
 
 async function getConnection(request: Request) {
     const { searchParams } = new URL(request.url);
@@ -77,13 +86,21 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
         const oldLink = config.externalLinks[linkIndex];
         const newName = body.name || oldLink.name;
         
+        let updatedIpTargets = oldLink.ip_targets || oldLink.ipTargets || [];
+        if (body.ip_targets !== undefined) {
+            updatedIpTargets = parseIpTargets(body.ip_targets, updatedIpTargets);
+        }
+        const updatedPorts = updatedIpTargets.length > 0 ? buildExternalLinkPorts(updatedIpTargets) : (oldLink.ports || []);
+
         config.externalLinks[linkIndex] = {
           ...oldLink,
           name: newName,
           url: body.url || oldLink.url,
           description: body.description || oldLink.description,
           monitor: body.monitor !== undefined ? body.monitor : oldLink.monitor,
-          ip_targets: body.ip_targets !== undefined ? body.ip_targets : oldLink.ip_targets
+          ip_targets: updatedIpTargets,
+          ipTargets: updatedIpTargets,
+          ports: updatedPorts
         };
         
         await saveConfig(config);
@@ -128,14 +145,20 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
         // Link does not exist, create it (Promote Virtual Node to External Link)
         if (!config.externalLinks) config.externalLinks = [];
         
-        config.externalLinks.push({
-            id: crypto.randomUUID(),
-            name: name,
-            url: body.url,
-            description: body.description || '',
-            monitor: body.monitor || false,
-            ip_targets: body.ip_targets || []
-        });
+        const parsedTargets = parseIpTargets(body.ip_targets);
+        const portMappings = buildExternalLinkPorts(parsedTargets);
+
+        const newLink: ExternalLink = {
+          id: crypto.randomUUID(),
+          name: name,
+          url: body.url,
+          description: body.description || '',
+          monitor: body.monitor || false,
+          ip_targets: parsedTargets,
+          ipTargets: parsedTargets,
+          ports: portMappings
+        };
+        config.externalLinks.push(newLink);
         
         await saveConfig(config);
 

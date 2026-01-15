@@ -4,13 +4,72 @@ import { DigitalTwinStore } from '@/lib/store/twin';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import { listNodes } from '@/lib/nodes';
+import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
 
+const parseIpTargets = (input: unknown, fallback: string[] = []) => {
+    const parsed = normalizeExternalTargets(input);
+    if (parsed.length > 0) {
+        return parsed;
+    }
+    return fallback;
+};
+
+const mapExternalLinks = (links: ExternalLink[]) => {
+    const checks = MonitoringStore.getChecks();
+
+    return links.map(link => {
+        const check = checks.find(c => c.name === `Link: ${link.name}`);
+        const lastResult = check ? MonitoringStore.getLastResult(check.id) : null;
+        const statusLabel = lastResult ? lastResult.status : 'external';
+        const isActive = statusLabel === 'ok' || statusLabel === 'active';
+        const activeState = isActive ? 'active' : 'inactive';
+        const ipTargets = normalizeExternalTargets(link.ip_targets || link.ipTargets);
+        const graphPorts = (link.ports && link.ports.length > 0) ? link.ports : buildExternalLinkPorts(ipTargets);
+        const ports = graphPorts.map(port => ({
+            host: port.host !== undefined ? String(port.host) : '',
+            container: port.container !== undefined ? String(port.container) : '',
+            hostIp: port.hostIp,
+            protocol: port.protocol,
+            source: port.source
+        }));
+
+        return {
+            name: link.name,
+            active: isActive,
+            status: statusLabel,
+            activeState,
+            subState: statusLabel,
+            kubePath: '',
+            yamlPath: null,
+            ports,
+            volumes: [],
+            type: 'link',
+            url: link.url,
+            description: link.description,
+            id: link.id,
+            monitor: Boolean(link.monitor),
+            ip_targets: link.ip_targets ?? ipTargets,
+            ipTargets,
+            labels: {},
+            nodeName: 'Global'
+        };
+    });
+};
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const scope = searchParams.get('scope');
+
+    if (scope === 'links') {
+        const config = await getConfig();
+        const links = config.externalLinks || [];
+        return NextResponse.json(mapExternalLinks(links));
+    }
+
     const nodeName = searchParams.get('node');
     const isLocal = !nodeName || nodeName === 'Local';
     
@@ -40,33 +99,7 @@ export async function GET(request: Request) {
     const config = configResolved;
 
     // Only fetch links and gateway if we are on the local or default node
-    const links = isDefaultOrLocal ? (config.externalLinks || []) : [];
-
-    // Get monitoring status for links
-    const checks = MonitoringStore.getChecks();
-
-    const mappedLinks = links.map(link => {
-        // Find associated check if monitored
-        const check = checks.find(c => c.name === `Link: ${link.name}`);
-        const lastResult = check ? MonitoringStore.getLastResult(check.id) : null;
-        
-        return {
-            name: link.name,
-            active: lastResult ? lastResult.status === 'ok' : true,
-            status: lastResult ? lastResult.status : 'external',
-            kubePath: '',
-            yamlPath: null,
-            ports: [],
-            volumes: [],
-            type: 'link',
-            url: link.url,
-            description: link.description,
-            id: link.id,
-            monitor: link.monitor,
-            ip_targets: link.ip_targets,
-            labels: {}
-        };
-    });
+    const mappedLinks = isDefaultOrLocal ? mapExternalLinks(config.externalLinks || []) : [];
 
 
     // Gateway Info from Config
@@ -219,14 +252,8 @@ export async function POST(request: Request) {
     }
 
     const config = await getConfig();
-    
-    // Parse IP Targets if provided (comma string or array)
-    let parsedTargets: string[] = [];
-    if (Array.isArray(ip_targets)) {
-        parsedTargets = ip_targets;
-    } else if (typeof ip_targets === 'string') {
-        parsedTargets = ip_targets.split(',').map(s => s.trim()).filter(Boolean);
-    }
+    const parsedTargets = parseIpTargets(ip_targets);
+    const portMappings = buildExternalLinkPorts(parsedTargets);
 
     const newLink: ExternalLink = {
         id: crypto.randomUUID(),
@@ -234,7 +261,9 @@ export async function POST(request: Request) {
         url,
         description,
         monitor,
-        ip_targets: parsedTargets
+        ip_targets: parsedTargets,
+        ipTargets: parsedTargets,
+        ports: portMappings
     };
 
     const links = config.externalLinks || [];
