@@ -45,6 +45,9 @@ export class AgentHandler extends EventEmitter {
   private process: ChildProcess | null = null;
   private buffer: Buffer = Buffer.alloc(0);
   private logBuffer: string = '';
+    private isStarting = false;
+    private startPromise: Promise<void> | null = null;
+    private currentRunId?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private pendingRequests: Map<string, { resolve: (val: any) => void; reject: (err: any) => void }> = new Map();
   private isConnected: boolean = false;
@@ -66,44 +69,86 @@ export class AgentHandler extends EventEmitter {
     this.health.nodeName = nodeName;
   }
 
+  private generateRunId(): string {
+    return `${this.nodeName}-${Date.now().toString(36)}-${Math.random().toString(36).slice(-4)}`;
+  }
+
+  public getCurrentRunId(): string | undefined {
+    return this.currentRunId;
+  }
+
+  private formatWithRunId(message: string): string {
+    if (!this.currentRunId) return message;
+    if (message.startsWith(`[${this.currentRunId}]`)) {
+        return message;
+    }
+    return `[${this.currentRunId}] ${message}`;
+  }
+
+  private log(scope: string, level: 'info' | 'warn' | 'error' | 'debug', message: string, ...args: unknown[]) {
+    const fn = (logger as Record<string, (scope: string, msg: string, ...rest: unknown[]) => void>)[level];
+    fn.call(logger, scope, this.formatWithRunId(message), ...args);
+  }
+
+  private logRaw(scope: string, level: 'info' | 'warn' | 'error' | 'debug', message: string, ...args: unknown[]) {
+    const fn = (logger as Record<string, (scope: string, msg: string, ...rest: unknown[]) => void>)[level];
+    fn.call(logger, scope, message, ...args);
+  }
+
   public getHealth(): AgentHealth {
     return { ...this.health };
   }
 
   public async start() {
     if (this.isConnected) return;
+    if (this.isStarting && this.startPromise) {
+      return this.startPromise;
+    }
 
-    // Check if we should use Local Spawn or SSH
-    let useLocalSpawn = false;
-    try {
+    this.isStarting = true;
+    const runId = this.generateRunId();
+    this.currentRunId = runId;
+
+    const starter = (async () => {
+      // Check if we should use Local Spawn or SSH
+      let useLocalSpawn = false;
+      try {
         const nodes = await listNodes();
         const configured = nodes.find(n => n.Name === this.nodeName);
-        
+            
         // Use local spawn if:
         // 1. Node is named 'Local' and NOT configured (implicit local)
         // 2. Node is configured with URI 'local'
         if ((!configured && this.nodeName === 'Local') || (configured && configured.URI === 'local')) {
-            useLocalSpawn = true;
+          useLocalSpawn = true;
         }
-    } catch {
+      } catch {
         // Fallback for implicit Local
         if (this.nodeName === 'Local') useLocalSpawn = true;
-    }
+      }
 
-    if (useLocalSpawn) {
-        logger.info('AgentHandler', 'Starting Local Agent...');
-        this.startLocal();
-    } else {
-        logger.info('AgentHandler', `Starting SSH Agent for ${this.nodeName}...`);
-        await this.startSSH();
-    }
+      if (useLocalSpawn) {
+        this.log('AgentHandler', 'info', 'Starting Local Agent...');
+        await this.startLocal(runId);
+      } else {
+        this.log('AgentHandler', 'info', `Starting SSH Agent for ${this.nodeName}...`);
+        await this.startSSH(runId);
+      }
+    })();
+
+    this.startPromise = starter.finally(() => {
+      this.isStarting = false;
+      this.startPromise = null;
+    });
+
+    return this.startPromise;
   }
 
-  private startLocal() {
+  private async startLocal(runId: string): Promise<void> {
     try {
         const script = getAgentScript();
         const args = ['-u', '-c', `import base64, sys; exec(base64.b64decode("${script}"))`];
-        logger.info('Agent:Local', 'Spawning python3...');
+        this.log('Agent:Local', 'info', 'Spawning python3...');
         
         // Ensure XDG_RUNTIME_DIR is set for systemctl --user
         const env = { ...process.env };
@@ -111,6 +156,7 @@ export class AgentHandler extends EventEmitter {
             const uid = process.getuid ? process.getuid() : 0;
             env.XDG_RUNTIME_DIR = `/run/user/${uid}`;
         }
+        env.SERVICEBAY_AGENT_ID = runId;
 
         const child = spawn('python3', args, { env });
 
@@ -129,14 +175,14 @@ export class AgentHandler extends EventEmitter {
         });
         
         child.on('close', (code) => {
-            logger.info('Agent:Local', `Closed. Code: ${code}`);
+          this.log('Agent:Local', 'info', `Closed. Code: ${code}`);
             this.handleDisconnect();
         });
         
         child.on('error', (err) => {
             this.health.errorCount++;
             this.health.lastError = err.message;
-            logger.error('Agent:Local', 'Spawn Error:', err);
+          this.log('Agent:Local', 'error', 'Spawn Error:', err);
             this.emit('error', err);
         });
 
@@ -146,26 +192,26 @@ export class AgentHandler extends EventEmitter {
     }
   }
 
-  private async startSSH() {
+  private async startSSH(runId: string) {
     try {
-      logger.info(this.nodeName, 'Establishing SSH connection...');
+      this.log(this.nodeName, 'info', 'Establishing SSH connection...');
       const pool = SSHConnectionPool.getInstance();
       const conn = await pool.getConnection(this.nodeName);
       
-      logger.info(this.nodeName, 'SSH connection established, starting Python agent...');
+      this.log(this.nodeName, 'info', 'SSH connection established, starting Python agent...');
       const script = getAgentScript();
       
       // Ensure systemd environment variables are set for the agent process
       // We export XDG_RUNTIME_DIR so systemctl can find the bus.
       // We do NOT manually set DBUS_SESSION_BUS_ADDRESS as it can vary (file vs abstract).
-      const envSetup = 'export XDG_RUNTIME_DIR="/run/user/$(id -u)";';
+      const envSetup = `export SERVICEBAY_AGENT_ID="${runId}"; export XDG_RUNTIME_DIR="/run/user/$(id -u)";`;
       const cmd = `${envSetup} python3 -u -c 'import base64, sys; exec(base64.b64decode("${script}"))'`;
 
       return new Promise<void>((resolve, reject) => {
         conn.exec(cmd, (err, stream) => {
           if (err) {
               const errorMsg = `Failed to execute agent command on ${this.nodeName}: ${err.message}`;
-              logger.error(this.nodeName, errorMsg);
+              this.log(this.nodeName, 'error', errorMsg);
               this.health.lastError = errorMsg;
               this.health.errorCount++;
               this.emit('error', err);
@@ -178,13 +224,13 @@ export class AgentHandler extends EventEmitter {
           this.health.isConnected = true;
           this.health.lastSync = Date.now();
           this.health.lastError = '';
-          logger.info(this.nodeName, '✓ Python agent started successfully via SSH');
+          this.log(this.nodeName, 'info', '✓ Python agent started successfully via SSH');
           this.emit('connected');
           resolve();
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
           stream.on('close', (code: any, signal: any) => {
-            logger.info(this.nodeName, `Agent Closed. Code: ${code}`);
+            this.log(this.nodeName, 'info', `Agent Closed. Code: ${code}`);
             this.handleDisconnect();
           });
 
@@ -196,7 +242,7 @@ export class AgentHandler extends EventEmitter {
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(this.nodeName, `SSH agent startup failed: ${errorMsg}`);
+      this.log(this.nodeName, 'error', `SSH agent startup failed: ${errorMsg}`);
       this.health.lastError = `SSH startup failed: ${errorMsg}`;
       this.health.errorCount++;
       this.health.isConnected = false;
@@ -214,40 +260,59 @@ export class AgentHandler extends EventEmitter {
           this.logBuffer = this.logBuffer.substring(newlineIndex + 1);
           
           if (!line) continue;
+            if (this.tryHandleStructuredLog(line)) {
+              continue;
+            }
           
-          if (line.includes('[INFO]')) {
-              logger.info(`Agent:${this.nodeName}`, line.replace(/.*\[INFO\]\s*/, ''));
-          } else if (line.includes('[WARN]')) {
-              logger.warn(`Agent:${this.nodeName}`, line.replace(/.*\[WARN\]\s*/, ''));
-          } else if (line.includes('[ERROR]')) {
+            if (line.includes('[INFO]')) {
+              this.log(`Agent:${this.nodeName}`, 'info', line.replace(/.*\[INFO\]\s*/, ''));
+            } else if (line.includes('[WARN]')) {
+              this.log(`Agent:${this.nodeName}`, 'warn', line.replace(/.*\[WARN\]\s*/, ''));
+            } else if (line.includes('[ERROR]')) {
               this.health.errorCount++;
               this.health.lastError = line;
-              logger.error(`Agent:${this.nodeName}`, line.replace(/.*\[ERROR\]\s*/, ''));
-          } else if (line.includes('[DEBUG]')) {
-              logger.debug(`Agent:${this.nodeName}`, line.replace(/.*\[DEBUG\]\s*/, ''));
+              this.log(`Agent:${this.nodeName}`, 'error', line.replace(/.*\[ERROR\]\s*/, ''));
+            } else if (line.includes('[DEBUG]')) {
+              this.log(`Agent:${this.nodeName}`, 'debug', line.replace(/.*\[DEBUG\]\s*/, ''));
           } else {
               // Unclassified stderr (e.g. traceback, system tool output)
               this.health.errorCount++;
               this.health.lastError = line;
-              logger.error(`Agent:${this.nodeName}:STDERR`, line);
+              this.log(`Agent:${this.nodeName}:STDERR`, 'error', line);
           }
       }
       
       // Safety: Prevent unlimited buffer growth if no newline ever comes (unlikely but safe)
       if (this.logBuffer.length > 1024 * 1024) {
           // Log what we have and clear
-          logger.error(`Agent:${this.nodeName}`, 'Log buffer exceeded 1MB, flushing raw content');
-          logger.error(`Agent:${this.nodeName}:STDERR`, this.logBuffer);
+          this.log(`Agent:${this.nodeName}`, 'error', 'Log buffer exceeded 1MB, flushing raw content');
+          this.log(`Agent:${this.nodeName}:STDERR`, 'error', this.logBuffer);
           this.logBuffer = '';
       }
   }
+
+    private tryHandleStructuredLog(line: string): boolean {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      const startsJson = trimmed.startsWith('{') || trimmed.startsWith('[');
+      if (!startsJson) return false;
+
+      try {
+        JSON.parse(trimmed);
+        this.logRaw(`Agent:${this.nodeName}`, 'info', trimmed);
+        return true;
+      } catch {
+        return false;
+      }
+    }
 
   private handleDisconnect() {
       this.isConnected = false;
       this.health.isConnected = false;
       this.channel = null;
       this.process = null;
-      logger.warn(this.nodeName, `Agent disconnected. Health: ${JSON.stringify(this.health)}`);
+      const runLabel = this.currentRunId ? ` (runId=${this.currentRunId})` : '';
+      this.log(this.nodeName, 'warn', `Agent disconnected${runLabel}. Health: ${JSON.stringify(this.health)}`);
       this.emit('disconnected');
       this.cleanupPending();
   }
@@ -277,11 +342,11 @@ export class AgentHandler extends EventEmitter {
              this.health.errorCount++;
              const errorMsg = e instanceof Error ? e.message : String(e);
              this.health.lastError = `Parse Error: ${errorMsg}`;
-             logger.error(this.nodeName, `Invalid JSON error: ${errorMsg}`);
-             logger.error(this.nodeName, `Invalid JSON content (first 200 chars): ${msgStr.substring(0, 200)}`);
+             this.log(this.nodeName, 'error', `Invalid JSON error: ${errorMsg}`);
+             this.log(this.nodeName, 'error', `Invalid JSON content (first 200 chars): ${msgStr.substring(0, 200)}`);
 
              if (this.consecutiveParseErrors >= this.MAX_PARSE_ERRORS) {
-                 logger.error(this.nodeName, `Too many consecutive parse errors (${this.consecutiveParseErrors}). Disconnecting for safety.`);
+                 this.log(this.nodeName, 'error', `Too many consecutive parse errors (${this.consecutiveParseErrors}). Disconnecting for safety.`);
                  this.emit('error', new Error('Circuit Breaker: Too many parse errors'));
                  this.disconnect();
                  return; // Stop processing further messages in this batch
@@ -322,20 +387,31 @@ export class AgentHandler extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public async sendCommand(action: string, params: any = {}): Promise<any> {
     if (!this.isConnected) {
-        logger.warn(this.nodeName, 'Not connected, attempting to reconnect...');
+        this.log(this.nodeName, 'warn', 'Not connected, attempting to reconnect...');
         try {
             await this.start();
         } catch (e) {  
             this.health.errorCount++;
             const msg = e instanceof Error ? e.message : String(e);
             this.health.lastError = `Reconnection failed: ${msg}`;
-            logger.error(this.nodeName, 'Reconnection failed:', e);
+            this.log(this.nodeName, 'error', 'Reconnection failed:', e);
             throw new Error(`Agent not connected: ${msg}`);
         }
     }
 
     const id = Math.random().toString(36).substring(7);
     const cmd = JSON.stringify({ id, action, payload: params });
+    const payloadPreview = (() => {
+      if (!params || Object.keys(params).length === 0) return '{}';
+      try {
+        const serialized = JSON.stringify(params);
+        return serialized.length > 400 ? `${serialized.slice(0, 400)}…` : serialized;
+      } catch {
+        return '[unserializable payload]';
+      }
+    })();
+
+    this.log(this.nodeName, 'info', `Sending command '${action}' (id: ${id}) payload: ${payloadPreview}`);
     
     return new Promise((resolve, reject) => {
         // maintain pending map
@@ -347,7 +423,7 @@ export class AgentHandler extends EventEmitter {
                 this.pendingRequests.delete(id);
                 this.health.errorCount++;
                 this.health.lastError = `Command timeout: ${action}`;
-                logger.warn(this.nodeName, `Command timeout for '${action}' (id: ${id})`);
+                this.log(this.nodeName, 'warn', `Command timeout for '${action}' (id: ${id})`);
                 reject(new Error('Agent request timeout'));
             }
         }, 10000);
@@ -379,7 +455,7 @@ export class AgentHandler extends EventEmitter {
       try {
           await this.sendCommand(enabled ? 'startMonitoring' : 'stopMonitoring');
       } catch (e) {
-          logger.warn(this.nodeName, 'Failed to toggle monitoring:', e);
+          this.log(this.nodeName, 'warn', 'Failed to toggle monitoring:', e);
       }
   }
 
@@ -388,7 +464,7 @@ export class AgentHandler extends EventEmitter {
       try {
           await this.sendCommand('setResourceMode', { active });
       } catch (e) {
-          logger.warn(this.nodeName, 'Failed to set resource mode:', e);
+          this.log(this.nodeName, 'warn', 'Failed to set resource mode:', e);
       }
   }
 

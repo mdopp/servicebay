@@ -38,6 +38,30 @@ const LOG_LEVEL_BG: Record<string, string> = {
   error: 'bg-red-50 dark:bg-red-900/20'
 };
 
+const RUN_ID_PREFIX_REGEX = /^\[([A-Za-z0-9:-]+)\]\s+(.*)$/s;
+
+const stripRunIdPrefix = (message: string) => {
+  const match = message.match(RUN_ID_PREFIX_REGEX);
+  if (match) {
+    return { runId: match[1], strippedMessage: match[2] || '' };
+  }
+  return { runId: undefined, strippedMessage: message };
+};
+
+const extractRunIdFromJson = (message: string): string | undefined => {
+  const trimmed = message.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.runId === 'string') {
+      return parsed.runId;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+};
+
 const formatBytes = (bytes: number, decimals = 1) => {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -70,8 +94,12 @@ const LogMessage = ({ message }: { message: string }) => {
   }
 
   if (isParsed) {
+      const summaryLabel = (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson) && 'event' in parsedJson)
+        ? `event: ${String((parsedJson as Record<string, unknown>).event)}`
+        : 'Structured JSON payload';
       return (
-        <div className="mt-1">
+        <div className="mt-1 space-y-1">
+          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-tight">{summaryLabel}</span>
           <button 
             onClick={() => setExpanded(!expanded)} 
             className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors select-none"
@@ -440,35 +468,51 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
           </div>
         )}
 
-        {logs.map((log) => (
-          <div
-            key={log.id || log.timestamp} // Fallback for transition
-            className={`px-2 py-1.5 rounded-sm border-l-2 ${LOG_LEVEL_BG[log.level]} hover:brightness-95 transition-all`}
-            style={{ borderLeftColor: log.level === 'error' ? '#dc2626' : log.level === 'warn' ? '#ca8a04' : log.level === 'info' ? '#2563eb' : '#6b7280' }}
-          >
-            <div className="flex flex-col md:flex-row md:items-baseline gap-2 md:gap-2 text-xs leading-relaxed">
-              <div className="flex gap-2 items-baseline flex-shrink-0">
-                <span className="font-mono opacity-70 flex-shrink-0 w-24">
-                  {extractTime(log.timestamp)}
-                </span>
-                <span className={`font-bold flex-shrink-0 w-14 uppercase ${LOG_LEVEL_COLORS[log.level]}`}>
-                  {log.level}
-                </span>
-                <span className="font-semibold flex-shrink-0 w-40 text-slate-700 dark:text-slate-300 truncate" title={log.tag}>
-                  [{log.tag}]
-                </span>
+        {logs.map((log) => {
+          const { runId: prefixRunId, strippedMessage } = stripRunIdPrefix(log.message);
+          const jsonRunId = prefixRunId ? undefined : extractRunIdFromJson(log.message);
+          const effectiveRunId = prefixRunId || jsonRunId;
+          const displayMessage = prefixRunId ? strippedMessage : log.message;
+          return (
+            <div
+              key={log.id || log.timestamp} // Fallback for transition
+              className={`px-2 py-1.5 rounded-sm border-l-2 ${LOG_LEVEL_BG[log.level]} hover:brightness-95 transition-all`}
+              style={{ borderLeftColor: log.level === 'error' ? '#dc2626' : log.level === 'warn' ? '#ca8a04' : log.level === 'info' ? '#2563eb' : '#6b7280' }}
+            >
+              <div className="flex flex-col md:flex-row md:items-baseline gap-2 md:gap-2 text-xs leading-relaxed">
+                <div className="flex gap-2 items-start flex-shrink-0">
+                  <span className="font-mono opacity-70 flex-shrink-0 w-24">
+                    {extractTime(log.timestamp)}
+                  </span>
+                  <span className={`font-bold flex-shrink-0 w-14 uppercase ${LOG_LEVEL_COLORS[log.level]}`}>
+                    {log.level}
+                  </span>
+                  <div className="flex flex-col flex-shrink-0 w-48 text-slate-700 dark:text-slate-300">
+                    <span className="font-semibold truncate" title={log.tag}>
+                      [{log.tag}]
+                    </span>
+                    {effectiveRunId && (
+                      <span
+                        className="mt-0.5 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-[10px] font-mono break-all"
+                        title={effectiveRunId}
+                      >
+                        {effectiveRunId}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex-1 text-slate-800 dark:text-slate-200 break-words min-w-0">
+                  <LogMessage message={displayMessage} />
+                </div>
               </div>
-              <div className="flex-1 text-slate-800 dark:text-slate-200 break-words min-w-0">
-                <LogMessage message={log.message} />
-              </div>
+              {log.args && Object.keys(log.args).length > 0 && (
+                <div className="text-[10px] opacity-60 mt-1 ml-28 font-mono text-slate-600 dark:text-slate-400">
+                  {JSON.stringify(log.args)}
+                </div>
+              )}
             </div>
-            {log.args && Object.keys(log.args).length > 0 && (
-              <div className="text-[10px] opacity-60 mt-1 ml-28 font-mono text-slate-600 dark:text-slate-400">
-                {JSON.stringify(log.args)}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
         {/* Helper for auto-scroll if needed, though usually top is better for live stream reading */}
       </div>
 

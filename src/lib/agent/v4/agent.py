@@ -11,13 +11,29 @@ import shutil
 import ctypes
 import struct
 import select
+import tempfile
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Callable
 
 # Container detection (must be done early, before using logger)
 IS_CONTAINERIZED = os.path.exists('/.containerenv') or os.path.exists('/.dockerenv')
 HOST_SSH = os.getenv('HOST_SSH', 'host.containers.internal')
 HOST_USER = os.getenv('HOST_USER', '')
+RUN_ID = os.getenv('SERVICEBAY_AGENT_ID')
+
+
+def _resolve_timeout_env(var_name: str, default: float) -> Optional[float]:
+    """Read timeout seconds from env; return None to disable."""
+    try:
+        raw = float(os.getenv(var_name, default))
+    except ValueError:
+        return default
+    if raw <= 0:
+        return None
+    return raw
+
+
+COMMAND_TIMEOUT_SECONDS = _resolve_timeout_env('SERVICEBAY_COMMAND_TIMEOUT', 20.0)
 
 # Import paramiko only if containerized
 if IS_CONTAINERIZED:
@@ -53,8 +69,11 @@ class NodeStateSnapshot:
 DEBUG_MODE = False
 
 def log_message(level: str, msg: str):
-    # Format: [LEVEL] Message
-    sys.stderr.write(f"[{level}] {msg}\n")
+    # Format: [LEVEL][RUN_ID] Message so first tag remains the log level
+    tags = [f"[{level}]"]
+    if RUN_ID:
+        tags.append(f"[{RUN_ID}]")
+    sys.stderr.write(f"{''.join(tags)} {msg}\n")
     sys.stderr.flush()
 
 def log_info(msg: str):
@@ -69,6 +88,18 @@ def log_error(msg: str):
 def log_debug(msg: str):
     if DEBUG_MODE:
         log_message("DEBUG", msg)
+
+
+def log_structured(event: str, payload: Any):
+    """Emit pure JSON (no tags) for structured log consumers."""
+    structured = {
+        'event': event,
+        'payload': payload
+    }
+    if RUN_ID:
+        structured['runId'] = RUN_ID
+    sys.stderr.write(json.dumps(structured) + "\n")
+    sys.stderr.flush()
 
 # Log container mode detection after logger is available
 if IS_CONTAINERIZED:
@@ -107,28 +138,33 @@ class CommandExecutor:
             log_error("Agent will not function properly in container mode without SSH access")
             # Don't exit - let agent startup continue, but commands will fail
     
-    def execute(self, command: List[str], check: bool = True) -> Tuple[str, str, int]:
+    def execute(self, command: List[str], check: bool = True, timeout: Optional[float] = None) -> Tuple[str, str, int]:
         """Execute command locally or via SSH.
         
         Returns: (stdout, stderr, returncode)
         """
         if IS_CONTAINERIZED:
-            return self._execute_ssh(command, check)
+            return self._execute_ssh(command, check, timeout)
         else:
-            return self._execute_local(command, check)
+            return self._execute_local(command, check, timeout)
     
-    def _execute_local(self, command: List[str], check: bool) -> Tuple[str, str, int]:
+    def _execute_local(self, command: List[str], check: bool, timeout: Optional[float]) -> Tuple[str, str, int]:
         """Direct local execution."""
         try:
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                check=check
+                check=check,
+                timeout=timeout
             )
             return result.stdout.strip(), result.stderr.strip(), result.returncode
         except subprocess.CalledProcessError as e:
             return e.stdout.strip() if e.stdout else "", e.stderr.strip() if e.stderr else "", e.returncode
+        except subprocess.TimeoutExpired:
+            joined = ' '.join(command)
+            log_error(f"Command timed out after {timeout}s: {joined}")
+            raise TimeoutError(f"Command timed out after {timeout}s: {joined}")
         except FileNotFoundError:
             log_error(f"Binary not found: {command[0]}")
             return "", f"Binary not found: {command[0]}", 127
@@ -136,7 +172,7 @@ class CommandExecutor:
             log_error(f"Unexpected error running {command}: {e}")
             return "", str(e), 1
     
-    def _execute_ssh(self, command: List[str], check: bool) -> Tuple[str, str, int]:
+    def _execute_ssh(self, command: List[str], check: bool, timeout: Optional[float]) -> Tuple[str, str, int]:
         """Execute via SSH on host."""
         if not self.ssh_client:
             log_error("SSH client not available - cannot execute command")
@@ -148,7 +184,10 @@ class CommandExecutor:
             cmd_str = ' '.join(quote(arg) for arg in command)
             
             log_debug(f"SSH exec: {cmd_str}")
-            stdin, stdout, stderr = self.ssh_client.exec_command(cmd_str)
+            stdin, stdout, stderr = self.ssh_client.exec_command(cmd_str, timeout=timeout)
+            if timeout:
+                stdout.channel.settimeout(timeout)
+                stderr.channel.settimeout(timeout)
             
             stdout_data = stdout.read().decode('utf-8', errors='replace').strip()
             stderr_data = stderr.read().decode('utf-8', errors='replace').strip()
@@ -158,6 +197,9 @@ class CommandExecutor:
                 log_warn(f"SSH command failed (exit {exit_code}): {cmd_str}")
             
             return stdout_data, stderr_data, exit_code
+        except socket.timeout:
+            log_error(f"SSH command timed out after {timeout}s: {cmd_str}")
+            raise TimeoutError(f"SSH command timed out after {timeout}s: {cmd_str}")
         except Exception as e:
             log_error(f"SSH execution error: {e}")
             return "", str(e), 1
@@ -214,12 +256,13 @@ class CommandExecutor:
 # Global executor instance
 _executor = CommandExecutor()
 
-def run_command(cmd: List[str], check: bool = True) -> str:
+def run_command(cmd: List[str], check: bool = True, timeout: Optional[float] = None) -> str:
     """Execute command and return stdout.
     
     Uses SSH when running in container, local subprocess otherwise.
     """
-    stdout, stderr, returncode = _executor.execute(cmd, check=False)
+    effective_timeout = timeout if timeout is not None else COMMAND_TIMEOUT_SECONDS
+    stdout, stderr, returncode = _executor.execute(cmd, check=False, timeout=effective_timeout)
     
     if returncode != 0:
         if check:
@@ -1260,46 +1303,47 @@ def fetch_proxy_routes():
     # sys.stderr.write(f"[Agent] Found Nginx container: {container_name}\n")
     # sys.stderr.flush()
 
-    # 2. Exec inspector script
-    # We pass the script via stdin to sh
+    # 2. Exec inspector script (copy + run to avoid stdin hangs)
     try:
-        # Use executor for container/SSH support
-        stdout, stderr, returncode = _executor.execute(
-            ['podman', 'exec', '-i', container_name, 'sh'],
-            check=False
-        )
-        
-        # For podman exec with stdin, we need to handle it differently
-        # In SSH mode, this won't work with stdin. Let's write script to temp file instead.
         if IS_CONTAINERIZED:
-            # Write script to temp file and execute
-            import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
                 f.write(INSPECTOR_SCRIPT)
                 temp_path = f.name
-            
+
             try:
-                # Copy to container
-                _executor.execute(['podman', 'cp', temp_path, f'{container_name}:/tmp/inspector.sh'])
-                stdout, stderr, returncode = _executor.execute(
-                    ['podman', 'exec', container_name, 'sh', '/tmp/inspector.sh']
+                _executor.execute(
+                    ['podman', 'cp', temp_path, f'{container_name}:/tmp/inspector.sh'],
+                    timeout=COMMAND_TIMEOUT_SECONDS
                 )
-                # Cleanup
-                _executor.execute(['podman', 'exec', container_name, 'rm', '/tmp/inspector.sh'])
+                stdout, stderr, returncode = _executor.execute(
+                    ['podman', 'exec', container_name, 'sh', '/tmp/inspector.sh'],
+                    timeout=COMMAND_TIMEOUT_SECONDS
+                )
+                _executor.execute(
+                    ['podman', 'exec', container_name, 'rm', '/tmp/inspector.sh'],
+                    timeout=COMMAND_TIMEOUT_SECONDS
+                )
             finally:
                 os.unlink(temp_path)
         else:
-            # Local mode - use stdin as before
-            result = subprocess.run(
-                ['podman', 'exec', '-i', container_name, 'sh'],
-                input=INSPECTOR_SCRIPT,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            stdout = result.stdout
-            stderr = result.stderr
-            returncode = result.returncode
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                f.write(INSPECTOR_SCRIPT)
+                temp_path = f.name
+
+            try:
+                subprocess.check_call(['podman', 'cp', temp_path, f'{container_name}:/tmp/inspector.sh'])
+                exec_proc = subprocess.run(
+                    ['podman', 'exec', container_name, 'sh', '/tmp/inspector.sh'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                stdout = exec_proc.stdout
+                stderr = exec_proc.stderr
+                returncode = exec_proc.returncode
+                subprocess.run(['podman', 'exec', container_name, 'rm', '/tmp/inspector.sh'], check=False)
+            finally:
+                os.unlink(temp_path)
 
         if stderr:
              log_warn(f"Nginx Inspector Stderr: {stderr}")
@@ -1459,7 +1503,6 @@ class Agent:
         
         # Initial Full Sync
         self.refresh_all()
-        
         try:
              # Main Loop: Listen for stdin commands
             while True:
@@ -1700,18 +1743,25 @@ class Agent:
             log_debug("File change triggered proxy update")
 
     def refresh_all(self):
+        containers = self._fetch_stage('containers', fetch_containers)
+
+        # Identify Nginx Mounts for fetch_files
+        extra_dirs = self._get_nginx_config_dirs(containers)
+
+        services = self._fetch_stage('services', lambda: fetch_services(containers))
+        volumes = self._fetch_stage('volumes', lambda: fetch_volumes(containers))
+        files = self._fetch_stage('files', lambda: fetch_files(extra_dirs))
+        resources = self._fetch_stage('resources', get_sys_resources)
+        proxy = self._fetch_stage('proxy', fetch_proxy_routes)
+
         with self.lock:
-            # 1. Fetch all data
-            self.state['containers'] = fetch_containers()
-            
-            # Identify Nginx Mounts for fetch_files
-            extra_dirs = self._get_nginx_config_dirs(self.state['containers'])
-            
-            self.state['services'] = fetch_services(self.state['containers'])
-            self.state['volumes'] = fetch_volumes(self.state['containers']) 
-            self.state['files'] = fetch_files(extra_dirs)
-            self.state['resources'] = get_sys_resources()
-            self.state['proxy'] = fetch_proxy_routes()
+            # 1. Update state with freshly fetched data
+            self.state['containers'] = containers
+            self.state['services'] = services
+            self.state['volumes'] = volumes
+            self.state['files'] = files
+            self.state['resources'] = resources
+            self.state['proxy'] = proxy
             
             # 2. Push Granular Updates (SYNC_PARTIAL)
             # This avoids huge 32KB+ payloads that might choke the channel
@@ -1724,6 +1774,19 @@ class Agent:
             
             # 3. Signal Complete (sets initialSyncComplete on receiver)
             self.push_state('SYNC_PARTIAL', {'initialSyncComplete': True})
+
+    def _fetch_stage(self, label: str, func: Callable[[], Any]):
+        start = time.time()
+        try:
+            return func()
+        except TimeoutError as exc:
+            raise TimeoutError(f"refresh_all stage '{label}' timed out: {exc}") from exc
+        except Exception as exc:
+            log_error(f"refresh_all stage '{label}' failed: {exc}")
+            raise
+        finally:
+            duration = time.time() - start
+            log_debug(f"refresh_all stage '{label}' completed in {duration:.2f}s")
 
     def _get_nginx_config_dirs(self, containers):
         # Auto-detect Nginx config bind mounts
@@ -1879,7 +1942,7 @@ class Agent:
         out_payload = payload if payload is not None else self.state
         
         if msg_type == 'SYNC_PARTIAL' and isinstance(out_payload, dict):
-            log_info(f"Pushing SYNC_PARTIAL payload: {json.dumps(out_payload)}")
+            log_structured('SYNC_PARTIAL', out_payload)
 
         # Construct message
         msg = {
@@ -1900,7 +1963,10 @@ class Agent:
 
 if __name__ == "__main__":
     # Immediate startup signal for debugging
-    log_info(f"Process started (PID: {os.getpid()})")
+    if RUN_ID:
+        log_info(f"Process started (PID: {os.getpid()}, ID: {RUN_ID})")
+    else:
+        log_info(f"Process started (PID: {os.getpid()})")
     sys.stderr.flush()
 
     try:
