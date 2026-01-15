@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import path from 'path';
 import os from 'os';
 import yaml from 'js-yaml';
-import { getExecutor, Executor } from './executor';
+import { getExecutor } from './executor';
 import { PodmanConnection } from './nodes';
 
 // We assume standard paths for now. In a real remote scenario, we might need to discover these.
@@ -175,7 +174,6 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
   for (const block of serviceBlocks) {
       const lines = block.split('\n');
       const nameLine = lines.find(l => l.startsWith('NAME: '));
-      const typeLine = lines.find(l => l.startsWith('TYPE: '));
       const fileLine = lines.find(l => l.startsWith('FILE: '));
       const statusLine = lines.find(l => l.startsWith('STATUS: '));
       const descLine = lines.find(l => l.startsWith('DESCRIPTION: '));
@@ -188,7 +186,6 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
       // This fixes the 'foo.kube' name issue reported by users
       name = name.replace(/\.(kube|container|service|pod)$/, '');
 
-      const type = typeLine ? typeLine.substring(6).trim() : 'kube';
       const fileName = fileLine ? fileLine.substring(6).trim() : `${name}.kube`;
       const status = statusLine ? statusLine.substring(8).trim() : 'unknown';
       let description = descLine ? descLine.substring(13).trim() : '';
@@ -420,7 +417,7 @@ export async function getServiceFiles(name: string, connection?: PodmanConnectio
         if (match) {
             servicePath = match[1].trim();
         }
-    } catch (e) {
+    } catch {
         serviceContent = '# Service unit not found or not generated yet.';
     }
 
@@ -488,14 +485,14 @@ export async function saveService(name: string, kubeContent: string, yamlContent
   // Only for local connection for now
   if (!connection) {
     try {
-        const existingKube = await executor.readFile(kubePath);
-        await saveSnapshot(path.basename(kubePath), existingKube);
-    } catch (e) { /* ignore if new file */ }
+      const existingKube = await executor.readFile(kubePath);
+      await saveSnapshot(path.basename(kubePath), existingKube);
+    } catch { /* ignore if new file */ }
 
     try {
         const existingYaml = await executor.readFile(yamlPath);
         await saveSnapshot(path.basename(yamlPath), existingYaml);
-    } catch (e) { /* ignore if new file */ }
+    } catch { /* ignore if new file */ }
   }
 
   await executor.writeFile(kubePath, kubeContent);
@@ -513,7 +510,7 @@ export async function deleteService(name: string, connection?: PodmanConnection)
 
   try {
     await executor.exec(`systemctl --user stop ${name}.service`);
-  } catch (e) {
+  } catch {
     // Ignore if already stopped or not loaded
   }
 
@@ -683,17 +680,6 @@ export async function getPodmanPs(connection?: PodmanConnection) {
   }
 }
 
-export async function getContainerLogs(containerId: string, connection?: PodmanConnection) {
-  const executor = getExecutor(connection);
-  try {
-    const { stdout, stderr } = await executor.exec(`podman logs --tail 100 ${containerId}`);
-    return stdout + (stderr ? '\n' + stderr : '');
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string };
-    return (err.stdout || '') + (err.stderr ? '\n' + err.stderr : '');
-  }
-}
-
 export async function getServiceStatus(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   const serviceName = name.endsWith('.service') ? name : `${name}.service`;
@@ -786,7 +772,7 @@ export async function updateAndRestartService(name: string, connection?: PodmanC
   logs.push(`Stopping service ${serviceName}...`);
   try {
     await executor.exec(`systemctl --user stop ${serviceName}`);
-  } catch (e) {}
+  } catch {}
 
   logs.push(`Starting service ${serviceName}...`);
   try {
@@ -838,7 +824,7 @@ export async function renameService(oldName: string, newName: string, connection
     if (await executor.exists(newKubePath)) {
         throw new Error(`Service ${newName} already exists`);
     }
-  } catch (e) {
+  } catch {
     // Ignore
   }
 
@@ -894,62 +880,7 @@ export async function renameService(oldName: string, newName: string, connection
   }
 }
 
-export async function stopContainer(id: string, connection?: PodmanConnection) {
-  const executor = getExecutor(connection);
-  await executor.exec(`podman stop ${id}`);
-}
-
-export async function forceStopContainer(id: string, connection?: PodmanConnection) {
-  const executor = getExecutor(connection);
-  await executor.exec(`podman stop -t 0 ${id}`);
-}
-
-export async function restartContainer(id: string, connection?: PodmanConnection) {
-  const executor = getExecutor(connection);
-  await executor.exec(`podman restart ${id}`);
-}
-
-export async function forceRestartContainer(id: string, connection?: PodmanConnection) {
-  const executor = getExecutor(connection);
-  await executor.exec(`podman restart -t 0 ${id}`);
-}
-
-export async function deleteContainer(id: string, connection?: PodmanConnection) {
-  const executor = getExecutor(connection);
-  await executor.exec(`podman rm -f ${id}`);
-}
-
-export async function getContainerInspect(id: string, connection?: PodmanConnection) {
-  const executor = getExecutor(connection);
-  try {
-    const { stdout } = await executor.exec(`podman inspect ${id}`);
-    const data = JSON.parse(stdout);
-    return data[0];
-  } catch (e) {
-    console.error(`Error inspecting container ${id}:`, e);
-    return null;
-  }
-}
-
-export async function getAllContainersInspect(connection?: PodmanConnection) {
-  if (!connection) {
-      return [];
-  }
-  const executor = getExecutor(connection);
-  try {
-    // Get all container IDs first
-    const { stdout: ids } = await executor.exec('podman ps -a -q');
-    if (!ids.trim()) return [];
-    
-    const { stdout } = await executor.exec(`podman inspect ${ids.split('\n').join(' ')}`);
-    return JSON.parse(stdout);
-  } catch (e) {
-    console.error('Error inspecting all containers:', e);
-    return [];
-  }
-}
-
-export async function getHostPortsForPids(pids: number[], connection?: PodmanConnection) {
+async function getHostPortsForPids(pids: number[], connection?: PodmanConnection) {
     if (pids.length === 0) return new Map<number, any[]>();
     const executor = getExecutor(connection);
     

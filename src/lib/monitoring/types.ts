@@ -31,14 +31,6 @@ export interface CheckResult {
   message?: string;
 }
 
-export interface CheckStatus {
-  id: string;
-  last_run: string | null;
-  status: 'ok' | 'fail' | 'unknown';
-  message: string | null;
-  latency: number | null;
-}
-
 // Extended type for UI
 export interface Check extends CheckConfig {
   status: 'ok' | 'fail' | 'unknown';
