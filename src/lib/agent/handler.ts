@@ -7,6 +7,15 @@ import { spawn, ChildProcess } from 'child_process';
 import { listNodes } from '../nodes';
 import { logger } from '@/lib/logger';
 
+type AgentLogLevel = 'info' | 'warn' | 'error' | 'debug';
+
+const loggerMethods: Record<AgentLogLevel, (scope: string, msg: string, ...rest: unknown[]) => void> = {
+  info: logger.info.bind(logger),
+  warn: logger.warn.bind(logger),
+  error: logger.error.bind(logger),
+  debug: logger.debug.bind(logger)
+};
+
 // Cache the agent script content
 // Updated: Force reload 2
 let AGENT_SCRIPT_B64: string = '';
@@ -85,14 +94,12 @@ export class AgentHandler extends EventEmitter {
     return `[${this.currentRunId}] ${message}`;
   }
 
-  private log(scope: string, level: 'info' | 'warn' | 'error' | 'debug', message: string, ...args: unknown[]) {
-    const fn = (logger as Record<string, (scope: string, msg: string, ...rest: unknown[]) => void>)[level];
-    fn.call(logger, scope, this.formatWithRunId(message), ...args);
+  private log(scope: string, level: AgentLogLevel, message: string, ...args: unknown[]) {
+    loggerMethods[level](scope, this.formatWithRunId(message), ...args);
   }
 
-  private logRaw(scope: string, level: 'info' | 'warn' | 'error' | 'debug', message: string, ...args: unknown[]) {
-    const fn = (logger as Record<string, (scope: string, msg: string, ...rest: unknown[]) => void>)[level];
-    fn.call(logger, scope, message, ...args);
+  private logRaw(scope: string, level: AgentLogLevel, message: string, ...args: unknown[]) {
+    loggerMethods[level](scope, message, ...args);
   }
 
   public getHealth(): AgentHealth {

@@ -38,7 +38,7 @@ const LOG_LEVEL_BG: Record<string, string> = {
   error: 'bg-red-50 dark:bg-red-900/20'
 };
 
-const RUN_ID_PREFIX_REGEX = /^\[([A-Za-z0-9:-]+)\]\s+(.*)$/s;
+const RUN_ID_PREFIX_REGEX = /^\[([A-Za-z0-9:-]+)\]\s+([\s\S]*)$/;
 
 const stripRunIdPrefix = (message: string) => {
   const match = message.match(RUN_ID_PREFIX_REGEX);

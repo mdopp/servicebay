@@ -20,11 +20,13 @@ const parseIpTargets = (input: unknown, fallback: string[] = []) => {
 const mapExternalLinks = (links: ExternalLink[]) => {
     const checks = MonitoringStore.getChecks();
 
+    type LinkStatus = 'ok' | 'fail' | 'external';
+
     return links.map(link => {
         const check = checks.find(c => c.name === `Link: ${link.name}`);
         const lastResult = check ? MonitoringStore.getLastResult(check.id) : null;
-        const statusLabel = lastResult ? lastResult.status : 'external';
-        const isActive = statusLabel === 'ok' || statusLabel === 'active';
+        const statusLabel: LinkStatus = lastResult ? lastResult.status : 'external';
+        const isActive = statusLabel === 'ok' || statusLabel === 'external';
         const activeState = isActive ? 'active' : 'inactive';
         const ipTargets = normalizeExternalTargets(link.ip_targets || link.ipTargets);
         const graphPorts = (link.ports && link.ports.length > 0) ? link.ports : buildExternalLinkPorts(ipTargets);
