@@ -30,6 +30,7 @@ Convert unmanaged Podman workloads into managed Quadlet stacks with a guided rev
 ### 4. Dry Run + Plan (Backup Tab)
 - `podman kube play --dry-run` validates the generated stack before anything is written to disk.
 - The plan lists files that will be created, overwritten, or archived along with the backup directory and archive name template.
+- The wizard now leverages the same streaming backup pipeline as **Settings → System Backups**, so every merge automatically produces a restorable archive that also appears in the global backups list.
 
 ### 5. Execution & Health Checks
 - When you confirm the merge, ServiceBay:
@@ -46,4 +47,5 @@ Convert unmanaged Podman workloads into managed Quadlet stacks with a guided rev
 - **Name carefully**: the target name becomes both the unit and Pod name. Stick to lowercase letters, numbers, and dashes.
 - **Files vs. secrets**: assets detected under `/config`, `.env`, or `.secret` paths are flagged so you can convert them into `ConfigMap`/secret volumes in the generated YAML.
 - **Iterate safely**: you can return to the Stack tab, adjust files on disk, and re-open the wizard—every dry run revalidates the plan.
+- **Unified history**: all wizard-created archives and restore events are visible under System Backups so ops teams can audit who merged what and when.
 - **Need context mid-merge?** Use the Merge Wizard help button in the UI to reopen this guide while reviewing assets, stack artifacts, or backup plans.

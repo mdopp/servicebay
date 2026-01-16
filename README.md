@@ -5,13 +5,14 @@ A Next.js web interface to manage Podman Quadlet services (Systemd).
 ## Features
 
 - **Dashboard:** List and manage existing services in `~/.config/containers/systemd/`.
-- **Infrastructure-as-Code:** Supports generic, reusable stacks via `{{STACKS_DIR}}` and custom template variables.
+- **Infrastructure-as-Code:** Supports generic, reusable stacks via `{{DATA_DIR}}` and custom template variables.
 - **Network Map:** Interactive visualization of your service architecture with auto-layout and health status.
 - **Monitoring:** Real-time health checks (HTTP/TCP), history visualization, and smart notifications.
 - **Registry:** Install services from a GitHub template registry.
 - **Editor:** Create and edit services with real-time YAML validation.
 - **System Info:** View server resources (CPU, RAM, Disk) and manage OS updates.
 - **Terminal:** Integrated web-based SSH terminal.
+- **Backups:** Multi-node configuration snapshots with streaming progress logs and one-click restore.
 - **Mobile Ready:** Fully responsive design with dedicated mobile navigation.
 - **Auto-Update:** Keep ServiceBay and your containers up to date.
 
@@ -65,9 +66,21 @@ ServiceBay is designed to separate **Application State** from **User Data**.
 | **Data** | `/mnt/data` (Configurable) | Persistent volume data for your stacks. |
 
 **Template Settings:**
-You can configure global variables like `STACKS_DIR` in `Settings -> Template Settings`. These are automatically substituted in generic stack templates (e.g., `{{STACKS_DIR}}/immich`).
+You can configure global variables like `DATA_DIR` in `Settings -> Template Settings`. These are automatically substituted in generic stack templates (e.g., `{{DATA_DIR}}/immich`).
 
-**Backup Strategy:** To backup your entire ServiceBay setup, backup `~/.servicebay` and your defined **Data** directory.
+**Backup Strategy:** Use **Settings → System Backups** to archive `~/.servicebay` plus every managed systemd stack (local + remote nodes). Persistent application data (your configured **Data** directory) should still be backed up using your preferred storage tooling.
+
+## System Backups & Restore
+
+ServiceBay ships with a first-class backup workflow that captures the critical configuration needed to recreate your managed environment.
+
+1. **Scope**: The backup pipeline copies `config.json`, `nodes.json`, `checks.json`, and every managed Quadlet definition from the local node and each configured SSH node.
+2. **Streaming Logs**: When you click **Create Backup**, the UI streams NDJSON progress logs so you can see when each node is scanned, archived, or skipped.
+3. **Metadata**: Every archive stores metadata describing the captured nodes, versions, and included files to guarantee parity at restore time.
+4. **Restore**: Choose any archive in **Settings → System Backups** to replay configs and redeploy Quadlet units across the same set of nodes.
+5. **Housekeeping**: Delete stale archives directly from the UI once you have moved them to long-term storage.
+
+> 💡 Only configuration/state files are included. Application volumes and other large data directories should still be handled by your regular storage strategy.
 
 ## Reverse Proxy Configuration
 

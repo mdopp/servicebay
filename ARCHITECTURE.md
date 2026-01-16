@@ -98,7 +98,7 @@ interface DigitalTwinStore {
   
   // App Configuration
   config: {
-    templateSettings: Record<string, string>; // e.g. { STACKS_DIR: "/mnt/data" }
+    templateSettings: Record<string, string>; // e.g. { DATA_DIR: "/mnt/data" }
   };
 }
 ```
@@ -342,6 +342,47 @@ We have explicitly chosen **Python 3** (Standard Library only) over Bash/Shell s
 1.  **JSON Handling**: The entire V4 architecture relies on structured JSON streams. Python handles this natively.
 2.  **Concurrency**: Managing multiple monitoring threads (DBus, Podman, File Watcher) in a single process is robust in Python.
 3.  **Abstraction**: Python is the "Driver" that orchestrates the "Native Shell Scripts" (like the Nginx inspector), acting as the bridge between raw OS commands and the structured Backend API.
+
+## System Backup Pipeline
+
+ServiceBay includes a built-in configuration backup workflow implemented in `src/lib/systemBackup.ts`. The goal is to archive the full control-plane (config files + Quadlet manifests) for every managed node without duplicating user data volumes.
+
+### Flow
+
+```mermaid
+sequenceDiagram
+    participant UI as Settings UI
+    participant API as /api/settings/backups
+    participant Backup as systemBackup.ts
+    participant SSH as Remote Nodes
+
+    UI->>API: POST (NDJSON stream)
+    API->>Backup: createSystemBackup(progress)
+    Backup->>Backup: Stage configs + local Quadlets
+    Backup->>SSH: Snapshot remote Quadlets
+    SSH-->>Backup: systemd.tgz
+    Backup-->>API: progress log entries
+    Backup-->>API: archive metadata + path
+    API-->>UI: done event
+
+    UI->>API: DELETE archive.tar.gz
+    API->>Backup: deleteSystemBackup
+
+    UI->>API: POST restore?file=…
+    API->>Backup: restoreSystemBackup
+    Backup->>SSH: Upload + extract
+```
+
+### Key Behaviors
+
+1. **Scoped Capture** – Only `config.json`, `nodes.json`, `checks.json`, and Quadlet-managed units are archived, keeping backups lightweight and fast.
+2. **Multi-Node Awareness** – Remote nodes are contacted via the SSH connection pool. Each node is encoded in the metadata descriptor (name, scope, folder) so restores can target the exact same topology.
+3. **Streaming Progress** – `createSystemBackup` emits structured log entries (scope, status, node) so the UI can display per-node progress and failures in real time via an NDJSON stream.
+4. **Metadata File** – Every archive includes `metadata.json` describing version, creation timestamp, included config files, and node descriptors. Restores fall back to folder names if metadata is unavailable.
+5. **Restore Safety** – Local Quadlets are copied directly; remote nodes receive a temporary tarball that is extracted into `$HOME/.config/containers/systemd` followed by `systemctl --user daemon-reload`. Errors are surfaced with precise node attribution.
+6. **Lifecycle Management** – Users can delete stale archives through the same API, and the server validates requested filenames to prevent path traversal.
+
+> The backup system is intentionally decoupled from application data volumes. Operators should combine these archives with their existing storage backups for a complete disaster-recovery story.
 
 ## Plugin Architecture
 

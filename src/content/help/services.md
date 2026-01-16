@@ -14,3 +14,8 @@ Manage systemd services and background tasks.
 ServiceBay automatically detects containers that are not managed by Systemd. You can:
 1. **Migrate Single**: Click "Migrate" on an unmanaged service to generate a Systemd unit for it.
 2. **Merge Multiple**: Select multiple unmanaged services and click "Merge Selected" to combine them into a single Pod. This is useful for stacks like `immich` or `nextcloud` that consist of multiple containers (app, db, redis) that should be managed together.
+
+## Tips
+- Use the node filter above the table to view services for each remote node before performing a backup or restore.
+- The "System Backups" card in Settings relies on these managed units, so keep your Quadlet definitions tidy and committed.
+- Review the **History** column to see who ran the last action and correlate that with archives if you need to roll back.
