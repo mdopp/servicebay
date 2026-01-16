@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe, HardDrive, RotateCcw } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -11,6 +11,7 @@ import { AppConfig } from '@/lib/config';
 import { getNodes, createNode, editNode, deleteNode, setNodeAsDefault } from '@/app/actions/nodes';
 import { checkConnection, checkFullConnection } from '@/app/actions/ssh';
 import { PodmanConnection } from '@/lib/nodes';
+import type { BackupLogEntry, BackupLogStatus } from '@/lib/systemBackup';
 
 type TemplateSettingsSchemaEntry = {
   default: string;
@@ -19,7 +20,7 @@ type TemplateSettingsSchemaEntry = {
 };
 
 const DEFAULT_TEMPLATE_SCHEMA: Record<string, TemplateSettingsSchemaEntry> = {
-  STACKS_DIR: {
+  DATA_DIR: {
     default: '/mnt/data',
     description: 'Base directory used by all templates for persistent data. Applies to new deployments.',
     required: true
@@ -44,6 +45,44 @@ interface AppUpdateStatus {
   };
 }
 
+interface SystemBackupEntrySummary {
+  fileName: string;
+  createdAt: string;
+  size: number;
+}
+
+type BackupStreamEvent =
+  | { type: 'log'; entry: BackupLogEntry }
+  | { type: 'done'; backup: SystemBackupEntrySummary }
+  | { type: 'error'; message: string };
+
+const LOG_STATUS_BADGES: Record<BackupLogStatus, string> = {
+  info: 'text-slate-600 bg-slate-100 dark:text-slate-300 dark:bg-slate-800',
+  success: 'text-emerald-700 bg-emerald-100 dark:text-emerald-300 dark:bg-emerald-900/30',
+  error: 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/30',
+  skip: 'text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/30'
+};
+
+const LOG_STATUS_DOTS: Record<BackupLogStatus, string> = {
+  info: 'bg-slate-400',
+  success: 'bg-emerald-500',
+  error: 'bg-red-500',
+  skip: 'bg-amber-500'
+};
+
+const formatBytes = (size: number): string => {
+  if (!Number.isFinite(size) || size <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = size;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  const precision = value >= 10 ? 0 : 1;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+};
+
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -59,6 +98,17 @@ export default function SettingsPage() {
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateMessage, setUpdateMessage] = useState('');
   const [updateError, setUpdateError] = useState('');
+
+  // Backup State
+  const [backups, setBackups] = useState<SystemBackupEntrySummary[]>([]);
+  const [backupsLoading, setBackupsLoading] = useState(true);
+  const [creatingBackup, setCreatingBackup] = useState(false);
+  const [restoreTarget, setRestoreTarget] = useState<SystemBackupEntrySummary | null>(null);
+  const [restoringBackup, setRestoringBackup] = useState(false);
+  const [backupLog, setBackupLog] = useState<BackupLogEntry[]>([]);
+  const [backupStatus, setBackupStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
+  const [deleteTarget, setDeleteTarget] = useState<SystemBackupEntrySummary | null>(null);
+  const [deletingBackup, setDeletingBackup] = useState(false);
 
   // Email Form State
   const [emailEnabled, setEmailEnabled] = useState(false);
@@ -80,7 +130,7 @@ export default function SettingsPage() {
 
   // Template Settings
   const [templateSchema, setTemplateSchema] = useState<Record<string, TemplateSettingsSchemaEntry>>(DEFAULT_TEMPLATE_SCHEMA);
-  const [templateValues, setTemplateValues] = useState<Record<string, string>>({ STACKS_DIR: DEFAULT_TEMPLATE_SCHEMA.STACKS_DIR.default });
+  const [templateValues, setTemplateValues] = useState<Record<string, string>>({ DATA_DIR: DEFAULT_TEMPLATE_SCHEMA.DATA_DIR.default });
   const [newVarKey, setNewVarKey] = useState('');
   const [newVarValue, setNewVarValue] = useState('');
 
@@ -185,6 +235,29 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchConfig();
   }, [fetchConfig]);
+
+  const fetchBackups = useCallback(async () => {
+    setBackupsLoading(true);
+    try {
+      const res = await fetch('/api/settings/backups');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Unable to load backups');
+      }
+      const data: SystemBackupEntrySummary[] = await res.json();
+      setBackups(data);
+    } catch (error) {
+      console.error(error);
+      const message = error instanceof Error ? error.message : undefined;
+      addToast('error', 'Failed to load backups', message);
+    } finally {
+      setBackupsLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => {
+    fetchBackups();
+  }, [fetchBackups]);
 
   const handleAddRecipient = () => {
     if (newRecipient && !emailRecipients.includes(newRecipient)) {
@@ -509,6 +582,141 @@ export default function SettingsPage() {
     }
   };
 
+  const handleCreateBackup = async () => {
+    if (creatingBackup) return;
+    setCreatingBackup(true);
+    setBackupStatus('running');
+    setBackupLog([]);
+    let sawDone = false;
+    let errorMessage: string | null = null;
+
+    try {
+      const res = await fetch('/api/settings/backups', { method: 'POST' });
+
+      if (!res.body) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Streaming not supported by server');
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+        let newlineIndex = buffer.indexOf('\n');
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (line.length > 0) {
+            try {
+              const event = JSON.parse(line) as BackupStreamEvent;
+              if (event.type === 'log' && event.entry) {
+                setBackupLog(prev => [...prev, event.entry]);
+              } else if (event.type === 'done') {
+                if (!sawDone) {
+                  sawDone = true;
+                  setBackupStatus('success');
+                  addToast('success', 'Backup created', `Archive ${event.backup.fileName} is ready.`);
+                  await fetchBackups();
+                }
+              } else if (event.type === 'error') {
+                errorMessage = event.message || 'Backup failed';
+                setBackupStatus('error');
+                addToast('error', 'Failed to create backup', errorMessage);
+              }
+            } catch {
+              // ignore malformed chunk
+            }
+          }
+          newlineIndex = buffer.indexOf('\n');
+        }
+
+        if (done) break;
+      }
+
+      if (!sawDone && !errorMessage) {
+        throw new Error('Backup stream ended unexpectedly');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      errorMessage = message;
+      setBackupStatus('error');
+      addToast('error', 'Failed to create backup', message);
+    } finally {
+      setCreatingBackup(false);
+    }
+  };
+
+  const handleDownloadBackup = (fileName: string) => {
+    const link = document.createElement('a');
+    link.href = `/api/settings/backups/download?file=${encodeURIComponent(fileName)}`;
+    link.target = '_blank';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleRestoreRequest = (entry: SystemBackupEntrySummary) => {
+    setRestoreTarget(entry);
+  };
+
+  const confirmRestoreBackup = async () => {
+    if (!restoreTarget || restoringBackup) return;
+    setRestoringBackup(true);
+    try {
+      const res = await fetch('/api/settings/backups/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: restoreTarget.fileName })
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Unable to restore backup');
+      }
+      addToast('success', 'Backup restored', 'ServiceBay config and managed services were restored.');
+      await fetchBackups();
+    } catch (error) {
+      console.error(error);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      addToast('error', 'Restore failed', message);
+    } finally {
+      setRestoringBackup(false);
+      setRestoreTarget(null);
+    }
+  };
+
+  const closeRestoreModal = () => {
+    if (restoringBackup) return;
+    setRestoreTarget(null);
+  };
+
+  const confirmDeleteBackup = async () => {
+    if (!deleteTarget || deletingBackup) return;
+    setDeletingBackup(true);
+    try {
+      const res = await fetch('/api/settings/backups', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: deleteTarget.fileName })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Unable to delete backup');
+      }
+      addToast('success', 'Backup deleted', `${deleteTarget.fileName} has been removed.`);
+      await fetchBackups();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      addToast('error', 'Failed to delete backup', message);
+    } finally {
+      setDeletingBackup(false);
+      setDeleteTarget(null);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -584,13 +792,13 @@ export default function SettingsPage() {
         {appUpdate && (
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-                    <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
-                        <RefreshCw size={20} className={(updateStatus === 'updating') || checkingUpdate ? 'animate-spin' : ''} />
-                    </div>
-                    <div>
-                        <h3 className="font-bold text-gray-900 dark:text-white">ServiceBay Updates</h3>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Manage application updates</p>
-                    </div>
+                  <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
+                    <RefreshCw size={20} className={(updateStatus === 'updating') || checkingUpdate ? 'animate-spin' : ''} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-900 dark:text-white">ServiceBay Updates</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Manage application updates</p>
+                  </div>
                     <div className="ml-auto flex items-center gap-4">
                         <div className="flex items-center gap-2 text-sm">
                             <span className="text-gray-500 dark:text-gray-400">Channel:</span>
@@ -687,89 +895,247 @@ export default function SettingsPage() {
                 </div>
             </div>
         )}
-              {/* Template Settings Section */}
-              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-                  <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
-                    <Server size={20} />
+
+        {/* System Backups */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
+            <div className="flex items-center gap-3 flex-1">
+              <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-emerald-600 dark:text-emerald-300">
+                <HardDrive size={20} />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 dark:text-white">System Backups</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Capture managed services and ServiceBay config into a restorable tarball.</p>
+                {backupStatus !== 'idle' && (
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+                    {backupStatus === 'running' && (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-300">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Backup in progress
+                      </span>
+                    )}
+                    {backupStatus === 'success' && (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-300">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Latest run completed
+                      </span>
+                    )}
+                    {backupStatus === 'error' && (
+                      <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-300">
+                        <XCircle className="w-3 h-3" />
+                        Last run failed
+                      </span>
+                    )}
                   </div>
-                  <div>
-                    <h3 className="font-bold text-gray-900 dark:text-white">Template Settings</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Environment variables for template rendering. Changes apply to new deployments.</p>
-                  </div>
-                </div>
-                <div className="p-6 space-y-6">
-                  <div className="space-y-4">
-                    {Object.keys(templateValues).sort().map(key => {
-                      const meta = templateSchema[key];
-                      const isRequired = meta?.required;
-                      return (
-                        <div key={key} className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 flex flex-col md:flex-row md:items-center md:gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="font-semibold text-gray-900 dark:text-white">{key}</span>
-                              {isRequired && (
-                                <span className="text-xs px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">Required</span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center gap-3">
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 bg-white/60 dark:bg-gray-900/40 px-3 py-1 rounded-md border border-gray-200 dark:border-gray-800">
+                Archives stored under <span className="font-mono">~/.config/containers/systemd/backups</span>
+              </p>
+              <button
+                onClick={handleCreateBackup}
+                disabled={creatingBackup}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg shadow-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creatingBackup ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
+                {creatingBackup ? 'Creating Backup...' : 'Create Backup'}
+              </button>
+            </div>
+          </div>
+          <div className="p-6">
+            {backupsLoading ? (
+              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+                <Loader2 className="animate-spin" size={18} />
+                Loading backups...
+              </div>
+            ) : backups.length === 0 ? (
+              <div className="text-sm text-gray-500 dark:text-gray-400 italic">No backups found. Create one to snapshot your environment.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
+                      <th className="py-2 font-medium">Archive</th>
+                      <th className="py-2 font-medium">Created</th>
+                      <th className="py-2 font-medium">Size</th>
+                      <th className="py-2 font-medium text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {backups.map(backup => (
+                      <tr key={backup.fileName}>
+                        <td className="py-3 font-mono text-xs text-blue-600 dark:text-blue-300 break-all">{backup.fileName}</td>
+                        <td className="py-3 text-gray-700 dark:text-gray-300">{new Date(backup.createdAt).toLocaleString()}</td>
+                        <td className="py-3 text-gray-700 dark:text-gray-300">{formatBytes(backup.size)}</td>
+                        <td className="py-3">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => handleDownloadBackup(backup.fileName)}
+                              className="text-xs px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center gap-1"
+                            >
+                              <Download size={14} />
+                              Download
+                            </button>
+                            <button
+                              onClick={() => handleRestoreRequest(backup)}
+                              className="text-xs px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 dark:text-amber-300 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors flex items-center gap-1"
+                            >
+                              <RotateCcw size={14} />
+                              Restore
+                            </button>
+                                <button
+                                  onClick={() => setDeleteTarget(backup)}
+                                  disabled={deletingBackup}
+                                  className="text-xs px-3 py-1.5 rounded-md border border-red-200 text-red-600 dark:text-red-400 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-1 disabled:opacity-60"
+                                >
+                                  <Trash2 size={14} />
+                                  Delete
+                                </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+                {(backupLog.length > 0 || backupStatus === 'running' || backupStatus === 'error') && (
+                  <div className="mt-6 border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50/60 dark:bg-gray-900/40">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">Backup Activity</span>
+                      {backupStatus === 'running' && (
+                        <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Streaming logs
+                        </span>
+                      )}
+                      {backupStatus === 'error' && (
+                        <span className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-300">
+                          <XCircle className="w-3 h-3" />
+                          Check details below
+                        </span>
+                      )}
+                      {backupStatus === 'success' && backupLog.length > 0 && (
+                        <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Completed
+                        </span>
+                      )}
+                    </div>
+                    <div className="max-h-48 overflow-y-auto pr-1 space-y-3">
+                      {backupLog.length === 0 ? (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 italic">Waiting for backup updates…</p>
+                      ) : (
+                        backupLog.map((entry, idx) => (
+                          <div key={`${entry.timestamp}-${idx}`} className="flex gap-3 text-xs">
+                            <span className={`mt-1 h-2 w-2 rounded-full ${LOG_STATUS_DOTS[entry.status] ?? LOG_STATUS_DOTS.info}`}></span>
+                            <div className="flex-1">
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                                <span className="font-mono">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                                {entry.node && <span className="uppercase tracking-wide text-gray-600 dark:text-gray-300">{entry.node}</span>}
+                                <span className={`px-2 py-0.5 rounded ${LOG_STATUS_BADGES[entry.status] ?? LOG_STATUS_BADGES.info}`}>
+                                  {entry.status.toUpperCase()}
+                                </span>
+                              </div>
+                              <p className="text-gray-700 dark:text-gray-200">{entry.message}</p>
+                              {entry.target && (
+                                <p className="text-[10px] font-mono text-gray-500 dark:text-gray-400 break-all">{entry.target}</p>
                               )}
                             </div>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                              {meta?.description || 'Template variable'}
-                              {meta?.default ? ` (default: ${meta.default})` : ''}
-                            </p>
-                            <input
-                              type="text"
-                              value={templateValues[key] || ''}
-                              onChange={e => handleTemplateValueChange(key, e.target.value)}
-                              className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                              placeholder={meta?.default || ''}
-                            />
                           </div>
-                          {!isRequired && (
-                            <button
-                              onClick={() => handleRemoveTemplateVariable(key)}
-                              className="mt-3 md:mt-0 text-gray-400 hover:text-red-500 transition-colors"
-                              aria-label={`Remove ${key}`}
-                            >
-                              <Trash2 size={18} />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Add custom variables to persist additional template settings. They will appear here after saving.</p>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-                      <input
-                        type="text"
-                        value={newVarKey}
-                        onChange={e => setNewVarKey(e.target.value)}
-                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                        placeholder="VAR_NAME"
-                      />
-                      <input
-                        type="text"
-                        value={newVarValue}
-                        onChange={e => setNewVarValue(e.target.value)}
-                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                        placeholder="value"
-                      />
-                      <button
-                        onClick={handleAddTemplateVariable}
-                        className="w-full md:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2 justify-center"
-                      >
-                        <Plus size={16} />
-                        Add Variable
-                      </button>
+                        ))
+                      )}
                     </div>
                   </div>
-                </div>
+                )}
+          </div>
+        </div>
+
+        {/* Template Settings Section */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
+            <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+              <Server size={20} />
+            </div>
+            <div>
+              <h3 className="font-bold text-gray-900 dark:text-white">Template Settings</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Environment variables for template rendering. Changes apply to new deployments.</p>
+            </div>
+          </div>
+          <div className="p-6 space-y-6">
+            <div className="space-y-4">
+              {Object.keys(templateValues).sort().map(key => {
+                const meta = templateSchema[key];
+                const isRequired = meta?.required;
+                return (
+                  <div key={key} className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 flex flex-col md:flex-row md:items-center md:gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-semibold text-gray-900 dark:text-white">{key}</span>
+                        {isRequired && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">Required</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                        {meta?.description || 'Template variable'}
+                        {meta?.default ? ` (default: ${meta.default})` : ''}
+                      </p>
+                      <input
+                        type="text"
+                        value={templateValues[key] || ''}
+                        onChange={e => handleTemplateValueChange(key, e.target.value)}
+                        className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder={meta?.default || ''}
+                      />
+                    </div>
+                    {!isRequired && (
+                      <button
+                        onClick={() => handleRemoveTemplateVariable(key)}
+                        className="mt-3 md:mt-0 text-gray-400 hover:text-red-500 transition-colors"
+                        aria-label={`Remove ${key}`}
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Add custom variables to persist additional template settings. They will appear here after saving.</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                <input
+                  type="text"
+                  value={newVarKey}
+                  onChange={e => setNewVarKey(e.target.value)}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="VAR_NAME"
+                />
+                <input
+                  type="text"
+                  value={newVarValue}
+                  onChange={e => setNewVarValue(e.target.value)}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="value"
+                />
+                <button
+                  onClick={handleAddTemplateVariable}
+                  className="w-full md:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2 justify-center"
+                >
+                  <Plus size={16} />
+                  Add Variable
+                </button>
               </div>
+            </div>
+          </div>
+        </div>
 
 
-              {/* Email Notifications Section */}
-        {/* System Connections (Nodes) */}
+  {/* System Connections (Nodes) */}
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
                 <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
@@ -1233,6 +1599,28 @@ export default function SettingsPage() {
         confirmText="Update Now"
         onConfirm={confirmAppUpdate}
         onCancel={() => setIsUpdateModalOpen(false)}
+      />
+
+      <ConfirmModal
+        isOpen={!!restoreTarget}
+        title="Restore Backup"
+        message={`Restoring ${restoreTarget?.fileName || ''} will overwrite existing managed services and ServiceBay configuration. Proceed only if you have noted current changes.`}
+        confirmText={restoringBackup ? 'Restoring...' : 'Restore Backup'}
+        confirmDisabled={restoringBackup}
+        isDestructive
+        onConfirm={confirmRestoreBackup}
+        onCancel={closeRestoreModal}
+      />
+
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        title="Delete Backup"
+        message={`Delete ${deleteTarget?.fileName || 'this backup'} permanently? This action cannot be undone.`}
+        confirmText={deletingBackup ? 'Deleting...' : 'Delete Backup'}
+        confirmDisabled={deletingBackup}
+        isDestructive
+        onConfirm={confirmDeleteBackup}
+        onCancel={() => !deletingBackup && setDeleteTarget(null)}
       />
 
       <SSHSetupModal 
