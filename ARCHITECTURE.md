@@ -349,8 +349,8 @@ The dashboard (`/`) is built using a modular plugin architecture. This allows fo
 
 ### Core Concepts
 
-- **Plugin Interface**: Defined in `src/plugins/types.ts`.
-- **Plugin Registry**: `src/plugins/index.tsx` exports an array of available plugins.
+- **Plugin Components**: Each dashboard surface lives in `src/plugins/*.tsx` and can be imported independently by the route pages.
+- **Navigation Registry**: `src/components/Sidebar.tsx` exports the plugin metadata array that is also shared with the mobile navigation.
 
 ### Current Plugins
 
@@ -367,12 +367,9 @@ The dashboard (`/`) is built using a modular plugin architecture. This allows fo
 - **Local Registry**: Templates are read from `templates/` and `stacks/` directories.
 - **Templates**: Are primarily **Kubernetes Pod YAMLs**.
 - **Installation Flow**:
-  1. Frontend sends configuration (Template + Variables).
-  2. `UnitGenerator` creates:
-     - `service.yml` (The K8s Pod definition).
-     - `service.kube` (The Systemd Quadlet unit referencing the YAML).
-  3. `FileManager` writes these files via SSH to `~/.config/containers/systemd/`.
-  4. `ServiceManager` reloads the daemon.
+    1. The Installer modal renders templates with Mustache using the variables provided by the user and submits the resulting YAML + Quadlet payload to `/api/services`.
+    2. `ServiceManager.deployKubeService()` writes the rendered files to `~/.config/containers/systemd/` through the Agent on the selected node.
+    3. `ServiceManager` reloads the user-level systemd daemon and attempts to start the new unit.
 
 ## Testing Strategy
 

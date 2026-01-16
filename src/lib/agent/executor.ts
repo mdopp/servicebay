@@ -74,8 +74,11 @@ export class AgentExecutor implements Executor {
       await this.exec(`mv "${oldPath}" "${newPath}"`);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   spawn(command: string, options: { pty?: boolean; cols?: number; rows?: number } = {}): { stdout: Readable; stderr: Readable; promise: Promise<void> } {
+    const { pty, cols, rows } = options;
+    if (pty || cols || rows) {
+      logger.warn(`Executor:${this.agent.nodeName}`, 'Spawn options (pty/cols/rows) are not supported yet; ignoring request.');
+    }
     const stdoutStream = new Readable({ read() {} });
     const stderrStream = new Readable({ read() {} });
     

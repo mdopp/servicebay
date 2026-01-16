@@ -16,15 +16,3 @@ export function getExecutor(connectionInput?: PodmanConnection | string): Execut
   // V4: Use AgentExecutor for everything (Local and Remote)
   return new AgentExecutor(nodeName);
 }
-
-// Deprecated classes kept for limited backward compatibility if imports exist
-export class LocalExecutor extends AgentExecutor {
-    constructor() {
-        super('Local');
-    }
-}
-export class SSHExecutor extends AgentExecutor {
-    constructor(node: PodmanConnection) {
-        super(node.Name);
-    }
-}

@@ -15,7 +15,6 @@ declare global {
 
 class ServiceWatcher extends EventEmitter {
   private podmanProcess: ChildProcess | null = null;
-  private fsWatcher: fs.FSWatcher | null = null;
   private isWatching = false;
 
   constructor() {
@@ -35,7 +34,7 @@ class ServiceWatcher extends EventEmitter {
         fs.mkdirSync(SYSTEMD_DIR, { recursive: true });
       }
       
-      this.fsWatcher = fs.watch(SYSTEMD_DIR, (eventType, filename) => {
+      fs.watch(SYSTEMD_DIR, (eventType, filename) => {
         if (filename && (filename.endsWith('.kube') || filename.endsWith('.yml') || filename.endsWith('.yaml'))) {
           console.log(`[Watcher] File changed: ${filename}`);
           this.emit('change', { type: 'config', message: `Config changed: ${filename}` });

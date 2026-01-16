@@ -119,6 +119,7 @@ interface DiscoveredService {
     status: 'managed' | 'unmanaged';
     type: 'kube' | 'container' | 'pod' | 'compose' | 'other';
     nodeName?: string;
+    discoveryHints?: string[];
 }
 
 interface MigrationPlan {
@@ -462,12 +463,29 @@ export default function ServicesPlugin() {
                 // Filter out Infrastructure Services (like podman.service)
                 const isInfra = unit.name === 'podman.service' || unit.name === 'podman.socket';
 
-                if (!isManaged && !isForcedProxy && !isInfra && unit.activeState === 'active') {
+                if (!isManaged && !isForcedProxy && !isInfra) {
                     // Try to identify relevant services (containers, or key system services)
                     const container = nodeState.containers.find(c => c.names.includes(baseName) || c.names.includes(unit.name) || unit.name.includes(c.id.substring(0, 12)));
-                    
-                    // Only show if it looks like a container service or has "container" in name
-                    if (container || unit.name.startsWith('container-') || unit.description.includes('Podman') || unit.description.includes('Container')) {
+                    const containerQuadletPath = fileKeys.find(f => f.endsWith(`/${baseName}.container`));
+                    const hasContainerQuadlet = Boolean(containerQuadletPath);
+                    const hasContainerKeyword = /container|podman/i.test(unit.name) || /container|podman/i.test(unit.description || '');
+
+                    if (container || hasContainerQuadlet || hasContainerKeyword) {
+                         const discoveryHints: string[] = [];
+                         if (unit.path) {
+                             discoveryHints.push(`Systemd unit ${unit.path}`);
+                         }
+                         if (container) {
+                             const containerLabel = container.names[0] || container.id.substring(0, 12);
+                             discoveryHints.push(`Linked to container ${containerLabel} (podman inspect ${container.id})`);
+                         }
+                         if (hasContainerQuadlet && containerQuadletPath) {
+                             discoveryHints.push(`Quadlet file ${containerQuadletPath}`);
+                         }
+                         if (!container && !hasContainerQuadlet && hasContainerKeyword) {
+                             discoveryHints.push('Detected via Podman/container keywords in unit metadata');
+                         }
+
                          allDiscovery.push({
                              serviceName: unit.name,
                              containerNames: container ? container.names : [],
@@ -478,7 +496,8 @@ export default function ServicesPlugin() {
                              sourcePath: unit.path,
                              // Optional fields
                              podId: undefined,
-                             unitFile: undefined
+                             unitFile: containerQuadletPath,
+                             discoveryHints
                          });
                     }
                 }
@@ -1164,7 +1183,12 @@ export default function ServicesPlugin() {
                 </div>
             ) : (
                 <div className="grid gap-4">
-                    {discoveredServices.filter(s => s.status === 'unmanaged').map((service) => (
+                    {discoveredServices.filter(s => s.status === 'unmanaged').map((service) => {
+                        const filePath = service.sourcePath || service.unitFile;
+                        const nodeParam = encodeURIComponent(service.nodeName || 'Local');
+                        const fileHref = filePath ? `/view?path=${encodeURIComponent(filePath)}&node=${nodeParam}` : '';
+
+                        return (
                         <div key={service.serviceName} className={`bg-white dark:bg-gray-900 border rounded-lg p-4 hover:shadow-md transition-all duration-200 ${selectedForMerge.includes(service.serviceName) ? 'border-indigo-500 ring-1 ring-indigo-500' : 'border-gray-200 dark:border-gray-800'}`}>
                             <div className="flex justify-between items-start mb-3">
                                 <div className="flex items-start gap-3">
@@ -1199,28 +1223,48 @@ export default function ServicesPlugin() {
                             <div className="ml-7 space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
                                 <div className="flex gap-2">
                                     <Box size={16} className="shrink-0 mt-0.5" />
-                                    <div className="flex flex-wrap gap-1">
-                                        {service.containerNames.map(c => (
-                                            <span key={c} className="bg-gray-200 dark:bg-gray-700 px-1.5 rounded text-xs text-gray-800 dark:text-gray-200">
-                                                {c}
-                                            </span>
-                                        ))}
-                                    </div>
+                                    {service.containerNames.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1">
+                                            {service.containerNames.map(c => (
+                                                <span key={c} className="bg-gray-200 dark:bg-gray-700 px-1.5 rounded text-xs text-gray-800 dark:text-gray-200">
+                                                    {c}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <span className="text-xs italic text-gray-500 dark:text-gray-400">No running container linked</span>
+                                    )}
                                 </div>
-                                {service.sourcePath ? (
+                                {filePath && (
                                     <div className="flex gap-2 break-all">
                                         <FileCode size={16} className="shrink-0 mt-0.5" />
-                                        <span className="font-mono text-xs">{service.sourcePath}</span>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="font-mono text-xs">{filePath}</span>
+                                            <a
+                                                href={fileHref}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                                            >
+                                                View file
+                                            </a>
+                                        </div>
                                     </div>
-                                ) : service.unitFile && (
-                                    <div className="flex gap-2 break-all">
-                                        <FileCode size={16} className="shrink-0 mt-0.5" />
-                                        <span className="font-mono text-xs">{service.unitFile}</span>
+                                )}
+                                {service.discoveryHints && service.discoveryHints.length > 0 && (
+                                    <div className="flex gap-2">
+                                        <AlertCircle size={16} className="shrink-0 mt-0.5 text-orange-500" />
+                                        <ul className="space-y-0.5 text-xs">
+                                            {service.discoveryHints.map((hint, idx) => (
+                                                <li key={idx} className="leading-snug">{hint}</li>
+                                            ))}
+                                        </ul>
                                     </div>
                                 )}
                             </div>
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </div>

@@ -31,7 +31,7 @@ interface Release {
   body: string;
 }
 
-export async function getCurrentVersion(): Promise<string> {
+async function getCurrentVersion(): Promise<string> {
   try {
     const pkgPath = path.join(process.cwd(), 'package.json');
     const content = await fs.readFile(pkgPath, 'utf-8');
@@ -42,7 +42,7 @@ export async function getCurrentVersion(): Promise<string> {
   }
 }
 
-export async function getLatestRelease(): Promise<Release | null> {
+async function getLatestRelease(): Promise<Release | null> {
   try {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
     if (!res.ok) return null;

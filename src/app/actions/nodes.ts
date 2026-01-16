@@ -98,10 +98,6 @@ export async function editNode(oldName: string, newName: string, destination: st
   }
 }
 
-export async function checkNodeStatus(name: string) {
-    return verifyNodeConnection(name);
-}
-
 export async function deleteNode(name: string) {
   try {
     await removeNode(name);

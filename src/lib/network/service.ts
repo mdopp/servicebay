@@ -4,7 +4,6 @@ import { listNodes, PodmanConnection } from '../nodes';
 import { getConfig } from '../config';
 import { NetworkStore } from './store';
 import { checkDomains } from './dns';
-import os from 'os';
 import watcher from '../watcher';
 import { DigitalTwinStore } from '../store/twin'; // Import Twin Store
 import { logger } from '../logger';
@@ -64,21 +63,6 @@ interface FritzPortMapping {
 }
 
 export class NetworkService {
-  private getLocalIPs(): string[] {
-    const nets = os.networkInterfaces();
-    const results: string[] = [];
-    for (const name of Object.keys(nets)) {
-        for (const net of nets[name]!) {
-            // Skip over non-IPv4 and internal (i.e. 127.0.0.1) addresses
-            if (net.family === 'IPv4' && !net.internal) {
-                results.push(net.address);
-            }
-        }
-    }
-    return results;
-  }
-
-
   async getGraph(targetNode?: string): Promise<NetworkGraph> {
     // 1. Get Global Infrastructure (Internet, Router, External Links) - ONLY ONCE
     const { nodes: globalNodes, edges: globalEdges, config, fbStatus } = await this.getGlobalInfrastructure();

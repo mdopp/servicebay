@@ -55,17 +55,20 @@ export class DigitalTwinStore {
 
   private constructor() {}
 
-  public static getInstance(): DigitalTwinStore {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const globalStore = global as any;
-    if (!globalStore.__DIGITAL_TWIN__) {
-      const id = Math.random().toString(36).substring(7);
-      // logger.info('TwinStore', `Creating NEW Singleton (PID: ${process.pid}) | Instance: ${id}`);
-      globalStore.__DIGITAL_TWIN__ = new DigitalTwinStore();
-      globalStore.__DIGITAL_TWIN__.instanceId = id;
+    public static getInstance(): DigitalTwinStore {
+        if (!DigitalTwinStore.instance) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const globalStore = global as any;
+            if (!globalStore.__DIGITAL_TWIN__) {
+                const id = Math.random().toString(36).substring(7);
+                // logger.info('TwinStore', `Creating NEW Singleton (PID: ${process.pid}) | Instance: ${id}`);
+                globalStore.__DIGITAL_TWIN__ = new DigitalTwinStore();
+                globalStore.__DIGITAL_TWIN__.instanceId = id;
+            }
+            DigitalTwinStore.instance = globalStore.__DIGITAL_TWIN__;
+        }
+        return DigitalTwinStore.instance;
     }
-    return globalStore.__DIGITAL_TWIN__;
-  }
 
   public instanceId: string = "unknown";
 

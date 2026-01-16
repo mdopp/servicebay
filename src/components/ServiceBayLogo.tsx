@@ -1,6 +1,4 @@
-import React from 'react';
-
-export const ServiceBayLogo = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
+const ServiceBayLogo = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
   <svg 
     width={size} 
     height={size} 

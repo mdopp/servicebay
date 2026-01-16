@@ -2,12 +2,8 @@ import { MonitoringStore } from './store';
 import { ServiceManager } from '../services/ServiceManager';
 import { getConfig } from '../config';
 import { listNodes } from '../nodes';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import crypto from 'crypto';
 import { logger } from '@/lib/logger';
-
-const execAsync = promisify(exec);
 
 export async function initializeDefaultChecks() {
   logger.info('Monitoring', 'Initializing default checks...');

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Settings, Save, AlertCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
-export interface LogLevelControlProps {
+interface LogLevelControlProps {
   onSave?: () => void;
 }
 

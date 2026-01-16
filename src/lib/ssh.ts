@@ -13,7 +13,7 @@ export async function verifySSHConnection(host: string, port: number, user: stri
     const cmd = `ssh -i "${identityFile}" -p ${port} -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 ${user}@${host} exit`;
     await execAsync(cmd);
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 }

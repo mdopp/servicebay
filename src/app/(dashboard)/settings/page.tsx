@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldCheck, ShieldAlert, Wifi, WifiOff, Globe } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import SSHSetupModal from '@/components/SSHSetupModal';
 import LogLevelControl from '@/components/LogLevelControl';
 import { AppConfig } from '@/lib/config';
-import { getNodes, createNode, editNode, deleteNode, setNodeAsDefault, checkNodeStatus } from '@/app/actions/nodes';
+import { getNodes, createNode, editNode, deleteNode, setNodeAsDefault } from '@/app/actions/nodes';
 import { checkConnection, checkFullConnection } from '@/app/actions/ssh';
 import { PodmanConnection } from '@/lib/nodes';
 

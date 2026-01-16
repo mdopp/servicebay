@@ -8,7 +8,7 @@ const SECRET_KEY = process.env.AUTH_SECRET || 'servicebay-insecure-fallback-secr
 const key = new TextEncoder().encode(SECRET_KEY);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function encrypt(payload: any) {
+async function encrypt(payload: any) {
   return await new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
@@ -28,19 +28,6 @@ export async function decrypt(input: string): Promise<any> {
   }
 }
 
-export async function getSession() {
-  if (process.env.LOGIN_REQUIRED === 'false') {
-    return {
-      user: process.env.SERVICEBAY_USERNAME || 'dev-user',
-      expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-    };
-  }
-  const cookieStore = await cookies();
-  const session = cookieStore.get('session')?.value;
-  if (!session) return null;
-  return await decrypt(session);
-}
-
 export async function login(username: string) {
   // Create the session
   const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
@@ -49,9 +36,4 @@ export async function login(username: string) {
   // Save the session in a cookie
   const cookieStore = await cookies();
   cookieStore.set('session', session, { expires, httpOnly: true, sameSite: 'lax' });
-}
-
-export async function logout() {
-  const cookieStore = await cookies();
-  cookieStore.delete('session');
 }

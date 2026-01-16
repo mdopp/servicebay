@@ -1,9 +1,8 @@
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NetworkService } from './network/service';
-import { Executor } from './interfaces';
 import { getExecutor } from './executor';
 import { getConfig } from './config';
 import { listNodes } from './nodes';

@@ -2,7 +2,6 @@
 
 import { getConfig, saveConfig } from '@/lib/config';
 import { SSH_DIR } from '@/lib/dirs';
-import { FritzBoxClient } from '@/lib/fritzbox/client';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -69,24 +68,6 @@ export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
         auth: !!config.auth?.password
     }
   };
-}
-
-export async function detectGateway() {
-  // Simple heuristic: Try to find fritz.box
-  try {
-    // We can just try to connect? 
-    // Or we can try to resolve DNS if we had a DNS tool
-    // For now, let's just assume we want to guide the user to enter it.
-    // There isn't a solid cross-platform "get default gateway" in node without executing shell commands (ip route)
-    // which might differ in container vs host.
-    
-    // We can try a simple HEAD request to http://fritz.box
-    new FritzBoxClient({ host: 'fritz.box' });
-    // This is hard to "detect" without auth.
-    return { detected: true, host: 'fritz.box', type: 'fritzbox' };
-  } catch {
-    return { detected: false };
-  }
 }
 
 export async function saveGatewayConfig(host: string, username?: string, password?: string) {

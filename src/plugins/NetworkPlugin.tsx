@@ -34,7 +34,7 @@ import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import Link from 'next/link';
 
-export interface GraphNodeData extends Record<string, unknown> {
+interface GraphNodeData extends Record<string, unknown> {
   id?: string;
   type: string; 
   label: string;
@@ -90,6 +90,34 @@ interface MonitoringData {
     deviceLog?: string;
     [key: string]: unknown;
 }
+
+const deriveNodeNameFromGraph = (node?: GraphNodeData | null): string | undefined => {
+    if (!node) return undefined;
+    const raw = node.rawData as { nodeName?: string; node?: string } | undefined;
+    const candidates = [
+        typeof raw?.nodeName === 'string' ? raw.nodeName : undefined,
+        typeof raw?.node === 'string' ? raw.node : undefined,
+        typeof node.node === 'string' ? node.node : undefined,
+        typeof node.id === 'string' && node.id.includes(':') ? node.id.split(':')[0] : undefined,
+    ];
+
+    const resolved = candidates.find((value): value is string => Boolean(value && value.trim().length > 0));
+    return resolved?.trim();
+};
+
+const buildServiceEditHref = (node: GraphNodeData): string => {
+    const serviceName = typeof node.rawData?.name === 'string' ? node.rawData.name : '';
+    if (!serviceName) return '/services';
+
+    const base = `/edit/${encodeURIComponent(serviceName)}`;
+    const nodeName = deriveNodeNameFromGraph(node);
+
+    if (nodeName && nodeName.toLowerCase() !== 'local') {
+        return `${base}?node=${encodeURIComponent(nodeName)}`;
+    }
+
+    return base;
+};
 
 // Custom Edge Component
 const CustomEdge = ({
@@ -1508,9 +1536,9 @@ export default function NetworkPlugin() {
                         </Link>
                     )}
 
-                    {selectedNodeData.type === 'service' && selectedNodeData.rawData?.name && (
+                    {selectedNodeData && selectedNodeData.type === 'service' && typeof selectedNodeData.rawData?.name === 'string' && (
                         <Link 
-                            href={`/edit/${selectedNodeData.rawData.name}`}
+                            href={buildServiceEditHref(selectedNodeData)}
                             className="w-full flex items-center justify-center gap-2 p-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors text-sm font-medium"
                         >
                             <Edit size={14} />

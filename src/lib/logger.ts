@@ -19,7 +19,7 @@ const COLORS = {
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-export interface LogEntry {
+interface LogEntry {
   id?: number;
   timestamp: string;
   level: LogLevel;

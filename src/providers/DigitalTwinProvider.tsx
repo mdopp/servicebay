@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { useSocket } from '@/hooks/useSocket';
 import type { NodeTwin, GatewayState, ProxyState } from '@/lib/store/twin';
 

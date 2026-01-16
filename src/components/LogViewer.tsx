@@ -167,7 +167,7 @@ const LogMessage = ({ message }: { message: string }) => {
   return <span className="whitespace-pre-wrap">{message}</span>;
 };
 
-export interface LogViewerProps {
+interface LogViewerProps {
   file?: string;
   searchQuery?: string;
 }

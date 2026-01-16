@@ -1,4 +1,3 @@
-import * as dns from 'dns/promises';
 import { NginxConfig } from '../nginx/types';
 import { FritzBoxStatus } from '../fritzbox/types';
 import { logger } from '@/lib/logger';
@@ -44,14 +43,4 @@ export async function checkDomains(nginxConfig: NginxConfig, fbStatus: FritzBoxS
     }
 
     return results;
-}
-
-export async function resolveHostname(ip: string): Promise<string | null> {
-    if (!ip.match(/^\d+\.\d+\.\d+\.\d+$/)) return null;
-    try {
-        const hostnames = await dns.reverse(ip);
-        return hostnames[0] || null;
-    } catch {
-        return null;
-    }
 }

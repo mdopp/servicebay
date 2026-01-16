@@ -1,7 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { NextRequest, NextResponse } from 'next/server';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // ----------------------------------------------------------------------
 // 1. Must Mock 'agentManager' and 'logger' before importing the API route

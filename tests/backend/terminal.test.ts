@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
+ 
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentExecutor } from '../../src/lib/agent/executor';
-import { AgentHandler } from '../../src/lib/agent/handler';
 
 // Mock Agent Manager
 const mockAgent = {

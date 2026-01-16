@@ -1,12 +1,11 @@
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentExecutor } from './agent/executor';
 import { AgentManager } from './agent/manager';
 import { NginxParser } from './nginx/parser';
 import { NetworkService } from './network/service';
 import { Executor } from './interfaces';
-import fs from 'fs/promises';
 import { Readable } from 'stream';
 
 // Mock dependnecies
@@ -42,7 +41,7 @@ describe('System Robustness Tests', () => {
                 stderr: ''
             });
 
-            const { stdout, stderr, promise } = agentExecutor.spawn('echo test');
+            const { stdout, promise } = agentExecutor.spawn('echo test');
             
             let output = '';
             stdout.on('data', chunk => output += chunk.toString());
@@ -151,7 +150,7 @@ describe('System Robustness Tests', () => {
 
         it('should suppress stopped container error during remote config fetch', async () => {
             const containerId = 'test-id';
-            const logSpy = vi.spyOn(console, 'warn');
+            vi.spyOn(console, 'warn');
 
             // Simulate the spawn failure
             // Create a promise that rejects, but silence the unhandled rejection warning immediately
@@ -170,7 +169,7 @@ describe('System Robustness Tests', () => {
             
             try {
                await (service as any).fetchRemoteConfig('node', containerId, mockExecutor);
-            } catch (e) {
+            } catch {
                 // If it throws, check if it's the one we want to suppress
             }
 

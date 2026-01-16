@@ -1,8 +1,7 @@
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { listServices, ServiceInfo } from './manager';
-import { Executor } from './interfaces';
 import { getExecutor } from './executor';
 
 // Mock dependencies

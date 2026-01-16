@@ -11,11 +11,14 @@ export class AgentManager extends EventEmitter {
   }
 
   public static getInstance(): AgentManager {
-    const globalHelper = globalThis as unknown as { __agentManager: AgentManager };
-    if (!globalHelper.__agentManager) {
-      globalHelper.__agentManager = new AgentManager();
+    if (!AgentManager.instance) {
+      const globalHelper = globalThis as unknown as { __agentManager?: AgentManager };
+      if (!globalHelper.__agentManager) {
+        globalHelper.__agentManager = new AgentManager();
+      }
+      AgentManager.instance = globalHelper.__agentManager;
     }
-    return globalHelper.__agentManager;
+    return AgentManager.instance;
   }
 
   public getAgent(nodeName: string): AgentHandler {

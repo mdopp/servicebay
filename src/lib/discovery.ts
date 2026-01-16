@@ -157,7 +157,7 @@ export async function discoverSystemdServices(connection?: PodmanConnection): Pr
 
 import { saveSnapshot } from './history';
 
-export interface MigrationPlan {
+interface MigrationPlan {
     filesToCreate: string[];
     filesToBackup: string[];
     servicesToStop: string[];
@@ -190,7 +190,7 @@ function sanitizePodName(name: string): string {
         .replace(/^-+|-+$/g, '');
 }
 
-export async function getMigrationPlan(service: DiscoveredService, customName?: string, connection?: PodmanConnection): Promise<MigrationPlan> {
+async function getMigrationPlan(service: DiscoveredService, customName?: string, connection?: PodmanConnection): Promise<MigrationPlan> {
     const executor = getExecutor(connection);
     const cleanName = customName || service.serviceName.replace('.service', '');
     const systemdDir = getSystemdDir(connection);
@@ -447,7 +447,7 @@ WantedBy=default.target
     await executor.exec('systemctl --user daemon-reload');
 }
 
-export async function getMergePlan(services: DiscoveredService[], newName: string, connection?: PodmanConnection): Promise<MigrationPlan> {
+async function getMergePlan(services: DiscoveredService[], newName: string, connection?: PodmanConnection): Promise<MigrationPlan> {
     const executor = getExecutor(connection);
     const systemdDir = getSystemdDir(connection);
     const targetKubePath = path.join(systemdDir, `${newName}.kube`);
