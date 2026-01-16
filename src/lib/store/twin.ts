@@ -3,6 +3,26 @@ import yaml from 'js-yaml';
 import { EnrichedContainer, ServiceUnit, SystemResources, Volume, WatchedFile, ProxyRoute, PortMapping } from '../agent/types';
 import { logger } from '../logger';
 import type { AgentHealth } from '../agent/handler';
+import type { ServiceBundle } from '../unmanaged/bundleShared';
+import { buildServiceBundlesForNode } from '../unmanaged/bundleBuilder';
+
+export interface MigrationHistoryEntry {
+    id: string;
+    timestamp: string;
+    actor: string;
+    targetName: string;
+    nodeName: string;
+    bundleSize: number;
+    services: Array<{
+        name: string;
+        sourcePath?: string;
+        unitFile?: string;
+        containerIds: string[];
+    }>;
+    backupArchive?: string;
+    status: 'success' | 'failed' | 'rolled_back';
+    error?: string;
+}
 
 export interface NodeTwin {
   connected: boolean;
@@ -15,7 +35,9 @@ export interface NodeTwin {
   files: Record<string, WatchedFile>;
   proxy?: ProxyRoute[];
   health?: AgentHealth;
-    nodeIPs: string[];
+  nodeIPs: string[];
+  unmanagedBundles: ServiceBundle[];
+    history: MigrationHistoryEntry[];
 }
 
 export interface GatewayState {
@@ -36,6 +58,7 @@ export interface ProxyState {
 
 export class DigitalTwinStore {
   private static instance: DigitalTwinStore;
+    private static readonly HISTORY_LIMIT = 25;
 
   public nodes: Record<string, NodeTwin> = {};
   
@@ -83,8 +106,10 @@ export class DigitalTwinStore {
         services: [],
         volumes: [],
         files: {},
-                proxy: [],
-                nodeIPs: []
+            proxy: [],
+                    nodeIPs: [],
+                    unmanagedBundles: [],
+        history: []
       };
       this.notifyListeners();
     }
@@ -111,6 +136,10 @@ export class DigitalTwinStore {
     if (data.proxy !== undefined && !Array.isArray(data.proxy)) {
          logger.error('TwinStore', `Invalid proxy update for ${nodeId} (expected Array):`, typeof data.proxy);
          delete data.proxy;
+    }
+    if (data.history !== undefined && !Array.isArray(data.history)) {
+        logger.error('TwinStore', `Invalid history update for ${nodeId} (expected Array):`, typeof data.history);
+        delete data.history;
     }
 
     // Files is a Record (Object)
@@ -217,6 +246,12 @@ export class DigitalTwinStore {
     // ENRICHMENT: Calculate Derived Properties (Effective Ports, Host Network)
     // This makes the Twin the Single Source of Truth for "Service Properties"
     this.enrichNode(nodeId, this.nodes[nodeId]);
+    this.nodes[nodeId].unmanagedBundles = buildServiceBundlesForNode({
+        nodeName: nodeId,
+        services: this.nodes[nodeId].services,
+        containers: this.nodes[nodeId].containers,
+        files: this.nodes[nodeId].files
+    });
 
     // AGGREGATION: Update Global Proxy State
     this.recalculateGlobalProxy();
@@ -796,6 +831,14 @@ export class DigitalTwinStore {
           }
       }
       return undefined;
+  }
+
+  public recordMigrationEvent(nodeId: string, event: MigrationHistoryEntry) {
+      this.registerNode(nodeId);
+      const node = this.nodes[nodeId];
+      const nextHistory = [event, ...(node.history || [])].slice(0, DigitalTwinStore.HISTORY_LIMIT);
+      node.history = nextHistory;
+      this.notifyListeners();
   }
 
   public updateGateway(data: Partial<GatewayState>) {

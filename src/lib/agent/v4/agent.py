@@ -15,6 +15,19 @@ import tempfile
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional, Any, Tuple, Callable
 
+# Ensure current directory is in path for local imports
+# (Handle cases where __file__ might not be defined, e.g., exec context)
+try:
+    script_dir = os.path.dirname(__file__)
+    if script_dir and script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+except NameError:
+    # __file__ not defined (exec context), try current directory
+    if '.' not in sys.path:
+        sys.path.insert(0, '.')
+
+# Quadlet parsing is now done in the backend; agent remains dumb and only ships files/paths.
+
 # Container detection (must be done early, before using logger)
 IS_CONTAINERIZED = os.path.exists('/.containerenv') or os.path.exists('/.dockerenv')
 HOST_SSH = os.getenv('HOST_SSH', 'host.containers.internal')
@@ -925,12 +938,15 @@ def fetch_services(containers=None):
                          log_debug(f"Linking container {c['id']} to service {clean_name} via Pod {pod_name}")
                          associated_ids.append(c['id'])
                          service_ports.extend(c.get('ports', []))
-
-
             
             # --- Result Construction ---
+            source_path = service_paths.get(name)
+            if not source_path:
+                log_debug(f"No source_path found for service {name}")
+            elif not os.path.exists(source_path):
+                log_debug(f"Source path does not exist: {source_path}")
 
-            services.append({
+            service_entry = {
                 'name': clean_name,
                 'id': clean_name,
                 'activeState': u.get('active'),
@@ -938,12 +954,15 @@ def fetch_services(containers=None):
                 'loadState': u.get('load'),
                 'description': u.get('description'),
                 'path': u.get('fragment_path', ''),
+                'fragmentPath': source_path if source_path else '',  # Add the Quadlet source file path
                 'active': u.get('active') == 'active' or u.get('active') == 'reloading',
                 'isServiceBay': False,   # Backend Calculated
                 'isManaged': is_managed,
                 'associatedContainerIds': associated_ids,
                 'ports': service_ports
-            })
+            }
+            
+            services.append(service_entry)
         
         # Sort by Name
         services.sort(key=lambda x: x['name'])

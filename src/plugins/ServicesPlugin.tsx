@@ -2,14 +2,14 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
-// import yaml from 'js-yaml'; // Import YAML parser for Strict Matching
 import { logger } from '@/lib/logger';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import PluginLoading from '@/components/PluginLoading';
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, FileText, ArrowRight } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, ArrowRight, ShieldCheck } from 'lucide-react';
+import { ServiceBundle, BundleValidation, BundleStackArtifacts, generateBundleStackArtifacts, generateBundleStackPreview, sanitizeBundleName } from '@/lib/unmanaged/bundleShared';
 
 // Define/Import UI Service Type locally or keep using legacy type if compatible
 // Let's redefine locally to be explicit about V4 structure or map to it.
@@ -48,12 +48,64 @@ interface Service {
   dnsServers?: string[];
 }
 
+interface MigrationPlan {
+    filesToCreate: string[];
+    filesToBackup: string[];
+    servicesToStop: string[];
+    targetName: string;
+    backupDir: string;
+    backupArchive?: string;
+    stackPreview?: string;
+    validations?: BundleValidation[];
+    fileMappings?: Array<{ source: string; action: 'backup' | 'migrate'; target?: string }>;
+}
+
 type LinkFormState = {
     name: string;
     url: string;
     description: string;
     monitor: boolean;
     ipTargetsText?: string;
+};
+
+const dedupeValidations = (entries: BundleValidation[]): BundleValidation[] => {
+    const map = new Map<string, BundleValidation>();
+    entries.forEach(entry => {
+        const key = `${entry.level}-${entry.scope || 'global'}-${entry.message}`;
+        if (!map.has(key)) {
+            map.set(key, entry);
+        }
+    });
+    return Array.from(map.values());
+};
+
+const bundleWizardSteps: Array<{ key: 'assets' | 'stack' | 'backup'; label: string; description: string; tooltip: string }> = [
+    {
+        key: 'assets',
+        label: 'Assets',
+        description: 'Review linked services, files, and containers',
+        tooltip: 'Verify every unmanaged unit, container, and config before generating the managed stack. See the Merge Workflow guide for full context.'
+    },
+    {
+        key: 'stack',
+        label: 'Stack',
+        description: 'Validate the generated pod stack',
+        tooltip: 'Inspect the synthesized .kube unit, Pod YAML, and config references before dry-running the plan.'
+    },
+    {
+        key: 'backup',
+        label: 'Backup Plan',
+        description: 'Confirm backups and execution plan',
+        tooltip: 'Dry run podman kube play, review tar/gzip backups, and note rollback instructions prior to executing the merge.'
+    }
+];
+
+const MERGE_HELP_ID = 'merge-wizard';
+
+const bundleSeverityClasses: Record<ServiceBundle['severity'], string> = {
+    critical: 'border-red-200 dark:border-red-800',
+    warning: 'border-amber-200 dark:border-amber-800',
+    info: 'border-gray-200 dark:border-gray-800'
 };
 
 type ApiLinkPayload = {
@@ -98,6 +150,7 @@ import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import ActionProgressModal from '@/components/ActionProgressModal';
+import PluginHelp from '@/components/PluginHelp';
 
 /**
  * ServicesPlugin
@@ -109,51 +162,30 @@ import ActionProgressModal from '@/components/ActionProgressModal';
  * - "Migrate Unmanaged" wizard for converting raw pods to Quadlet
  * - External Link and Gateway management
  */
-interface DiscoveredService {
-    serviceName: string;
-    containerNames: string[];
-    containerIds: string[];
-    podId?: string;
-    unitFile?: string;
-    sourcePath?: string;
-    status: 'managed' | 'unmanaged';
-    type: 'kube' | 'container' | 'pod' | 'compose' | 'other';
-    nodeName?: string;
-    discoveryHints?: string[];
-}
-
-interface MigrationPlan {
-    filesToCreate: string[];
-    filesToBackup: string[];
-    servicesToStop: string[];
-    targetName: string;
-    backupDir: string;
-}
-
 export default function ServicesPlugin() {
   const router = useRouter();
   // removed services, filteredServices state
-  const [filteredServices, setFilteredServices] = useState<Service[]>([]);
-  const [discoveredServices, setDiscoveredServices] = useState<DiscoveredService[]>([]);
-  // removed loading
-  const [selectedService, setSelectedService] = useState<Service | null>(null);
+    const [filteredServices, setFilteredServices] = useState<Service[]>([]);
+    const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [showActions, setShowActions] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
-  const [mergeModalOpen, setMergeModalOpen] = useState(false);
-  const [mergeName, setMergeName] = useState('');
-  const [migrationPlan, setMigrationPlan] = useState<MigrationPlan | null>(null);
-  const [migrationModalOpen, setMigrationModalOpen] = useState(false);
-  const [selectedForMigration, setSelectedForMigration] = useState<DiscoveredService | null>(null);
-  const [migrationName, setMigrationName] = useState('');
   // removed nodes
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
-  const [hasDiscovered, setHasDiscovered] = useState(false);
-  const [migrating, setMigrating] = useState(false);
+    const [hasDiscovered, setHasDiscovered] = useState(false);
     const [externalLinks, setExternalLinks] = useState<Service[]>([]);
+    const [serviceBundles, setServiceBundles] = useState<ServiceBundle[]>([]);
+    const [selectedBundle, setSelectedBundle] = useState<ServiceBundle | null>(null);
+        const [detailBundle, setDetailBundle] = useState<ServiceBundle | null>(null);
+    const [bundleWizardStep, setBundleWizardStep] = useState<'assets' | 'stack' | 'backup'>('assets');
+    const [bundleTargetName, setBundleTargetName] = useState('');
+    const [bundlePlan, setBundlePlan] = useState<MigrationPlan | null>(null);
+    const [bundlePlanLoading, setBundlePlanLoading] = useState(false);
+    const [bundleStackArtifacts, setBundleStackArtifacts] = useState<BundleStackArtifacts | null>(null);
+    const [bundleValidations, setBundleValidations] = useState<BundleValidation[]>([]);
+    const [bundleActionLoading, setBundleActionLoading] = useState(false);
   // removed refreshing, isFetchingRef
   const { addToast, updateToast } = useToast();
 
@@ -436,81 +468,154 @@ export default function ServicesPlugin() {
 
   const loading = !isConnected && services.length === 0;
 
+  const collectBundlesFromTwin = useCallback((): ServiceBundle[] => {
+      if (!twin || !twin.nodes) return [];
+      const aggregates: ServiceBundle[] = [];
+      Object.values(twin.nodes).forEach(node => {
+          if (Array.isArray(node.unmanagedBundles)) {
+              aggregates.push(...node.unmanagedBundles);
+          }
+      });
+      return aggregates;
+  }, [twin]);
+
   const discoverUnmanaged = async () => {
-    if (!twin || !twin.nodes) return;
     setDiscoveryLoading(true);
     
     // Simulate async to show loading state briefy
     await new Promise(r => setTimeout(r, 300));
 
     try {
-        const allDiscovery: DiscoveredService[] = [];
-        
-        Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
-            const fileKeys = Object.keys(nodeState.files);
-            
-            nodeState.services.forEach(unit => {
-                const baseName = unit.name.replace('.service', '');
-                // Check if Managed (already shown in main list)
-                // STRICT: Only .kube files are considered "Managed".
-                // .container files are considered "Unmanaged" (Legacy) and should be available for migration.
-                const isManaged = fileKeys.some(f => f.endsWith(`/${baseName}.kube`));
-                
-                // ALSO Check if it's the Proxy which we force-show in the main list
-                // This prevents "nginx-web" from appearing in both Lists if it is a legacy .container
-                const isForcedProxy = (twin.proxy?.provider === 'nginx' && (unit.name === 'nginx-web.service' || unit.name === 'nginx.service'));
-
-                // Filter out Infrastructure Services (like podman.service)
-                const isInfra = unit.name === 'podman.service' || unit.name === 'podman.socket';
-
-                if (!isManaged && !isForcedProxy && !isInfra) {
-                    // Try to identify relevant services (containers, or key system services)
-                    const container = nodeState.containers.find(c => c.names.includes(baseName) || c.names.includes(unit.name) || unit.name.includes(c.id.substring(0, 12)));
-                    const containerQuadletPath = fileKeys.find(f => f.endsWith(`/${baseName}.container`));
-                    const hasContainerQuadlet = Boolean(containerQuadletPath);
-                    const hasContainerKeyword = /container|podman/i.test(unit.name) || /container|podman/i.test(unit.description || '');
-
-                    if (container || hasContainerQuadlet || hasContainerKeyword) {
-                         const discoveryHints: string[] = [];
-                         if (unit.path) {
-                             discoveryHints.push(`Systemd unit ${unit.path}`);
-                         }
-                         if (container) {
-                             const containerLabel = container.names[0] || container.id.substring(0, 12);
-                             discoveryHints.push(`Linked to container ${containerLabel} (podman inspect ${container.id})`);
-                         }
-                         if (hasContainerQuadlet && containerQuadletPath) {
-                             discoveryHints.push(`Quadlet file ${containerQuadletPath}`);
-                         }
-                         if (!container && !hasContainerQuadlet && hasContainerKeyword) {
-                             discoveryHints.push('Detected via Podman/container keywords in unit metadata');
-                         }
-
-                         allDiscovery.push({
-                             serviceName: unit.name,
-                             containerNames: container ? container.names : [],
-                             containerIds: container ? [container.id] : [],
-                             status: 'unmanaged',
-                             type: 'container',
-                             nodeName: nodeName,
-                             sourcePath: unit.path,
-                             // Optional fields
-                             podId: undefined,
-                             unitFile: containerQuadletPath,
-                             discoveryHints
-                         });
-                    }
-                }
-            });
-        });
-        
-        setDiscoveredServices(allDiscovery);
+        const bundles = collectBundlesFromTwin();
+        setServiceBundles(bundles);
         setHasDiscovered(true);
     } catch (error) {
       logger.error('ServicesPlugin', 'Failed to discover services', error);
+            setServiceBundles([]);
     } finally {
       setDiscoveryLoading(false);
     }
+  };
+
+  useEffect(() => {
+      if (!hasDiscovered) return;
+      setServiceBundles(collectBundlesFromTwin());
+  }, [hasDiscovered, collectBundlesFromTwin]);
+
+  const openBundleWizard = (bundle: ServiceBundle) => {
+      const initialName = sanitizeBundleName(bundle.displayName);
+      setDetailBundle(null);
+      setSelectedBundle(bundle);
+      setBundleWizardStep('assets');
+      setBundleTargetName(initialName);
+      setBundleStackArtifacts(generateBundleStackArtifacts(bundle, initialName));
+      setBundleValidations(bundle.validations);
+      setBundlePlan(null);
+  };
+
+  const closeBundleWizard = () => {
+      setSelectedBundle(null);
+      setBundlePlan(null);
+      setBundleTargetName('');
+      setBundleStackArtifacts(null);
+      setBundleWizardStep('assets');
+      setBundlePlanLoading(false);
+  };
+
+  const fetchBundlePlanForBundle = useCallback(async (bundle: ServiceBundle, target: string, dryRun = true) => {
+      if (!target) return;
+      const nodeParam = bundle.nodeName && bundle.nodeName !== 'Local' ? `?node=${bundle.nodeName}` : '';
+      const isMerge = bundle.services.length > 1;
+      const endpoint = isMerge ? '/api/system/discovery/merge' : '/api/system/discovery/migrate';
+      const body = isMerge
+          ? { services: bundle.services, newName: target, dryRun }
+          : { service: bundle.services[0], customName: target, dryRun };
+
+      setBundlePlanLoading(true);
+      try {
+          const res = await fetch(`${endpoint}${nodeParam}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+          });
+          if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              throw new Error(data.error || 'Unable to build merge plan');
+          }
+          const payload = await res.json();
+          const plan: MigrationPlan | null = payload.plan ?? null;
+          setBundlePlan(plan);
+          if (plan?.validations) {
+              const merged = dedupeValidations([...bundle.validations, ...plan.validations]);
+              setBundleValidations(merged);
+          } else {
+              setBundleValidations(bundle.validations);
+          }
+      } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Failed to build merge plan';
+          addToast('error', message);
+          setBundlePlan(null);
+          setBundleValidations(bundle.validations);
+      } finally {
+          setBundlePlanLoading(false);
+      }
+  }, [addToast]);
+
+  useEffect(() => {
+      if (!selectedBundle) return;
+      const artifacts = generateBundleStackArtifacts(selectedBundle, bundleTargetName || selectedBundle.derivedName);
+      setBundleStackArtifacts(artifacts);
+      if (!bundlePlan || bundleWizardStep !== 'backup') {
+          setBundleValidations(selectedBundle.validations);
+      }
+  }, [selectedBundle, bundleTargetName, bundlePlan, bundleWizardStep]);
+
+  useEffect(() => {
+      if (selectedBundle && bundleWizardStep === 'backup' && bundleTargetName) {
+          fetchBundlePlanForBundle(selectedBundle, bundleTargetName, true);
+      }
+      if (bundleWizardStep !== 'backup') {
+          setBundlePlan(null);
+      }
+  }, [selectedBundle, bundleWizardStep, bundleTargetName, fetchBundlePlanForBundle]);
+
+  const executeBundleMerge = async () => {
+      if (!selectedBundle) return;
+      if (!bundleTargetName) {
+          addToast('error', 'Provide a target service name');
+          return;
+      }
+
+      const nodeParam = selectedBundle.nodeName && selectedBundle.nodeName !== 'Local' ? `?node=${selectedBundle.nodeName}` : '';
+      const isMerge = selectedBundle.services.length > 1;
+      const endpoint = isMerge ? '/api/system/discovery/merge' : '/api/system/discovery/migrate';
+      const body = isMerge
+          ? { services: selectedBundle.services, newName: bundleTargetName }
+          : { service: selectedBundle.services[0], customName: bundleTargetName };
+
+      setBundleActionLoading(true);
+      const toastId = addToast('loading', 'Applying bundle merge...', `Creating ${bundleTargetName}`, 0);
+      try {
+          const res = await fetch(`${endpoint}${nodeParam}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+          });
+          if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              throw new Error(data.error || 'Merge failed');
+          }
+
+          updateToast(toastId, 'success', 'Bundle merged', `Created ${bundleTargetName}`);
+          closeBundleWizard();
+          await discoverUnmanaged();
+          fetchData();
+      } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Failed to merge bundle';
+          updateToast(toastId, 'error', 'Merge failed', message);
+      } finally {
+          setBundleActionLoading(false);
+      }
   };
 
   useEffect(() => {
@@ -530,144 +635,7 @@ export default function ServicesPlugin() {
       setFilteredServices(filtered);
   }, [services, searchQuery]);
 
-  const openMigrationModal = async (service: DiscoveredService) => {
-      setSelectedForMigration(service);
-      setMigrationName(service.serviceName.replace('.service', ''));
-      setMigrationModalOpen(true);
-      
-      // Fetch Plan
-      try {
-          const query = service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : '';
-          const res = await fetch(`/api/system/discovery/migrate${query}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ service, customName: service.serviceName.replace('.service', ''), dryRun: true })
-          });
-          if (res.ok) {
-              const data = await res.json();
-              setMigrationPlan(data.plan);
-          }
-      } catch (e) {
-          logger.error('ServicesPlugin', 'Failed to fetch migration plan', e);
-      }
-  };
 
-  const handleMigrate = async () => {
-      if (!selectedForMigration) return;
-      setMigrating(true);
-      
-      try {
-          const query = selectedForMigration.nodeName && selectedForMigration.nodeName !== 'Local' ? `?node=${selectedForMigration.nodeName}` : '';
-          const res = await fetch(`/api/system/discovery/migrate${query}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ service: selectedForMigration, customName: migrationName })
-          });
-          
-          if (!res.ok) throw new Error('Migration failed');
-          
-          addToast('success', `Service ${migrationName} migrated successfully`);
-          setMigrationModalOpen(false);
-          setMigrationPlan(null);
-          fetchData();
-      } catch {
-          addToast('error', 'Failed to migrate service');
-      } finally {
-          setMigrating(false);
-      }
-  };
-
-  const updateMigrationPlan = async (name: string) => {
-      setMigrationName(name);
-      if (!selectedForMigration) return;
-      
-      try {
-          const query = selectedForMigration.nodeName && selectedForMigration.nodeName !== 'Local' ? `?node=${selectedForMigration.nodeName}` : '';
-          const res = await fetch(`/api/system/discovery/migrate${query}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ service: selectedForMigration, customName: name, dryRun: true })
-          });
-          if (res.ok) {
-              const data = await res.json();
-              setMigrationPlan(data.plan);
-          }
-      } catch (e) {
-          logger.error('ServicesPlugin', 'Failed to fetch migration plan', e);
-      }
-  };
-
-  const openMergeModal = async () => {
-      setMergeModalOpen(true);
-      setMergeName('');
-      setMigrationPlan(null);
-  };
-
-  const updateMergePlan = async (name: string) => {
-      setMergeName(name);
-      if (selectedForMerge.length < 2 || !name) return;
-
-      const servicesToMerge = discoveredServices.filter(s => selectedForMerge.includes(s.serviceName));
-      
-      try {
-          const nodeName = servicesToMerge[0]?.nodeName;
-          const query = nodeName && nodeName !== 'Local' ? `?node=${nodeName}` : '';
-          const res = await fetch(`/api/system/discovery/merge${query}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ services: servicesToMerge, newName: name, dryRun: true })
-          });
-          if (res.ok) {
-              const data = await res.json();
-              setMigrationPlan(data.plan);
-          }
-      } catch (e) {
-          logger.error('ServicesPlugin', 'Failed to fetch merge plan', e);
-      }
-  };
-
-  const handleMerge = async () => {
-      if (selectedForMerge.length < 2) return;
-      if (!mergeName) {
-          addToast('error', 'Please enter a name for the new service');
-          return;
-      }
-
-      const servicesToMerge = discoveredServices.filter(s => selectedForMerge.includes(s.serviceName));
-      
-      try {
-          const nodeName = servicesToMerge[0]?.nodeName;
-          const query = nodeName && nodeName !== 'Local' ? `?node=${nodeName}` : '';
-          const res = await fetch(`/api/system/discovery/merge${query}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ services: servicesToMerge, newName: mergeName })
-          });
-          
-          if (!res.ok) {
-              const data = await res.json();
-              throw new Error(data.error || 'Merge failed');
-          }
-          
-          addToast('success', `Services merged into ${mergeName} successfully`);
-          setMergeModalOpen(false);
-          setSelectedForMerge([]);
-          setMergeName('');
-          setMigrationPlan(null);
-          fetchData();
-      } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : 'Failed to merge services';
-          addToast('error', message);
-      }
-  };
-
-  const toggleMergeSelection = (serviceName: string) => {
-      if (selectedForMerge.includes(serviceName)) {
-          setSelectedForMerge(selectedForMerge.filter(s => s !== serviceName));
-      } else {
-          setSelectedForMerge([...selectedForMerge, serviceName]);
-      }
-  };
 
   // SSE Effect removed - Twin handles updates.
   /*
@@ -1143,16 +1111,17 @@ export default function ServicesPlugin() {
             <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-semibold flex items-center gap-2 text-orange-600 dark:text-orange-400">
                     <AlertCircle size={20} />
-                    Unmanaged Services
-                    {hasDiscovered && ` (${discoveredServices.filter(s => s.status === 'unmanaged').length})`}
+                    Unmanaged Service Bundles
+                    {hasDiscovered && ` (${serviceBundles.length})`}
                 </h2>
-                {selectedForMerge.length > 1 && (
+                {hasDiscovered && (
                     <button 
-                        onClick={openMergeModal}
-                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg flex items-center gap-2 transition-colors shadow-sm"
+                        onClick={discoverUnmanaged}
+                        disabled={discoveryLoading}
+                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg flex items-center gap-2 transition-colors disabled:opacity-60"
                     >
-                        <Box size={16} />
-                        Merge Selected ({selectedForMerge.length})
+                        {discoveryLoading ? <RefreshCw size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                        {discoveryLoading ? 'Scanning...' : 'Rescan'}
                     </button>
                 )}
             </div>
@@ -1171,330 +1140,505 @@ export default function ServicesPlugin() {
                         {discoveryLoading ? 'Scanning...' : 'Discover Unmanaged Services'}
                     </button>
                 </div>
-            ) : discoveredServices.filter(s => s.status === 'unmanaged').length === 0 ? (
+            ) : serviceBundles.length === 0 ? (
                 <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-8 text-center border border-gray-200 dark:border-gray-800">
                     <p className="text-gray-500 dark:text-gray-400">No unmanaged services found.</p>
                     <button
                         onClick={discoverUnmanaged}
-                        className="mt-4 text-sm text-blue-600 hover:underline"
+                        disabled={discoveryLoading}
+                        className="mt-4 text-sm text-blue-600 hover:underline disabled:opacity-60"
                     >
-                        Scan Again
+                        {discoveryLoading ? 'Scanning...' : 'Scan Again'}
                     </button>
                 </div>
             ) : (
                 <div className="grid gap-4">
-                    {discoveredServices.filter(s => s.status === 'unmanaged').map((service) => {
-                        const filePath = service.sourcePath || service.unitFile;
-                        const nodeParam = encodeURIComponent(service.nodeName || 'Local');
-                        const fileHref = filePath ? `/view?path=${encodeURIComponent(filePath)}&node=${nodeParam}` : '';
-
-                        return (
-                        <div key={service.serviceName} className={`bg-white dark:bg-gray-900 border rounded-lg p-4 hover:shadow-md transition-all duration-200 ${selectedForMerge.includes(service.serviceName) ? 'border-indigo-500 ring-1 ring-indigo-500' : 'border-gray-200 dark:border-gray-800'}`}>
+                    {serviceBundles.map(bundle => (
+                        <div key={bundle.id} className={`bg-white dark:bg-gray-900 border rounded-lg p-4 hover:shadow-md transition-all duration-200 ${bundleSeverityClasses[bundle.severity]}`}>
                             <div className="flex justify-between items-start mb-3">
-                                <div className="flex items-start gap-3">
-                                    <input 
-                                        type="checkbox" 
-                                        checked={selectedForMerge.includes(service.serviceName)}
-                                        onChange={() => toggleMergeSelection(service.serviceName)}
-                                        className="mt-1.5 w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-                                    />
-                                    <div>
-                                        <h3 className="font-bold text-lg break-all">{service.serviceName}</h3>
-                                        <div className="flex gap-2 flex-wrap">
-                                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 mt-1">
-                                                Type: {service.type}
+                                <div className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="font-bold text-lg break-all">{bundle.displayName}</h3>
+                                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                                            <Box size={14} /> {bundle.services.length} units
+                                        </span>
+                                        {bundle.nodeName && (
+                                            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                                                {bundle.nodeName}
                                             </span>
-                                            {service.nodeName && (
-                                                <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 mt-1">
-                                                    Node: {service.nodeName}
-                                                </span>
-                                            )}
-                                        </div>
+                                        )}
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                        <span>{bundle.containers.length} containers</span>
+                                        <span>• {bundle.assets.length} files</span>
+                                        <span>• {bundle.hints.length} hints</span>
                                     </div>
                                 </div>
-                                <button 
-                                    onClick={() => openMigrationModal(service)}
-                                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg flex items-center gap-1 transition-colors"
-                                >
-                                    Migrate <ArrowRight size={16} />
-                                </button>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setDetailBundle(bundle)}
+                                        className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-sm rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                    >
+                                        Details
+                                    </button>
+                                    <button 
+                                        onClick={() => openBundleWizard(bundle)}
+                                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg flex items-center gap-1 transition-colors"
+                                    >
+                                        Review <ArrowRight size={16} />
+                                    </button>
+                                </div>
                             </div>
 
-                            <div className="ml-7 space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+                            <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
                                 <div className="flex gap-2">
-                                    <Box size={16} className="shrink-0 mt-0.5" />
-                                    {service.containerNames.length > 0 ? (
-                                        <div className="flex flex-wrap gap-1">
-                                            {service.containerNames.map(c => (
-                                                <span key={c} className="bg-gray-200 dark:bg-gray-700 px-1.5 rounded text-xs text-gray-800 dark:text-gray-200">
-                                                    {c}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <span className="text-xs italic text-gray-500 dark:text-gray-400">No running container linked</span>
-                                    )}
-                                </div>
-                                {filePath && (
-                                    <div className="flex gap-2 break-all">
-                                        <FileCode size={16} className="shrink-0 mt-0.5" />
-                                        <div className="flex flex-col gap-1">
-                                            <span className="font-mono text-xs">{filePath}</span>
-                                            <a
-                                                href={fileHref}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
-                                            >
-                                                View file
-                                            </a>
-                                        </div>
+                                    <FileCode size={16} className="shrink-0 mt-0.5" />
+                                    <div className="flex flex-wrap gap-1">
+                                        {bundle.assets.slice(0, 4).map(asset => (
+                                            <span key={asset.path} className="px-2 py-0.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono truncate max-w-[180px]" title={asset.path}>
+                                                {asset.path.split('/').pop()}
+                                            </span>
+                                        ))}
+                                        {bundle.assets.length > 4 && (
+                                            <span className="text-xs text-gray-500">+{bundle.assets.length - 4} more</span>
+                                        )}
                                     </div>
-                                )}
-                                {service.discoveryHints && service.discoveryHints.length > 0 && (
+                                </div>
+                                {bundle.hints.length > 0 && (
                                     <div className="flex gap-2">
                                         <AlertCircle size={16} className="shrink-0 mt-0.5 text-orange-500" />
                                         <ul className="space-y-0.5 text-xs">
-                                            {service.discoveryHints.map((hint, idx) => (
+                                            {bundle.hints.slice(0, 3).map((hint, idx) => (
                                                 <li key={idx} className="leading-snug">{hint}</li>
                                             ))}
+                                            {bundle.hints.length > 3 && (
+                                                <li className="text-[10px] text-gray-500">+{bundle.hints.length - 3} more hints</li>
+                                            )}
                                         </ul>
+                                    </div>
+                                )}
+                                {bundle.validations.length > 0 && (
+                                    <div className="flex flex-col gap-1">
+                                        {bundle.validations.map((validation, idx) => (
+                                            <div key={idx} className={`text-xs px-2 py-1 rounded border ${validation.level === 'error' ? 'border-red-200 text-red-700 bg-red-50 dark:border-red-900/50 dark:text-red-300 dark:bg-red-900/20' : validation.level === 'warning' ? 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:bg-amber-900/20' : 'border-green-200 text-green-700 bg-green-50 dark:border-green-900/50 dark:text-green-300 dark:bg-green-900/20'}`}>
+                                                {validation.message}
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                             </div>
                         </div>
-                        );
-                    })}
+                    ))}
                 </div>
             )}
         </div>
       </div>
 
-      {/* Migration Modal */}
-      {migrationModalOpen && selectedForMigration && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-2xl border border-gray-200 dark:border-gray-800 p-6 max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-bold">Migrate Service</h3>
-                    <button onClick={() => setMigrationModalOpen(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                        <X size={20} />
-                    </button>
+      {/* Bundle Detail Drawer */}
+      {detailBundle && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex justify-end">
+            <div className="w-full max-w-3xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 flex flex-col">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+                    <div>
+                        <p className="text-xs uppercase tracking-widest text-gray-500 dark:text-gray-400">Bundle Overview</p>
+                        <h3 className="text-2xl font-semibold text-gray-900 dark:text-white">{detailBundle.displayName}</h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">{detailBundle.nodeName}</p>
+                    </div>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={() => openBundleWizard(detailBundle)}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm"
+                        >
+                            Launch Merge Wizard
+                        </button>
+                        <button onClick={() => setDetailBundle(null)} className="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
-                
-                <div className="space-y-6">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Service Name
-                        </label>
-                        <input
-                            type="text"
-                            value={migrationName}
-                            onChange={(e) => updateMigrationPlan(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                            This will be the name of the systemd service and the pod.
-                        </p>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Source
-                        </label>
-                        {selectedForMigration.sourcePath || selectedForMigration.unitFile ? (
-                            <a 
-                                href={`/view?path=${encodeURIComponent(selectedForMigration.sourcePath || selectedForMigration.unitFile || '')}&node=${encodeURIComponent(selectedForMigration.nodeName || 'Local')}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-sm text-blue-600 hover:underline flex items-center gap-1 w-fit"
-                            >
-                                <FileText size={14} />
-                                {selectedForMigration.sourcePath || selectedForMigration.unitFile}
-                            </a>
-                        ) : selectedForMigration.podId ? (
-                            <div className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                                <Box size={14} />
-                                <span>Running Pod (ID: {selectedForMigration.podId.substring(0, 12)})</span>
-                                <span className="text-xs text-gray-500 ml-1">(Source file not found)</span>
-                            </div>
-                        ) : (
-                            <div className="text-sm text-red-600 flex items-center gap-1">
-                                <AlertCircle size={14} />
-                                <span>No source file or running pod found. Cannot migrate.</span>
-                            </div>
-                        )}
-                    </div>
-
-                    <details className="mt-4 text-xs text-gray-400">
-                        <summary className="cursor-pointer hover:text-gray-600">Debug Info</summary>
-                        <pre className="mt-2 p-2 bg-gray-100 dark:bg-gray-900 rounded overflow-auto max-h-32">
-                            {JSON.stringify(selectedForMigration, null, 2)}
-                        </pre>
-                    </details>
-
-                    {migrationPlan ? (
-                        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 space-y-4 border border-gray-200 dark:border-gray-700">
-                            <h4 className="font-semibold text-sm text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                                <FileCode size={16} /> Migration Plan
-                            </h4>
-                            
-                            {migrationPlan.backupDir && (
-                                <div className="text-sm">
-                                    <span className="text-amber-600 dark:text-amber-400 font-medium">Backup: </span>
-                                    <span className="text-gray-600 dark:text-gray-400">Existing files will be backed up to </span>
-                                    <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 py-0.5 rounded">{migrationPlan.backupDir}</code>
-                                </div>
-                            )}
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Files to Create</span>
-                                    <ul className="mt-2 space-y-1">
-                                        {migrationPlan.filesToCreate.map(f => (
-                                            <li key={f} className="text-sm text-green-600 dark:text-green-400 flex items-center gap-2">
-                                                <Plus size={14} /> {f}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                                
-                                {migrationPlan.servicesToStop.length > 0 && (
+                <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+                    <section>
+                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Systemd Units</h4>
+                        <div className="space-y-2">
+                            {detailBundle.services.map(service => (
+                                <div key={service.serviceName} className="flex items-center justify-between bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2">
                                     <div>
-                                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Services to Stop</span>
-                                        <ul className="mt-2 space-y-1">
-                                            {migrationPlan.servicesToStop.map(s => (
-                                                <li key={s} className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
-                                                    <Power size={14} /> {s}
-                                                </li>
-                                            ))}
-                                        </ul>
+                                        <p className="font-medium text-gray-900 dark:text-gray-100">{service.serviceName}</p>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">{service.sourcePath || service.unitFile || 'Unknown source'}</p>
                                     </div>
-                                )}
-                            </div>
+                                    <div className="text-right">
+                                        <p className="text-xs text-gray-500">Containers: {service.containerIds.length}</p>
+                                        {service.podId && <p className="text-xs text-gray-500">Pod: {service.podId.substring(0, 12)}</p>}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-                    ) : (
-                        <div className="flex justify-center py-8">
-                            <RefreshCw className="animate-spin text-blue-500" />
+                    </section>
+                    <section className="grid md:grid-cols-2 gap-4">
+                        <div className="bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
+                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Containers</h5>
+                            <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                                {detailBundle.containers.map(container => (
+                                    <li key={container.id} className="flex flex-col border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2">
+                                        <span className="font-medium text-gray-900 dark:text-gray-100">{container.name}</span>
+                                        <span className="text-xs text-gray-500">{container.image}</span>
+                                        {container.ports.length > 0 && (
+                                            <span className="text-xs mt-1">Ports: {container.ports.map(port => `${port.hostPort || port.containerPort}/${port.protocol || 'tcp'}`).join(', ')}</span>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
                         </div>
-                    )}
-                </div>
-
-                <div className="flex justify-end gap-3 mt-8">
-                    <button 
-                        onClick={() => setMigrationModalOpen(false)}
-                        className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button 
-                        onClick={handleMigrate}
-                        disabled={!migrationName || !migrationPlan || (!selectedForMigration.sourcePath && !selectedForMigration.unitFile && !selectedForMigration.podId) || migrating}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-2"
-                    >
-                        {migrating ? (
-                            <>
-                                <RefreshCw className="animate-spin" size={16} />
-                                Migrating...
-                            </>
+                        <div className="bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
+                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Assets</h5>
+                            <ul className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400 max-h-48 overflow-y-auto">
+                                {detailBundle.assets.map(asset => (
+                                    <li key={asset.path} className="px-2 py-1 bg-white dark:bg-gray-950 rounded border border-gray-200 dark:border-gray-800">{asset.path}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    </section>
+                    <section>
+                        <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Dependency Graph</h5>
+                        {detailBundle.graph.length === 0 ? (
+                            <p className="text-sm text-gray-500">No dependency hints detected.</p>
                         ) : (
-                            'Confirm Migration'
+                            <ul className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
+                                {detailBundle.graph.map(edge => (
+                                    <li key={`${edge.from}-${edge.to}-${edge.reason}`} className="flex items-center gap-2">
+                                        <span className="font-mono text-xs bg-gray-100 dark:bg-gray-900 px-2 py-0.5 rounded">{edge.from}</span>
+                                        <ArrowRight size={14} className="text-gray-400" />
+                                        <span className="font-mono text-xs bg-gray-100 dark:bg-gray-900 px-2 py-0.5 rounded">{edge.to}</span>
+                                        <span className="text-[10px] uppercase tracking-wide text-gray-400">{edge.reason}</span>
+                                    </li>
+                                ))}
+                            </ul>
                         )}
-                    </button>
+                    </section>
+                    <section className="grid md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Hints</h5>
+                            {detailBundle.hints.length === 0 ? (
+                                <p className="text-sm text-gray-500">No additional hints.</p>
+                            ) : (
+                                <ul className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
+                                    {detailBundle.hints.map((hint, idx) => (
+                                        <li key={idx} className="flex items-start gap-2">
+                                            <AlertCircle size={14} className="text-amber-500 mt-0.5" />
+                                            <span>{hint}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                        <div className="space-y-2">
+                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Validations</h5>
+                            {detailBundle.validations.length === 0 ? (
+                                <p className="text-sm text-gray-500">No blocking validations.</p>
+                            ) : (
+                                <ul className="space-y-1 text-sm">
+                                    {detailBundle.validations.map((validation, idx) => (
+                                        <li key={idx} className={`px-3 py-1.5 rounded border ${validation.level === 'error' ? 'border-red-200 text-red-700 bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:bg-red-950/40' : validation.level === 'warning' ? 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-900/40 dark:text-amber-300 dark:bg-amber-950/40' : 'border-green-200 text-green-700 bg-green-50 dark:border-green-900/40 dark:text-green-300 dark:bg-green-950/40'}`}>
+                                            {validation.message}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    </section>
+                    <section>
+                        <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Stack Preview</h5>
+                        <pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto">
+{generateBundleStackPreview(detailBundle, detailBundle.derivedName)}
+                        </pre>
+                    </section>
+                    <section>
+                        <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Raw Bundle Data</h5>
+                        <details className="bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-800 rounded-lg">
+                            <summary className="px-4 py-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/60 text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Show discovered service data
+                            </summary>
+                            <pre className="bg-gray-900 text-gray-100 text-xs rounded-b-lg p-4 overflow-x-auto max-h-96">
+{JSON.stringify(detailBundle, null, 2)}
+                            </pre>
+                        </details>
+                    </section>
                 </div>
             </div>
         </div>
       )}
 
-      {/* Merge Modal */}
-      {mergeModalOpen && (
+      {/* Bundle Wizard */}
+      {selectedBundle && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-2xl border border-gray-200 dark:border-gray-800 p-6 max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-bold">Merge Services</h3>
-                    <button onClick={() => setMergeModalOpen(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                        <X size={20} />
-                    </button>
-                </div>
-                
-                <div className="space-y-6">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            New Service Name
-                        </label>
-                        <input
-                            type="text"
-                            value={mergeName}
-                            onChange={(e) => updateMergePlan(e.target.value)}
-                            placeholder="e.g. my-app-stack"
-                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
-                            autoFocus
-                        />
+            <div className="bg-white dark:bg-gray-950 rounded-2xl shadow-2xl w-full max-w-4xl border border-gray-200 dark:border-gray-800 max-h-[95vh] overflow-hidden flex flex-col">
+                <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex flex-col gap-4">
+                    <div className="flex items-start justify-between">
+                        <div>
+                            <p className="text-xs uppercase tracking-widest text-gray-500 dark:text-gray-400">Merge Wizard</p>
+                            <h3 className="text-2xl font-semibold text-gray-900 dark:text-white">{selectedBundle.displayName}</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">{selectedBundle.nodeName}</p>
+                        </div>
+                        <button onClick={closeBundleWizard} className="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
+                            <X size={20} />
+                        </button>
                     </div>
-                    
-                    <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded text-xs font-mono text-gray-600 dark:text-gray-400 max-h-32 overflow-y-auto">
-                        <div className="font-semibold mb-2">Selected Services:</div>
-                        {selectedForMerge.map(s => (
-                            <div key={s}>• {s}</div>
+                    <div className="grid grid-cols-3 gap-4">
+                        {bundleWizardSteps.map(step => (
+                            <div
+                                key={step.key}
+                                title={step.tooltip}
+                                className={`rounded-lg border px-3 py-2 ${bundleWizardStep === step.key ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-800'}`}
+                            >
+                                <p className={`text-xs uppercase tracking-wide ${bundleWizardStep === step.key ? 'text-blue-600 dark:text-blue-300' : 'text-gray-400'}`}>{step.label}</p>
+                                <p className="text-[11px] text-gray-500 dark:text-gray-400">{step.description}</p>
+                            </div>
                         ))}
                     </div>
-
-                    {migrationPlan && (
-                        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 space-y-4 border border-gray-200 dark:border-gray-700">
-                            <h4 className="font-semibold text-sm text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                                <FileCode size={16} /> Merge Plan
-                            </h4>
-                            
-                            {migrationPlan.backupDir && (
-                                <div className="text-sm">
-                                    <span className="text-amber-600 dark:text-amber-400 font-medium">Backup: </span>
-                                    <span className="text-gray-600 dark:text-gray-400">Existing files will be backed up to </span>
-                                    <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 py-0.5 rounded">{migrationPlan.backupDir}</code>
-                                </div>
-                            )}
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Files to Create</span>
-                                    <ul className="mt-2 space-y-1">
-                                        {migrationPlan.filesToCreate.map(f => (
-                                            <li key={f} className="text-sm text-green-600 dark:text-green-400 flex items-center gap-2">
-                                                <Plus size={14} /> {f}
+                    <div className="flex flex-col gap-3 rounded-xl border border-blue-100 dark:border-blue-900/40 bg-blue-50/70 dark:bg-blue-900/10 px-4 py-3">
+                        <div className="flex items-start gap-3 text-sm text-blue-900 dark:text-blue-100">
+                            <ShieldCheck size={18} className="text-blue-600 dark:text-blue-300 mt-0.5" />
+                            <p className="leading-snug">
+                                Every merge snapshots legacy files, runs <code className="font-mono text-xs">podman kube play --dry-run</code>, and records rollback metadata before enabling the managed Quadlet. Keep this in mind when reviewing plan details.
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm">
+                            <PluginHelp helpId={MERGE_HELP_ID} label="Merge Workflow guide" />
+                            <span className="text-xs text-blue-900 dark:text-blue-200">Opens the full checklist if you need a refresher mid-migration.</span>
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                        <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">Target Service Name</label>
+                        <input
+                            value={bundleTargetName}
+                            onChange={(e) => setBundleTargetName(sanitizeBundleName(e.target.value))}
+                            placeholder="my-app-stack"
+                            className="px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-sm"
+                        />
+                        <p className="text-[11px] text-gray-500">This becomes the Quadlet unit and Pod name.</p>
+                    </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {bundleWizardStep === 'assets' && (
+                        <div className="space-y-4">
+                            <section className="grid md:grid-cols-2 gap-4">
+                                <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
+                                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Linked Services</h4>
+                                    <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                                        {selectedBundle.services.map(service => (
+                                            <li key={service.serviceName} className="flex items-center justify-between">
+                                                <span>{service.serviceName}</span>
+                                                <span className="text-xs text-gray-400">{service.containerIds.length} containers</span>
                                             </li>
                                         ))}
                                     </ul>
                                 </div>
-                                
-                                {migrationPlan.servicesToStop.length > 0 && (
-                                    <div>
-                                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Services to Stop</span>
-                                        <ul className="mt-2 space-y-1">
-                                            {migrationPlan.servicesToStop.map(s => (
-                                                <li key={s} className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
-                                                    <Power size={14} /> {s}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
+                                <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
+                                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Files</h4>
+                                    <ul className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400 max-h-40 overflow-y-auto">
+                                        {selectedBundle.assets.map(asset => (
+                                            <li key={asset.path} className="px-2 py-1 bg-white dark:bg-gray-950 rounded border border-gray-200 dark:border-gray-800">{asset.path}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </section>
+                            <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
+                                <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">Pre-flight Validations</h4>
+                                {bundleValidations.length === 0 ? (
+                                    <p className="text-sm text-gray-500">No warnings detected.</p>
+                                ) : (
+                                    <ul className="space-y-2 text-sm">
+                                        {bundleValidations.map((validation, idx) => (
+                                            <li key={`${validation.level}-${idx}`} className={`px-3 py-2 rounded border ${validation.level === 'error' ? 'border-red-200 text-red-700 bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:bg-red-950/40' : validation.level === 'warning' ? 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-900/40 dark:text-amber-300 dark:bg-amber-950/40' : 'border-green-200 text-green-700 bg-green-50 dark:border-green-900/40 dark:text-green-300 dark:bg-green-950/40'}`}>
+                                                {validation.message}
+                                            </li>
+                                        ))}
+                                    </ul>
                                 )}
-                            </div>
+                            </section>
+                        </div>
+                    )}
+                    {bundleWizardStep === 'stack' && (
+                        <div className="space-y-4">
+                            {bundleStackArtifacts && (
+                                <>
+                                    <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Quadlet (.kube) Unit</h4>
+                                            <button
+                                                onClick={() => {
+                                                    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                                                        navigator.clipboard.writeText(bundleStackArtifacts.kubeUnit);
+                                                        addToast('success', '.kube unit copied');
+                                                    } else {
+                                                        addToast('error', 'Clipboard API unavailable');
+                                                    }
+                                                }}
+                                                className="text-xs text-blue-600 hover:underline"
+                                            >
+                                                Copy Unit
+                                            </button>
+                                        </div>
+                                        <pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto max-h-80">
+{bundleStackArtifacts.kubeUnit}
+                                        </pre>
+                                    </section>
+                                    <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Pod Specification</h4>
+                                            <button
+                                                onClick={() => {
+                                                    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                                                        navigator.clipboard.writeText(bundleStackArtifacts.podYaml);
+                                                        addToast('success', 'Pod YAML copied');
+                                                    } else {
+                                                        addToast('error', 'Clipboard API unavailable');
+                                                    }
+                                                }}
+                                                className="text-xs text-blue-600 hover:underline"
+                                            >
+                                                Copy YAML
+                                            </button>
+                                        </div>
+                                        <pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto max-h-80">
+{bundleStackArtifacts.podYaml}
+                                        </pre>
+                                    </section>
+                                    {bundleStackArtifacts.configPaths.length > 0 && (
+                                        <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
+                                            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Referenced Config Files</h4>
+                                            <ul className="text-xs font-mono text-gray-600 dark:text-gray-400 space-y-1">
+                                                {bundleStackArtifacts.configPaths.map(path => (
+                                                    <li key={path} className="px-2 py-1 bg-gray-50 dark:bg-gray-900/40 rounded border border-gray-200 dark:border-gray-800">{path}</li>
+                                                ))}
+                                            </ul>
+                                        </section>
+                                    )}
+                                </>
+                            )}
+                            {!bundleStackArtifacts && (
+                                <p className="text-sm text-gray-500">Unable to generate stack artifacts. Provide a target name to continue.</p>
+                            )}
+                        </div>
+                    )}
+                    {bundleWizardStep === 'backup' && (
+                        <div className="space-y-4">
+                            {bundlePlanLoading ? (
+                                <div className="flex flex-col items-center justify-center py-10 text-gray-500">
+                                    <RefreshCw className="animate-spin mb-2" />
+                                    Building plan...
+                                </div>
+                            ) : bundlePlan ? (
+                                <>
+                                    <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
+                                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Backup Directory</h4>
+                                        <code className="text-xs bg-white dark:bg-gray-950 px-2 py-1 rounded border border-gray-200 dark:border-gray-800">{bundlePlan.backupDir}</code>
+                                    </section>
+                                    {bundlePlan.backupArchive && (
+                                        <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
+                                            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Archive Pattern</h4>
+                                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">Each execution produces a timestamped archive using this pattern.</p>
+                                            <code className="text-xs bg-gray-50 dark:bg-gray-950 px-2 py-1 rounded border border-gray-200 dark:border-gray-800">{bundlePlan.backupArchive}</code>
+                                        </section>
+                                    )}
+                                    <section className="grid md:grid-cols-2 gap-4">
+                                        <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
+                                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Files To Create</h5>
+                                            <ul className="text-xs font-mono space-y-1">
+                                                {bundlePlan.filesToCreate.map(file => (
+                                                    <li key={file} className="px-2 py-1 bg-gray-50 dark:bg-gray-900/40 rounded">{file}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                        <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
+                                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Files To Backup</h5>
+                                            <ul className="text-xs font-mono space-y-1">
+                                                {bundlePlan.filesToBackup.length === 0 ? (
+                                                    <li className="text-gray-500">No overwrites expected.</li>
+                                                ) : (
+                                                    bundlePlan.filesToBackup.map(file => (
+                                                        <li key={file} className="px-2 py-1 bg-gray-50 dark:bg-gray-900/40 rounded">{file}</li>
+                                                    ))
+                                                )}
+                                            </ul>
+                                        </div>
+                                    </section>
+                                    {bundlePlan.fileMappings && bundlePlan.fileMappings.length > 0 && (
+                                        <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
+                                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">File Mapping</h5>
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-left text-gray-500">
+                                                        <th className="py-1">Source</th>
+                                                        <th className="py-1">Action</th>
+                                                        <th className="py-1">Target</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {bundlePlan.fileMappings.map((mapping, idx) => (
+                                                        <tr key={`${mapping.source}-${idx}`} className="border-t border-gray-200 dark:border-gray-800">
+                                                            <td className="py-1 pr-2 font-mono">{mapping.source}</td>
+                                                            <td className="py-1 capitalize">{mapping.action}</td>
+                                                            <td className="py-1 font-mono">{mapping.target || '—'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </section>
+                                    )}
+                                    {bundlePlan.servicesToStop.length > 0 && (
+                                        <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
+                                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Services To Stop</h5>
+                                            <ul className="text-sm text-red-600 dark:text-red-400 space-y-1">
+                                                {bundlePlan.servicesToStop.map(service => (
+                                                    <li key={service} className="flex items-center gap-2"><Power size={14} /> {service}</li>
+                                                ))}
+                                            </ul>
+                                        </section>
+                                    )}
+                                </>
+                            ) : (
+                                <p className="text-sm text-gray-500">No plan available. Adjust the target name or try again.</p>
+                            )}
                         </div>
                     )}
                 </div>
-
-                <div className="flex justify-end gap-3 mt-8">
-                    <button 
-                        onClick={() => setMergeModalOpen(false)}
-                        className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button 
-                        onClick={handleMerge}
-                        disabled={!mergeName || !migrationPlan}
-                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-                    >
-                        Merge & Migrate
-                    </button>
+                <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Step {bundleWizardSteps.findIndex(step => step.key === bundleWizardStep) + 1} of 3</div>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={() => {
+                                if (bundleWizardStep === 'assets') {
+                                    closeBundleWizard();
+                                } else if (bundleWizardStep === 'stack') {
+                                    setBundleWizardStep('assets');
+                                } else {
+                                    setBundleWizardStep('stack');
+                                }
+                            }}
+                            className="px-4 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700"
+                        >
+                            {bundleWizardStep === 'assets' ? 'Cancel' : 'Back'}
+                        </button>
+                        {bundleWizardStep !== 'backup' ? (
+                            <button
+                                onClick={() => setBundleWizardStep(bundleWizardStep === 'assets' ? 'stack' : 'backup')}
+                                disabled={!bundleTargetName || (bundleWizardStep === 'stack' && bundleValidations.some(v => v.level === 'error'))}
+                                className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white"
+                            >
+                                Next
+                            </button>
+                        ) : (
+                            <button
+                                onClick={executeBundleMerge}
+                                disabled={bundleActionLoading || !bundlePlan}
+                                className="px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white flex items-center gap-2"
+                            >
+                                {bundleActionLoading ? <RefreshCw className="animate-spin" size={16} /> : <ArrowRight size={16} />}
+                                Execute Merge
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>

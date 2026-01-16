@@ -1,7 +1,31 @@
 
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { mergeServices, DiscoveredService } from '@/lib/discovery';
 import { listNodes } from '@/lib/nodes';
+import { decrypt } from '@/lib/auth';
+
+async function resolveActor(request: Request): Promise<string> {
+  const forwarded = request.headers.get('x-forwarded-user') || request.headers.get('remote-user');
+  if (forwarded) {
+    return forwarded;
+  }
+
+  try {
+    const cookieStore = await cookies();
+    const sessionToken = cookieStore.get('session')?.value;
+    if (sessionToken) {
+      const payload = await decrypt(sessionToken);
+      if (payload?.user) {
+        return String(payload.user);
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to resolve actor from session', error);
+  }
+
+  return 'unknown';
+}
 
 export async function POST(request: Request) {
   try {
@@ -28,7 +52,12 @@ export async function POST(request: Request) {
         }
     }
 
-    const result = await mergeServices(services, newName, dryRun, connection);
+    const actor = await resolveActor(request);
+    const result = await mergeServices(services, newName, {
+      dryRun,
+      connection,
+      initiator: actor
+    });
     
     if (dryRun) {
         return NextResponse.json({ plan: result });

@@ -6,9 +6,11 @@ import ReactMarkdown from 'react-markdown';
 
 interface PluginHelpProps {
   helpId: string;
+  label?: string;
+  className?: string;
 }
 
-export default function PluginHelp({ helpId }: PluginHelpProps) {
+export default function PluginHelp({ helpId, label, className }: PluginHelpProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,14 +33,21 @@ export default function PluginHelp({ helpId }: PluginHelpProps) {
     }
   };
 
+  const iconOnly = !label;
+  const buttonClasses = `${iconOnly
+    ? 'p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400'
+    : 'inline-flex items-center gap-2 px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-300 hover:underline rounded-full bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40'} ${className ?? ''}`.trim();
+
   return (
     <>
       <button
+        type="button"
         onClick={handleOpen}
-        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
-        title="Help"
+        className={buttonClasses}
+        title={label || 'Help'}
       >
-        <CircleHelp size={20} />
+        <CircleHelp size={iconOnly ? 20 : 16} />
+        {label && <span>{label}</span>}
       </button>
 
       {isOpen && (

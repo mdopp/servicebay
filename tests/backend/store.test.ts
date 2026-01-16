@@ -62,4 +62,30 @@ describe('DigitalTwinStore', () => {
         expect(store.gateway.upstreamStatus).toBe('up');
         expect(store.gateway.lastUpdated).toBeGreaterThan(0);
     });
+
+    it('records migration events with bounded history', () => {
+        const nodeId = 'NodeHistory';
+        store.registerNode(nodeId);
+
+        for (let i = 0; i < 30; i += 1) {
+            store.recordMigrationEvent(nodeId, {
+                id: `evt-${i}`,
+                timestamp: new Date(Date.now() + i).toISOString(),
+                actor: 'tester',
+                targetName: `target-${i}`,
+                nodeName: nodeId,
+                bundleSize: 2,
+                services: [
+                    { name: 'svc-a', containerIds: [], sourcePath: '/tmp/a', unitFile: '/tmp/a.service' },
+                    { name: 'svc-b', containerIds: [], sourcePath: '/tmp/b', unitFile: '/tmp/b.service' }
+                ],
+                status: 'success'
+            });
+        }
+
+        const history = store.nodes[nodeId].history;
+        expect(history).toHaveLength(25);
+        expect(history[0].targetName).toBe('target-29');
+        expect(history[history.length - 1].targetName).toBe('target-5');
+    });
 });

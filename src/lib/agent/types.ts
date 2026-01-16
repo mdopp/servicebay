@@ -92,6 +92,24 @@ export interface ServiceUnit {
   isPrimaryProxy?: boolean; // Managed by TwinStore (Consistency)
   associatedContainerIds?: string[]; // IDs of containers managed by this service (SINGLE SOURCE OF TRUTH)
   ports?: PortMapping[];
+  
+  // Quadlet/Systemd Relationship Fields (discovered via QuadletParser)
+  requires?: string[]; // Hard dependencies from Requires= directive
+  after?: string[]; // Ordering constraints from After= directive
+  wants?: string[]; // Soft dependencies from Wants= directive
+  bindsTo?: string[]; // Bidirectional dependencies from BindsTo= directive
+  
+  // Quadlet-specific references
+  podReference?: string; // Pod name referenced by Pod= directive (for .container files)
+  publishedPorts?: Array<{
+    hostPort?: number;
+    containerPort?: number;
+    protocol?: string;
+  }>; // Ports from PublishPort= directive (for .pod files)
+  
+  // Source type for better categorization
+  quadletSourceType?: 'container' | 'pod' | 'kube' | 'service';
+  
   // Derived/Enriched Properties (calculated by TwinStore)
   effectiveHostNetwork?: boolean;
   proxyConfiguration?: unknown; // Nginx/Traefik Routing Table (Enriched)
