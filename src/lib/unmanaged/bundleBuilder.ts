@@ -220,6 +220,74 @@ const evaluateBundleValidations = (bundle: ServiceBundle): BundleValidation[] =>
   return validations;
 };
 
+const mergeBundlesByPod = (bundles: Map<string, ServiceBundle>): Map<string, ServiceBundle> => {
+  const podToBundles = new Map<string, ServiceBundle[]>();
+  const noPodBundles: ServiceBundle[] = [];
+
+  // Group bundles by pod reference extracted from their containers and services
+  bundles.forEach((bundle) => {
+    const podNames = new Set<string>();
+    
+    // Get pod names from containers (they have explicit podName property)
+    bundle.containers.forEach(container => {
+      if (container.podName) {
+        podNames.add(container.podName);
+      }
+    });
+
+    // Get pod names from graph edges (Container → pod relationships)
+    bundle.graph
+      .filter(edge => edge.reason === 'Container → pod')
+      .forEach(edge => podNames.add(edge.to));
+
+    if (podNames.size > 0) {
+      const podName = Array.from(podNames)[0]; // Use first pod if multiple
+      if (!podToBundles.has(podName)) {
+        podToBundles.set(podName, []);
+      }
+      podToBundles.get(podName)!.push(bundle);
+    } else {
+      noPodBundles.push(bundle);
+    }
+  });
+
+  const merged = new Map<string, ServiceBundle>();
+
+  // Merge bundles that share the same pod
+  podToBundles.forEach((bundleGroup) => {
+    if (bundleGroup.length === 1) {
+      // No merging needed
+      merged.set(bundleGroup[0].id, bundleGroup[0]);
+    } else {
+      // Merge all bundles in this group
+      const [primary, ...rest] = bundleGroup;
+      rest.forEach(bundle => {
+        primary.services.push(...bundle.services);
+        primary.containers = dedupeContainers([...primary.containers, ...bundle.containers]);
+        primary.assets = dedupeAssets([...primary.assets, ...bundle.assets]);
+        primary.ports = aggregatePorts(primary.containers);
+        primary.graph = dedupeEdges([...primary.graph, ...bundle.graph]);
+        bundle.hints.forEach(hint => {
+          if (!primary.hints.includes(hint)) {
+            primary.hints.push(hint);
+          }
+        });
+      });
+      // Re-evaluate validations after merge
+      primary.validations = evaluateBundleValidations(primary);
+      primary.severity = severityFromValidations(primary.validations);
+      merged.set(primary.id, primary);
+    }
+  });
+
+  // Add bundles with no pod reference
+  noPodBundles.forEach(bundle => {
+    merged.set(bundle.id, bundle);
+  });
+
+  return merged;
+};
+
 export const buildServiceBundlesForNode = ({ nodeName, services, containers, files }: BundleBuildInput): ServiceBundle[] => {
   if (!services || services.length === 0) return [];
   const containerMap = new Map<string, EnrichedContainer>();
@@ -556,7 +624,10 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
       drafts.set(bundleId, bundle);
     });
 
-  return Array.from(drafts.values()).sort((a, b) => {
+  // --- Merge bundles that share the same pod reference ---
+  const mergedDrafts = mergeBundlesByPod(drafts);
+
+  return Array.from(mergedDrafts.values()).sort((a, b) => {
     if (a.severity === b.severity) {
       return a.displayName.localeCompare(b.displayName);
     }
