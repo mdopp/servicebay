@@ -224,24 +224,27 @@ const mergeBundlesByPod = (bundles: Map<string, ServiceBundle>): Map<string, Ser
   const podToBundles = new Map<string, ServiceBundle[]>();
   const noPodBundles: ServiceBundle[] = [];
 
-  // Group bundles by pod reference extracted from their containers and services
+  // Group bundles by pod reference (extracted during bundle creation from ServiceUnit.podReference)
   bundles.forEach((bundle) => {
-    const podNames = new Set<string>();
+    const podNames = bundle.podReferences || [];
     
-    // Get pod names from containers (they have explicit podName property)
+    // Also check containers and graph edges as fallback
+    const additionalPods = new Set<string>();
+    
     bundle.containers.forEach(container => {
       if (container.podName) {
-        podNames.add(container.podName);
+        additionalPods.add(container.podName);
       }
     });
 
-    // Get pod names from graph edges (Container → pod relationships)
     bundle.graph
       .filter(edge => edge.reason === 'Container → pod')
-      .forEach(edge => podNames.add(edge.to));
+      .forEach(edge => additionalPods.add(edge.to));
 
-    if (podNames.size > 0) {
-      const podName = Array.from(podNames)[0]; // Use first pod if multiple
+    const allPods = [...podNames, ...Array.from(additionalPods)];
+
+    if (allPods.length > 0) {
+      const podName = allPods[0]; // Use first pod if multiple
       if (!podToBundles.has(podName)) {
         podToBundles.set(podName, []);
       }
@@ -591,6 +594,15 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
       discoveryLog.push(`Total Graph Edges: ${dedupeEdges(graphEdges).length}`);
       discoveryLog.push(`Total Hints: ${bundleHints.size}`);
       discoveryLog.push(``);
+
+      // Extract pod references from services
+      const podRefs = new Set<string>();
+      bundleServices.forEach(svc => {
+        if (svc.podReference) {
+          podRefs.add(svc.podReference);
+        }
+      });
+
       if (bundleServices.length === 1 && relatedServices.length > 1) {
         discoveryLog.push(`⚠ WARNING: Started with ${relatedServices.length} services but ended with ${bundleServices.length}`);
         discoveryLog.push(`   This suggests services were found but not all were added to the bundle`);
@@ -616,6 +628,7 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
         ports: aggregatePorts(deduped),
         assets: dedupedAssets,
         graph: dedupeEdges(graphEdges),
+        podReferences: Array.from(podRefs),
         discoveryLog
       };
       bundle.validations = evaluateBundleValidations(bundle);

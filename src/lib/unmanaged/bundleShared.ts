@@ -64,6 +64,7 @@ export interface ServiceBundle {
   ports: BundlePortSummary[];
   assets: BundleAsset[];
   graph: BundleGraphEdge[];
+  podReferences?: string[]; // Pod names this bundle's services reference (for grouping)
   discoveryLog?: string[];
 }
 
