@@ -8,7 +8,10 @@ import ContainerList from './ContainerList';
 import { EnrichedContainer } from '@/lib/agent/types';
 
 interface ServiceMonitorProps {
-  serviceName: string;
+    serviceName: string;
+    initialNode?: string;
+    onBack?: () => void;
+    variant?: 'page' | 'embedded';
 }
 
 // Raw Podman API response shape (PascalCase)
@@ -36,10 +39,11 @@ interface NetworkGraphNode {
     };
 }
 
-export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
+export default function ServiceMonitor({ serviceName, initialNode, onBack, variant = 'page' }: ServiceMonitorProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const node = searchParams?.get('node');
+    const nodeParam = searchParams?.get('node');
+    const node = initialNode ?? (nodeParam && nodeParam.length > 0 ? nodeParam : undefined);
   const [activeTab, setActiveTab] = useState<'status' | 'service' | 'container-logs' | 'network'>('status');
   
   const [logs, setLogs] = useState<{ serviceLogs: string; podmanPs: Partial<EnrichedContainer>[] } | null>(null);
@@ -49,10 +53,10 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
   const [networkData, setNetworkData] = useState<NetworkGraphNode | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const fetchLogs = async () => {
+    const fetchLogs = async () => {
     setLoading(true);
     try {
-      const query = node ? `?node=${node}` : '';
+            const query = node ? `?node=${encodeURIComponent(node)}` : '';
       const [logsRes, statusRes, graphRes] = await Promise.all([
         fetch(`/api/services/${serviceName}/logs${query}`),
         fetch(`/api/services/${serviceName}/status${query}`),
@@ -125,9 +129,9 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
     }
   };
 
-  const fetchContainerLogs = async (id: string) => {
+    const fetchContainerLogs = async (id: string) => {
     try {
-        const query = node ? `?node=${node}` : '';
+                const query = node ? `?node=${encodeURIComponent(node)}` : '';
         const res = await fetch(`/api/containers/${id}/logs${query}`);
         if (res.ok) {
             const data = await res.json();
@@ -140,38 +144,48 @@ export default function ServiceMonitor({ serviceName }: ServiceMonitorProps) {
 
   useEffect(() => {
     fetchLogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceName]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [serviceName, node]);
 
-  useEffect(() => {
-    if (activeTab === 'container-logs' && selectedContainerId) {
-        fetchContainerLogs(selectedContainerId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, selectedContainerId]);
+    useEffect(() => {
+        if (activeTab === 'container-logs' && selectedContainerId) {
+                fetchContainerLogs(selectedContainerId);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, selectedContainerId, node]);
+
+    const handleBack = () => {
+        if (onBack) {
+                onBack();
+        } else {
+                router.back();
+        }
+    };
 
   return (
-    <div className="h-full flex flex-col relative">
-      <div className="flex justify-between items-center mb-6 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-        <div className="flex items-center gap-4">
-            <button onClick={() => router.back()} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
-                <ArrowLeft size={24} className="text-gray-600 dark:text-gray-300" />
-            </button>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Monitor: {serviceName}</h1>
-        </div>
-        <div className="flex gap-3">
-            <button 
-                onClick={fetchLogs} 
-                disabled={loading}
-                className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" 
-                title="Refresh"
-            >
-                <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-            </button>
-        </div>
-      </div>
+        <div className="h-full flex flex-col relative">
+            {variant === 'page' && (
+                <div className="flex justify-between items-center mb-6 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+                    <div className="flex items-center gap-4">
+                            <button onClick={handleBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
+                                    <ArrowLeft size={24} className="text-gray-600 dark:text-gray-300" />
+                            </button>
+                            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Monitor: {serviceName}</h1>
+                    </div>
+                    <div className="flex gap-3">
+                            <button 
+                                    onClick={fetchLogs} 
+                                    disabled={loading}
+                                    className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" 
+                                    title="Refresh"
+                            >
+                                    <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+                            </button>
+                    </div>
+                </div>
+            )}
 
-      <div className="flex-1 flex flex-col min-h-0 p-6">
+            <div className={`flex-1 flex flex-col min-h-0 ${variant === 'embedded' ? 'p-0' : 'p-6'}`}>
       <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
         <div className="flex border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 shrink-0">
             <button

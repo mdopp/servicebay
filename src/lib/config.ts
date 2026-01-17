@@ -100,6 +100,18 @@ const DEFAULT_CONFIG: AppConfig = {
   }
 };
 
+const normalizeTemplateSettingsKeys = (settings?: Record<string, string>): Record<string, string> | undefined => {
+  if (!settings) return settings;
+  const normalized = { ...settings };
+  if (typeof normalized.STACKS_DIR === 'string' && !normalized.DATA_DIR) {
+    normalized.DATA_DIR = normalized.STACKS_DIR;
+  }
+  if ('STACKS_DIR' in normalized) {
+    delete normalized.STACKS_DIR;
+  }
+  return normalized;
+};
+
 // Recursive helper to traverse config and apply a transform function to specific keys
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function transformConfig(obj: any, keysToTransform: string[], transformFn: (val: string) => string): any {
@@ -129,6 +141,7 @@ export async function getConfig(): Promise<AppConfig> {
     // Decrypt sensitive fields
     const config = transformConfig(rawConfig, SENSITIVE_KEYS, decrypt) as AppConfig;
     const merged = { ...DEFAULT_CONFIG, ...config };
+    merged.templateSettings = normalizeTemplateSettingsKeys(merged.templateSettings) || {};
     merged.externalLinks = normalizeExternalLinks(merged.externalLinks);
     return merged;
   } catch {
@@ -142,6 +155,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
   const normalizedConfig: AppConfig = {
     ...config,
     externalLinks: normalizeExternalLinks(config.externalLinks),
+    templateSettings: normalizeTemplateSettingsKeys(config.templateSettings)
   };
   const safeConfig = transformConfig(normalizedConfig, SENSITIVE_KEYS, encrypt);
   await fs.writeFile(CONFIG_PATH, JSON.stringify(safeConfig, null, 2));

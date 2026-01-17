@@ -2,14 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Server, Network, HardDrive } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Server, Network } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import pkg from '../../package.json';
 
 export const plugins = [
     { id: 'services', name: 'Services', icon: Box, path: '/services' },
-    { id: 'containers', name: 'Containers', icon: LayoutDashboard, path: '/containers' },
-    { id: 'volumes', name: 'Volumes', icon: HardDrive, path: '/volumes' },
+    { id: 'containers', name: 'Container Engine', icon: LayoutDashboard, path: '/containers' },
     { id: 'network', name: 'Network Map', icon: Network, path: '/network' },
     { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
     { id: 'system', name: 'System Info', icon: Server, path: '/system' },
@@ -18,7 +17,7 @@ export const plugins = [
 ];
 
 export default function Sidebar() {
-  const pathname = usePathname();
+    const pathname = usePathname() || '';
   const searchParams = useSearchParams();
   const node = searchParams?.get('node');
   const router = useRouter();

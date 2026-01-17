@@ -56,6 +56,23 @@ type BackupStreamEvent =
   | { type: 'done'; backup: SystemBackupEntrySummary }
   | { type: 'error'; message: string };
 
+type SettingsOverrides = Partial<{
+  templateValues: Record<string, string>;
+  registriesEnabled: boolean;
+  registries: { name: string; url: string; branch?: string }[];
+}> & {
+  email?: Partial<{
+    enabled: boolean;
+    host: string;
+    port: number;
+    secure: boolean;
+    user: string;
+    pass: string;
+    from: string;
+    to: string[];
+  }>;
+};
+
 const LOG_STATUS_BADGES: Record<BackupLogStatus, string> = {
   info: 'text-slate-600 bg-slate-100 dark:text-slate-300 dark:bg-slate-800',
   success: 'text-emerald-700 bg-emerald-100 dark:text-emerald-300 dark:bg-emerald-900/30',
@@ -86,6 +103,7 @@ const formatBytes = (size: number): string => {
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [configReady, setConfigReady] = useState(false);
   const { addToast } = useToast();
 
   // App Update State
@@ -141,6 +159,12 @@ export default function SettingsPage() {
   const [newNodeIdentity, setNewNodeIdentity] = useState('/app/data/ssh/id_rsa');
   const [addingNode, setAddingNode] = useState(false);
   const [editingNode, setEditingNode] = useState<string | null>(null);
+  const [nodeDraft, setNodeDraft] = useState<{ name: string; destination: string; identity: string }>({
+    name: '',
+    destination: '',
+    identity: '/app/data/ssh/id_rsa'
+  });
+  const [savingNode, setSavingNode] = useState(false);
   const [nodeHealth, setNodeHealth] = useState<Record<string, { loading: boolean; online: boolean; auth: boolean; error?: string }>>({});
 
   // SSH Setup Modal
@@ -224,6 +248,8 @@ export default function SettingsPage() {
         setEmailFrom(e.from);
         setEmailRecipients(e.to || []);
       }
+
+      setConfigReady(true);
     } catch (error) {
       console.error(error);
       addToast('error', 'Failed to load settings');
@@ -259,28 +285,212 @@ export default function SettingsPage() {
     fetchBackups();
   }, [fetchBackups]);
 
+  const persistSettings = useCallback(async (overrides?: SettingsOverrides) => {
+    if (!configReady || saving) return;
+    setSaving(true);
+    try {
+      const templateDefaults = Object.fromEntries(
+        Object.entries(templateSchema).map(([key, meta]) => [key, meta.default ?? ''])
+      ) as Record<string, string>;
+      const effectiveTemplateValues = overrides?.templateValues ?? templateValues;
+      const enforcedTemplateValues = {
+        ...templateDefaults,
+        ...effectiveTemplateValues
+      } as Record<string, string>;
+
+      const effectiveRegistries = overrides?.registries ?? registries;
+      const effectiveRegistriesEnabled = overrides?.registriesEnabled ?? registriesEnabled;
+
+      const emailOverrides = overrides?.email ?? {};
+      const emailConfig = {
+        enabled: emailOverrides.enabled ?? emailEnabled,
+        host: emailOverrides.host ?? emailHost,
+        port: emailOverrides.port ?? emailPort,
+        secure: emailOverrides.secure ?? emailSecure,
+        user: emailOverrides.user ?? emailUser,
+        pass: emailOverrides.pass ?? emailPass,
+        from: emailOverrides.from ?? emailFrom,
+        to: emailOverrides.to ?? emailRecipients
+      };
+
+      const newConfig: Partial<AppConfig> = {
+        templateSettings: enforcedTemplateValues,
+        registries: {
+          enabled: effectiveRegistriesEnabled,
+          items: effectiveRegistries
+        },
+        notifications: {
+          email: emailConfig
+        }
+      };
+
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newConfig)
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        throw new Error(errorBody.error || 'Failed to save settings');
+      }
+
+      addToast('success', 'Settings saved', 'Your changes were stored.');
+    } catch (error) {
+      console.error(error);
+      addToast('error', 'Failed to save settings', error instanceof Error ? error.message : undefined);
+    } finally {
+      setSaving(false);
+    }
+  }, [addToast, configReady, emailEnabled, emailFrom, emailHost, emailPass, emailPort, emailRecipients, emailSecure, emailUser, registries, registriesEnabled, saving, templateSchema, templateValues]);
+
   const handleAddRecipient = () => {
     if (newRecipient && !emailRecipients.includes(newRecipient)) {
-      setEmailRecipients([...emailRecipients, newRecipient]);
+      const updatedRecipients = [...emailRecipients, newRecipient];
+      setEmailRecipients(updatedRecipients);
       setNewRecipient('');
+      void persistSettings({ email: { to: updatedRecipients } });
     }
   };
 
   const handleRemoveRecipient = (email: string) => {
-    setEmailRecipients(emailRecipients.filter(e => e !== email));
+    const updatedRecipients = emailRecipients.filter(e => e !== email);
+    setEmailRecipients(updatedRecipients);
+    void persistSettings({ email: { to: updatedRecipients } });
   };
+
+  const handleEmailEnabledToggle = (enabled: boolean) => {
+    setEmailEnabled(enabled);
+    void persistSettings({ email: { enabled } });
+  };
+
+  const handleEmailSecureToggle = (secure: boolean) => {
+    setEmailSecure(secure);
+    void persistSettings({ email: { secure } });
+  };
+
+  const handleAddNode = () => {
+    void submitNode('create', {
+      name: newNodeName.trim(),
+      destination: newNodeDest.trim(),
+      identity: newNodeIdentity.trim()
+    });
+  };
+
+  const startEditingNode = (node: PodmanConnection) => {
+    setEditingNode(node.Name);
+    setNodeDraft({ name: node.Name, destination: node.URI, identity: node.Identity });
+  };
+
+  const cancelInlineEdit = () => {
+    setEditingNode(null);
+    setNodeDraft({ name: '', destination: '', identity: '/app/data/ssh/id_rsa' });
+  };
+
+  const handleInlineSave = () => {
+    if (!editingNode) return;
+    void submitNode('edit', {
+      originalName: editingNode,
+      name: nodeDraft.name.trim(),
+      destination: nodeDraft.destination.trim(),
+      identity: nodeDraft.identity.trim()
+    });
+  };
+
+  const parseDestination = (destination: string) => {
+    let host = '', port = 22, user = 'root';
+    try {
+      const urlStr = destination.includes('://') ? destination : `ssh://${destination}`;
+      const parsed = new URL(urlStr);
+      host = parsed.hostname;
+      port = parsed.port ? parseInt(parsed.port) : 22;
+      user = parsed.username || 'root';
+    } catch {
+      // ignore
+    }
+    return { host, port, user };
+  };
+
+  const submitNode = useCallback(async (mode: 'create' | 'edit', payload: { name: string; destination: string; identity: string; originalName?: string }) => {
+    if (!payload.name || !payload.destination || !payload.identity) return false;
+
+    const { host, port, user } = parseDestination(payload.destination);
+    const setBusy = mode === 'create' ? setAddingNode : setSavingNode;
+    setBusy(true);
+
+    if (host) {
+      const check = await checkConnection(host, port);
+      if (!check.success || !check.isOpen) {
+        addToast('error', 'Connection Failed', `Could not connect to ${host}:${port}. Is the server reachable?`);
+        setBusy(false);
+        return false;
+      }
+    }
+
+    try {
+      const result = mode === 'edit' && payload.originalName
+        ? await editNode(payload.originalName, payload.name, payload.destination, payload.identity)
+        : await createNode(payload.name, payload.destination, payload.identity);
+
+      if (result.success) {
+        setNodes(await getNodes());
+        if (mode === 'create') {
+          setNewNodeName('');
+          setNewNodeDest('');
+          setNewNodeIdentity('/app/data/ssh/id_rsa');
+        } else {
+          setEditingNode(null);
+          setNodeDraft({ name: '', destination: '', identity: '/app/data/ssh/id_rsa' });
+        }
+
+        const warning = (result as { warning?: string }).warning;
+        if (warning) {
+          if (warning.includes('timed out') || warning.includes('Permission denied') || warning.includes('password') || warning.includes('publickey')) {
+            addToast('warning', 'SSH Connection Failed', 'The node was saved, but we could not connect. It seems password-less SSH is not configured.');
+            if (host) {
+              setSshModalDefaults({ host, port, user });
+              setIsSSHModalOpen(true);
+            }
+          } else {
+            addToast('warning', mode === 'edit' ? 'Node updated with warning' : 'Node added with warning', warning);
+          }
+        } else {
+          addToast('success', mode === 'edit' ? 'Node updated' : 'Node added');
+        }
+
+        return true;
+      }
+
+      addToast('error', mode === 'edit' ? 'Failed to update node' : 'Failed to add node', (result as { error?: string }).error);
+      return false;
+    } catch (error) {
+      addToast('error', mode === 'edit' ? 'Failed to update node' : 'Failed to add node', error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [addToast, checkConnection, editNode, createNode, getNodes, setSshModalDefaults]);
 
   const handleAddRegistry = () => {
     if (newRegName && newRegUrl) {
-      setRegistries([...registries, { name: newRegName, url: newRegUrl, branch: newRegBranch || undefined }]);
+      const updatedRegistries = [...registries, { name: newRegName, url: newRegUrl, branch: newRegBranch || undefined }];
+      setRegistries(updatedRegistries);
       setNewRegName('');
       setNewRegUrl('');
       setNewRegBranch('');
+      void persistSettings({ registries: updatedRegistries });
     }
   };
 
   const handleRemoveRegistry = (name: string) => {
-    setRegistries(registries.filter(r => r.name !== name));
+    const updatedRegistries = registries.filter(r => r.name !== name);
+    setRegistries(updatedRegistries);
+    void persistSettings({ registries: updatedRegistries });
+  };
+
+  const handleRegistriesToggle = (enabled: boolean) => {
+    setRegistriesEnabled(enabled);
+    void persistSettings({ registriesEnabled: enabled });
   };
 
   const handleTemplateValueChange = (key: string, value: string) => {
@@ -289,9 +499,12 @@ export default function SettingsPage() {
 
   const handleAddTemplateVariable = () => {
     if (!newVarKey.trim()) return;
-    setTemplateValues(prev => ({ ...prev, [newVarKey.trim()]: newVarValue }));
+    const key = newVarKey.trim();
+    const updated = { ...templateValues, [key]: newVarValue };
+    setTemplateValues(updated);
     setNewVarKey('');
     setNewVarValue('');
+    void persistSettings({ templateValues: updated });
   };
 
   const handleRemoveTemplateVariable = (key: string) => {
@@ -300,108 +513,11 @@ export default function SettingsPage() {
     setTemplateValues(prev => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [key]: _removed, ...rest } = prev;
+      void persistSettings({ templateValues: rest });
       return rest;
     });
   };
 
-  const handleSaveNode = async () => {
-    if (!newNodeName || !newNodeDest || !newNodeIdentity) return;
-
-    // Parse URL for pre-check
-    let host = '', port = 22, user = 'root';
-    try {
-        const urlStr = newNodeDest.includes('://') ? newNodeDest : `ssh://${newNodeDest}`;
-        const url = new URL(urlStr);
-        host = url.hostname;
-        port = url.port ? parseInt(url.port) : 22;
-        user = url.username || 'root';
-    } catch {
-        // Ignore parse error
-    }
-
-    setAddingNode(true);
-
-    // Pre-check TCP connection
-    if (host) {
-        const check = await checkConnection(host, port);
-        if (!check.success || !check.isOpen) {
-            addToast('error', 'Connection Failed', `Could not connect to ${host}:${port}. Is the server reachable?`);
-            setAddingNode(false);
-            return;
-        }
-    }
-
-    try {
-      let res;
-      if (editingNode) {
-          res = await editNode(editingNode, newNodeName, newNodeDest, newNodeIdentity);
-      } else {
-          res = await createNode(newNodeName, newNodeDest, newNodeIdentity);
-      }
-
-      if (res.success) {
-        setNodes(await getNodes());
-        setNewNodeName('');
-        setNewNodeDest('');
-        setNewNodeIdentity('/app/data/ssh/id_rsa');
-        setEditingNode(null);
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const resultAny = res as any;
-        if (resultAny.warning) {
-             
-            const warning = resultAny.warning as string;
-            
-            // Check for common SSH issues
-            if (warning.includes('timed out') || warning.includes('Permission denied') || warning.includes('password') || warning.includes('publickey')) {
-                addToast('warning', 'SSH Connection Failed', 
-                    'The node was saved, but we could not connect. It seems password-less SSH is not configured.'
-                );
-                // Pre-fill and open modal
-                if (host) {
-                    setSshModalDefaults({ host, port, user });
-                    setIsSSHModalOpen(true);
-                }
-            } else {
-                addToast('warning', editingNode ? 'Node updated with warning' : 'Node added with warning', warning);
-            }
-        } else {
-            addToast('success', editingNode ? 'Node updated' : 'Node added');
-        }
-        
-        // Retrigger health check
-        await new Promise(r => setTimeout(r, 1000));
-        // We can't easily re-call checkHealth specifically for the new node because of closure, 
-        // but useEffect will pick it up or we can force it.
-        // Actually, just let the user see the status.
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        addToast('error', editingNode ? 'Failed to update node' : 'Failed to add node', (res as any).error);
-      }
-    } catch (e) {
-        addToast('error', editingNode ? 'Failed to save node' : 'Failed to add node', String(e));
-    } finally {
-      setAddingNode(false);
-    }
-  };
-
-  const handleEditClick = (node: PodmanConnection) => {
-    setNewNodeName(node.Name);
-    setNewNodeDest(node.URI);
-    setNewNodeIdentity(node.Identity);
-    setEditingNode(node.Name);
-    // Scroll to top or form (simple approach)
-    const form = document.getElementById('node-form');
-    if (form) form.scrollIntoView({ behavior: 'smooth' });
-  };
-  
-  const handleCancelEdit = () => {
-    setNewNodeName('');
-    setNewNodeDest('');
-    setNewNodeIdentity('/app/data/ssh/id_rsa');
-    setEditingNode(null);
-  };
- 
   const checkHealth = useCallback(async (nodeName: string) => {
     setNodeHealth(prev => ({ ...prev, [nodeName]: { loading: true, online: false, auth: false } }));
     
@@ -717,55 +833,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const enforcedTemplateValues = {
-        ...Object.fromEntries(
-          Object.entries(templateSchema).map(([k, v]) => [k, v.default ?? ''])
-        ),
-        ...templateValues
-      } as Record<string, string>;
-
-      const newConfig: Partial<AppConfig> = {
-        templateSettings: enforcedTemplateValues,
-        registries: {
-            enabled: registriesEnabled,
-            items: registries
-        },
-        notifications: {
-          email: {
-            enabled: emailEnabled,
-            host: emailHost,
-            port: emailPort,
-            secure: emailSecure,
-            user: emailUser,
-            pass: emailPass,
-            from: emailFrom,
-            to: emailRecipients
-          }
-        }
-      };
-
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newConfig)
-      });
-
-      if (!res.ok) throw new Error('Failed to save settings');
-      
-      addToast('success', 'Settings saved successfully');
-      // Refresh config to ensure sync
-      fetchConfig();
-    } catch (error) {
-      console.error(error);
-      addToast('error', 'Failed to save settings');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   if (loading) {
     return <div className="p-8 text-center text-gray-500">Loading settings...</div>;
   }
@@ -776,14 +843,16 @@ export default function SettingsPage() {
         title="Settings" 
         showBack={false}
         actions={
-            <button 
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm transition-colors font-medium disabled:opacity-50"
-            >
-                <Save className="w-4 h-4" />
-                {saving ? 'Saving...' : 'Save Changes'}
-            </button>
+          <span className="text-sm text-gray-500 dark:text-gray-400 inline-flex items-center gap-2">
+            {saving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Saving changes…
+              </>
+            ) : (
+              'All changes saved'
+            )}
+          </span>
         }
       />
 
@@ -1062,11 +1131,44 @@ export default function SettingsPage() {
             </div>
             <div>
               <h3 className="font-bold text-gray-900 dark:text-white">Template Settings</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Environment variables for template rendering. Changes apply to new deployments.</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Define global variables used when rendering new stacks (e.g., DATA_DIR). Updates affect future deployments only.</p>
             </div>
           </div>
           <div className="p-6 space-y-6">
             <div className="space-y-4">
+              <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gradient-to-r from-indigo-50 via-white to-white dark:from-gray-900 dark:via-gray-900 dark:to-gray-900 flex flex-col md:flex-row md:items-center md:gap-4">
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Add Variable</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input
+                      type="text"
+                      value={newVarKey}
+                      onChange={e => setNewVarKey(e.target.value)}
+                      disabled={saving}
+                      className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                      placeholder="VAR_NAME"
+                    />
+                    <input
+                      type="text"
+                      value={newVarValue}
+                      onChange={e => setNewVarValue(e.target.value)}
+                      disabled={saving}
+                      className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                      placeholder="value"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Variables appear below immediately after you add them.</p>
+                </div>
+                <button
+                  onClick={handleAddTemplateVariable}
+                  disabled={saving || !newVarKey.trim()}
+                  className="w-full md:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2 justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus size={16} />
+                  Add Variable
+                </button>
+              </div>
+
               {Object.keys(templateValues).sort().map(key => {
                 const meta = templateSchema[key];
                 const isRequired = meta?.required;
@@ -1087,6 +1189,8 @@ export default function SettingsPage() {
                         type="text"
                         value={templateValues[key] || ''}
                         onChange={e => handleTemplateValueChange(key, e.target.value)}
+                        onBlur={() => persistSettings()}
+                        disabled={saving}
                         className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
                         placeholder={meta?.default || ''}
                       />
@@ -1094,7 +1198,8 @@ export default function SettingsPage() {
                     {!isRequired && (
                       <button
                         onClick={() => handleRemoveTemplateVariable(key)}
-                        className="mt-3 md:mt-0 text-gray-400 hover:text-red-500 transition-colors"
+                        disabled={saving}
+                        className="mt-3 md:mt-0 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         aria-label={`Remove ${key}`}
                       >
                         <Trash2 size={18} />
@@ -1105,32 +1210,6 @@ export default function SettingsPage() {
               })}
             </div>
 
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Add custom variables to persist additional template settings. They will appear here after saving.</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-                <input
-                  type="text"
-                  value={newVarKey}
-                  onChange={e => setNewVarKey(e.target.value)}
-                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="VAR_NAME"
-                />
-                <input
-                  type="text"
-                  value={newVarValue}
-                  onChange={e => setNewVarValue(e.target.value)}
-                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="value"
-                />
-                <button
-                  onClick={handleAddTemplateVariable}
-                  className="w-full md:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2 justify-center"
-                >
-                  <Plus size={16} />
-                  Add Variable
-                </button>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -1178,8 +1257,8 @@ export default function SettingsPage() {
                         <input 
                             type="text" 
                             value={newNodeName}
-                            onChange={e => setNewNodeName(e.target.value)}
-                            disabled={!!editingNode} 
+                        onChange={e => setNewNodeName(e.target.value)}
+                        disabled={addingNode}
                             className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
                             placeholder="my-node"
                         />
@@ -1189,8 +1268,9 @@ export default function SettingsPage() {
                         <input 
                             type="text" 
                             value={newNodeDest}
-                            onChange={e => setNewNodeDest(e.target.value)}
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        onChange={e => setNewNodeDest(e.target.value)}
+                            disabled={addingNode}
+                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                             placeholder="ssh://user@host:port"
                         />
                     </div>
@@ -1201,98 +1281,154 @@ export default function SettingsPage() {
                             <input 
                                 type="text" 
                                 value={newNodeIdentity}
-                                onChange={e => setNewNodeIdentity(e.target.value)}
-                                className="w-full pl-9 pr-2 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                              onChange={e => setNewNodeIdentity(e.target.value)}
+                                disabled={addingNode}
+                                className="w-full pl-9 pr-2 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                                 placeholder="/app/data/ssh/id_rsa"
                             />
                         </div>
                     </div>
                     <div className="md:col-span-1 flex gap-2">
                         <button 
-                            onClick={handleSaveNode}
-                            disabled={!newNodeName || !newNodeDest || !newNodeIdentity || addingNode}
+                            onClick={handleAddNode}
+                            disabled={addingNode || !newNodeName.trim() || !newNodeDest.trim() || !newNodeIdentity.trim()}
                             className={`w-full p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2`}
-                            title={editingNode ? 'Update Node' : 'Add Node'}
+                            title="Add Node"
                         >
-                            {addingNode ? <Loader2 className="animate-spin" size={20} /> : (editingNode ? <Save size={20} /> : <Plus size={20} />)}
+                            {addingNode ? <Loader2 className="animate-spin" size={20} /> : <Plus size={20} />}
                         </button>
-                        {editingNode && (
-                            <button 
-                                onClick={handleCancelEdit}
-                                className="p-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                                title="Cancel Edit"
-                            >
-                                <XCircle size={20} />
-                            </button>
-                        )}
                     </div>
                 </div>
 
                 <div className="space-y-2">
-                    {nodes.map(node => {
-                        const health = nodeHealth[node.Name] || { loading: false, online: false, auth: false };
-                        return (
-                        <div key={node.Name} className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${editingNode === node.Name ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800' : 'bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-700'}`}>
-                            <div className="flex items-center gap-3">
-                                <div className={`w-2 h-2 rounded-full ${node.Default ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} title={node.Default ? 'Default Node' : ''} />
-                                <div>
-                                    <div className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
-                                        {node.Name}
-                                        {node.Default && <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded uppercase font-bold">Default</span>}
-                                        
-                                        {/* Health Status */}
-                                        <div className="flex items-center gap-1 ml-2" title={health.error || (health.online ? (health.auth ? 'Online & Authenticated' : 'Online but Auth Failed') : 'Unreachable')}>
-                                            {health.loading ? (
-                                                <Loader2 size={14} className="animate-spin text-gray-400" />
-                                            ) : health.online && health.auth ? (
-                                                <div className="flex items-center text-green-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm">
-                                                    <Globe size={10} />
-                                                    <span>Connected</span>
-                                                </div>
-                                            ) : health.online && !health.auth ? (
-                                                <div className="flex items-center text-yellow-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm cursor-help">
-                                                    <ShieldAlert size={10} />
-                                                    <span>Auth Failed</span>
-                                                </div>
-                                            ) : (
-                                                <div className="flex items-center text-red-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm cursor-help">
-                                                    <WifiOff size={10} />
-                                                    <span>Offline</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{node.URI}</div>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {!node.Default && (
-                                    <button 
-                                        onClick={() => handleSetDefaultNode(node.Name)}
-                                        className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors"
-                                        title="Set as Default"
-                                    >
-                                        <CheckCircle2 size={16} />
-                                    </button>
+                  {nodes.map(node => {
+                    const health = nodeHealth[node.Name] || { loading: false, online: false, auth: false };
+                    const isEditing = editingNode === node.Name;
+                    const displayName = isEditing ? (nodeDraft.name || node.Name) : node.Name;
+                    const inlineDisabled = savingNode || !nodeDraft.name.trim() || !nodeDraft.destination.trim() || !nodeDraft.identity.trim();
+
+                    return (
+                    <div key={node.Name} className={`flex flex-col gap-4 md:flex-row md:items-start md:justify-between p-4 rounded-lg border transition-colors ${isEditing ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800' : 'bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-700'}`}>
+                      <div className="flex-1 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-2 h-2 rounded-full ${node.Default ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} title={node.Default ? 'Default Node' : ''} />
+                          <div>
+                            <div className="font-medium text-gray-900 dark:text-white flex flex-wrap items-center gap-2">
+                              {displayName}
+                              {node.Default && <span className="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded uppercase font-bold">Default</span>}
+                              <div className="flex items-center gap-1 ml-1" title={health.error || (health.online ? (health.auth ? 'Online & Authenticated' : 'Online but Auth Failed') : 'Unreachable')}>
+                                {health.loading ? (
+                                  <Loader2 size={14} className="animate-spin text-gray-400" />
+                                ) : health.online && health.auth ? (
+                                  <div className="flex items-center text-green-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm">
+                                    <Globe size={10} />
+                                    <span>Connected</span>
+                                  </div>
+                                ) : health.online && !health.auth ? (
+                                  <div className="flex items-center text-yellow-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm cursor-help">
+                                    <ShieldAlert size={10} />
+                                    <span>Auth Failed</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center text-red-500 gap-1 text-[10px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 shadow-sm cursor-help">
+                                    <WifiOff size={10} />
+                                    <span>Offline</span>
+                                  </div>
                                 )}
-                                <button 
-                                    onClick={() => handleEditClick(node)}
-                                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
-                                    title="Edit Node settings"
-                                >
-                                    <Edit2 size={16} />
-                                </button>
-                                <button 
-                                    onClick={() => handleDeleteNode(node.Name)}
-                                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                                    title="Remove Node"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
+                              </div>
                             </div>
+                            {!isEditing && <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{node.URI}</div>}
+                          </div>
                         </div>
-                    );
-                    })}
+
+                        {isEditing && (
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                            <div className="md:col-span-3">
+                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Name</label>
+                              <input
+                                type="text"
+                                value={nodeDraft.name}
+                                onChange={e => setNodeDraft(prev => ({ ...prev, name: e.target.value }))}
+                                disabled={savingNode}
+                                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                placeholder="my-node"
+                              />
+                            </div>
+                            <div className="md:col-span-5">
+                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Destination (SSH)</label>
+                              <input
+                                type="text"
+                                value={nodeDraft.destination}
+                                onChange={e => setNodeDraft(prev => ({ ...prev, destination: e.target.value }))}
+                                disabled={savingNode}
+                                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                placeholder="ssh://user@host:port"
+                              />
+                            </div>
+                            <div className="md:col-span-4">
+                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Identity File</label>
+                              <input
+                                type="text"
+                                value={nodeDraft.identity}
+                                onChange={e => setNodeDraft(prev => ({ ...prev, identity: e.target.value }))}
+                                disabled={savingNode}
+                                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                placeholder="/app/data/ssh/id_rsa"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {isEditing ? (
+                          <>
+                            <button
+                              onClick={handleInlineSave}
+                              disabled={inlineDisabled}
+                              className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Save changes"
+                            >
+                              {savingNode ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                            </button>
+                            <button
+                              onClick={cancelInlineEdit}
+                              className="p-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                              title="Cancel"
+                            >
+                              <XCircle size={18} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {!node.Default && (
+                              <button 
+                                onClick={() => handleSetDefaultNode(node.Name)}
+                                className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors"
+                                title="Set as Default"
+                              >
+                                <CheckCircle2 size={16} />
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => startEditingNode(node)}
+                              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                              title="Edit Node settings"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteNode(node.Name)}
+                              className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                              title="Remove Node"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                  })}
                     {nodes.length === 0 && (
                         <div className="text-center py-4 text-gray-500 dark:text-gray-400 text-sm italic">
                             No remote nodes configured. ServiceBay is running in local mode.
@@ -1310,7 +1446,7 @@ export default function SettingsPage() {
                 </div>
                 <div>
                     <h3 className="font-bold text-gray-900 dark:text-white">Template Registries</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Manage external template sources</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Connect Git repositories that supply ServiceBay templates and stacks.</p>
                 </div>
                 <div className="ml-auto">
                     <label className="relative inline-flex items-center cursor-pointer">
@@ -1318,7 +1454,8 @@ export default function SettingsPage() {
                             type="checkbox" 
                             className="sr-only peer" 
                             checked={registriesEnabled}
-                            onChange={e => setRegistriesEnabled(e.target.checked)}
+                      onChange={e => handleRegistriesToggle(e.target.checked)}
+                      disabled={saving}
                         />
                         <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
                     </label>
@@ -1334,6 +1471,7 @@ export default function SettingsPage() {
                                 type="text" 
                                 value={newRegName}
                                 onChange={e => setNewRegName(e.target.value)}
+                              disabled={saving}
                                 className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
                                 placeholder="my-registry"
                             />
@@ -1344,6 +1482,7 @@ export default function SettingsPage() {
                                 type="text" 
                                 value={newRegUrl}
                                 onChange={e => setNewRegUrl(e.target.value)}
+                              disabled={saving}
                                 className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
                                 placeholder="https://github.com/user/repo.git"
                             />
@@ -1354,6 +1493,7 @@ export default function SettingsPage() {
                                 type="text" 
                                 value={newRegBranch}
                                 onChange={e => setNewRegBranch(e.target.value)}
+                              disabled={saving}
                                 className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
                                 placeholder="main"
                             />
@@ -1361,8 +1501,8 @@ export default function SettingsPage() {
                         <div className="md:col-span-1">
                             <button 
                                 onClick={handleAddRegistry}
-                                disabled={!newRegName || !newRegUrl}
-                                className="w-full p-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center"
+                              disabled={saving || !newRegName || !newRegUrl}
+                              className="w-full p-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center"
                             >
                                 <Plus size={20} />
                             </button>
@@ -1383,7 +1523,8 @@ export default function SettingsPage() {
                                 </div>
                                 <button 
                                     onClick={() => handleRemoveRegistry(reg.name)}
-                                    className="text-gray-400 hover:text-red-500 transition-colors"
+                                  disabled={saving}
+                                  className="text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
                                     <Trash2 size={18} />
                                 </button>
@@ -1415,7 +1556,8 @@ export default function SettingsPage() {
                             type="checkbox" 
                             className="sr-only peer" 
                             checked={emailEnabled}
-                            onChange={e => setEmailEnabled(e.target.checked)}
+                      onChange={e => handleEmailEnabledToggle(e.target.checked)}
+                      disabled={saving}
                         />
                         <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
                     </label>
@@ -1439,7 +1581,9 @@ export default function SettingsPage() {
                             <input 
                                 type="text" 
                                 value={emailHost}
-                                onChange={e => setEmailHost(e.target.value)}
+                              onChange={e => setEmailHost(e.target.value)}
+                              onBlur={() => persistSettings()}
+                              disabled={saving}
                                 className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                                 placeholder="smtp.gmail.com"
                             />
@@ -1449,7 +1593,9 @@ export default function SettingsPage() {
                             <input 
                                 type="number" 
                                 value={emailPort}
-                                onChange={e => setEmailPort(parseInt(e.target.value))}
+                              onChange={e => setEmailPort(parseInt(e.target.value) || 0)}
+                              onBlur={() => persistSettings()}
+                              disabled={saving}
                                 className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                                 placeholder="587"
                             />
@@ -1459,7 +1605,9 @@ export default function SettingsPage() {
                             <input 
                                 type="text" 
                                 value={emailUser}
-                                onChange={e => setEmailUser(e.target.value)}
+                              onChange={e => setEmailUser(e.target.value)}
+                              onBlur={() => persistSettings()}
+                              disabled={saving}
                                 className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                                 placeholder="user@example.com"
                             />
@@ -1469,7 +1617,9 @@ export default function SettingsPage() {
                             <input 
                                 type="password" 
                                 value={emailPass}
-                                onChange={e => setEmailPass(e.target.value)}
+                              onChange={e => setEmailPass(e.target.value)}
+                              onBlur={() => persistSettings()}
+                              disabled={saving}
                                 className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                                 placeholder="••••••••"
                             />
@@ -1479,7 +1629,9 @@ export default function SettingsPage() {
                             <input 
                                 type="text" 
                                 value={emailFrom}
-                                onChange={e => setEmailFrom(e.target.value)}
+                              onChange={e => setEmailFrom(e.target.value)}
+                              onBlur={() => persistSettings()}
+                              disabled={saving}
                                 className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                                 placeholder="ServiceBay <alerts@example.com>"
                             />
@@ -1489,7 +1641,8 @@ export default function SettingsPage() {
                                 <input 
                                     type="checkbox" 
                                     checked={emailSecure}
-                                    onChange={e => setEmailSecure(e.target.checked)}
+                                onChange={e => handleEmailSecureToggle(e.target.checked)}
+                                disabled={saving}
                                     className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
                                 />
                                 <span className="text-sm text-gray-700 dark:text-gray-300">Use Secure Connection (TLS/SSL)</span>
@@ -1505,12 +1658,14 @@ export default function SettingsPage() {
                                 value={newRecipient}
                                 onChange={e => setNewRecipient(e.target.value)}
                                 onKeyDown={e => e.key === 'Enter' && handleAddRecipient()}
+                              disabled={saving}
                                 className="flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                                 placeholder="Add email address..."
                             />
                             <button 
                                 onClick={handleAddRecipient}
-                                className="p-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                              disabled={saving || !newRecipient}
+                              className="p-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <Plus size={20} />
                             </button>
@@ -1521,7 +1676,8 @@ export default function SettingsPage() {
                                     <span className="text-sm text-gray-700 dark:text-gray-300">{email}</span>
                                     <button 
                                         onClick={() => handleRemoveRecipient(email)}
-                                        className="text-gray-400 hover:text-red-500 transition-colors"
+                                  disabled={saving}
+                                  className="text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                     >
                                         <Trash2 size={16} />
                                     </button>

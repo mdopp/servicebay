@@ -1,7 +1,7 @@
 'use client';
 
-import VolumeList from '@/components/VolumeList';
+import ContainersPlugin from '@/plugins/ContainersPlugin';
 
 export default function VolumesPage() {
-  return <VolumeList />;
+  return <ContainersPlugin defaultTab="volumes" />;
 }

@@ -44,8 +44,7 @@ interface KubeDoc {
     };
 }
 
-interface ServiceFormProps {
-  initialData?: {
+export type ServiceFormInitialData = {
     name: string;
     kubeContent: string;
     yamlContent: string;
@@ -54,17 +53,24 @@ interface ServiceFormProps {
     kubePath?: string;
     yamlPath?: string;
     servicePath?: string;
-  };
+};
+
+interface ServiceFormProps {
+    initialData?: ServiceFormInitialData;
   isEdit?: boolean;
+    defaultNode?: string;
+    onClose?: () => void;
+    variant?: 'page' | 'embedded';
 }
 
-export default function ServiceForm({ initialData, isEdit }: ServiceFormProps) {
+export default function ServiceForm({ initialData, isEdit, defaultNode, onClose, variant = 'page' }: ServiceFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nodeParam = searchParams?.get('node');
+    const nodeParam = searchParams?.get('node');
+    const initialNode = defaultNode ?? (nodeParam || '');
   const { addToast } = useToast();
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [selectedNode, setSelectedNode] = useState(nodeParam || '');
+    const [selectedNode, setSelectedNode] = useState(initialNode);
   
   const [name, setName] = useState(initialData?.name || '');
   const [kubeContent, setKubeContent] = useState(initialData?.kubeContent || '');
@@ -301,21 +307,35 @@ WantedBy=default.target`;
     }
   }, [yamlFileName, autoUpdate, isEdit, name, description]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const query = selectedNode ? `?node=${selectedNode}` : '';
-    const url = isEdit ? `/api/services/${name}${query}` : `/api/services${query}`;
-    const method = isEdit ? 'PUT' : 'POST';
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const query = selectedNode ? `?node=${selectedNode}` : '';
+        const url = isEdit ? `/api/services/${name}${query}` : `/api/services${query}`;
+        const method = isEdit ? 'PUT' : 'POST';
 
-    await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, kubeContent, yamlContent, yamlFileName }),
-    });
+        try {
+                const res = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, kubeContent, yamlContent, yamlFileName }),
+                });
+                if (!res.ok) {
+                        const data = await res.json().catch(() => ({ error: 'Failed to save service' }));
+                        throw new Error(data.error || 'Failed to save service');
+                }
 
-    router.push('/');
-    router.refresh();
-  };
+                if (variant === 'embedded') {
+                        onClose?.();
+                        router.refresh();
+                } else {
+                        router.push('/');
+                        router.refresh();
+                }
+        } catch (error) {
+                const message = error instanceof Error ? error.message : 'Failed to save service';
+                addToast('error', 'Save failed', message);
+        }
+    };
 
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -335,14 +355,21 @@ WantedBy=default.target`;
             throw new Error(data.error || 'Failed to rename service');
         }
 
-        // Redirect to the new service edit page
-        router.push(`/edit/${newServiceName}`);
-        router.refresh();
+        if (variant === 'embedded') {
+            onClose?.();
+            router.refresh();
+        } else {
+            router.push(`/edit/${newServiceName}`);
+            router.refresh();
+        }
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setRenameError(msg);
         setIsRenaming(false);
+        return;
     }
+
+    setIsRenaming(false);
   };
 
   return (

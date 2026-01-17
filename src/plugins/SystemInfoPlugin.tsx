@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { getSystemUpdates } from '@/app/actions/system';
 import { logger } from '@/lib/logger';
-import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info } from 'lucide-react';
+import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info, Monitor } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useSocket } from '@/hooks/useSocket';
@@ -11,6 +11,8 @@ import PluginLoading from '@/components/PluginLoading';
 import PageHeader from '@/components/PageHeader';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
+import { Select, SelectOption } from '@/components/Select';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 interface UpdateInfo {
     count: number;
@@ -46,21 +48,68 @@ export default function SystemInfoPlugin() {
 
   const { data: twin } = useDigitalTwin();
   const { socket } = useSocket();
+    const router = useRouter();
+    const pathname = usePathname() || '';
+    const searchParams = useSearchParams();
+    const nodeParam = searchParams?.get('node') ?? null;
+    const queryString = searchParams?.toString() ?? '';
+    const storageHydrated = useRef(false);
+
+    const updateNodeQuery = useCallback((nextNode: string) => {
+        const normalized = nextNode === 'Local' ? null : nextNode;
+        if ((normalized && normalized === nodeParam) || (!normalized && !nodeParam)) return;
+        const params = new URLSearchParams(queryString);
+        if (normalized) {
+            params.set('node', normalized);
+        } else {
+            params.delete('node');
+        }
+        const qs = params.toString();
+        const url = qs ? `${pathname}?${qs}` : pathname;
+        router.replace(url, { scroll: false });
+    }, [nodeParam, pathname, queryString, router]);
 
   // Load available nodes and restore selection
   useEffect(() => {
-    getNodes().then(nodeList => {
-        setNodes(nodeList);
-        // Restore saved node selection after hydration
-        const saved = localStorage.getItem('podcli-selected-node');
-        if (saved) {
-            if (saved === 'Local' || nodeList.find(n => n.Name === saved)) {
-                setSelectedNode(saved);
+        getNodes()
+            .then(setNodes)
+            .catch(e => logger.error('SystemInfoPlugin', 'Failed to fetch nodes', e));
+    }, []);
+
+    useEffect(() => {
+        if (nodeParam) {
+            if (nodeParam !== selectedNode) {
+                setSelectedNode(nodeParam);
+                if (typeof window !== 'undefined') {
+                    window.localStorage.setItem('podcli-selected-node', nodeParam);
+                }
             }
-            // If saved node doesn't exist, keep 'Local' default
+            storageHydrated.current = true;
+            return;
         }
-    }).catch(e => logger.error('SystemInfoPlugin', 'Failed to fetch nodes', e));
-  }, []);
+
+        if (!storageHydrated.current) {
+            storageHydrated.current = true;
+            if (typeof window !== 'undefined') {
+                const stored = window.localStorage.getItem('podcli-selected-node');
+                if (stored) {
+                    setSelectedNode(stored);
+                    window.localStorage.setItem('podcli-selected-node', stored);
+                    updateNodeQuery(stored);
+                    return;
+                }
+            }
+            setSelectedNode('Local');
+            return;
+        }
+
+        if (selectedNode !== 'Local') {
+            setSelectedNode('Local');
+            if (typeof window !== 'undefined') {
+                window.localStorage.setItem('podcli-selected-node', 'Local');
+            }
+        }
+    }, [nodeParam, selectedNode, updateNodeQuery]);
 
   // High Frequency Monitoring Subscription
   useEffect(() => {
@@ -92,12 +141,39 @@ export default function SystemInfoPlugin() {
       return () => { mounted = false; };
   }, [selectedNode]);
 
-  const handleCopyCommand = () => {
+    const handleCopyCommand = () => {
     navigator.clipboard.writeText('sudo apt update && sudo apt upgrade -y');
     setCopied(true);
     addToast('success', 'Copied to clipboard', 'Update command copied.');
     setTimeout(() => setCopied(false), 2000);
   };
+
+    const handleSelectNode = (value: string) => {
+        setSelectedNode(value);
+        if (typeof window !== 'undefined') {
+            window.localStorage.setItem('podcli-selected-node', value);
+        }
+        updateNodeQuery(value);
+    };
+
+    const nodeOptions = useMemo<SelectOption[]>(() => {
+        const remote = nodes.map(node => ({
+            label: node.Name,
+            value: node.Name,
+            description: node.URI,
+            badge: node.Default ? 'Default' : undefined,
+            icon: <Server size={16} className="text-blue-600 dark:text-blue-300" />
+        }));
+        return [
+            {
+                label: 'Local',
+                value: 'Local',
+                description: 'This ServiceBay host',
+                icon: <Monitor size={16} className="text-indigo-600 dark:text-indigo-300" />
+            },
+            ...remote
+        ];
+    }, [nodes]);
 
   // Get resources from Twin
   const resources = twin?.nodes?.[selectedNode]?.resources;
@@ -105,7 +181,7 @@ export default function SystemInfoPlugin() {
   if (!resources || !resources.os) {
       return (
         <div className="h-full flex flex-col">
-            <PageHeader title="System Information" showBack={false} />
+            <PageHeader title="System Info" showBack={false} />
             <PluginLoading 
                 message="Waiting for agent report..." 
                 subMessage={selectedNode !== 'Local' ? `Waiting for data from ${selectedNode}` : undefined}
@@ -127,43 +203,17 @@ export default function SystemInfoPlugin() {
   return (
     <div className="h-full flex flex-col overflow-y-auto">
       <PageHeader 
-        title="System Information" 
+        title="System Info" 
         showBack={false} 
         helpId="system-info"
         actions={
-            <div className="flex items-center gap-2">
-                <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
-                    <button
-                        onClick={() => {
-                            setSelectedNode('Local');
-                            localStorage.setItem('podcli-selected-node', 'Local');
-                        }}
-                        className={`px-3 py-1 text-sm rounded-md transition-all ${
-                            selectedNode === 'Local'
-                            ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm font-medium'
-                            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                        }`}
-                    >
-                        Local
-                    </button>
-                    {nodes.map(node => (
-                        <button
-                            key={node.Name}
-                            onClick={() => {
-                                setSelectedNode(node.Name);
-                                localStorage.setItem('podcli-selected-node', node.Name);
-                            }}
-                            className={`px-3 py-1 text-sm rounded-md transition-all ${
-                                selectedNode === node.Name
-                                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm font-medium'
-                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                            }`}
-                        >
-                            {node.Name}
-                        </button>
-                    ))}
-                </div>
-            </div>
+          <Select
+            options={nodeOptions}
+            value={selectedNode}
+            onChange={handleSelectNode}
+            placeholder="Select node"
+            className="min-w-[240px]"
+          />
         }
       />
       

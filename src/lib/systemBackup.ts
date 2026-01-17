@@ -132,13 +132,13 @@ async function execRemoteCommand(conn: Client, command: string): Promise<{ stdou
 
             let stdout = '';
             let stderr = '';
-            stream.on('data', chunk => {
+            stream.on('data', (chunk: Buffer | string) => {
                 stdout += chunk.toString();
             });
-            stream.stderr?.on('data', chunk => {
+            stream.stderr?.on('data', (chunk: Buffer | string) => {
                 stderr += chunk.toString();
             });
-            stream.on('close', (code) => {
+            stream.on('close', (code: number | undefined) => {
                 resolve({ stdout, stderr, code: code ?? 0 });
             });
             stream.on('error', reject);
@@ -173,7 +173,7 @@ async function downloadRemoteFile(conn: Client, remotePath: string, localPath: s
     await withSftp(conn, sftp => new Promise((resolve, reject) => {
         sftp.fastGet(remotePath, localPath, (err) => {
             if (err) reject(err);
-            else resolve();
+            else resolve(undefined);
         });
     }));
 }
@@ -182,7 +182,7 @@ async function uploadRemoteFile(conn: Client, localPath: string, remotePath: str
     await withSftp(conn, sftp => new Promise((resolve, reject) => {
         sftp.fastPut(localPath, remotePath, (err) => {
             if (err) reject(err);
-            else resolve();
+            else resolve(undefined);
         });
     }));
 }

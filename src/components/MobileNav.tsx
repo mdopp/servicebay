@@ -34,7 +34,7 @@ export function MobileTopBar() {
 }
 
 export function MobileBottomBar() {
-  const pathname = usePathname();
+   const pathname = usePathname() || '';
   const router = useRouter();
   
   // Exclude settings as it is in the top bar

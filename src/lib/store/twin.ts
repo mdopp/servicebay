@@ -37,6 +37,7 @@ export interface NodeTwin {
   health?: AgentHealth;
   nodeIPs: string[];
   unmanagedBundles: ServiceBundle[];
+    dismissedBundles: string[];
     history: MigrationHistoryEntry[];
 }
 
@@ -109,6 +110,7 @@ export class DigitalTwinStore {
             proxy: [],
                     nodeIPs: [],
                     unmanagedBundles: [],
+                                        dismissedBundles: [],
         history: []
       };
       this.notifyListeners();
@@ -154,6 +156,11 @@ export class DigitalTwinStore {
               if (c.ports && Array.isArray(c.ports)) {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   c.ports = c.ports.map((p: any) => normalizePort(p));
+              }
+
+              const imageName = typeof c.image === 'string' ? c.image.toLowerCase() : '';
+              if (imageName.includes('podman-pause')) {
+                  c.isInfra = true;
               }
           });
     }
@@ -246,12 +253,16 @@ export class DigitalTwinStore {
     // ENRICHMENT: Calculate Derived Properties (Effective Ports, Host Network)
     // This makes the Twin the Single Source of Truth for "Service Properties"
     this.enrichNode(nodeId, this.nodes[nodeId]);
-    this.nodes[nodeId].unmanagedBundles = buildServiceBundlesForNode({
+    const builtBundles = buildServiceBundlesForNode({
         nodeName: nodeId,
         services: this.nodes[nodeId].services,
         containers: this.nodes[nodeId].containers,
         files: this.nodes[nodeId].files
     });
+    const dismissed = new Set(this.nodes[nodeId].dismissedBundles || []);
+    this.nodes[nodeId].unmanagedBundles = dismissed.size > 0
+        ? builtBundles.filter(bundle => !dismissed.has(bundle.id))
+        : builtBundles;
 
     // AGGREGATION: Update Global Proxy State
     this.recalculateGlobalProxy();
@@ -263,6 +274,23 @@ export class DigitalTwinStore {
 
     this.notifyListeners();
   }
+
+    public dismissUnmanagedBundle(nodeId: string, bundleId: string): boolean {
+            if (!bundleId) return false;
+            const node = this.nodes[nodeId];
+            if (!node) return false;
+
+            if (!node.dismissedBundles.includes(bundleId)) {
+                    node.dismissedBundles.push(bundleId);
+            }
+
+            const previousLength = node.unmanagedBundles.length;
+            node.unmanagedBundles = node.unmanagedBundles.filter(bundle => bundle.id !== bundleId);
+
+            const didRemove = node.unmanagedBundles.length !== previousLength;
+            this.notifyListeners();
+            return didRemove;
+    }
 
   private recalculateGlobalProxy() {
       const allRoutes: ProxyRoute[] = [];

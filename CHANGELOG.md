@@ -265,7 +265,7 @@ All notable changes to this project will be documented in this file.
 - **System Info**: "Compute Resources" card now displays CPU Model and Core Count for deeper hardware visibility.
 - **Installer**: Fixed permissions crash and missing Podman Socket activation in the new Fedora CoreOS installer.
 - **Installation**: New generic Fedora CoreOS installer script (`install-fedora-coreos.sh`) for rapid, rootless deployments.
-- **Settings**: New "Template Settings" section to configure global stack variables (e.g., `STACKS_DIR`), enabling portable and reusable service templates.
+- **Settings**: New "Template Settings" section to configure global stack variables (e.g., `DATA_DIR`), enabling portable and reusable service templates.
 - Added `LOGIN_REQUIRED` configuration option to allow passwordless access in development or trusted environments (Default: true).
 - **Logging**: Improved server logging format for better readability and debugging.
 

@@ -672,8 +672,31 @@ export default function NetworkPlugin() {
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const rawGraphData = React.useRef<{ nodes: Node[], edges: Edge[] } | null>(null);
-  const activeToastRef = React.useRef<string | null>(null);
-  const { addToast, updateToast } = useToast();
+    const activeToastRef = React.useRef<string | null>(null);
+    const { addToast, updateToast, removeToast } = useToast();
+
+  const startReloadToast = useCallback((description = 'Reloading network graph...') => {
+      if (activeToastRef.current) {
+          updateToast(activeToastRef.current, 'loading', 'Refreshing Network', description);
+          return activeToastRef.current;
+      }
+
+      const id = addToast('loading', 'Refreshing Network', description, 0);
+      activeToastRef.current = id;
+      return id;
+  }, [addToast, updateToast]);
+
+  const resolveReloadToast = useCallback((status: 'success' | 'error', description?: string) => {
+      if (!activeToastRef.current) return;
+
+      if (status === 'success') {
+          removeToast(activeToastRef.current);
+      } else {
+          updateToast(activeToastRef.current, 'error', 'Network refresh failed', description);
+      }
+
+      activeToastRef.current = null;
+  }, [removeToast, updateToast]);
 
   // Monitoring Modal State
   const [showMonitoringModal, setShowMonitoringModal] = useState(false);
@@ -949,17 +972,26 @@ export default function NetworkPlugin() {
   const [rawData, setRawData] = useState<NetworkGraph | null>(null);
 
   const fetchGraph = useCallback(async () => {
+     startReloadToast();
      try {
          const res = await fetch('/api/network/graph');
-         if (res.ok) {
-             const data = await res.json();
-             setRawData(data);
-             // setLoading(false);
+         if (!res.ok) {
+             throw new Error('Failed to fetch network graph');
          }
+
+         const data = await res.json();
+         setRawData(data);
      } catch (e) {
          console.error('Failed to fetch graph', e);
+         const message = e instanceof Error ? e.message : 'Unable to reload network map';
+         resolveReloadToast('error', message);
      }
-  }, []);
+  }, [startReloadToast, resolveReloadToast]);
+
+  // Kick off the first render as soon as the plugin mounts so the toast shows immediately
+  useEffect(() => {
+      fetchGraph();
+  }, [fetchGraph]);
 
   // Auto-fetch when Twin updates (debounced)
   useEffect(() => {
@@ -1049,20 +1081,40 @@ export default function NetworkPlugin() {
 
 
   useEffect(() => {
-     if (graphData) {
-        let currentCollapsed = collapsedGroups;
-        if (!rawGraphData.current && graphData.nodes.length > 0) {
+      if (!graphData) return;
+
+      let currentCollapsed = collapsedGroups;
+      if (!rawGraphData.current && graphData.nodes.length > 0) {
               const groups = graphData.nodes
-                    .filter(n => ['group', 'service', 'pod', 'proxy'].includes(n.data.type as string))
-                    .map(n => n.id);
+                      .filter(n => ['group', 'service', 'pod', 'proxy'].includes(n.data.type as string))
+                      .map(n => n.id);
               currentCollapsed = new Set(groups);
               setCollapsedGroups(currentCollapsed);
-        }
-        
-        rawGraphData.current = graphData;
-        processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery);
-     }
-  }, [graphData, processAndLayout, collapsedGroups, searchQuery]);
+      }
+
+      rawGraphData.current = graphData;
+      let cancelled = false;
+
+      const runLayout = async () => {
+          try {
+                await processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery);
+                if (!cancelled) {
+                     resolveReloadToast('success', 'Latest network topology is ready');
+                }
+          } catch (error) {
+                console.error('Failed to process network graph', error);
+                if (!cancelled) {
+                     resolveReloadToast('error', 'Unable to render network map');
+                }
+          }
+      };
+
+      runLayout();
+
+      return () => {
+          cancelled = true;
+      };
+  }, [graphData, processAndLayout, collapsedGroups, searchQuery, resolveReloadToast]);
 
   useEffect(() => {
     // Setup SSE for progress updates
@@ -1083,6 +1135,23 @@ export default function NetworkPlugin() {
       eventSource.close();
     };
   }, [updateToast]);
+
+    useEffect(() => {
+            if (!selectedNodeData && !selectedEdge) return;
+            const handleKeyDown = (event: KeyboardEvent) => {
+                    if (event.key === 'Escape') {
+                            event.preventDefault();
+                            if (selectedNodeData) {
+                                    setSelectedNodeData(null);
+                            }
+                            if (selectedEdge) {
+                                    setSelectedEdge(null);
+                            }
+                    }
+            };
+            window.addEventListener('keydown', handleKeyDown);
+            return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [selectedNodeData, selectedEdge, setSelectedNodeData, setSelectedEdge]);
 
   const handleEditLink = () => {
       if (!selectedNodeData || !selectedNodeData.rawData) return;
@@ -1459,184 +1528,186 @@ export default function NetworkPlugin() {
       
       {/* Context Menu / Details Panel */}
       {selectedNodeData && (
-          <div className="absolute right-4 top-20 w-80 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-10 animate-in slide-in-from-right-5">
-              <div className="flex justify-between items-start mb-4 gap-2">
-                  <div className="min-w-0 flex-1">
-                      <h3 className="font-bold text-lg truncate" title={selectedNodeData.label}>{selectedNodeData.label}</h3>
-                      <div className="text-xs text-gray-500 font-mono truncate" title={selectedNodeData.id}>{selectedNodeData.id}</div>
-                  </div>
-                  <button onClick={() => setSelectedNodeData(null)} className="text-gray-400 hover:text-gray-600 shrink-0">
-                      <X size={16} />
-                  </button>
-              </div>
-              
-              <div className="space-y-3 max-h-[80vh] overflow-y-auto pr-1">
-                  <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-900 rounded-lg">
-                      <span className="text-sm text-gray-500">Status</span>
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          selectedNodeData.status === 'up' 
-                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
-                              : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                      }`}>
-                          {selectedNodeData.status?.toUpperCase() || 'UNKNOWN'}
-                      </span>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="grid grid-cols-1 gap-2">
-                    {selectedNodeData.type === 'router' && (
-                        <button 
-                            onClick={() => {
-                                setMonitoringData((selectedNodeData.rawData as MonitoringData) || null);
-                                setShowMonitoringModal(true);
-                            }}
-                            className="w-full flex items-center justify-center gap-2 p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm font-medium"
-                        >
-                            <Activity size={14} />
-                            Device Monitoring
-                        </button>
-                    )}
-
-                    {selectedNodeData.type === 'device' && (
-                        <button 
-                            onClick={() => {
-                                const url = selectedNodeData.metadata?.verifiedDomains?.[0] || selectedNodeData.metadata?.link || '';
-                                setLinkForm({
-                                    name: selectedNodeData.label || '',
-                                    url: url,
-                                    description: selectedNodeData.metadata?.description || '',
-                                    monitor: true
-                                });
-                                setShowLinkModal(true);
-                            }}
-                            className="w-full flex items-center justify-center gap-2 p-2 bg-cyan-50 text-cyan-600 hover:bg-cyan-100 rounded-lg transition-colors text-sm font-medium"
-                        >
-                            <LinkIcon size={14} />
-                            Create External Link
-                        </button>
-                    )}
-
-                    {selectedNodeData.type === 'link' && (
-                        <button 
-                            onClick={handleEditLink}
-                            className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
-                        >
-                            <Edit size={14} />
-                            Edit Link
-                        </button>
-                    )}
-
-                    {selectedNodeData.type === 'container' && selectedNodeData.rawData?.Id && (
-                        <Link 
-                            href={`/containers/${selectedNodeData.rawData.Id}`}
-                            className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
-                        >
-                            <Info size={14} />
-                            Inspect Container
-                        </Link>
-                    )}
-
-                    {selectedNodeData && selectedNodeData.type === 'service' && typeof selectedNodeData.rawData?.name === 'string' && (
-                        <Link 
-                            href={buildServiceEditHref(selectedNodeData)}
-                            className="w-full flex items-center justify-center gap-2 p-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors text-sm font-medium"
-                        >
-                            <Edit size={14} />
-                            Edit Service
-                        </Link>
-                    )}
-
-                    {selectedNodeData.type === 'proxy' && (
-                        <Link 
-                            href="/proxy"
-                            className="w-full flex items-center justify-center gap-2 p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors text-sm font-medium"
-                        >
-                            <Edit size={14} />
-                            Configure Proxy
-                        </Link>
-                    )}
-
-                    {selectedNodeData.rawData?.metadata?.link && (
-                        <Link 
-                            href={selectedNodeData.rawData?.metadata?.link || '#'}
-                            target="_blank"
-                            className="block w-full text-center p-2 bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium"
-                        >
-                            Open Service ↗
-                        </Link>
-                    )}
-                  </div>
-
-                  {/* Network Info */}
-                  <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
-                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Network Details</h4>
-                      <div className="space-y-1 text-sm">
-                          {selectedNodeData.ip && (
-                              <div className="flex justify-between">
-                                  <span className="text-gray-500">IP Address</span>
-                                  <span className="font-mono">{selectedNodeData.ip}</span>
-                              </div>
-                          )}
-                          {/* Host Network Flag */}
-                          {selectedNodeData.rawData?.hostNetwork && (
-                              <div className="flex justify-between">
-                                  <span className="text-gray-500">Mode</span>
-                                  <span className="font-mono text-amber-600 dark:text-amber-400 font-bold">Host Network</span>
-                              </div>
-                          )}
-                          {selectedNodeData.rawData?.ports && selectedNodeData.rawData.ports.length > 0 && (
-                              <div className="flex justify-between">
-                                  <span className="text-gray-500">Ports</span>
-                                  <span className="font-mono">
-                                    {(selectedNodeData.rawData.ports as unknown[]).map((p) => {
-                                        if (typeof p === 'object' && p !== null) {
-                                            const port = p as LegacyPortMapping;
-                                            const h = port.host || port.hostPort;
-                                            const c = port.container || port.containerPort;
-                                            return h && c && h !== c ? `${h}:${c}` : (h || c);
-                                        }
-                                        return String(p);
-                                    }).join(', ')}
-                                  </span>
-                              </div>
-                          )}
-                          {selectedNodeData.rawData?.MacAddress && (
-                              <div className="flex justify-between">
-                                  <span className="text-gray-500">MAC</span>
-                                  <span className="font-mono">{selectedNodeData.rawData.MacAddress}</span>
-                              </div>
-                          )}
+          <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+              <div className="w-full sm:max-w-md h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col animate-in slide-in-from-right-10">
+                  <div className="flex items-start justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800 gap-3">
+                      <div className="min-w-0 flex-1">
+                          <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">Node Details</p>
+                          <h3 className="font-bold text-xl truncate" title={selectedNodeData.label}>{selectedNodeData.label}</h3>
+                          <div className="text-xs text-gray-500 font-mono truncate" title={selectedNodeData.id}>{selectedNodeData.id}</div>
                       </div>
+                      <button onClick={() => setSelectedNodeData(null)} className="text-gray-400 hover:text-gray-600 shrink-0 rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800">
+                          <X size={16} />
+                      </button>
                   </div>
-
-                  {/* Debug Info */}
-                  <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
-                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Debug Info</h4>
-                      <div className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400">
-                          <div className="flex justify-between">
-                              <span>Node ID</span>
-                              <span>{selectedNodeData.id}</span>
-                          </div>
-                          <div className="flex justify-between">
-                              <span>Type</span>
-                              <span>{selectedNodeData.type}</span>
-                          </div>
-                          {selectedNodeData.parentId && (
-                              <div className="flex justify-between">
-                                  <span>Parent</span>
-                                  <span>{selectedNodeData.parentId}</span>
-                              </div>
-                          )}
+                  <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
+                          <span className="text-sm text-gray-500">Status</span>
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                              selectedNodeData.status === 'up' 
+                                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
+                                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                          }`}>
+                              {selectedNodeData.status?.toUpperCase() || 'UNKNOWN'}
+                          </span>
                       </div>
-                  </div>
 
-                  {/* Raw Data */}
-                  <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
-                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Raw Data</h4>
-                      <div className="bg-gray-50 dark:bg-gray-900 p-2 rounded-lg overflow-x-auto">
-                          <pre className="text-[10px] font-mono text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all">
-                              {JSON.stringify(selectedNodeData.rawData, null, 2)}
-                          </pre>
+                      {/* Actions */}
+                      <div className="grid grid-cols-1 gap-2">
+                        {selectedNodeData.type === 'router' && (
+                            <button 
+                                onClick={() => {
+                                    setMonitoringData((selectedNodeData.rawData as MonitoringData) || null);
+                                    setShowMonitoringModal(true);
+                                }}
+                                className="w-full flex items-center justify-center gap-2 p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                <Activity size={14} />
+                                Device Monitoring
+                            </button>
+                        )}
+
+                        {selectedNodeData.type === 'device' && (
+                            <button 
+                                onClick={() => {
+                                    const url = selectedNodeData.metadata?.verifiedDomains?.[0] || selectedNodeData.metadata?.link || '';
+                                    setLinkForm({
+                                        name: selectedNodeData.label || '',
+                                        url: url,
+                                        description: selectedNodeData.metadata?.description || '',
+                                        monitor: true
+                                    });
+                                    setShowLinkModal(true);
+                                }}
+                                className="w-full flex items-center justify-center gap-2 p-2 bg-cyan-50 text-cyan-600 hover:bg-cyan-100 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                <LinkIcon size={14} />
+                                Create External Link
+                            </button>
+                        )}
+
+                        {selectedNodeData.type === 'link' && (
+                            <button 
+                                onClick={handleEditLink}
+                                className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                <Edit size={14} />
+                                Edit Link
+                            </button>
+                        )}
+
+                        {selectedNodeData.type === 'container' && selectedNodeData.rawData?.Id && (
+                            <Link 
+                                href={`/containers/${selectedNodeData.rawData.Id}`}
+                                className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                <Info size={14} />
+                                Inspect Container
+                            </Link>
+                        )}
+
+                        {selectedNodeData && selectedNodeData.type === 'service' && typeof selectedNodeData.rawData?.name === 'string' && (
+                            <Link 
+                                href={buildServiceEditHref(selectedNodeData)}
+                                className="w-full flex items-center justify-center gap-2 p-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                <Edit size={14} />
+                                Edit Service
+                            </Link>
+                        )}
+
+                        {selectedNodeData.type === 'proxy' && (
+                            <Link 
+                                href="/proxy"
+                                className="w-full flex items-center justify-center gap-2 p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                <Edit size={14} />
+                                Configure Proxy
+                            </Link>
+                        )}
+
+                        {selectedNodeData.rawData?.metadata?.link && (
+                            <Link 
+                                href={selectedNodeData.rawData?.metadata?.link || '#'}
+                                target="_blank"
+                                className="block w-full text-center p-2 bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                Open Service ↗
+                            </Link>
+                        )}
+                      </div>
+
+                      {/* Network Info */}
+                      <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
+                          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Network Details</h4>
+                          <div className="space-y-1 text-sm">
+                              {selectedNodeData.ip && (
+                                  <div className="flex justify-between">
+                                      <span className="text-gray-500">IP Address</span>
+                                      <span className="font-mono">{selectedNodeData.ip}</span>
+                                  </div>
+                              )}
+                              {/* Host Network Flag */}
+                              {selectedNodeData.rawData?.hostNetwork && (
+                                  <div className="flex justify-between">
+                                      <span className="text-gray-500">Mode</span>
+                                      <span className="font-mono text-amber-600 dark:text-amber-400 font-bold">Host Network</span>
+                                  </div>
+                              )}
+                              {selectedNodeData.rawData?.ports && selectedNodeData.rawData.ports.length > 0 && (
+                                  <div className="flex justify-between">
+                                      <span className="text-gray-500">Ports</span>
+                                      <span className="font-mono">
+                                        {(selectedNodeData.rawData.ports as unknown[]).map((p) => {
+                                            if (typeof p === 'object' && p !== null) {
+                                                const port = p as LegacyPortMapping;
+                                                const h = port.host || port.hostPort;
+                                                const c = port.container || port.containerPort;
+                                                return h && c && h !== c ? `${h}:${c}` : (h || c);
+                                            }
+                                            return String(p);
+                                        }).join(', ')}
+                                      </span>
+                                  </div>
+                              )}
+                              {selectedNodeData.rawData?.MacAddress && (
+                                  <div className="flex justify-between">
+                                      <span className="text-gray-500">MAC</span>
+                                      <span className="font-mono">{selectedNodeData.rawData.MacAddress}</span>
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+
+                      {/* Debug Info */}
+                      <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
+                          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Debug Info</h4>
+                          <div className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400">
+                              <div className="flex justify-between">
+                                  <span>Node ID</span>
+                                  <span>{selectedNodeData.id}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                  <span>Type</span>
+                                  <span>{selectedNodeData.type}</span>
+                              </div>
+                              {selectedNodeData.parentId && (
+                                  <div className="flex justify-between">
+                                      <span>Parent</span>
+                                      <span>{selectedNodeData.parentId}</span>
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+
+                      {/* Raw Data */}
+                      <div className="border-t border-gray-100 dark:border-gray-800 pt-3 pb-2">
+                          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Raw Data</h4>
+                          <div className="bg-gray-50 dark:bg-gray-900 p-2 rounded-lg overflow-x-auto">
+                              <pre className="text-[10px] font-mono text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all">
+                                  {JSON.stringify(selectedNodeData.rawData, null, 2)}
+                              </pre>
+                          </div>
                       </div>
                   </div>
               </div>
@@ -1644,41 +1715,48 @@ export default function NetworkPlugin() {
       )}
 
       {selectedEdge && (
-          <div className="absolute right-4 top-20 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-10 animate-in slide-in-from-right-5">
-              <div className="flex justify-between items-start mb-4">
-                  <h3 className="font-bold">Connection</h3>
-                  <button onClick={() => setSelectedEdge(null)} className="text-gray-400 hover:text-gray-600">
-                      <X size={16} />
-                  </button>
-              </div>
-              <p className="text-sm text-gray-500 mb-3">
-                  {selectedEdgeMeta?.isManual
-                      ? 'Manual connection between nodes.'
-                      : 'Auto-discovered link inferred from real traffic.'}
-              </p>
-              <div className="space-y-2 text-xs font-mono text-gray-600 dark:text-gray-400 mb-3">
-                  <div className="flex justify-between">
-                      <span>Port</span>
-                      <span>{selectedEdgeMeta?.port ? `:${selectedEdgeMeta.port}` : 'unassigned'}</span>
+          <div className="fixed inset-0 z-40 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+              <div className="w-full sm:max-w-sm h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col animate-in slide-in-from-right-10">
+                  <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+                      <div>
+                          <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">Connection</p>
+                          <h3 className="font-bold">Link Details</h3>
+                      </div>
+                      <button onClick={() => setSelectedEdge(null)} className="text-gray-400 hover:text-gray-600 rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800">
+                          <X size={16} />
+                      </button>
                   </div>
-                  <div className="flex justify-between">
-                      <span>Status</span>
-                      <span className="uppercase">{selectedEdgeMeta?.state || 'UNKNOWN'}</span>
+                  <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                      <p className="text-sm text-gray-500">
+                          {selectedEdgeMeta?.isManual
+                              ? 'Manual connection between nodes.'
+                              : 'Auto-discovered link inferred from real traffic.'}
+                      </p>
+                      <div className="space-y-2 text-xs font-mono text-gray-600 dark:text-gray-400">
+                          <div className="flex justify-between">
+                              <span>Port</span>
+                              <span>{selectedEdgeMeta?.port ? `:${selectedEdgeMeta.port}` : 'unassigned'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                              <span>Status</span>
+                              <span className="uppercase">{selectedEdgeMeta?.state || 'UNKNOWN'}</span>
+                          </div>
+                      </div>
+                      {selectedEdgeMeta?.isManual ? (
+                          <button 
+                              onClick={handleDeleteEdge}
+                              className="w-full flex items-center justify-center gap-2 p-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors text-sm font-medium"
+                          >
+                              <Trash2 size={14} />
+                              Remove Connection
+                          </button>
+                      ) : (
+                          <p className="text-xs text-gray-500">
+                              Auto-discovered edges cannot be removed manually.
+                          </p>
+                      )}
                   </div>
               </div>
-              {selectedEdgeMeta?.isManual ? (
-                  <button 
-                      onClick={handleDeleteEdge}
-                      className="w-full flex items-center justify-center gap-2 p-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors text-sm font-medium"
-                  >
-                      <Trash2 size={14} />
-                      Remove Connection
-                  </button>
-              ) : (
-                  <p className="text-xs text-gray-500">
-                      Auto-discovered edges cannot be removed manually.
-                  </p>
-              )}
           </div>
       )}
     </div>

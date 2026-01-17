@@ -60,15 +60,15 @@ spec:
   # Persistence (Mapped to Host directories)
   - name: ha-config
     hostPath:
-      path: {{STACKS_DIR}}/home-assistant/homeassistant
+      path: {{DATA_DIR}}/home-assistant/homeassistant
       type: DirectoryOrCreate
   - name: zwave-config
     hostPath:
-      path: {{STACKS_DIR}}/home-assistant/zwave-js
+      path: {{DATA_DIR}}/home-assistant/zwave-js
       type: DirectoryOrCreate
   - name: matter-config
     hostPath:
-      path: {{STACKS_DIR}}/home-assistant/matter-server
+      path: {{DATA_DIR}}/home-assistant/matter-server
       type: DirectoryOrCreate
 
   # System Mounts

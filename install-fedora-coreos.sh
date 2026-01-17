@@ -171,7 +171,7 @@ storage:
               "channel": "${SERVICEBAY_CHANNEL}"
             },
             "templateSettings": {
-              "STACKS_DIR": "${DATA_ROOT}/stacks"
+              "DATA_DIR": "${DATA_ROOT}/stacks"
             }
           }
 EOF

@@ -31,7 +31,7 @@ export interface TemplateSettingsSchemaEntry {
 }
 
 const DEFAULT_TEMPLATE_SCHEMA: Record<string, TemplateSettingsSchemaEntry> = {
-    STACKS_DIR: {
+    DATA_DIR: {
         default: '/mnt/data',
         description: 'Base directory used by templates for persistent data',
         required: true

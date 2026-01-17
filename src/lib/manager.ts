@@ -684,12 +684,16 @@ export async function getPodmanPs(connection?: PodmanConnection) {
     
     const { stdout } = await executor.exec(`podman ps -a --pod --format json`);
     const containers = JSON.parse(stdout);
-    // Filter out system containers
-     
-    return containers.filter((c: any) => {
-        const isInfra = c.Names && c.Names.some((n: string) => n.includes('-infra'));
-        const isPause = c.Image && c.Image.includes('podman-pause');
-        return !isInfra && !isPause;
+    return containers.map((c: any) => {
+        const names: string[] = Array.isArray(c.Names) ? c.Names : [];
+        const normalizedNames = names.map(name => (typeof name === 'string' && name.startsWith('/')) ? name.slice(1) : String(name || ''));
+        const hasInfraName = normalizedNames.some(name => name.includes('-infra'));
+        const imageName = typeof c.Image === 'string' ? c.Image.toLowerCase() : '';
+        const isPause = imageName.includes('podman-pause');
+        if (hasInfraName || isPause) {
+            c.isInfra = true;
+        }
+        return c;
     });
   } catch (e) {
     console.error('Error fetching podman ps:', e);

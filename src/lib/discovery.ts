@@ -7,6 +7,7 @@ import os from 'os';
 import { randomUUID } from 'crypto';
 import { saveSnapshot } from './history';
 import { DigitalTwinStore, MigrationHistoryEntry } from './store/twin';
+import type { ServiceBundle } from './unmanaged/bundleShared';
 
 function getSystemdDir(connection?: PodmanConnection) {
     if (connection) {
@@ -59,6 +60,12 @@ interface MergeOptions {
     dryRun?: boolean;
     connection?: PodmanConnection;
     initiator?: string;
+}
+
+export interface DeleteBundleResult {
+    stoppedUnits: string[];
+    removedFiles: string[];
+    missingFiles: string[];
 }
 
 export async function discoverSystemdServices(connection?: PodmanConnection): Promise<DiscoveredService[]> {
@@ -366,6 +373,103 @@ function collectBackupCandidates(services: DiscoveredService[], extraPaths: stri
         if (service.unitFile) candidates.add(service.unitFile);
     });
     return Array.from(candidates);
+}
+
+export async function deleteBundleResources(bundle: ServiceBundle, connection?: PodmanConnection): Promise<DeleteBundleResult> {
+    if (!bundle) {
+        throw new Error('Bundle is required for deletion.');
+    }
+
+    const executor = getExecutor(connection);
+    const stoppedUnits: string[] = [];
+    const removedFiles: string[] = [];
+    const missingFiles: string[] = [];
+
+    const serviceUnits = new Set<string>();
+    const fileCandidates = new Set<string>();
+
+    bundle.services.forEach(service => {
+        if (service.serviceName) {
+            const normalized = service.serviceName.endsWith('.service') ? service.serviceName : `${service.serviceName}.service`;
+            serviceUnits.add(normalized);
+        }
+        if (service.unitFile) {
+            fileCandidates.add(service.unitFile);
+        }
+        if (service.sourcePath) {
+            fileCandidates.add(service.sourcePath);
+        }
+    });
+
+    bundle.assets?.forEach(asset => {
+        if (asset.path) {
+            fileCandidates.add(asset.path);
+        }
+    });
+
+    for (const unit of serviceUnits) {
+        try {
+            await executor.exec(`systemctl --user disable --now ${unit}`);
+            await executor.exec(`systemctl --user reset-failed ${unit}`);
+            stoppedUnits.push(unit);
+        } catch (error) {
+            console.warn(`Failed to disable unmanaged unit ${unit}`, error);
+        }
+    }
+
+    const needsHomeDir = Array.from(fileCandidates).some(candidate => candidate && !candidate.trim().startsWith('/'));
+    let homeDir: string | undefined;
+    if (needsHomeDir) {
+        try {
+            const { stdout } = await executor.exec('echo $HOME');
+            homeDir = stdout.trim() || undefined;
+        } catch (error) {
+            console.warn('Unable to resolve remote home directory for bundle deletion', error);
+        }
+    }
+
+    const normalizeRemotePath = (raw: string | undefined): string | null => {
+        if (!raw) return null;
+        let value = raw.trim();
+        if (!value) return null;
+
+        if (value.startsWith('~')) {
+            if (!homeDir) return null;
+            value = `${homeDir}${value.slice(1)}`;
+        } else if (!value.startsWith('/')) {
+            if (!homeDir) return null;
+            value = path.posix.resolve(homeDir, value);
+        }
+
+        if (!value.startsWith('/')) return null;
+        if (value === '/' || (homeDir && value === homeDir)) return null;
+        return value;
+    };
+
+    for (const target of fileCandidates) {
+        const absolutePath = normalizeRemotePath(target);
+        if (!absolutePath) continue;
+
+        try {
+            const exists = await executor.exists(absolutePath);
+            if (!exists) {
+                missingFiles.push(absolutePath);
+                continue;
+            }
+            await executor.rm(absolutePath);
+            removedFiles.push(absolutePath);
+        } catch (error) {
+            console.warn(`Failed to remove bundle asset ${absolutePath}`, error);
+        }
+    }
+
+    try {
+        await executor.exec('systemctl --user daemon-reload');
+    } catch (error) {
+        console.warn('Failed to reload systemd after deleting unmanaged bundle', error);
+    }
+
+    return { stoppedUnits, removedFiles, missingFiles };
 }
 
 interface RollbackContext {

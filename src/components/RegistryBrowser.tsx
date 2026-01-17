@@ -49,7 +49,7 @@ const specialItems: SpecialItem[] = [
 
 export default function RegistryBrowser({ templates }: { templates: Template[] }) {
   const router = useRouter();
-  const pathname = usePathname();
+    const pathname = usePathname() || '';
   const searchParams = useSearchParams();
   const [selected, setSelected] = useState<Template | SpecialItem | null>(null);
   const [readme, setReadme] = useState<string>('');

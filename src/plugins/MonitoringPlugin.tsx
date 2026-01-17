@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Plus, RefreshCw, X, Search } from 'lucide-react';
 import { useToast, ToastType } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
@@ -9,10 +10,10 @@ import { Autocomplete } from '@/components/Autocomplete';
 import ConfirmModal from '@/components/ConfirmModal';
 import LogViewer from '@/components/LogViewer';
 import MonitoringChecks from '@/components/MonitoringChecks';
-import CheckHistoryModal from '@/components/CheckHistoryModal';
 import { CheckConfig, CheckType, Check } from '@/lib/monitoring/types';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface Container {
   Id: string;
@@ -27,6 +28,8 @@ interface HistoryItem {
   message?: string;
 }
 
+type MonitoringTab = 'checks' | 'logs';
+
 export default function MonitoringPlugin() {
   const [checks, setChecks] = useState<Check[]>([]);
   const [containers, setContainers] = useState<Container[]>([]);
@@ -39,15 +42,55 @@ export default function MonitoringPlugin() {
   const [editingCheck, setEditingCheck] = useState<CheckConfig | null>(null);
   const [historyCheck, setHistoryCheck] = useState<Check | null>(null);
   const [historyData, setHistoryData] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [timeRange, setTimeRange] = useState<'1h' | '24h' | '3d' | '2w'>('24h');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'fail' | 'unknown'>('all');
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'checks' | 'health' | 'logs'>('checks');
+  const [activeTab, setActiveTab] = useState<MonitoringTab>('checks');
   const isFetchingRef = useRef(false);
   const { addToast, updateToast } = useToast();
   const { socket } = useSocket();
+  const router = useRouter();
+  const pathname = usePathname() || '';
+  const searchParams = useSearchParams();
+  const searchString = searchParams?.toString() ?? '';
+  const tabParam = searchParams?.get('tab');
+  const normalizedTab: MonitoringTab | null = tabParam === 'logs' || tabParam === 'checks' ? (tabParam as MonitoringTab) : null;
+
+  const closeOverlaysOnEscape = useCallback(() => {
+    if (isDeleteModalOpen) return;
+    if (historyCheck) {
+      setHistoryCheck(null);
+      setHistoryData([]);
+      setHistoryLoading(false);
+      return;
+    }
+    if (isModalOpen) {
+      setIsModalOpen(false);
+    }
+  }, [historyCheck, isModalOpen, isDeleteModalOpen]);
+
+  useEscapeKey(closeOverlaysOnEscape, Boolean(historyCheck || isModalOpen));
+
+  useEffect(() => {
+    if (!normalizedTab) return;
+    setActiveTab(prev => (prev === normalizedTab ? prev : normalizedTab));
+  }, [normalizedTab]);
+
+  const handleTabChange = useCallback((nextTab: MonitoringTab) => {
+    if (nextTab === activeTab) return;
+    setActiveTab(nextTab);
+    const params = new URLSearchParams(searchString);
+    if (nextTab === 'checks') {
+      params.delete('tab');
+    } else {
+      params.set('tab', nextTab);
+    }
+    const nextQuery = params.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }, [activeTab, pathname, router, searchString]);
   // Using Digital Twin hook to trigger re-fetches when state changes?
   // Monitoring data is stored in `data/checks.json` in backend, NOT in twin directly.
   // HOWEVER, the backend runs the checks and emits events.
@@ -269,19 +312,22 @@ export default function MonitoringPlugin() {
     }
   };
 
-  const handleShowHistory = async (check: Check) => {
+    const handleShowHistory = async (check: Check) => {
     setHistoryCheck(check);
-    setHistoryData([]); // Clear previous data
+    setHistoryData([]);
+    setHistoryLoading(true);
     try {
-        const res = await fetch(`/api/monitoring/checks/${check.id}/history`);
-        if (res.ok) {
-            setHistoryData(await res.json());
-        }
+      const res = await fetch(`/api/monitoring/checks/${check.id}/history`);
+      if (res.ok) {
+        setHistoryData(await res.json());
+      }
     } catch (error) {
-        console.error('Failed to fetch history', error);
-        addToast('error', 'Failed to fetch history');
+      console.error('Failed to fetch history', error);
+      addToast('error', 'Failed to fetch history');
+    } finally {
+      setHistoryLoading(false);
     }
-  };
+    };
 
 
 
@@ -320,7 +366,7 @@ export default function MonitoringPlugin() {
       {/* Tab Navigation */}
       <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700 px-2 shrink-0">
         <button 
-          onClick={() => setActiveTab('checks')} 
+          onClick={() => handleTabChange('checks')} 
           className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
             activeTab === 'checks' 
               ? 'border-blue-600 text-blue-600 dark:text-blue-400' 
@@ -330,7 +376,7 @@ export default function MonitoringPlugin() {
           Monitoring
         </button>
         <button 
-          onClick={() => setActiveTab('logs')} 
+          onClick={() => handleTabChange('logs')} 
           className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
             activeTab === 'logs' 
               ? 'border-blue-600 text-blue-600 dark:text-blue-400' 
@@ -367,25 +413,24 @@ export default function MonitoringPlugin() {
 
       {/* History Modal */}
       {historyCheck && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-4xl border border-gray-200 dark:border-gray-800 flex flex-col max-h-[90vh]">
-            <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                    History: {historyCheck.name}
-                </h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">{historyCheck.target}</p>
+        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+          <div className="w-full sm:max-w-3xl h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col shadow-2xl animate-in slide-in-from-right-10">
+            <div className="flex flex-col gap-4 p-5 border-b border-gray-200 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">History Drawer</p>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white truncate">{historyCheck.name}</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 font-mono truncate">{historyCheck.target}</p>
               </div>
-              <div className="flex items-center gap-4">
-                <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+              <div className="flex items-center gap-2">
+                <div className="flex bg-slate-100 dark:bg-gray-800 rounded-lg p-1">
                     {(['1h', '24h', '3d', '2w'] as const).map(range => (
                         <button
                             key={range}
                             onClick={() => setTimeRange(range)}
-                            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                            className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
                                 timeRange === range 
-                                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' 
-                                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                    ? 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-300 shadow-sm' 
+                                    : 'text-gray-500 dark:text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-300'
                             }`}
                         >
                             {range}
@@ -394,20 +439,34 @@ export default function MonitoringPlugin() {
                 </div>
                 <button 
                     onClick={() => historyCheck && handleShowHistory(historyCheck)}
-                    className="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                    title="Refresh History"
+                    className="p-2 text-gray-500 hover:text-emerald-500 dark:text-gray-300 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
+                    title="Refresh history"
                 >
-                    <RefreshCw size={20} />
+                    <RefreshCw size={18} className={historyLoading ? 'animate-spin' : ''} />
                 </button>
-                <button onClick={() => setHistoryCheck(null)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                    <X size={20} />
+                <button 
+                  onClick={() => {
+                    setHistoryCheck(null);
+                    setHistoryData([]);
+                    setHistoryLoading(false);
+                  }} 
+                  className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
+                  title="Close drawer"
+                >
+                    <X size={18} />
                 </button>
               </div>
             </div>
-            
-            <div className="p-4 overflow-y-auto flex-1">
-                {/* Chart */}
-                <div className="h-64 mb-6 bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 relative">
+
+            <div className="flex-1 overflow-y-auto p-5">
+                {historyLoading && historyData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-slate-500 dark:text-slate-300 gap-3">
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span>Loading history…</span>
+                    </div>
+                ) : (
+                <div className="space-y-6">
+                <div className="h-64 bg-slate-50 dark:bg-gray-900/40 rounded-xl p-4 border border-slate-200 dark:border-gray-800 shadow-inner">
                     {historyData.length > 0 ? (
                         (() => {
                             const now = new Date().getTime();
@@ -487,13 +546,13 @@ export default function MonitoringPlugin() {
                                                 <div 
                                                     key={i}
                                                     className={`flex-1 min-w-[2px] rounded-t-sm hover:opacity-80 transition-opacity relative group ${
-                                                        !h.hasData ? 'bg-transparent' :
-                                                        h.status === 'ok' ? 'bg-green-500 dark:bg-green-400' : 'bg-red-500 dark:bg-red-400'
+                                                      !h.hasData ? 'bg-transparent' :
+                                                      h.status === 'ok' ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-emerald-900 dark:bg-emerald-700'
                                                     }`}
                                                     style={{ height: h.hasData ? `${Math.max(5, ((h.latency || 0) / maxLatency) * 100)}%` : '0%' }}
                                                 >
                                                     {h.hasData && (
-                                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 text-white text-xs p-2 rounded whitespace-nowrap z-10 shadow-lg">
+                                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 text-white text-xs p-2 rounded whitespace-nowrap z-10 shadow-lg">
                                                             {new Date(h.timestamp).toLocaleString()}<br/>
                                                             Avg Latency: {h.latency}ms<br/>
                                                             Status: {h.status}
@@ -504,7 +563,7 @@ export default function MonitoringPlugin() {
                                         </div>
                                         
                                         {/* X-Axis Labels */}
-                                        <div className="flex justify-between text-[10px] text-gray-400 pt-2 border-t border-gray-200 dark:border-gray-700">
+                                        <div className="flex justify-between text-[10px] text-gray-500 dark:text-gray-400 pt-2 border-t border-gray-200 dark:border-gray-700">
                                             <span>{formatLabel(cutoff)}</span>
                                             <span>{formatLabel(alignedEndTime)}</span>
                                         </div>
@@ -513,64 +572,69 @@ export default function MonitoringPlugin() {
                             );
                         })()
                     ) : (
-                        <div className="w-full h-full flex items-center justify-center text-gray-400">
+                                <div className="w-full h-full flex items-center justify-center text-gray-400">
                             No history data available
                         </div>
                     )}
                 </div>
 
                 {/* Table */}
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 sticky top-0">
+                            <table className="w-full text-left text-sm border border-slate-200 dark:border-gray-800 rounded-xl overflow-hidden">
+                              <thead className="bg-slate-100 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300">
                         <tr>
-                            <th className="p-3">Time</th>
-                            <th className="p-3">Status</th>
-                            <th className="p-3">Latency</th>
-                            <th className="p-3">Message</th>
+                                  <th className="p-3 font-semibold">Time</th>
+                                  <th className="p-3 font-semibold">Status</th>
+                                  <th className="p-3 font-semibold">Latency</th>
+                                  <th className="p-3 font-semibold">Message</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                              <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                         {historyData.map((h, i) => (
-                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
-                                <td className="p-3 text-gray-900 dark:text-white whitespace-nowrap">
+                                  <tr key={i} className="hover:bg-slate-50 dark:hover:bg-gray-800/40">
+                                    <td className="p-3 text-gray-900 dark:text-white whitespace-nowrap">
                                     {new Date(h.timestamp).toLocaleString()}
                                 </td>
                                 <td className="p-3">
                                     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                        h.status === 'ok' ? 'bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400' :
-                                        'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400'
+                                        h.status === 'ok' ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' :
+                                        'bg-emerald-900/10 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200'
                                     }`}>
                                         {h.status.toUpperCase()}
                                     </span>
                                 </td>
-                                <td className="p-3 text-gray-500 dark:text-gray-400 font-mono">
+                                    <td className="p-3 text-gray-600 dark:text-gray-300 font-mono">
                                     {h.latency}ms
                                 </td>
-                                <td className="p-3 text-gray-500 dark:text-gray-400 truncate max-w-xs" title={h.message}>
+                                    <td className="p-3 text-gray-500 dark:text-gray-400 truncate max-w-xs" title={h.message}>
                                     {h.message || '-'}
                                 </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
+                            </div>
+                            )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Edit/Create Modal */}
+      {/* Edit/Create Drawer */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800">
-            <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                {editingCheck ? (isSystemCheck() ? 'View Check Config' : 'Edit Check') : 'New Check'}
-              </h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                <X size={20} />
+        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+          <div className="w-full sm:max-w-xl h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col shadow-2xl animate-in slide-in-from-right-10">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+              <div>
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">{editingCheck ? (isSystemCheck() ? 'View Check' : 'Edit Check') : 'New Check'}</p>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                  {editingCheck ? editingCheck.name : 'Create Monitoring Check'}
+                </h3>
+              </div>
+              <button onClick={() => setIsModalOpen(false)} className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors">
+                <X size={18} />
               </button>
             </div>
-            <div className="p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
                 <input 
@@ -776,7 +840,7 @@ export default function MonitoringPlugin() {
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
               <button 
                 onClick={() => setIsModalOpen(false)}
                 className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
@@ -806,15 +870,6 @@ export default function MonitoringPlugin() {
         onCancel={() => setIsDeleteModalOpen(false)}
       />
 
-      <CheckHistoryModal
-        isOpen={!!historyCheck}
-        check={historyCheck}
-        data={historyData}
-        onClose={() => {
-            setHistoryCheck(null);
-            setHistoryData([]);
-        }}
-      />
     </div>
   );
 }

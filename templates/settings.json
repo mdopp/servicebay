@@ -1,6 +1,6 @@
 {
   "variables": {
-    "STACKS_DIR": {
+    "DATA_DIR": {
       "default": "/mnt/data",
       "description": "Base directory used by all templates for persistent data. Change applies to new deployments.",
       "required": true

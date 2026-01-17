@@ -1,4 +1,3 @@
-
 'use client';
 
 import { X, Clock, AlertTriangle, CheckCircle, Activity } from 'lucide-react';

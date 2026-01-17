@@ -1,6 +1,7 @@
 'use client';
 
 import { AlertTriangle } from 'lucide-react';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface ConfirmModalProps {
   confirmText?: string;
   cancelText?: string;
   isDestructive?: boolean;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -20,9 +22,12 @@ export default function ConfirmModal({
   confirmText = 'Confirm',
   cancelText = 'Cancel',
   isDestructive = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel
 }: ConfirmModalProps) {
+  useEscapeKey(onCancel, isOpen);
+
   if (!isOpen) return null;
 
   return (
@@ -51,11 +56,12 @@ export default function ConfirmModal({
           </button>
           <button
             onClick={onConfirm}
+            disabled={confirmDisabled}
             className={`px-4 py-2 text-white rounded-md transition-colors font-medium text-sm shadow-sm ${
               isDestructive 
                 ? 'bg-red-600 hover:bg-red-700' 
                 : 'bg-blue-600 hover:bg-blue-700'
-            }`}
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             {confirmText}
           </button>

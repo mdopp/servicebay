@@ -633,12 +633,18 @@ def fetch_containers():
             is_infra = c.get('IsInfra', False)
             names = c.get('Names', [])
             name = names[0] if isinstance(names, list) and names else str(names)
+            image = c.get('Image') or ''
+            normalized_image = image.lower() if isinstance(image, str) else ''
             
             # Fallback check by name if IsInfra is missing or false (older Podman versions)
             if not is_infra:
                 # Common naming patterns for infra containers
                 if name.endswith('-infra') or name.endswith('_infra'):
                     is_infra = True
+
+            # Treat Podman pause containers as infrastructure as well
+            if not is_infra and 'podman-pause' in normalized_image:
+                is_infra = True
             
             if is_infra:
                 continue
@@ -770,7 +776,7 @@ def fetch_containers():
             enriched.append({
                 'id': c.get('Id'),
                 'names': c.get('Names', []),
-                'image': c.get('Image'),
+                'image': image,
                 'state': c.get('State'),
                 'status': c.get('Status'),
                 'created': c.get('Created'),
@@ -781,7 +787,7 @@ def fetch_containers():
                 'isHostNetwork': is_host_net,
                 'podId': c.get('Pod', ''),
                 'podName': pod_name,
-                'isInfra': c.get('IsInfra', False),
+                'isInfra': is_infra,
                 'pid': pid # Useful for debugging or further mapping
             })
         

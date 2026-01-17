@@ -7,10 +7,12 @@ import { useToast } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
 import { MultiSelect } from './MultiSelect';
 
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
 interface LogEntry {
   id: number;
   timestamp: string;
-  level: 'debug' | 'info' | 'warn' | 'error';
+  level: LogLevel;
   tag: string;
   message: string;
   args?: unknown[];
@@ -24,18 +26,27 @@ interface LogFilter {
   limit: number;
 }
 
-const LOG_LEVEL_COLORS: Record<string, string> = {
-  debug: 'text-gray-500',
-  info: 'text-blue-600',
-  warn: 'text-yellow-600',
-  error: 'text-red-600'
-};
-
-const LOG_LEVEL_BG: Record<string, string> = {
-  debug: 'bg-gray-100 dark:bg-gray-800',
-  info: 'bg-blue-50 dark:bg-blue-900/20',
-  warn: 'bg-yellow-50 dark:bg-yellow-900/20',
-  error: 'bg-red-50 dark:bg-red-900/20'
+const LEVEL_STYLES: Record<LogLevel, { label: string; accent: string; runId: string }> = {
+  debug: {
+    label: 'text-slate-400',
+    accent: 'border-l-4 border-emerald-200',
+    runId: 'bg-slate-200/80 dark:bg-slate-800/80 text-slate-500 dark:text-slate-200'
+  },
+  info: {
+    label: 'text-emerald-400',
+    accent: 'border-l-4 border-emerald-300',
+    runId: 'bg-slate-200/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-200'
+  },
+  warn: {
+    label: 'text-emerald-500',
+    accent: 'border-l-4 border-emerald-500',
+    runId: 'bg-slate-200/70 dark:bg-slate-800/70 text-slate-700 dark:text-slate-100'
+  },
+  error: {
+    label: 'text-emerald-700',
+    accent: 'border-l-4 border-emerald-700',
+    runId: 'bg-slate-200/70 dark:bg-slate-800/70 text-slate-800 dark:text-white'
+  }
 };
 
 const RUN_ID_PREFIX_REGEX = /^\[([A-Za-z0-9:-]+)\]\s+([\s\S]*)$/;
@@ -339,40 +350,42 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
     return match ? match[1] : timestamp;
   };
 
+  const controlInputClass = 'w-full h-10 px-3 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-colors';
+  const baseButtonClass = 'h-10 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-300 hover:border-blue-300 dark:hover:border-blue-500 transition-colors disabled:opacity-50';
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800">
       {/* Toolbar */}
-      <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex flex-col lg:flex-row lg:items-end gap-3 z-10 bg-inherit">
+      <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-inherit">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[180px_120px_minmax(0,1fr)_110px_auto] items-end">
+          {/* Date Selection */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              Date
+            </label>
+            <select
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              className={`${controlInputClass} cursor-pointer`}
+            >
+              <option value="live">Live Log Stream</option>
+              {logDates.map(date => (
+                <option key={date} value={date}>
+                  {date}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        {/* Date Selection */}
-        <div className="w-full lg:w-40 shrink-0">
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-            Date
-          </label>
-          <select
-            value={selectedDate}
-            onChange={e => setSelectedDate(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer"
-          >
-            <option value="live">Live Log Stream</option>
-            {logDates.map(date => (
-              <option key={date} value={date}>
-                {date}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Filters Group */}
-        <div className="flex gap-2 min-w-0">
-          <div className="w-24 shrink-0">
-            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+          {/* Level Filter */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
               Level
             </label>
             <select
               value={filter.level || ''}
               onChange={e => setFilter({ ...filter, level: e.target.value || undefined })}
-              className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer"
+              className={`${controlInputClass} cursor-pointer`}
             >
               <option value="">All</option>
               <option value="debug">Debug</option>
@@ -383,8 +396,8 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
           </div>
 
           {/* Tag Filter */}
-          <div className="w-64 shrink-1 min-w-0">
-            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+          <div className="flex flex-col gap-1 min-w-0">
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
               Tag
             </label>
             <MultiSelect
@@ -392,58 +405,67 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
               value={filter.tags || []}
               onChange={(tags) => setFilter({ ...filter, tags })}
               placeholder="Tag..."
-              className="w-full"
+              className="w-full min-w-0 [&>div:first-child]:min-h-[40px]"
             />
           </div>
 
           {/* Limit */}
-          <div className="w-20 shrink-0">
-            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
               Limit
             </label>
             <input
               type="number"
               value={filter.limit}
               onChange={e => setFilter({ ...filter, limit: parseInt(e.target.value) || 100 })}
-              className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              className={controlInputClass}
             />
           </div>
-        </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-2 ml-auto pb-1">
-          <Link href="/settings" title="Change max Log Level" className="hidden xl:flex items-center gap-2 px-2 py-1.5 text-xs text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 rounded border border-transparent hover:border-slate-300 dark:hover:border-slate-700 transition-all">
-             <Settings className="w-3 h-3" />
-             <span>Max Level: <span className="font-semibold uppercase">{currentSystemLogLevel}</span></span>
-          </Link>
+          {/* Actions */}
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              Actions
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href="/settings"
+                title="Change max Log Level"
+                className={`hidden xl:inline-flex items-center gap-2 px-3 text-xs ${baseButtonClass}`}
+              >
+                 <Settings className="w-3 h-3" />
+                 <span>Max Level: <span className="font-semibold uppercase">{currentSystemLogLevel}</span></span>
+              </Link>
 
-          <button
-            onClick={handleRefresh}
-            disabled={loading || selectedDate === 'live'}
-            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-            title="Refresh logs"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          
-          <button
-            onClick={handleDownload}
-            disabled={logs.length === 0}
-            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50"
-            title="Download logs"
-          >
-            <Download className="w-4 h-4" />
-          </button>
-          
-          {hasActiveFilter && (
-            <button
-               onClick={handleClearFilter}
-               className="ml-1 text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 hover:bg-slate-200"
-               title="Clear filters"
-            >
-              Clear
-            </button>
-          )}
+              <button
+                onClick={handleRefresh}
+                disabled={loading || selectedDate === 'live'}
+                className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
+                title={selectedDate === 'live' ? 'Refresh disabled in live mode' : 'Refresh logs'}
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+              
+              <button
+                onClick={handleDownload}
+                disabled={logs.length === 0}
+                className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
+                title="Download logs"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              
+              {hasActiveFilter && (
+                <button
+                   onClick={handleClearFilter}
+                   className={`inline-flex items-center justify-center px-3 text-xs font-medium ${baseButtonClass}`}
+                   title="Clear filters"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -473,27 +495,28 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
           const jsonRunId = prefixRunId ? undefined : extractRunIdFromJson(log.message);
           const effectiveRunId = prefixRunId || jsonRunId;
           const displayMessage = prefixRunId ? strippedMessage : log.message;
+          const levelStyle = LEVEL_STYLES[log.level];
+
           return (
             <div
-              key={log.id || log.timestamp} // Fallback for transition
-              className={`px-2 py-1.5 rounded-sm border-l-2 ${LOG_LEVEL_BG[log.level]} hover:brightness-95 transition-all`}
-              style={{ borderLeftColor: log.level === 'error' ? '#dc2626' : log.level === 'warn' ? '#ca8a04' : log.level === 'info' ? '#2563eb' : '#6b7280' }}
+              key={log.id || log.timestamp}
+              className={`px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 shadow-sm transition-colors hover:border-emerald-400/60 ${levelStyle.accent}`}
             >
-              <div className="flex flex-col md:flex-row md:items-baseline gap-2 md:gap-2 text-xs leading-relaxed">
-                <div className="flex gap-2 items-start flex-shrink-0">
-                  <span className="font-mono opacity-70 flex-shrink-0 w-24">
+              <div className="flex flex-col md:flex-row md:items-baseline gap-3 text-xs leading-relaxed">
+                <div className="flex gap-3 items-start flex-shrink-0">
+                  <span className="font-mono text-slate-500 dark:text-slate-400 w-24">
                     {extractTime(log.timestamp)}
                   </span>
-                  <span className={`font-bold flex-shrink-0 w-14 uppercase ${LOG_LEVEL_COLORS[log.level]}`}>
+                  <span className={`font-semibold tracking-wide uppercase w-12 ${levelStyle.label}`}>
                     {log.level}
                   </span>
-                  <div className="flex flex-col flex-shrink-0 w-48 text-slate-700 dark:text-slate-300">
+                  <div className="flex flex-col flex-shrink-0 w-48 text-slate-700 dark:text-slate-200">
                     <span className="font-semibold truncate" title={log.tag}>
                       [{log.tag}]
                     </span>
                     {effectiveRunId && (
                       <span
-                        className="mt-0.5 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-[10px] font-mono break-all"
+                        className={`mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-mono break-all ${levelStyle.runId}`}
                         title={effectiveRunId}
                       >
                         {effectiveRunId}
@@ -501,12 +524,12 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
                     )}
                   </div>
                 </div>
-                <div className="flex-1 text-slate-800 dark:text-slate-200 break-words min-w-0">
+                <div className="flex-1 text-slate-800 dark:text-slate-50 break-words min-w-0">
                   <LogMessage message={displayMessage} />
                 </div>
               </div>
               {log.args && Object.keys(log.args).length > 0 && (
-                <div className="text-[10px] opacity-60 mt-1 ml-28 font-mono text-slate-600 dark:text-slate-400">
+                <div className="text-[10px] mt-2 font-mono text-slate-500 dark:text-slate-400">
                   {JSON.stringify(log.args)}
                 </div>
               )}

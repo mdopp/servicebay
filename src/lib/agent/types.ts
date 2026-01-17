@@ -1,3 +1,5 @@
+import type { QuadletDirectives } from '@/lib/quadlet/parser';
+
 export interface SystemResources {
   cpuUsage: number; // Percentage 0-100
   memoryUsage: number; // Bytes
@@ -106,6 +108,7 @@ export interface ServiceUnit {
     containerPort?: number;
     protocol?: string;
   }>; // Ports from PublishPort= directive (for .pod files)
+  quadletDirectives?: QuadletDirectives; // Raw parsed directives for downstream consumers
   
   // Source type for better categorization
   quadletSourceType?: 'container' | 'pod' | 'kube' | 'service';

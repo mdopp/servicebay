@@ -7,6 +7,7 @@ import {
   BundleGraphEdge,
   BundlePortSummary,
   BundleServiceRef,
+  BundleServiceTemplate,
   BundleValidation,
   ServiceBundle,
   assetKindFromPath,
@@ -151,7 +152,8 @@ const parseQuadletAuthoritatively = (
       podReference: parsed.pod || service.podReference,
       publishedPorts: parsed.publishPorts || service.publishedPorts,
       quadletSourceType: parsed.sourceType || service.quadletSourceType,
-      description: (service.description || parsed.description) as string
+      description: (service.description || parsed.description) as string,
+      quadletDirectives: parsed
     };
 
     const foundRels = (updated.requires?.length || 0) + (updated.after?.length || 0) + (updated.wants?.length || 0) + (updated.bindsTo?.length || 0);
@@ -173,7 +175,7 @@ const collectBundleKey = (
   linkedContainers: EnrichedContainer[]
 ): { key: string; display: string } => {
   const displayName = deriveBundleDisplayName(service.name);
-  const podName = linkedContainers.find(c => c.podName)?.podName;
+  const podName = (service.podReference || '').trim() || linkedContainers.find(c => c.podName)?.podName;
   const composeProject = linkedContainers.find(c => c.labels?.['io.podman.compose.project'])?.labels?.['io.podman.compose.project'];
   const dirName = service.path ? path.basename(path.dirname(service.path)) : undefined;
   const token = sanitizeBundleName(podName || composeProject || dirName || displayName || service.name);
@@ -226,22 +228,7 @@ const mergeBundlesByPod = (bundles: Map<string, ServiceBundle>): Map<string, Ser
 
   // Group bundles by pod reference (extracted during bundle creation from ServiceUnit.podReference)
   bundles.forEach((bundle) => {
-    const podNames = bundle.podReferences || [];
-    
-    // Also check containers and graph edges as fallback
-    const additionalPods = new Set<string>();
-    
-    bundle.containers.forEach(container => {
-      if (container.podName) {
-        additionalPods.add(container.podName);
-      }
-    });
-
-    bundle.graph
-      .filter(edge => edge.reason === 'Container → pod')
-      .forEach(edge => additionalPods.add(edge.to));
-
-    const allPods = [...podNames, ...Array.from(additionalPods)];
+    const allPods = Array.from(extractPodCandidates(bundle));
 
     if (allPods.length > 0) {
       const podName = allPods[0]; // Use first pod if multiple
@@ -268,14 +255,26 @@ const mergeBundlesByPod = (bundles: Map<string, ServiceBundle>): Map<string, Ser
         primary.services.push(...bundle.services);
         primary.containers = dedupeContainers([...primary.containers, ...bundle.containers]);
         primary.assets = dedupeAssets([...primary.assets, ...bundle.assets]);
-        primary.ports = aggregatePorts(primary.containers);
         primary.graph = dedupeEdges([...primary.graph, ...bundle.graph]);
+        primary.podReferences = Array.from(new Set([...(primary.podReferences || []), ...(bundle.podReferences || [])]));
+        primary.serviceTemplates = dedupeServiceTemplates([
+          ...(primary.serviceTemplates || []),
+          ...(bundle.serviceTemplates || [])
+        ]);
         bundle.hints.forEach(hint => {
           if (!primary.hints.includes(hint)) {
             primary.hints.push(hint);
           }
         });
       });
+      // Final deduplication after merge
+      primary.services = dedupeServices(primary.services);
+      primary.containers = dedupeContainers(primary.containers);
+      primary.assets = dedupeAssets(primary.assets);
+      primary.graph = dedupeEdges(primary.graph);
+      primary.ports = aggregatePorts(primary.containers);
+      primary.podReferences = Array.from(new Set(primary.podReferences || []));
+      primary.serviceTemplates = dedupeServiceTemplates(primary.serviceTemplates || []);
       // Re-evaluate validations after merge
       primary.validations = evaluateBundleValidations(primary);
       primary.severity = severityFromValidations(primary.validations);
@@ -575,6 +574,10 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
       // Deduplicate containers and assets
       const deduped = dedupeContainers(bundleContainers);
       const dedupedAssets = dedupeAssets(bundleAssets);
+      const rawTemplates = bundleServices
+        .map(extractServiceTemplate)
+        .filter((template): template is BundleServiceTemplate => Boolean(template));
+      const serviceTemplates = dedupeServiceTemplates(rawTemplates);
 
       if (bundleServices.length === 0) {
         bundleHints.add('No matching Quadlet files were found in watched directories');
@@ -629,7 +632,8 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
         assets: dedupedAssets,
         graph: dedupeEdges(graphEdges),
         podReferences: Array.from(podRefs),
-        discoveryLog
+        discoveryLog,
+        serviceTemplates
       };
       bundle.validations = evaluateBundleValidations(bundle);
       bundle.severity = severityFromValidations(bundle.validations);
@@ -663,6 +667,104 @@ const dedupeAssets = (assets: BundleAsset[]): BundleAsset[] => {
     map.set(asset.path, asset);
   });
   return Array.from(map.values());
+};
+
+const dedupeServices = (services: BundleServiceRef[]): BundleServiceRef[] => {
+  const map = new Map<string, BundleServiceRef>();
+  services.forEach(service => {
+    map.set(service.serviceName, service);
+  });
+  return Array.from(map.values());
+};
+
+const mergeUniqueStrings = (...lists: Array<string[] | undefined>): string[] | undefined => {
+  const combined: string[] = [];
+  lists.forEach(list => {
+    if (!list) return;
+    list.forEach(entry => {
+      if (entry && entry.length > 0) {
+        combined.push(entry);
+      }
+    });
+  });
+  if (combined.length === 0) return undefined;
+  return Array.from(new Set(combined));
+};
+
+const extractServiceTemplate = (service: ServiceUnit): BundleServiceTemplate | null => {
+  const directives = service.quadletDirectives;
+  if (!directives) return null;
+  const hasEnvironment = directives.environment && Object.keys(directives.environment).length > 0;
+  const hasPayload = Boolean(
+    directives.containerName ||
+    directives.image ||
+    hasEnvironment ||
+    (directives.environmentFiles && directives.environmentFiles.length > 0) ||
+    (directives.volumes && directives.volumes.length > 0)
+  );
+  if (!hasPayload) return null;
+  return {
+    serviceName: service.name,
+    containerName: directives.containerName,
+    image: directives.image,
+    environment: hasEnvironment ? { ...directives.environment } : undefined,
+    environmentFiles: mergeUniqueStrings(directives.environmentFiles),
+    volumes: mergeUniqueStrings(directives.volumes)
+  };
+};
+
+const dedupeServiceTemplates = (templates: BundleServiceTemplate[] = []): BundleServiceTemplate[] => {
+  const map = new Map<string, BundleServiceTemplate>();
+  templates.forEach(template => {
+    const existing = map.get(template.serviceName);
+    if (!existing) {
+      map.set(template.serviceName, {
+        ...template,
+        environment: template.environment ? { ...template.environment } : undefined,
+        environmentFiles: mergeUniqueStrings(template.environmentFiles),
+        volumes: mergeUniqueStrings(template.volumes)
+      });
+      return;
+    }
+    map.set(template.serviceName, {
+      serviceName: template.serviceName,
+      containerName: template.containerName || existing.containerName,
+      image: template.image || existing.image,
+      environment: template.environment || existing.environment
+        ? { ...(existing.environment || {}), ...(template.environment || {}) }
+        : undefined,
+      environmentFiles: mergeUniqueStrings(existing.environmentFiles, template.environmentFiles),
+      volumes: mergeUniqueStrings(existing.volumes, template.volumes)
+    });
+  });
+  return Array.from(map.values());
+};
+
+const extractPodCandidates = (bundle: ServiceBundle): Set<string> => {
+  const pods = new Set<string>();
+
+  // Primary: explicit pod references collected from ServiceUnit parsing
+  (bundle.podReferences || []).forEach(p => pods.add(p));
+
+  // Secondary: pod name on containers
+  bundle.containers.forEach(container => {
+    if (container.podName) pods.add(container.podName);
+  });
+
+  // Tertiary: edges that point to pods
+  bundle.graph
+    .filter(edge => edge.reason === 'Container → pod')
+    .forEach(edge => pods.add(edge.to));
+
+  // Pod assets (.pod files) imply the pod name
+  bundle.assets
+    .filter(asset => asset.path.endsWith('.pod'))
+    .forEach(asset => pods.add(path.basename(asset.path, '.pod')));
+
+  // If the displayName looks like the pod name (pod bundles), use it
+  if (bundle.displayName) pods.add(bundle.displayName);
+
+  return pods;
 };
 
 // @knipignore - exported for potential UI/API use to generate bundle preview YAML
