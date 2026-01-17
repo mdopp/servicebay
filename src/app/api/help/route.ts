@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 
+const HELP_ALIASES: Record<string, string> = {
+  containers: 'container-engine',
+  volumes: 'container-engine',
+};
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
@@ -12,7 +17,8 @@ export async function GET(request: Request) {
 
   // Prevent directory traversal
   const safeId = id.replace(/[^a-zA-Z0-9-]/g, '');
-  const filePath = path.join(process.cwd(), 'src/content/help', `${safeId}.md`);
+  const normalizedId = HELP_ALIASES[safeId] ?? safeId;
+  const filePath = path.join(process.cwd(), 'src/content/help', `${normalizedId}.md`);
 
   try {
     const content = await fs.readFile(filePath, 'utf-8');

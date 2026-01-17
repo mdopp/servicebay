@@ -79,6 +79,9 @@
   "knip": {
     "ignoreBinaries": [
       "fuser"
+    ],
+    "ignore": [
+      "src/components/CheckHistoryModal.tsx"
     ]
   },
   "overrides": {
