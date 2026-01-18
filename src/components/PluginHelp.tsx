@@ -51,8 +51,8 @@ export default function PluginHelp({ helpId, label, className }: PluginHelpProps
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col animate-in zoom-in-95 duration-200 border border-gray-200 dark:border-gray-800">
+        <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:p-6 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-gray-900 rounded-none sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-h-[85vh] max-w-none sm:max-w-[1024px] flex flex-col animate-in zoom-in-95 duration-200 border border-gray-200 dark:border-gray-800">
             <div className="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-800">
               <h3 className="font-bold text-lg flex items-center gap-2">
                 <CircleHelp size={20} className="text-blue-500" />

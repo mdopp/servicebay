@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { logger } from '@/lib/logger';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -15,12 +14,13 @@ import ActionProgressModal from '@/components/ActionProgressModal';
 import PluginHelp from '@/components/PluginHelp';
 import ServiceMonitor from '@/components/ServiceMonitor';
 import ServiceForm, { ServiceFormInitialData } from '@/components/ServiceForm';
+import FileViewerOverlay from '@/components/FileViewerOverlay';
 import RegistryPlugin from '@/plugins/RegistryPlugin';
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
 import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, ArrowRight, ShieldCheck } from 'lucide-react';
-import { ServiceBundle, BundleValidation, BundleStackArtifacts, generateBundleStackArtifacts, sanitizeBundleName } from '@/lib/unmanaged/bundleShared';
+import { ServiceBundle, BundleValidation, BundleStackArtifacts, BundlePortSummary, BundleContainerSummary, generateBundleStackArtifacts, sanitizeBundleName } from '@/lib/unmanaged/bundleShared';
 
 // Define/Import UI Service Type locally or keep using legacy type if compatible
 // Let's redefine locally to be explicit about V4 structure or map to it.
@@ -32,31 +32,40 @@ type ServicePort = {
     source?: string;
 };
 
+type ServiceVolume = {
+    host: string;
+    container: string;
+    mode?: string;
+};
+
+type TwinContainer = {
+    ports?: Array<{ hostPort?: string | number; containerPort?: string | number }>;
+    labels?: Record<string, string>;
+};
+
 interface Service {
-  name: string;
-  id?: string;
-  active: boolean; // activeState == 'active'
-  status: string; // subState
-  activeState: string; 
-  subState: string;
-  kubePath: string; // path
-  yamlPath: string | null;
-    ports: ServicePort[];
-  volumes: { host: string; container: string }[];
-  type?: 'container' | 'link' | 'gateway' | 'kube' | 'pod';
-  url?: string;
-  description?: string;
-  monitor?: boolean;
-  labels?: Record<string, string>;
-  verifiedDomains?: string[];
-  hostNetwork?: boolean;
+    name: string;
+    id?: string;
+    description?: string | null;
     nodeName?: string;
+    active: boolean;
+    status?: string;
+    activeState?: string;
+    subState?: string;
+    kubePath?: string | null;
+    yamlPath?: string | null;
+    type: 'kube' | 'container' | 'link' | 'gateway';
+    ports: ServicePort[];
+    volumes?: ServiceVolume[];
+    monitor?: boolean;
+    labels?: Record<string, string>;
+    verifiedDomains?: string[];
+    externalIP?: string;
+    internalIP?: string;
+    dnsServers?: string[];
+    uptime?: number;
+    url?: string;
     ipTargets?: string[];
-  // Gateway specific
-  externalIP?: string;
-  uptime?: number;
-  internalIP?: string;
-  dnsServers?: string[];
 }
 
 interface MigrationPlan {
@@ -155,48 +164,23 @@ type RawLinkVolume = {
     container?: string;
 };
 
-type ServiceTab = 'managed' | 'discover';
-
-
-/**
- * ServicesPlugin
- * 
- * The main dashboard plugin for managing systemd/Quadlet services.
- * Features:
- * - List services from all nodes
- * - Start/Stop/Restart control
- * - "Migrate Unmanaged" wizard for converting raw pods to Quadlet
- * - External Link and Gateway management
- */
 export default function ServicesPlugin() {
-    const router = useRouter();
-    const pathname = usePathname() || '';
-    const searchParams = useSearchParams();
-    const searchString = searchParams?.toString() ?? '';
-    const tabParam = searchParams?.get('tab');
-    const normalizedTab: ServiceTab | null =
-            tabParam === 'managed' || tabParam === 'discover'
-                    ? (tabParam as ServiceTab)
-                    : null;
-  // removed services, filteredServices state
+    const { data: twin, isConnected, lastUpdate } = useDigitalTwin();
+    const { addToast, updateToast } = useToast();
+
     const [filteredServices, setFilteredServices] = useState<Service[]>([]);
+    const [filteredBundles, setFilteredBundles] = useState<ServiceBundle[]>([]);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
-  const [showActions, setShowActions] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-        const [activeTab, setActiveTab] = useState<ServiceTab>('managed');
-        const [drawerState, setDrawerState] = useState<{ mode: 'monitor' | 'edit'; service: Service } | null>(null);
-        const [editInitialData, setEditInitialData] = useState<ServiceFormInitialData | null>(null);
-        const [drawerLoading, setDrawerLoading] = useState(false);
-        const [showRegistryOverlay, setShowRegistryOverlay] = useState(false);
-  // removed nodes
-  const [discoveryLoading, setDiscoveryLoading] = useState(false);
-    const [hasDiscovered, setHasDiscovered] = useState(false);
+    const [showActions, setShowActions] = useState(false);
+    const [actionLoading, setActionLoading] = useState(false);
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [discoveryLoading, setDiscoveryLoading] = useState(false);
     const [externalLinks, setExternalLinks] = useState<Service[]>([]);
     const [serviceBundles, setServiceBundles] = useState<ServiceBundle[]>([]);
     const [selectedBundle, setSelectedBundle] = useState<ServiceBundle | null>(null);
+    const [bundlePendingDelete, setBundlePendingDelete] = useState<ServiceBundle | null>(null);
     const [bundleWizardStep, setBundleWizardStep] = useState<'assets' | 'stack' | 'backup'>('assets');
     const [bundleTargetName, setBundleTargetName] = useState('');
     const [bundlePlan, setBundlePlan] = useState<MigrationPlan | null>(null);
@@ -204,415 +188,899 @@ export default function ServicesPlugin() {
     const [bundleStackArtifacts, setBundleStackArtifacts] = useState<BundleStackArtifacts | null>(null);
     const [bundleValidations, setBundleValidations] = useState<BundleValidation[]>([]);
     const [bundleActionLoading, setBundleActionLoading] = useState(false);
-    const [bundlePendingDelete, setBundlePendingDelete] = useState<ServiceBundle | null>(null);
     const [bundleDeleteLoading, setBundleDeleteLoading] = useState(false);
-    // removed refreshing, isFetchingRef
-    const { addToast, updateToast } = useToast();
-    const wizardStepIndex = useMemo(() => bundleWizardSteps.findIndex(step => step.key === bundleWizardStep), [bundleWizardStep]);
+    const [actionService, setActionService] = useState<Service | null>(null);
+    const [actionModalOpen, setActionModalOpen] = useState(false);
+    const [currentAction, setCurrentAction] = useState<'start' | 'stop' | 'restart'>('start');
+    const [showLinkModal, setShowLinkModal] = useState(false);
+    const [isEditingLink, setIsEditingLink] = useState(false);
+    const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
+    const [linkForm, setLinkForm] = useState<LinkFormState>({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
+    const [drawerState, setDrawerState] = useState<{ mode: 'monitor' | 'edit'; service: Service } | null>(null);
+    const [drawerLoading, setDrawerLoading] = useState(false);
+    const [editInitialData, setEditInitialData] = useState<ServiceFormInitialData | null>(null);
+    const [showRegistryOverlay, setShowRegistryOverlay] = useState(false);
+    const [filePreview, setFilePreview] = useState<{ path: string; nodeName?: string } | null>(null);
 
-        useEffect(() => {
-            if (!normalizedTab) return;
-            setActiveTab((current) => (current === normalizedTab ? current : normalizedTab));
-        }, [normalizedTab]);
+    const wizardStepIndex = Math.max(0, bundleWizardSteps.findIndex(step => step.key === bundleWizardStep));
 
-        const handleTabChange = useCallback((nextTab: ServiceTab) => {
-            if (nextTab === activeTab) return;
-            setActiveTab(nextTab);
-            const params = new URLSearchParams(searchString);
-            if (nextTab === 'managed') {
-                params.delete('tab');
-            } else {
-                params.set('tab', nextTab);
+    const openFilePreview = useCallback((path: string, nodeName?: string) => {
+        if (!path) return;
+        setFilePreview({ path, nodeName });
+    }, []);
+
+    const closeFilePreview = useCallback(() => setFilePreview(null), []);
+
+    const FileBadge = ({
+        path,
+        nodeName,
+        label,
+        variant = 'chip'
+    }: {
+        path: string;
+        nodeName?: string;
+        label?: string;
+        variant?: 'chip' | 'list' | 'inline';
+    }) => {
+        if (!path) return null;
+        const display = label || (variant === 'chip' ? path.split('/').pop() || path : path);
+        const baseClasses =
+            variant === 'inline'
+                ? 'text-left text-xs font-mono text-blue-600 dark:text-blue-300 hover:underline px-1 py-0.5 rounded border border-transparent whitespace-normal break-all max-w-full'
+                : variant === 'list'
+                    ? 'w-full text-left px-2 py-1 bg-gray-50 dark:bg-gray-950 rounded border border-gray-200 dark:border-gray-800 text-xs font-mono transition-colors whitespace-normal break-all'
+                    : 'text-left px-2 py-0.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono whitespace-normal break-all max-w-full transition-colors';
+
+        return (
+            <button
+                type="button"
+                onClick={() => openFilePreview(path, nodeName)}
+                className={`${baseClasses} hover:border-blue-400 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+                title={`Open ${path} on ${nodeName || 'Local'}`}
+            >
+                {display}
+            </button>
+        );
+    };
+
+    const filterBundleHints = useCallback((hints: string[]) => {
+        return hints.filter(hint => {
+            const normalized = hint.toLowerCase();
+            return !normalized.startsWith('published ports') && !normalized.startsWith('joins pod');
+        });
+    }, []);
+
+    const selectedBundleHints = selectedBundle ? filterBundleHints(selectedBundle.hints) : [];
+
+    const containersById = useMemo(() => {
+        if (!selectedBundle) return new Map<string, BundleContainerSummary>();
+        const map = new Map<string, BundleContainerSummary>();
+        selectedBundle.containers.forEach(container => {
+            map.set(container.id, container);
+        });
+        return map;
+    }, [selectedBundle]);
+
+    const extraConfigAssets = useMemo(() => {
+        if (!selectedBundle) return [] as ServiceBundle['assets'];
+        const servicePaths = new Set(
+            selectedBundle.services.flatMap(svc => {
+                const entries: string[] = [];
+                if (svc.sourcePath) entries.push(svc.sourcePath);
+                if (svc.unitFile) entries.push(svc.unitFile);
+                return entries;
+            })
+        );
+        return selectedBundle.assets.filter(asset => !servicePaths.has(asset.path));
+    }, [selectedBundle]);
+
+    const loadExternalLinks = useCallback(async () => {
+        try {
+            const res = await fetch('/api/services?scope=links', { cache: 'no-store' });
+            if (!res.ok) {
+                throw new Error('Failed to load external links');
             }
-            const nextQuery = params.toString();
-            router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-        }, [activeTab, pathname, router, searchString]);
+
+            const payload = await res.json();
+            const parsed: Service[] = Array.isArray(payload)
+                ? payload.map((link: ApiLinkPayload) => {
+                      const status = typeof link.status === 'string' ? link.status : link.active ? 'active' : 'inactive';
+                      const activeState = typeof link.activeState === 'string' ? link.activeState : status;
+                      const subState = typeof link.subState === 'string' ? link.subState : status;
+                      const ipTargets = Array.isArray(link.ipTargets) ? link.ipTargets : [];
+                      return {
+                          id: link.id || link.name,
+                          name: link.name,
+                          nodeName: link.nodeName || 'Global',
+                          description: link.description,
+                          active: typeof link.active === 'boolean' ? link.active : true,
+                          status,
+                          activeState,
+                          subState,
+                          kubePath: link.kubePath || '',
+                          yamlPath: link.yamlPath ?? null,
+                          type: 'link',
+                          ports: Array.isArray(link.ports)
+                              ? link.ports.map((p: RawLinkPort) => ({
+                                    host: p?.host !== undefined ? String(p.host) : p?.hostPort !== undefined ? String(p.hostPort) : undefined,
+                                    container: p?.container !== undefined ? String(p.container) : p?.containerPort !== undefined ? String(p.containerPort) : '',
+                                    hostIp: p?.hostIp,
+                                    protocol: p?.protocol,
+                                    source: p?.source
+                                }))
+                              : [],
+                          volumes: Array.isArray(link.volumes)
+                              ? link.volumes.map((v: RawLinkVolume) => ({
+                                    host: v?.host ? String(v.host) : '',
+                                    container: v?.container ? String(v.container) : '',
+                                    mode: undefined
+                                }))
+                              : [],
+                          monitor: Boolean(link.monitor),
+                          url: link.url,
+                          labels: link.labels || {},
+                          verifiedDomains: link.verifiedDomains || [],
+                          ipTargets
+                      };
+                  })
+                : [];
+
+            setExternalLinks(parsed);
+        } catch (error) {
+            logger.error('ServicesPlugin', 'Failed to load external links', error);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadExternalLinks();
+    }, [loadExternalLinks]);
+
+    const fetchData = useCallback(() => {
+        loadExternalLinks();
+    }, [loadExternalLinks]);
+
+    const services = useMemo<Service[]>(() => {
+        if (!twin || !twin.nodes) {
+            return externalLinks.length > 0 ? [...externalLinks] : [];
+        }
+
+        const servicesList: Service[] = [];
+
+        Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
+            if (!Array.isArray(nodeState.services)) return;
+            const fileKeys = Object.keys(nodeState.files || {});
+
+            nodeState.services.forEach(unit => {
+                const baseName = unit.name.replace('.service', '');
+                const isManaged = Boolean(unit.isManaged);
+
+                if (!isManaged && !unit.isReverseProxy && !unit.isServiceBay) {
+                    return;
+                }
+
+                let yamlPath: string | null = null;
+                if (isManaged) {
+                    const filePath = fileKeys.find(f => f.endsWith(`/${baseName}.kube`));
+                    if (filePath) {
+                        yamlPath = filePath;
+                        const file = nodeState.files?.[filePath];
+                        if (file && file.content) {
+                            const match = file.content.match(/^Yaml=(.+)$/m);
+                            if (match) {
+                                const yamlFile = match[1].trim();
+                                const yamlKey = fileKeys.find(k => k.endsWith(`/${yamlFile}`));
+                                if (yamlKey) {
+                                    yamlPath = yamlKey;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    const fallbackYaml = fileKeys.find(f => f.endsWith(`/${baseName}.yml`) || f.endsWith(`/${baseName}.yaml`));
+                    if (fallbackYaml) {
+                        yamlPath = fallbackYaml;
+                    }
+                }
+
+                let container = undefined;
+                if (unit.associatedContainerIds && unit.associatedContainerIds.length > 0) {
+                    container = nodeState.containers?.find(c => unit.associatedContainerIds?.includes(c.id));
+                }
+
+                const verifiedDomains = unit.verifiedDomains || [];
+                const rawContainer = container as TwinContainer | undefined;
+
+                let ports: ServicePort[] = [];
+                if (unit.ports && unit.ports.length > 0) {
+                    ports = unit.ports.map(p => ({
+                        host: p.hostPort ? String(p.hostPort) : '',
+                        container: p.containerPort ? String(p.containerPort) : ''
+                    }));
+                } else if (rawContainer?.ports) {
+                    ports = rawContainer.ports.map((p: { hostPort?: string | number; containerPort?: string | number }) => ({
+                        host: p.hostPort ? String(p.hostPort) : '',
+                        container: p.containerPort ? String(p.containerPort) : ''
+                    }));
+                }
+
+                const labels = { ...(rawContainer?.labels || {}) };
+                if (unit.isReverseProxy) labels['servicebay.role'] = 'reverse-proxy';
+                if (unit.isServiceBay) labels['servicebay.role'] = 'system';
+
+                let displayName = unit.name;
+                if (unit.isReverseProxy) displayName = 'Reverse Proxy (Nginx)';
+                else if (unit.isServiceBay) displayName = 'ServiceBay System';
+
+                const svc: Service = {
+                    id: unit.name,
+                    name: displayName,
+                    nodeName,
+                    description: unit.description,
+                    active: unit.activeState === 'active',
+                    status: unit.activeState,
+                    activeState: unit.activeState,
+                    subState: unit.subState,
+                    kubePath: unit.path,
+                    yamlPath,
+                    type: isManaged ? 'kube' : 'container',
+                    ports,
+                    volumes: [],
+                    monitor: false,
+                    labels,
+                    verifiedDomains
+                };
+
+                if (twin.proxy?.routes) {
+                    const route = twin.proxy.routes.find(r => r.targetService === baseName);
+                    if (route) {
+                        svc.url = `https://${route.host}`;
+                    }
+                }
+
+                servicesList.push(svc);
+            });
+        });
+
+        const uniqueServices = new Map<string, Service>();
+        servicesList.forEach(s => {
+            const key = `${s.nodeName}:${s.name}`;
+            const existing = uniqueServices.get(key);
+            if (!existing) {
+                uniqueServices.set(key, s);
+                return;
+            }
+
+            const isNewManaged = s.type === 'kube';
+            const isOldManaged = existing.type === 'kube';
+
+            if (isNewManaged && !isOldManaged) {
+                uniqueServices.set(key, s);
+                return;
+            }
+            if (isOldManaged && !isNewManaged) return;
+
+            if (s.active && !existing.active) {
+                uniqueServices.set(key, s);
+                return;
+            }
+
+            if (s.yamlPath && !existing.yamlPath) {
+                uniqueServices.set(key, s);
+            }
+        });
+
+        const finalServices = Array.from(uniqueServices.values());
+
+        if (twin.gateway) {
+            const gatewayService: Service = {
+                name: twin.gateway.provider === 'fritzbox' ? 'FritzBox Gateway' : 'Internet Gateway',
+                id: 'gateway',
+                nodeName: 'Global',
+                description: 'Upstream Internet Connection',
+                active: twin.gateway.upstreamStatus === 'up',
+                status: twin.gateway.upstreamStatus === 'up' ? 'active' : 'inactive',
+                activeState: twin.gateway.upstreamStatus === 'up' ? 'active' : 'inactive',
+                subState: 'running',
+                kubePath: '',
+                yamlPath: null,
+                type: 'gateway',
+                ports: (twin.gateway.portMappings || []).map(p => ({
+                    host: p.hostPort !== undefined ? String(p.hostPort) : undefined,
+                    container: p.containerPort !== undefined ? String(p.containerPort) : ''
+                })),
+                volumes: [],
+                monitor: true,
+                externalIP: twin.gateway.publicIp,
+                internalIP: twin.gateway.internalIp,
+                dnsServers: twin.gateway.dnsServers,
+                uptime: twin.gateway.uptime
+            };
+
+            finalServices.push(gatewayService);
+        }
+
+        if (externalLinks.length > 0) {
+            finalServices.push(...externalLinks);
+        }
+
+        return finalServices;
+    }, [twin, externalLinks]);
+
+    const loading = !isConnected && services.length === 0;
+
+    const collectBundlesFromTwin = useCallback((): ServiceBundle[] => {
+        if (!twin || !twin.nodes) return [];
+        const aggregates: ServiceBundle[] = [];
+        Object.values(twin.nodes).forEach(node => {
+            if (Array.isArray(node.unmanagedBundles)) {
+                aggregates.push(...node.unmanagedBundles);
+            }
+        });
+        return aggregates;
+    }, [twin]);
+
+    const discoverUnmanaged = useCallback(async () => {
+        setDiscoveryLoading(true);
+        await new Promise(r => setTimeout(r, 300));
+
+        try {
+            const bundles = collectBundlesFromTwin();
+            setServiceBundles(bundles);
+        } catch (error) {
+            logger.error('ServicesPlugin', 'Failed to discover services', error);
+            setServiceBundles([]);
+        } finally {
+            setDiscoveryLoading(false);
+        }
+    }, [collectBundlesFromTwin]);
+
+    useEffect(() => {
+        setServiceBundles(collectBundlesFromTwin());
+    }, [collectBundlesFromTwin]);
+
+    function handleEditLink(service: Service) {
+        setLinkForm({
+            name: service.name,
+            url: service.url || '',
+            description: service.description || '',
+            monitor: service.monitor || false,
+            ipTargetsText: service.ipTargets && service.ipTargets.length > 0 ? service.ipTargets.join(', ') : ''
+        });
+        setIsEditingLink(true);
+        setEditingLinkId(service.id || service.name);
+        setShowLinkModal(true);
+    }
+
+    function confirmDelete(service: Service) {
+        setServiceToDelete(service);
+        setDeleteModalOpen(true);
+    }
+
+    function openMonitorDrawer(service: Service) {
+        setDrawerState({ mode: 'monitor', service });
+        setShowActions(false);
+    }
+
+    async function openEditDrawer(service: Service) {
+        const serviceName = service.id || service.name;
+        setDrawerState({ mode: 'edit', service });
+        setShowActions(false);
+        setDrawerLoading(true);
+        setEditInitialData(null);
+
+        try {
+            const nodeParam = service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : '';
+            const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}${nodeParam}`, { cache: 'no-store' });
+            if (!res.ok) {
+                throw new Error('Failed to load service files');
+            }
+
+            const files = await res.json();
+            const yamlFileName = files.yamlPath?.split('/').pop() || `${serviceName.replace('.service', '')}.yml`;
+            const initialData: ServiceFormInitialData = {
+                name: service.name.replace('.service', ''),
+                kubeContent: files.kubeContent || '',
+                yamlContent: files.yamlContent || '',
+                yamlFileName,
+                serviceContent: files.serviceContent,
+                kubePath: files.kubePath,
+                yamlPath: files.yamlPath,
+                servicePath: files.servicePath
+            };
+            setEditInitialData(initialData);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to load service files';
+            addToast('error', message);
+            setDrawerState(null);
+        } finally {
+            setDrawerLoading(false);
+        }
+    }
 
     const closeDrawer = useCallback(() => {
         setDrawerState(null);
-        setEditInitialData(null);
         setDrawerLoading(false);
+        setEditInitialData(null);
+    }, []);
+
+    const openRegistryOverlay = useCallback(() => {
+        setShowRegistryOverlay(true);
     }, []);
 
     const closeRegistryOverlay = useCallback(() => {
         setShowRegistryOverlay(false);
     }, []);
 
-    useEscapeKey(closeDrawer, Boolean(drawerState));
-    useEscapeKey(closeRegistryOverlay, showRegistryOverlay);
-
-    const openRegistryOverlay = useCallback(() => {
-        closeDrawer();
-        setShowRegistryOverlay(true);
-    }, [closeDrawer]);
-
-    const fetchEditInitialData = useCallback(async (service: Service) => {
-        setDrawerLoading(true);
-        setEditInitialData(null);
-        try {
-            const slug = encodeURIComponent(service.id || service.name);
-            const nodeQuery = service.nodeName && service.nodeName !== 'Local'
-                ? `?node=${encodeURIComponent(service.nodeName)}`
-                : '';
-            const res = await fetch(`/api/services/${slug}${nodeQuery}`);
-            const payload = await res.json();
-
-            if (!res.ok) {
-                throw new Error(payload?.error || 'Failed to load service files');
-            }
-
-            const yamlFileName = payload.yamlFileName || payload.yamlPath?.split('/').pop() || 'pod.yml';
-            const initial: ServiceFormInitialData = {
-                name: service.id || service.name,
-                kubeContent: payload.kubeContent ?? '',
-                yamlContent: payload.yamlContent ?? '',
-                yamlFileName,
-                serviceContent: payload.serviceContent,
-                kubePath: payload.kubePath,
-                yamlPath: payload.yamlPath,
-                servicePath: payload.servicePath,
-            };
-            setEditInitialData(initial);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to load service files';
-            addToast('error', 'Load failed', message);
-            closeDrawer();
-        } finally {
-            setDrawerLoading(false);
-        }
-    }, [addToast, closeDrawer]);
-
-    const openMonitorDrawer = useCallback((service: Service) => {
-        setShowRegistryOverlay(false);
-        setDrawerState({ mode: 'monitor', service });
-        setEditInitialData(null);
-        setDrawerLoading(false);
-    }, []);
-
-    const openEditDrawer = useCallback((service: Service) => {
-        setShowRegistryOverlay(false);
-        setDrawerState({ mode: 'edit', service });
-        setEditInitialData(null);
-        void fetchEditInitialData(service);
-    }, [fetchEditInitialData]);
-
-  // Action Progress Modal
-  const [actionService, setActionService] = useState<Service | null>(null);
-  const [actionModalOpen, setActionModalOpen] = useState(false);
-  const [currentAction, setCurrentAction] = useState<'start' | 'stop' | 'restart'>('start');
-
-  // Link Modal State
-    const [showLinkModal, setShowLinkModal] = useState(false);
-    const [isEditingLink, setIsEditingLink] = useState(false);
-    const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
-    const [linkForm, setLinkForm] = useState<LinkFormState>({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
-  
-  const { data: twin, isConnected, lastUpdate } = useDigitalTwin();
-  
-  const loadExternalLinks = useCallback(async () => {
-      try {
-          const res = await fetch('/api/services?scope=links', { cache: 'no-store' });
-          if (!res.ok) {
-              throw new Error('Failed to load external links');
-          }
-
-          const payload = await res.json();
-          const parsed: Service[] = Array.isArray(payload) ? payload.map((link: ApiLinkPayload) => {
-              const status = typeof link.status === 'string' ? link.status : (link.active ? 'active' : 'inactive');
-              const activeState = typeof link.activeState === 'string' ? link.activeState : status;
-              const subState = typeof link.subState === 'string' ? link.subState : status;
-              const ipTargets = Array.isArray(link.ipTargets) ? link.ipTargets : [];
-
-              return {
-                  id: link.id || link.name,
-                  name: link.name,
-                  nodeName: link.nodeName || 'Global',
-                  description: link.description,
-                  active: typeof link.active === 'boolean' ? link.active : true,
-                  status,
-                  activeState,
-                  subState,
-                  kubePath: link.kubePath || '',
-                  yamlPath: link.yamlPath ?? null,
-                  type: 'link',
-                  ports: Array.isArray(link.ports) ? link.ports.map((p: RawLinkPort) => ({
-                      host: p?.host !== undefined ? String(p.host) : p?.hostPort !== undefined ? String(p.hostPort) : '',
-                      container: p?.container !== undefined ? String(p.container) : p?.containerPort !== undefined ? String(p.containerPort) : '',
-                      hostIp: p?.hostIp,
-                      protocol: p?.protocol,
-                      source: p?.source
-                  })) : [],
-                  volumes: Array.isArray(link.volumes) ? link.volumes.map((v: RawLinkVolume) => ({
-                      host: v?.host ? String(v.host) : '',
-                      container: v?.container ? String(v.container) : ''
-                  })) : [],
-                  monitor: Boolean(link.monitor),
-                  url: link.url,
-                  labels: link.labels || {},
-                  verifiedDomains: link.verifiedDomains || [],
-                  hostNetwork: false,
-                  ipTargets
-              };
-          }) : [];
-
-          setExternalLinks(parsed);
-      } catch (error) {
-          logger.error('ServicesPlugin', 'Failed to load external links', error);
-      }
-  }, []);
-
-  useEffect(() => {
-      loadExternalLinks();
-  }, [loadExternalLinks]);
-
-  const fetchData = useCallback(() => {
-      loadExternalLinks();
-  }, [loadExternalLinks]);
-  
-  // Replaced Legacy Hooks with Twin Logic
-  // const { data: servicesData, loading: servicesLoading, validating: servicesValidating, refresh: refreshServices } = useServicesList();
-  // const { data: graphData, loading: graphLoading, validating: graphValidating, refresh: refreshGraph } = useNetworkGraph();
-  
-    const { services } = useMemo(() => {
-        if (!twin || !twin.nodes) return { services: [...externalLinks], nodes: [] };
-
-    // 1. Extract Nodes
-    const nodeList = Object.keys(twin.nodes).map(name => ({ Name: name, Addr: '0.0.0.0' }));
-
-    const servicesList: Service[] = [];
-
-    Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
-         const fileKeys = Object.keys(nodeState.files);
-         
-         nodeState.services.forEach(unit => {
-             const baseName = unit.name.replace('.service', '');
-             const isManaged = !!unit.isManaged;
-             
-             // Filter: Only show Managed services
-             if (!isManaged) {
-                // Also check if it's the gateway or proxy which might be special
-                // If it is NOT managed, we still want to show it if it's the proxy or ServiceBay itself.
-                // We rely on the Backend (Agent V4) to flag these via Source-Centric Truth.
-                if (unit.isReverseProxy || unit.isServiceBay) {
-                   // allow
-                } else {
-                   return;
+    const ServiceCard = ({ service }: { service: Service }) => {
+        const dedupedPorts = useMemo(() => {
+            const uniquePortsMap = new Map<string, ServicePort>();
+            service.ports.forEach(p => {
+                const key = `${p.host || '_'}:${p.container}`;
+                if (!uniquePortsMap.has(key)) {
+                    uniquePortsMap.set(key, p);
                 }
-             }
+            });
+            return Array.from(uniquePortsMap.values());
+        }, [service.ports]);
 
-             // --- RAW DATA LINKING (Single Source of Truth) ---
-             // We link the Systemd Service to its Podman Container to get runtime stats.
-             
-             // 1. Determine Yaml Path (Static Definition, not guessing)
-             let yamlPath: string | null = null;
-             if (isManaged) {
-                 // STRICT: The Quadlet file must match the service Base Name.
-                 // Since isManaged=true means it IS a .kube service (Agent V4 definition), we search for .kube
-                 const filePath = fileKeys.find(f => f.endsWith(`/${baseName}.kube`));
+        return (
+            <div className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden flex flex-col h-full min-w-0">
+                <div className="flex items-start gap-4 justify-between mb-4">
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <div className={`mt-1.5 w-3 h-3 shrink-0 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
+                        <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                                <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate" title={service.name}>
+                                    {service.name.replace('.service', '')}
+                                </h3>
+                                {service.nodeName && service.nodeName !== 'Local' && (
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 rounded">
+                                        {service.nodeName}
+                                    </span>
+                                )}
+                                {service.type === 'link' && (
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800 rounded">
+                                        External Link
+                                    </span>
+                                )}
+                                {service.type === 'gateway' && (
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 rounded">
+                                        Gateway
+                                    </span>
+                                )}
+                                {service.labels && service.labels['servicebay.role'] === 'reverse-proxy' && (
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 rounded">
+                                        Reverse Proxy
+                                    </span>
+                                )}
+                                {service.labels && service.labels['servicebay.role'] === 'system' && (
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 rounded">
+                                        System
+                                    </span>
+                                )}
+                                {service.externalIP && service.type !== 'gateway' && (
+                                    <span className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-1.5 py-0.5 rounded">
+                                        IP: {service.externalIP}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0 ml-auto bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
+                        {service.type === 'gateway' ? (
+                            <>
+                                <Link href="/monitor/gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors" title="Monitor Gateway">
+                                    <Activity size={16} />
+                                </Link>
+                                <Link href="/registry?selected=gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Gateway">
+                                    <Edit size={16} />
+                                </Link>
+                            </>
+                        ) : service.type === 'link' ? (
+                            <>
+                                <button onClick={() => handleEditLink(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Link">
+                                    <Edit size={16} />
+                                </button>
+                                <button onClick={() => confirmDelete(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors" title="Delete">
+                                    <Trash2 size={16} />
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => openMonitorDrawer(service)}
+                                    className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors"
+                                    title="Monitor"
+                                >
+                                    <Activity size={16} />
+                                </button>
+                                {service.type === 'kube' ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => openEditDrawer(service)}
+                                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                                        title="Edit Configuration"
+                                    >
+                                        <Edit size={16} />
+                                    </button>
+                                ) : (
+                                    <div className="p-1.5 text-gray-300 dark:text-gray-700 cursor-not-allowed opacity-50" title="Not Managed via Quadlet Kube">
+                                        <Edit size={16} />
+                                    </div>
+                                )}
+                                <button onClick={() => openActions(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/30 rounded transition-colors" title="Actions">
+                                    <MoreVertical size={16} />
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
 
-                 if (filePath) {
-                     yamlPath = filePath; 
-                     
-                     // For Kube, we want the actual YAML file referenced
-                     const file = nodeState.files[filePath];
-                     if (file && file.content) {
-                          const match = file.content.match(/^Yaml=(.+)$/m);
-                          if (match) {
-                              const yamlFile = match[1].trim();
-                              const yamlKey = fileKeys.find(k => k.endsWith(`/${yamlFile}`));
-                              if (yamlKey) {
-                                  yamlPath = yamlKey;
-                              }
-                          }
-                     }
-                 }
-             } else {
-                 // Unmanaged: Check for direct YAML existence
-                 const fallbackYaml = fileKeys.find(f => f.endsWith(`/${baseName}.yml`) || f.endsWith(`/${baseName}.yaml`));
-                 if (fallbackYaml) {
-                     yamlPath = fallbackYaml;
-                 }
-             }
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-4 bg-gray-50/50 dark:bg-gray-800/20 rounded-md p-3 border border-gray-100 dark:border-gray-800/50 flex-1">
+                    {service.type === 'gateway' ? (
+                        <>
+                            <div className="flex flex-col">
+                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Ext IP</span>
+                                <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.externalIP || 'N/A'}</span>
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Int IP</span>
+                                <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.internalIP || 'N/A'}</span>
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Uptime</span>
+                                <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.uptime ? `${Math.floor(service.uptime / 3600)}h` : 'N/A'}</span>
+                            </div>
+                            {service.dnsServers && (
+                                <div className="flex flex-col col-span-2">
+                                    <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">DNS Servers</span>
+                                    <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.dnsServers.join(', ')}</span>
+                                </div>
+                            )}
+                        </>
+                    ) : service.type === 'link' ? (
+                        <div className="col-span-full">
+                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold block">Target URL</span>
+                            <a href={service.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
+                                {service.url}
+                            </a>
+                            {service.ipTargets && service.ipTargets.length > 0 && (
+                                <div className="mt-3">
+                                    <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold block">IP Targets</span>
+                                    <div className="flex flex-wrap gap-1.5 mt-1">
+                                        {service.ipTargets.map(target => (
+                                            <span key={target} className="px-2 py-0.5 rounded text-xs font-mono border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300">
+                                                {target}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <>
+                            {service.verifiedDomains && service.verifiedDomains.length > 0 && (
+                                <div className="flex flex-col col-span-2">
+                                    <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Domains</span>
+                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                        {service.verifiedDomains.map(d => (
+                                            <a 
+                                                key={d} 
+                                                href={d.startsWith('http') ? d : `https://${d}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded hover:underline"
+                                            >
+                                                {d}
+                                            </a>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
 
-             // 2. Find Container
-             let container = undefined;
-             
-             // STRICT: Only use Explicit Link from Backend (Agent V4.1+)
-             // We do NOT guess based on names. If Agent V4 hasn't linked it, it's not linked.
-             if (unit.associatedContainerIds && unit.associatedContainerIds.length > 0) {
-                 container = nodeState.containers.find(c => unit.associatedContainerIds?.includes(c.id));
-             }
+                <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100 dark:border-gray-800/50 mt-auto">
+                    {dedupedPorts.length > 0 && (
+                        <div className="flex gap-2 items-center text-sm">
+                            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Ports:</span>
+                            <div className="flex flex-wrap gap-1.5">
+                                {dedupedPorts.map((p, i) => {
+                                    const display = p.host ? `:${p.host}` : `${p.container}/tcp`;
+                                    return (
+                                        <a 
+                                            key={`${display}-${i}`} 
+                                            href={p.host ? `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${p.host}` : '#'}
+                                            target={p.host ? '_blank' : undefined}
+                                            rel="noopener noreferrer"
+                                            className={`px-2 py-0.5 rounded text-xs font-mono border transition-colors ${
+                                                p.host 
+                                                    ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 cursor-pointer' 
+                                                    : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800/30 cursor-default'
+                                            }`}
+                                            title={p.container ? `Container Port: ${p.container}` : 'Host Port'}
+                                            onClick={(e) => !p.host && e.preventDefault()}
+                                        >
+                                            {display}
+                                        </a>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
 
-             // Find Verified Domains via Proxy State (Source of Truth)
-             // V4.1: Use Enriched Data from Backend (TwinStore)
-             const verifiedDomains = unit.verifiedDomains || [];
-
-             // Prepare Runtime Data from Container (Source of Truth)
-             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-             const rawContainer = container as any;
-             
-             // 1. Ports (Prefer direct Twin data)
-             let ports = [];
-             if (unit.ports && unit.ports.length > 0) {
-                 ports = unit.ports.map(p => ({
-                    host: p.hostPort ? String(p.hostPort) : '',
-                    container: p.containerPort ? String(p.containerPort) : ''
-                 }));
-             } else {
-                 // Fallback to container linkage (Legacy)
-                 ports = rawContainer?.ports?.map((p: { hostPort?: string | number, containerPort?: string | number }) => ({
-                    host: p.hostPort ? String(p.hostPort) : '',
-                    container: p.containerPort ? String(p.containerPort) : ''
-                 })) || [];
-             }
-
-             // 2. Labels
-             const labels = { ...rawContainer?.labels };
-             if (unit.isReverseProxy) labels['servicebay.role'] = 'reverse-proxy';
-             if (unit.isServiceBay) labels['servicebay.role'] = 'system';
-
-             // 3. Name & Description overrides
-             let displayName = unit.name;
-             if (unit.isReverseProxy) displayName = 'Reverse Proxy (Nginx)';
-             else if (unit.isServiceBay) displayName = 'ServiceBay System';
-
-             const svc: Service = {
-                 id: unit.name,
-                 name: displayName,
-                 nodeName: nodeName,
-                 description: unit.description,
-                 active: unit.activeState === 'active',
-                 status: unit.activeState,
-                 activeState: unit.activeState,
-                 subState: unit.subState,
-                 kubePath: unit.path,
-                 yamlPath: yamlPath,
-                 type: isManaged ? 'kube' : 'container',
-                 ports: ports,
-                 volumes: [], // Todo: Map container mounts if needed
-                 monitor: false,
-                 labels: labels,
-                 verifiedDomains: verifiedDomains
-             };
-             
-             if (twin.proxy?.routes) {
-                 const route = twin.proxy.routes.find(r => r.targetService === baseName);
-                 if (route) {
-                     svc.url = `https://${route.host}`;
-                 }
-             }
-             
-             servicesList.push(svc);
-         });
-    });
-
-    // Deduplicate Services (merge aliases like nginx-web and nginx)
-    const uniqueServices = new Map<string, Service>();
-    servicesList.forEach(s => {
-        const key = `${s.nodeName}:${s.name}`;
-        const existing = uniqueServices.get(key);
-        if (!existing) {
-            uniqueServices.set(key, s);
-        } else {
-            // Priority: Managed > Unmanaged, Active > Inactive
-            const isNewManaged = s.type === 'kube';
-            const isOldManaged = existing.type === 'kube';
-            
-            // If one is Managed and other isn't, prefer Managed
-            if (isNewManaged && !isOldManaged) {
-                uniqueServices.set(key, s);
-                return;
-            }
-            if (isOldManaged && !isNewManaged) return;
-            
-            // If both same type, prefer Active
-            if (s.active && !existing.active) {
-                uniqueServices.set(key, s);
-                return;
-            }
-            
-            // If both active, prefer one with Yaml Path
-            if (s.yamlPath && !existing.yamlPath) {
-                uniqueServices.set(key, s);
-            }
-        }
-    });
-
-    // 2. Add Abstract Gateway Service (if not already present as a physical service)
-    // We treat the Gateway (Router) as a service to ensure it appears in the list.
-    const gatewayService: Service = {
-        name: twin.gateway.provider === 'fritzbox' ? 'FritzBox Gateway' : 'Internet Gateway',
-        id: 'gateway',
-        nodeName: 'Global',
-        description: 'Upstream Internet Connection',
-        active: twin.gateway.upstreamStatus === 'up',
-        status: twin.gateway.upstreamStatus === 'up' ? 'active' : 'inactive',
-        activeState: twin.gateway.upstreamStatus === 'up' ? 'active' : 'inactive',
-        subState: 'running',
-        kubePath: '',
-        yamlPath: null,
-        type: 'gateway',
-        ports: (twin.gateway.portMappings || []).map(p => ({
-            host: String(p.hostPort), 
-            container: String(p.containerPort)
-        })),
-        volumes: [],
-        monitor: true,
-        externalIP: twin.gateway.publicIp,
-        internalIP: twin.gateway.internalIp,
-        dnsServers: twin.gateway.dnsServers,
-        uptime: twin.gateway.uptime
+                    {service.volumes && service.volumes.length > 0 && (
+                        <div className="flex gap-2 items-center text-sm ml-auto">
+                            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Volumes:</span>
+                            <span className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700" title={service.volumes.map(v => `${v.host} -> ${v.container}`).join('\n')}>
+                                {service.volumes.length}
+                            </span>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
     };
-    
-    const finalServices = Array.from(uniqueServices.values());
-        finalServices.push(gatewayService);
-        if (externalLinks.length > 0) {
-                finalServices.push(...externalLinks);
+
+    const BundleCard = ({ bundle }: { bundle: ServiceBundle }) => {
+        const bundlePorts = useMemo(() => {
+            const sourcePorts = bundle.ports && bundle.ports.length > 0
+                ? bundle.ports
+                : bundle.containers.flatMap(container => container.ports || []);
+            const seen = new Map<string, BundlePortSummary>();
+            sourcePorts.forEach(port => {
+                if (!port.hostPort && !port.containerPort) return;
+                const protocol = (port.protocol || 'tcp').toLowerCase();
+                const key = `${port.hostIp || '0.0.0.0'}:${port.hostPort ?? port.containerPort}/${protocol}`;
+                if (!seen.has(key)) {
+                    seen.set(key, { ...port, protocol });
+                }
+            });
+            return Array.from(seen.values());
+        }, [bundle.ports, bundle.containers]);
+
+        const conflictingPortKeys = useMemo(() => {
+            const counters = new Map<string, number>();
+            bundle.containers.forEach(container => {
+                container.ports.forEach(port => {
+                    if (!port.hostPort) return;
+                    const protocol = (port.protocol || 'tcp').toLowerCase();
+                    const key = `${port.hostPort}/${protocol}`;
+                    counters.set(key, (counters.get(key) || 0) + 1);
+                });
+            });
+            return new Set(
+                Array.from(counters.entries())
+                    .filter(([, count]) => count > 1)
+                    .map(([key]) => key)
+            );
+        }, [bundle.containers]);
+
+        const filteredHints = filterBundleHints(bundle.hints);
+
+        const filteredValidations = useMemo(
+            () => bundle.validations.filter(validation => !validation.message.toLowerCase().startsWith('multiple containers publish host port')),
+            [bundle.validations]
+        );
+
+        return (
+            <div className={`bg-white dark:bg-gray-900 border rounded-lg p-4 flex flex-col h-full transition-all duration-200 ${bundleSeverityClasses[bundle.severity]}`}>
+            <div className="flex justify-between items-start mb-3">
+                <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-bold text-lg break-all text-gray-900 dark:text-gray-100">{bundle.displayName}</h3>
+                        {bundle.nodeName && (
+                            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                                {bundle.nodeName}
+                            </span>
+                        )}
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200">
+                            Unmanaged Bundle
+                        </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span>{bundle.containers.length} containers</span>
+                        <span>• {bundle.assets.length} files</span>
+                    </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0 ml-auto bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
+                    <button
+                        onClick={() => openBundleWizard(bundle)}
+                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                        title="Migrate bundle"
+                        aria-label={`Migrate ${bundle.displayName}`}
+                    >
+                        <ArrowRight size={16} />
+                        <span className="sr-only">Migrate bundle</span>
+                    </button>
+                    <button
+                        onClick={() => setBundlePendingDelete(bundle)}
+                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors"
+                        title="Delete bundle from node"
+                        aria-label={`Delete ${bundle.displayName}`}
+                    >
+                        <Trash2 size={15} />
+                        <span className="sr-only">Delete bundle</span>
+                    </button>
+                </div>
+            </div>
+
+            <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg flex-1">
+                <div className="flex gap-2">
+                    <FileCode size={16} className="shrink-0 mt-0.5" />
+                    <div className="flex flex-wrap gap-1">
+                        {bundle.assets.slice(0, 4).map(asset => (
+                            <FileBadge key={asset.path} path={asset.path} nodeName={bundle.nodeName} />
+                        ))}
+                        {bundle.assets.length > 4 && (
+                            <span className="text-xs text-gray-500">+{bundle.assets.length - 4} more</span>
+                        )}
+                    </div>
+                </div>
+                {filteredHints.length > 0 && (
+                    <div className="flex gap-2">
+                        <AlertCircle size={16} className="shrink-0 mt-0.5 text-orange-500" />
+                        <ul className="space-y-0.5 text-xs">
+                            {filteredHints.slice(0, 3).map((hint, idx) => (
+                                <li key={idx} className="leading-snug">{hint}</li>
+                            ))}
+                            {filteredHints.length > 3 && (
+                                <li className="text-[10px] text-gray-500">+{filteredHints.length - 3} more hints</li>
+                            )}
+                        </ul>
+                    </div>
+                )}
+                {filteredValidations.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                        {filteredValidations.map((validation, idx) => (
+                            <div key={idx} className={`text-xs px-2 py-1 rounded border ${validation.level === 'error' ? 'border-red-200 text-red-700 bg-red-50 dark:border-red-900/50 dark:text-red-300 dark:bg-red-900/20' : validation.level === 'warning' ? 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:bg-amber-900/20' : 'border-green-200 text-green-700 bg-green-50 dark:border-green-900/50 dark:text-green-300 dark:bg-green-900/20'}`}>
+                                {validation.message}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+            {bundlePorts.length > 0 && (
+                <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100 dark:border-gray-800/50 mt-3">
+                    <div className="flex gap-2 items-center text-sm">
+                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Ports:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                            {bundlePorts.map((port, idx) => {
+                                const hostValue = typeof port.hostPort !== 'undefined' && port.hostPort !== null ? String(port.hostPort) : undefined;
+                                const containerValue = typeof port.containerPort !== 'undefined' && port.containerPort !== null ? String(port.containerPort) : undefined;
+                                const protocol = (port.protocol || 'tcp').toLowerCase();
+                                const display = hostValue ? `:${hostValue}` : `${containerValue || '—'}/${protocol}`;
+                                const conflictKey = hostValue ? `${hostValue}/${protocol}` : null;
+                                const hasConflict = conflictKey ? conflictingPortKeys.has(conflictKey) : false;
+                                const baseClasses = hostValue
+                                    ? hasConflict
+                                        ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/30'
+                                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 cursor-pointer'
+                                    : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800/30 cursor-default';
+                                const title = hostValue
+                                    ? hasConflict
+                                        ? `Host port ${hostValue}/${protocol} is published by multiple containers`
+                                        : containerValue
+                                            ? `Host ${hostValue} → Container ${containerValue}/${protocol}`
+                                            : `Host port ${hostValue}/${protocol}`
+                                    : `Container port ${containerValue || 'unknown'}/${protocol}`;
+                                const href = hostValue ? `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${hostValue}` : '#';
+                                return (
+                                    <a
+                                        key={`${display}-${idx}`}
+                                        href={href}
+                                        target={hostValue ? '_blank' : undefined}
+                                        rel={hostValue ? 'noopener noreferrer' : undefined}
+                                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-colors ${baseClasses}`}
+                                        title={title}
+                                        onClick={event => {
+                                            if (!hostValue) {
+                                                event.preventDefault();
+                                            }
+                                        }}
+                                    >
+                                        {display}
+                                    </a>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
+            </div>
+        );
+    };
+
+    const renderServiceContent = () => {
+        if (loading) {
+            return (
+                <PluginLoading message="Loading services..." subMessage="Waiting for agent synchronization..." />
+            );
         }
 
-    return { services: finalServices, nodes: nodeList };
-    }, [twin, externalLinks]);
+        const totalResults = filteredServices.length + filteredBundles.length;
+        const totalInventory = services.length + serviceBundles.length;
+        const hasSearch = searchQuery.trim().length > 0;
+        const hasBundles = serviceBundles.length > 0;
 
-  const loading = !isConnected && services.length === 0;
+        if (totalResults === 0) {
+            return (
+                <div className="flex flex-col items-center justify-center p-12 text-center">
+                    <div className="bg-slate-50 dark:bg-slate-900 rounded-full p-6 mb-4">
+                        <Box size={48} className="text-slate-300 dark:text-slate-600" />
+                    </div>
+                    <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100 mb-2">
+                        {hasSearch ? 'No Results' : 'No Services or Bundles Found'}
+                    </h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mb-6">
+                        {hasSearch
+                            ? `Nothing matching "${searchQuery}" exists across managed services or unmanaged bundles.`
+                            : "ServiceBay couldn't find any Quadlet-managed services or discovery bundles on your nodes yet."}
+                    </p>
 
-  const collectBundlesFromTwin = useCallback((): ServiceBundle[] => {
-      if (!twin || !twin.nodes) return [];
-      const aggregates: ServiceBundle[] = [];
-      Object.values(twin.nodes).forEach(node => {
-          if (Array.isArray(node.unmanagedBundles)) {
-              aggregates.push(...node.unmanagedBundles);
-          }
-      });
-      return aggregates;
-  }, [twin]);
-
-    const discoverUnmanaged = useCallback(async () => {
-        setDiscoveryLoading(true);
-    
-        // Simulate async to show loading state briefy
-        await new Promise(r => setTimeout(r, 300));
-
-        try {
-                const bundles = collectBundlesFromTwin();
-                setServiceBundles(bundles);
-                setHasDiscovered(true);
-        } catch (error) {
-            logger.error('ServicesPlugin', 'Failed to discover services', error);
-                        setServiceBundles([]);
-        } finally {
-            setDiscoveryLoading(false);
+                    {!hasSearch && totalInventory === 0 && (
+                        <div className="text-left text-xs text-slate-400 bg-slate-100 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800 font-mono w-full max-w-md overflow-x-auto">
+                            <p className="font-bold mb-2">Debug Information:</p>
+                            <ul className="space-y-1">
+                                <li>Twin Status: {isConnected ? 'Connected' : 'Disconnected'}</li>
+                                <li>Last Update: {new Date(lastUpdate).toLocaleTimeString()}</li>
+                                {Object.entries(twin?.nodes || {}).map(([name, state]) => (
+                                    <li key={name} className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                                        <strong>Node: {name}</strong><br />
+                                        - Raw Services: {state.services.length}<br />
+                                        - Files: {Object.keys(state.files).length}<br />
+                                        - Containers: {state.containers.length}<br />
+                                        - Bundles: {(state.unmanagedBundles || []).length}
+                                    </li>
+                                ))}
+                            </ul>
+                            <p className="mt-2 italic opacity-75">
+                                Note: Managed services come from Quadlet definitions; unmanaged bundles surface from discovery scans.
+                            </p>
+                        </div>
+                    )}
+                </div>
+            );
         }
-    }, [collectBundlesFromTwin]);
 
-  useEffect(() => {
-      if (!hasDiscovered) return;
-      setServiceBundles(collectBundlesFromTwin());
-  }, [hasDiscovered, collectBundlesFromTwin]);
+        const combinedItems = [
+            ...filteredServices.map(service => ({ type: 'service' as const, id: `svc-${service.nodeName || 'local'}-${service.name}`, service })),
+            ...filteredBundles.map(bundle => ({ type: 'bundle' as const, id: `bundle-${bundle.id}`, bundle }))
+        ];
 
-  useEffect(() => {
-      if (activeTab !== 'discover' || hasDiscovered || discoveryLoading) return;
-      discoverUnmanaged();
-  }, [activeTab, discoveryLoading, hasDiscovered, discoverUnmanaged]);
+        return (
+            <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-4 py-3">
+                    <div>
+                        <p className="text-xs uppercase tracking-widest text-orange-500 dark:text-orange-300">Unmanaged Bundles</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {hasBundles
+                                ? `${serviceBundles.length} bundle${serviceBundles.length === 1 ? '' : 's'} awaiting migration.`
+                                : 'Scan for unmanaged services and container groups ready for migration.'}
+                        </p>
+                    </div>
+                    <button 
+                        onClick={discoverUnmanaged}
+                        disabled={discoveryLoading}
+                        className="px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-sm rounded-lg flex items-center gap-2 transition-colors disabled:opacity-60"
+                    >
+                        {discoveryLoading ? <RefreshCw size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                        {discoveryLoading ? 'Scanning...' : hasBundles ? 'Refresh Bundles' : 'Discover Bundles'}
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6 auto-rows-fr">
+                    {combinedItems.map(entry => (
+                        entry.type === 'service'
+                            ? <ServiceCard key={entry.id} service={entry.service} />
+                            : <BundleCard key={entry.id} bundle={entry.bundle} />
+                    ))}
+                </div>
+            </div>
+        );
+    };
 
   const openBundleWizard = (bundle: ServiceBundle) => {
       const initialName = sanitizeBundleName(bundle.displayName);
@@ -663,6 +1131,30 @@ export default function ServicesPlugin() {
       }
   }, [bundlePendingDelete, addToast, updateToast, discoverUnmanaged]);
 
+  const handleEscape = useCallback(() => {
+      if (drawerState) {
+          closeDrawer();
+          return;
+      }
+      if (selectedBundle) {
+          closeBundleWizard();
+          return;
+      }
+      if (showRegistryOverlay) {
+          closeRegistryOverlay();
+          return;
+      }
+      if (showActions) {
+          setShowActions(false);
+          return;
+      }
+      if (showLinkModal) {
+          setShowLinkModal(false);
+      }
+  }, [drawerState, closeDrawer, selectedBundle, closeBundleWizard, showRegistryOverlay, closeRegistryOverlay, showActions, showLinkModal]);
+
+  useEscapeKey(handleEscape, Boolean(drawerState || selectedBundle || showRegistryOverlay || showActions || showLinkModal));
+
   const fetchBundlePlanForBundle = useCallback(async (bundle: ServiceBundle, target: string, dryRun = true) => {
       if (!target) return;
       const nodeParam = bundle.nodeName && bundle.nodeName !== 'Local' ? `?node=${bundle.nodeName}` : '';
@@ -710,18 +1202,6 @@ export default function ServicesPlugin() {
           setBundleValidations(selectedBundle.validations);
       }
   }, [selectedBundle, bundleTargetName, bundlePlan, bundleWizardStep]);
-
-  useEffect(() => {
-      if (!selectedBundle) return;
-      const handleKeyDown = (event: KeyboardEvent) => {
-          if (event.key === 'Escape') {
-              event.preventDefault();
-              closeBundleWizard();
-          }
-      };
-      window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedBundle, closeBundleWizard]);
 
   useEffect(() => {
       if (selectedBundle && bundleWizardStep === 'backup' && bundleTargetName) {
@@ -772,21 +1252,31 @@ export default function ServicesPlugin() {
   };
 
   useEffect(() => {
-      let filtered = services;
+      const q = searchQuery.trim().toLowerCase();
 
-      
-      // Filter by Search
-      if (searchQuery) {
-          const q = searchQuery.toLowerCase();
-          filtered = filtered.filter(s => 
-              s.name.toLowerCase().includes(q) ||
-              (s.description && s.description.toLowerCase().includes(q)) ||
-              (s.nodeName && s.nodeName.toLowerCase().includes(q))
-          );
-      }
-      
+      const filtered = q
+          ? services.filter(s =>
+                s.name.toLowerCase().includes(q) ||
+                (s.description && s.description.toLowerCase().includes(q)) ||
+                (s.nodeName && s.nodeName.toLowerCase().includes(q))
+            )
+          : services;
       setFilteredServices(filtered);
-  }, [services, searchQuery]);
+
+      const filteredBundleList = q
+          ? serviceBundles.filter(bundle => {
+                if (bundle.displayName?.toLowerCase().includes(q)) return true;
+                if (bundle.nodeName?.toLowerCase().includes(q)) return true;
+                if (bundle.derivedName?.toLowerCase().includes(q)) return true;
+                const serviceHit = bundle.services.some(svc => svc.serviceName.toLowerCase().includes(q));
+                if (serviceHit) return true;
+                const hintHit = bundle.hints.some(hint => hint.toLowerCase().includes(q));
+                if (hintHit) return true;
+                return bundle.containers.some(container => container.name.toLowerCase().includes(q));
+            })
+          : serviceBundles;
+      setFilteredBundles(filteredBundleList);
+  }, [services, serviceBundles, searchQuery]);
 
 
 
@@ -806,20 +1296,7 @@ export default function ServicesPlugin() {
   }, []);
   */
 
-  const handleEditLink = (service: Service) => {
-    setLinkForm({
-        name: service.name,
-        url: service.url || '',
-        description: service.description || '',
-                monitor: service.monitor || false,
-                                ipTargetsText: service.ipTargets && service.ipTargets.length > 0 ? service.ipTargets.join(', ') : ''
-    });
-    setIsEditingLink(true);
-        setEditingLinkId(service.id || service.name);
-    setShowLinkModal(true);
-  };
-
-  const handleSaveLink = async () => {
+  async function handleSaveLink() {
     if (!linkForm.name || !linkForm.url) {
         addToast('error', 'Name and URL are required');
         return;
@@ -857,14 +1334,9 @@ export default function ServicesPlugin() {
     } catch {
         addToast('error', 'Failed to save link');
     }
-  };
+  }
 
-  const confirmDelete = (service: Service) => {
-    setServiceToDelete(service);
-    setDeleteModalOpen(true);
-  };
-
-  const handleDelete = async () => {
+  async function handleDelete() {
     if (!serviceToDelete) return;
     setDeleteModalOpen(false);
     
@@ -889,17 +1361,16 @@ export default function ServicesPlugin() {
     } catch {
         updateToast(toastId, 'error', 'Delete failed', 'An unexpected error occurred.');
     }
-  };
+  }
 
-  const openActions = (service: Service) => {
+  function openActions(service: Service) {
     setSelectedService(service);
     setShowActions(true);
-  };
+  }
 
-  const handleAction = async (action: string) => {
+  async function handleAction(action: string) {
     if (!selectedService) return;
     
-    // Intercept start, stop, restart actions to show progress modal
     if (action === 'start' || action === 'stop' || action === 'restart') {
         setActionService(selectedService);
         setCurrentAction(action);
@@ -928,7 +1399,6 @@ export default function ServicesPlugin() {
         } else {
             setShowActions(false);
             updateToast(toastId, 'success', 'Action initiated', `${action} command sent to ${selectedService.name}`);
-            // Wait a bit for the action to take effect
             setTimeout(fetchData, 1000);
         }
     } catch (e) {
@@ -937,408 +1407,9 @@ export default function ServicesPlugin() {
     } finally {
         setActionLoading(false);
     }
-  };
+  }
 
   // filteredServices is already computed in useEffect
-
-    const renderManagedContent = () => {
-        if (loading) {
-            return (
-                <PluginLoading message="Loading services..." subMessage="Waiting for agent synchronization..." />
-            );
-        }
-
-        if (filteredServices.length === 0) {
-            return (
-                <div className="flex flex-col items-center justify-center p-12 text-center">
-                    <div className="bg-slate-50 dark:bg-slate-900 rounded-full p-6 mb-4">
-                        <Box size={48} className="text-slate-300 dark:text-slate-600" />
-                    </div>
-                    <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100 mb-2">
-                        {services.length > 0 ? 'No Matching Services' : 'No Managed Services Found'}
-                    </h3>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mb-6">
-                        {services.length > 0 
-                            ? `No services match "${searchQuery}". Try a different search term.`
-                            : "ServiceBay couldn't find any Quadlet-managed services running on your nodes."}
-                    </p>
-
-                    {services.length === 0 && (
-                        <div className="text-left text-xs text-slate-400 bg-slate-100 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800 font-mono w-full max-w-md overflow-x-auto">
-                            <p className="font-bold mb-2">Debug Information:</p>
-                            <ul className="space-y-1">
-                                <li>Twin Status: {isConnected ? 'Connected' : 'Disconnected'}</li>
-                                <li>Last Update: {new Date(lastUpdate).toLocaleTimeString()}</li>
-                                {Object.entries(twin?.nodes || {}).map(([name, state]) => (
-                                    <li key={name} className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-                                        <strong>Node: {name}</strong><br />
-                                        - Raw Services: {state.services.length}<br />
-                                        - Files: {Object.keys(state.files).length}<br />
-                                        - Containers: {state.containers.length}
-                                    </li>
-                                ))}
-                            </ul>
-                            <p className="mt-2 italic opacity-75">
-                                Note: ServiceBay filters services to only show those managed by Quadlet (matching .container/.kube files) or explicit system services.
-                            </p>
-                        </div>
-                    )}
-                </div>
-            );
-        }
-
-        return (
-            <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6 auto-rows-fr">
-                {filteredServices.map((service) => {
-                    const dedupedPorts = (() => {
-                        const uniquePortsMap = new Map<string, ServicePort>();
-                        service.ports.forEach(p => {
-                            const key = `${p.host || '_'}:${p.container}`;
-                            if (!uniquePortsMap.has(key)) {
-                                uniquePortsMap.set(key, p);
-                            }
-                        });
-                        return Array.from(uniquePortsMap.values());
-                    })();
-
-                    return (
-                        <div key={`${service.nodeName || 'local'}-${service.name}`} className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden flex flex-col h-full min-w-0">
-                            {/* Header Row */}
-                            <div className="flex items-start gap-4 justify-between mb-4">
-                                <div className="flex items-start gap-3 flex-1 min-w-0">
-                                    {/* Status Dot */}
-                                    <div className={`mt-1.5 w-3 h-3 shrink-0 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                                            <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate" title={service.name}>
-                                                {service.name.replace('.service', '')}
-                                            </h3>
-                                            {service.nodeName && service.nodeName !== 'Local' && (
-                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 rounded">
-                                                    {service.nodeName}
-                                                </span>
-                                            )}
-                                            {service.type === 'link' && (
-                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800 rounded">
-                                                    External Link
-                                                </span>
-                                            )}
-                                            {service.type === 'gateway' && (
-                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 rounded">
-                                                    Gateway
-                                                </span>
-                                            )}
-                                            {service.labels && service.labels['servicebay.role'] === 'reverse-proxy' && (
-                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 rounded">
-                                                    Reverse Proxy
-                                                </span>
-                                            )}
-                                            {service.labels && service.labels['servicebay.role'] === 'system' && (
-                                                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 rounded">
-                                                    System
-                                                </span>
-                                            )}
-                                            {service.externalIP && service.type !== 'gateway' && (
-                                                <span className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-1.5 py-0.5 rounded">
-                                                    IP: {service.externalIP}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-1 shrink-0 ml-auto bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
-                                    {service.type === 'gateway' ? (
-                                        <>
-                                            <Link href="/monitor/gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors" title="Monitor Gateway">
-                                                <Activity size={16} />
-                                            </Link>
-                                            <Link href="/registry?selected=gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Gateway">
-                                                <Edit size={16} />
-                                            </Link>
-                                        </>
-                                    ) : service.type === 'link' ? (
-                                        <>
-                                            <button onClick={() => handleEditLink(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Link">
-                                                <Edit size={16} />
-                                            </button>
-                                            <button onClick={() => confirmDelete(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors" title="Delete">
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <button
-                                                type="button"
-                                                onClick={() => openMonitorDrawer(service)}
-                                                className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors"
-                                                title="Monitor"
-                                            >
-                                                <Activity size={16} />
-                                            </button>
-                                            {service.type === 'kube' ? (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => openEditDrawer(service)}
-                                                    className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-                                                    title="Edit Configuration"
-                                                >
-                                                    <Edit size={16} />
-                                                </button>
-                                            ) : (
-                                                <div className="p-1.5 text-gray-300 dark:text-gray-700 cursor-not-allowed opacity-50" title="Not Managed via Quadlet Kube">
-                                                    <Edit size={16} />
-                                                </div>
-                                            )}
-                                            <button onClick={() => openActions(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/30 rounded transition-colors" title="Actions">
-                                                <MoreVertical size={16} />
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-4 bg-gray-50/50 dark:bg-gray-800/20 rounded-md p-3 border border-gray-100 dark:border-gray-800/50 flex-1">
-                                {service.type === 'gateway' ? (
-                                    <>
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Ext IP</span>
-                                            <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.externalIP || 'N/A'}</span>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Int IP</span>
-                                            <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.internalIP || 'N/A'}</span>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Uptime</span>
-                                            <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.uptime ? `${Math.floor(service.uptime / 3600)}h` : 'N/A'}</span>
-                                        </div>
-                                        {service.dnsServers && (
-                                            <div className="flex flex-col col-span-2">
-                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">DNS Servers</span>
-                                                <span className="text-sm font-mono text-gray-900 dark:text-gray-100">{service.dnsServers.join(', ')}</span>
-                                            </div>
-                                        )}
-                                    </>
-                                ) : service.type === 'link' ? (
-                                    <div className="col-span-full">
-                                        <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold block">Target URL</span>
-                                        <a href={service.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
-                                            {service.url}
-                                        </a>
-                                        {service.ipTargets && service.ipTargets.length > 0 && (
-                                            <div className="mt-3">
-                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold block">IP Targets</span>
-                                                <div className="flex flex-wrap gap-1.5 mt-1">
-                                                    {service.ipTargets.map(target => (
-                                                        <span key={target} className="px-2 py-0.5 rounded text-xs font-mono border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300">
-                                                            {target}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <>
-                                        {service.verifiedDomains && service.verifiedDomains.length > 0 && (
-                                            <div className="flex flex-col col-span-2">
-                                                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Domains</span>
-                                                <div className="flex flex-wrap gap-1 mt-0.5">
-                                                    {service.verifiedDomains.map(d => (
-                                                        <a 
-                                                            key={d} 
-                                                            href={d.startsWith('http') ? d : `https://${d}`}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded hover:underline"
-                                                        >
-                                                            {d}
-                                                        </a>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </>
-                                )}
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100 dark:border-gray-800/50 mt-auto">
-                                {dedupedPorts.length > 0 && (
-                                    <div className="flex gap-2 items-center text-sm">
-                                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Ports:</span>
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {dedupedPorts.map((p, i) => {
-                                                const display = p.host ? `:${p.host}` : `${p.container}/tcp`;
-                                                return (
-                                                    <a 
-                                                        key={i} 
-                                                        href={p.host ? `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${p.host}` : '#'}
-                                                        target={p.host ? '_blank' : undefined}
-                                                        rel="noopener noreferrer"
-                                                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-colors ${
-                                                            p.host 
-                                                                ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 cursor-pointer' 
-                                                                : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800/30 cursor-default'
-                                                        }`}
-                                                        title={p.container ? `Container Port: ${p.container}` : 'Host Port'}
-                                                        onClick={(e) => !p.host && e.preventDefault()}
-                                                    >
-                                                        {display}
-                                                    </a>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {service.volumes && service.volumes.length > 0 && (
-                                    <div className="flex gap-2 items-center text-sm ml-auto">
-                                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Volumes:</span>
-                                        <span className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700" title={service.volumes.map(v => `${v.host} -> ${v.container}`).join('\n')}>
-                                            {service.volumes.length}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-        );
-    };
-
-    const renderDiscoverContent = () => (
-        <div className="max-w-5xl mx-auto w-full">
-            <div className="flex justify-between items-center mb-6">
-                <div>
-                    <p className="text-xs uppercase tracking-widest text-orange-500 dark:text-orange-300">Migration Candidates</p>
-                    <h2 className="text-2xl font-semibold flex items-center gap-2 text-orange-600 dark:text-orange-400">
-                        <AlertCircle size={22} />
-                        Unmanaged Service Bundles
-                        {hasDiscovered && ` (${serviceBundles.length})`}
-                    </h2>
-                </div>
-                {hasDiscovered && (
-                    <button 
-                        onClick={discoverUnmanaged}
-                        disabled={discoveryLoading}
-                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg flex items-center gap-2 transition-colors disabled:opacity-60"
-                    >
-                        {discoveryLoading ? <RefreshCw size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                        {discoveryLoading ? 'Scanning...' : 'Rescan'}
-                    </button>
-                )}
-            </div>
-
-            {!hasDiscovered ? (
-                <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-8 text-center border border-gray-200 dark:border-gray-800">
-                    <p className="text-gray-600 dark:text-gray-400 mb-4">
-                        Scan your system for running containers that are not yet managed by ServiceBay.
-                    </p>
-                    <button
-                        onClick={discoverUnmanaged}
-                        disabled={discoveryLoading}
-                        className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg inline-flex items-center gap-2 transition-colors disabled:opacity-50"
-                    >
-                        {discoveryLoading ? <RefreshCw className="animate-spin" size={18} /> : <Search size={18} />}
-                        {discoveryLoading ? 'Scanning...' : 'Discover Unmanaged Services'}
-                    </button>
-                </div>
-            ) : serviceBundles.length === 0 ? (
-                <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-8 text-center border border-gray-200 dark:border-gray-800">
-                    <p className="text-gray-500 dark:text-gray-400">No unmanaged services found.</p>
-                    <button
-                        onClick={discoverUnmanaged}
-                        disabled={discoveryLoading}
-                        className="mt-4 text-sm text-blue-600 hover:underline disabled:opacity-60"
-                    >
-                        {discoveryLoading ? 'Scanning...' : 'Scan Again'}
-                    </button>
-                </div>
-            ) : (
-                <div className="grid gap-4">
-                    {serviceBundles.map(bundle => (
-                        <div key={bundle.id} className={`bg-white dark:bg-gray-900 border rounded-lg p-4 hover:shadow-md transition-all duration-200 ${bundleSeverityClasses[bundle.severity]}`}>
-                            <div className="flex justify-between items-start mb-3">
-                                <div className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-2">
-                                        <h3 className="font-bold text-lg break-all">{bundle.displayName}</h3>
-                                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
-                                            <Box size={14} /> {bundle.services.length} units
-                                        </span>
-                                        {bundle.nodeName && (
-                                            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
-                                                {bundle.nodeName}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="flex flex-wrap gap-2 text-xs text-gray-500 dark:text-gray-400">
-                                        <span>{bundle.containers.length} containers</span>
-                                        <span>• {bundle.assets.length} files</span>
-                                        <span>• {bundle.hints.length} hints</span>
-                                    </div>
-                                </div>
-                                <div className="flex gap-2">
-                                    <button 
-                                        onClick={() => openBundleWizard(bundle)}
-                                        className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg flex items-center gap-1 transition-colors"
-                                    >
-                                        Migrate <ArrowRight size={16} />
-                                    </button>
-                                    <button
-                                        onClick={() => setBundlePendingDelete(bundle)}
-                                        className="px-3 py-1.5 border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 text-sm rounded-lg flex items-center gap-1 transition-colors hover:bg-red-100 dark:hover:bg-red-900/30"
-                                        title="Delete bundle from node"
-                                    >
-                                        <Trash2 size={15} />
-                                        Delete
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
-                                <div className="flex gap-2">
-                                    <FileCode size={16} className="shrink-0 mt-0.5" />
-                                    <div className="flex flex-wrap gap-1">
-                                        {bundle.assets.slice(0, 4).map(asset => (
-                                            <span key={asset.path} className="px-2 py-0.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono truncate max-w-[180px]" title={asset.path}>
-                                                {asset.path.split('/').pop()}
-                                            </span>
-                                        ))}
-                                        {bundle.assets.length > 4 && (
-                                            <span className="text-xs text-gray-500">+{bundle.assets.length - 4} more</span>
-                                        )}
-                                    </div>
-                                </div>
-                                {bundle.hints.length > 0 && (
-                                    <div className="flex gap-2">
-                                        <AlertCircle size={16} className="shrink-0 mt-0.5 text-orange-500" />
-                                        <ul className="space-y-0.5 text-xs">
-                                            {bundle.hints.slice(0, 3).map((hint, idx) => (
-                                                <li key={idx} className="leading-snug">{hint}</li>
-                                            ))}
-                                            {bundle.hints.length > 3 && (
-                                                <li className="text-[10px] text-gray-500">+{bundle.hints.length - 3} more hints</li>
-                                            )}
-                                        </ul>
-                                    </div>
-                                )}
-                                {bundle.validations.length > 0 && (
-                                    <div className="flex flex-col gap-1">
-                                        {bundle.validations.map((validation, idx) => (
-                                            <div key={idx} className={`text-xs px-2 py-1 rounded border ${validation.level === 'error' ? 'border-red-200 text-red-700 bg-red-50 dark:border-red-900/50 dark:text-red-300 dark:bg-red-900/20' : validation.level === 'warning' ? 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:bg-amber-900/20' : 'border-green-200 text-green-700 bg-green-50 dark:border-green-900/50 dark:text-green-300 dark:bg-green-900/20'}`}>
-                                                {validation.message}
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
 
   return (
     <div className="h-full flex flex-col relative">
@@ -1395,45 +1466,30 @@ export default function ServicesPlugin() {
             </>
         }
       >
-        {activeTab === 'managed' ? (
-            <div className="relative flex-1 max-w-md min-w-[100px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input 
-                    type="text" 
-                    placeholder="Search..." 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-                />
-            </div>
-        ) : (
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-                Scan your nodes for unmanaged stacks and convert them into managed Quadlet services.
-            </p>
-        )}
+        <div className="relative flex-1 max-w-md min-w-[100px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input 
+                type="text" 
+                placeholder="Search services or bundles..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+            />
+        </div>
       </PageHeader>
 
-      <div className="px-4 md:px-6 border-b border-gray-200 dark:border-gray-800">
-          <div className="flex gap-1">
-              {(['managed', 'discover'] as ServiceTab[]).map((tab) => (
-                  <button
-                      key={tab}
-                      onClick={() => handleTabChange(tab)}
-                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                          activeTab === tab
-                              ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                      }`}
-                  >
-                      {tab === 'managed' ? 'Managed Services' : 'Discover Services'}
-                  </button>
-              ))}
-          </div>
+      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
+          {renderServiceContent()}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
-          {activeTab === 'managed' ? renderManagedContent() : renderDiscoverContent()}
-      </div>
+            {filePreview && (
+                <FileViewerOverlay
+                        isOpen={Boolean(filePreview)}
+                        path={filePreview.path}
+                        nodeName={filePreview.nodeName}
+                        onClose={closeFilePreview}
+                />
+            )}
 
       {/* Bundle Wizard */}
       {selectedBundle && (
@@ -1529,7 +1585,7 @@ export default function ServicesPlugin() {
                                     { label: 'Systemd Units', value: selectedBundle.services.length, caption: 'Unit files detected in this bundle', Icon: Box, accent: 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-200' },
                                     { label: 'Containers', value: selectedBundle.containers.length, caption: 'Runtime containers behind these units', Icon: Activity, accent: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-200' },
                                     { label: 'Config Files', value: selectedBundle.assets.length, caption: 'Files that will be migrated', Icon: FileCode, accent: 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-200' },
-                                    { label: 'Hints & Warnings', value: selectedBundle.hints.length + bundleValidations.length, caption: 'Signals to review before migrating', Icon: AlertCircle, accent: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-200' }
+                                    { label: 'Hints & Warnings', value: selectedBundleHints.length + bundleValidations.length, caption: 'Signals to review before migrating', Icon: AlertCircle, accent: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-200' }
                                 ].map(stat => {
                                     const Icon = stat.Icon;
                                     return (
@@ -1547,62 +1603,121 @@ export default function ServicesPlugin() {
                                 })}
                             </section>
 
-                            <section className="grid md:grid-cols-2 gap-4">
+                            <section className="grid gap-4">
                                 <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
-                                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">Systemd Units</h4>
+                                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">Systemd Units, Containers & Files</h4>
                                     <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                                        {selectedBundle.services.map(service => (
-                                            <li key={service.serviceName} className="flex items-start justify-between gap-3 border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 bg-white dark:bg-gray-950/40">
-                                                <div>
-                                                    <p className="font-medium text-gray-900 dark:text-gray-100">{service.serviceName}</p>
-                                                    <p className="text-xs text-gray-500 dark:text-gray-400">{service.sourcePath || service.unitFile || 'Unknown source'}</p>
-                                                </div>
-                                                <div className="text-right">
-                                                    <p className="text-xs text-gray-500">{service.containerIds.length} containers</p>
-                                                    {service.podId && (
-                                                        <p className="text-[11px] text-gray-400 font-mono">Pod: {service.podId.substring(0, 12)}</p>
-                                                    )}
-                                                </div>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                                <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
-                                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">Containers & Images</h4>
-                                    {selectedBundle.containers.length === 0 ? (
-                                        <p className="text-sm text-gray-500">No containers detected for this bundle.</p>
-                                    ) : (
-                                        <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400 max-h-56 overflow-y-auto pr-1">
-                                            {selectedBundle.containers.map(container => (
-                                                <li key={container.id} className="flex flex-col border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 bg-white dark:bg-gray-950/40">
-                                                    <span className="font-medium text-gray-900 dark:text-gray-100">{container.name}</span>
-                                                    <span className="text-xs text-gray-500">{container.image}</span>
-                                                    {container.ports.length > 0 && (
-                                                        <span className="text-xs mt-1">Ports: {container.ports.map(port => `${port.hostPort || port.containerPort}/${port.protocol || 'tcp'}`).join(', ')}</span>
-                                                    )}
+                                        {selectedBundle.services.map(service => {
+                                            const path = service.sourcePath || service.unitFile || '';
+                                            const attachedContainers = (service.containerIds || [])
+                                                .map(containerId => containersById.get(containerId))
+                                                .filter((container): container is BundleContainerSummary => Boolean(container));
+                                            const podShortId = service.podId ? service.podId.substring(0, 12) : null;
+                                            return (
+                                                <li key={service.serviceName} className="border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 bg-white dark:bg-gray-950/40">
+                                                    <div className="flex flex-col gap-1">
+                                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                                            <p className="font-medium text-gray-900 dark:text-gray-100">{service.serviceName}</p>
+                                                        </div>
+                                                        <div className="flex flex-col gap-0.5">
+                                                            <span className="text-[11px] font-semibold tracking-wide uppercase text-gray-400 dark:text-gray-500">Config File:</span>
+                                                            {path ? (
+                                                                <FileBadge path={path} nodeName={selectedBundle.nodeName} variant="inline" />
+                                                            ) : (
+                                                                <span className="text-xs text-gray-500 dark:text-gray-400">Unknown source</span>
+                                                            )}
+                                                        </div>
+                                                        {attachedContainers.length > 0 && (
+                                                            <div className="mt-2 space-y-2">
+                                                                {attachedContainers.map((container, containerIndex) => (
+                                                                    <div key={container.id} className="space-y-2">
+                                                                        <div className="flex flex-col gap-0.5">
+                                                                            <span className="text-[11px] font-semibold tracking-wide uppercase text-gray-400 dark:text-gray-500">Container Image:</span>
+                                                                            <span className="text-xs font-mono text-gray-700 dark:text-gray-200 block whitespace-normal break-all" title={container.image}>
+                                                                                {container.image}
+                                                                            </span>
+                                                                        </div>
+                                                                        {(container.ports.length > 0 || (containerIndex === 0 && podShortId)) && (
+                                                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                                                {container.ports.map((port, portIdx) => {
+                                                                                    const protocol = (port.protocol || 'tcp').toLowerCase();
+                                                                                    const hostValue = typeof port.hostPort !== 'undefined' && port.hostPort !== null ? String(port.hostPort) : undefined;
+                                                                                    const containerValue = typeof port.containerPort !== 'undefined' && port.containerPort !== null ? String(port.containerPort) : undefined;
+                                                                                    const display = hostValue ? `:${hostValue}` : `${containerValue || '—'}/${protocol}`;
+                                                                                    const href = hostValue ? `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${hostValue}` : '#';
+                                                                                    const title = hostValue
+                                                                                        ? containerValue
+                                                                                            ? `Host ${hostValue} → Container ${containerValue}/${protocol}`
+                                                                                            : `Host port ${hostValue}/${protocol}`
+                                                                                        : `Container port ${containerValue || 'unknown'}/${protocol}`;
+                                                                                    return (
+                                                                                        <a
+                                                                                            key={`${container.id}-${display}-${portIdx}`}
+                                                                                            href={href}
+                                                                                            target={hostValue ? '_blank' : undefined}
+                                                                                            rel={hostValue ? 'noopener noreferrer' : undefined}
+                                                                                            className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-colors ${
+                                                                                                hostValue
+                                                                                                    ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                                                                                    : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800/30'
+                                                                                            }`}
+                                                                                            title={title}
+                                                                                            onClick={event => {
+                                                                                                if (!hostValue) {
+                                                                                                    event.preventDefault();
+                                                                                                }
+                                                                                            }}
+                                                                                        >
+                                                                                            {display}
+                                                                                        </a>
+                                                                                    );
+                                                                                })}
+                                                                                {containerIndex === 0 && podShortId && (
+                                                                                    <span className="px-2 py-0.5 rounded text-[11px] font-mono border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300">
+                                                                                        Pod {podShortId}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {attachedContainers.length === 0 && podShortId && (
+                                                            <div className="mt-2">
+                                                                <span className="px-2 py-0.5 rounded text-[11px] font-mono border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300">
+                                                                    Pod {podShortId}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </li>
-                                            ))}
-                                        </ul>
-                                    )}
+                                            );
+                                        })}
+                                    </ul>
                                 </div>
                             </section>
 
                             <section className="grid md:grid-cols-2 gap-4">
-                                <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Config Files</h4>
-                                    <ul className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400 max-h-40 overflow-y-auto">
-                                        {selectedBundle.assets.map(asset => (
-                                            <li key={asset.path} className="px-2 py-1 bg-gray-50 dark:bg-gray-950 rounded border border-gray-200 dark:border-gray-800">{asset.path}</li>
-                                        ))}
-                                    </ul>
-                                </div>
+                                {extraConfigAssets.length > 0 && (
+                                    <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
+                                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Additional Config Files</h4>
+                                        <ul className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400 max-h-40 overflow-y-auto">
+                                            {extraConfigAssets.map(asset => (
+                                                <li key={asset.path}>
+                                                    <FileBadge path={asset.path} nodeName={selectedBundle.nodeName} variant="list" />
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
                                 <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
                                     <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Merge Hints</h4>
-                                    {selectedBundle.hints.length === 0 ? (
+                                    {selectedBundleHints.length === 0 ? (
                                         <p className="text-sm text-gray-500">No additional hints from discovery.</p>
                                     ) : (
                                         <ul className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
-                                            {selectedBundle.hints.map((hint, idx) => (
+                                            {selectedBundleHints.map((hint, idx) => (
                                                 <li key={idx} className="flex items-start gap-2">
                                                     <AlertCircle size={14} className="text-amber-500 mt-0.5" />
                                                     <span>{hint}</span>
@@ -1701,7 +1816,9 @@ export default function ServicesPlugin() {
                                             <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Referenced Config Files</h4>
                                             <ul className="text-xs font-mono text-gray-600 dark:text-gray-400 space-y-1">
                                                 {bundleStackArtifacts.configPaths.map(path => (
-                                                    <li key={path} className="px-2 py-1 bg-gray-50 dark:bg-gray-900/40 rounded border border-gray-200 dark:border-gray-800">{path}</li>
+                                                    <li key={path}>
+                                                        <FileBadge path={path} nodeName={selectedBundle?.nodeName} variant="list" />
+                                                    </li>
                                                 ))}
                                             </ul>
                                         </section>
@@ -1738,7 +1855,9 @@ export default function ServicesPlugin() {
                                             <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Files To Create</h5>
                                             <ul className="text-xs font-mono space-y-1">
                                                 {bundlePlan.filesToCreate.map(file => (
-                                                    <li key={file} className="px-2 py-1 bg-gray-50 dark:bg-gray-900/40 rounded">{file}</li>
+                                                    <li key={file}>
+                                                        <FileBadge path={file} nodeName={selectedBundle?.nodeName} variant="list" />
+                                                    </li>
                                                 ))}
                                             </ul>
                                         </div>
@@ -1749,7 +1868,9 @@ export default function ServicesPlugin() {
                                                     <li className="text-gray-500">No overwrites expected.</li>
                                                 ) : (
                                                     bundlePlan.filesToBackup.map(file => (
-                                                        <li key={file} className="px-2 py-1 bg-gray-50 dark:bg-gray-900/40 rounded">{file}</li>
+                                                        <li key={file}>
+                                                            <FileBadge path={file} nodeName={selectedBundle?.nodeName} variant="list" />
+                                                        </li>
                                                     ))
                                                 )}
                                             </ul>
@@ -1769,9 +1890,17 @@ export default function ServicesPlugin() {
                                                 <tbody>
                                                     {bundlePlan.fileMappings.map((mapping, idx) => (
                                                         <tr key={`${mapping.source}-${idx}`} className="border-t border-gray-200 dark:border-gray-800">
-                                                            <td className="py-1 pr-2 font-mono">{mapping.source}</td>
+                                                            <td className="py-1 pr-2">
+                                                                <FileBadge path={mapping.source} nodeName={selectedBundle?.nodeName} variant="inline" />
+                                                            </td>
                                                             <td className="py-1 capitalize">{mapping.action}</td>
-                                                            <td className="py-1 font-mono">{mapping.target || '—'}</td>
+                                                            <td className="py-1">
+                                                                {mapping.target ? (
+                                                                    <FileBadge path={mapping.target} nodeName={selectedBundle?.nodeName} variant="inline" />
+                                                                ) : (
+                                                                    <span className="text-gray-500">—</span>
+                                                                )}
+                                                            </td>
                                                         </tr>
                                                     ))}
                                                 </tbody>

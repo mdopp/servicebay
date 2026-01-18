@@ -159,8 +159,10 @@ export function Select({
                 <li
                   key={option.value}
                   onClick={() => handleSelect(option)}
+                  role="option"
+                  aria-selected={isSelected}
+                  aria-disabled={option.disabled || undefined}
                   className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition hover:bg-gray-50 dark:hover:bg-gray-800 ${option.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  aria-disabled={option.disabled}
                 >
                   {renderIcon(option)}
                   <div className="flex-1 min-w-0">

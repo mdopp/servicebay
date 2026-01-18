@@ -469,7 +469,7 @@ export default function SettingsPage() {
     } finally {
       setBusy(false);
     }
-  }, [addToast, checkConnection, editNode, createNode, getNodes, setSshModalDefaults]);
+  }, [addToast, setSshModalDefaults]);
 
   const handleAddRegistry = () => {
     if (newRegName && newRegUrl) {
