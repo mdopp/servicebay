@@ -21,7 +21,7 @@ describe('Sidebar', () => {
 
     it('renders expanded by default on desktop', () => {
         render(<Sidebar />);
-        expect(screen.getByText('Containers')).toBeDefined();
+        expect(screen.getByText('Container Engine')).toBeDefined();
         expect(screen.getByTitle('Collapse Sidebar')).toBeDefined();
     });
 
@@ -32,7 +32,7 @@ describe('Sidebar', () => {
         fireEvent.click(toggleBtn);
 
         await waitFor(() => {
-             expect(screen.queryByText('Containers')).toBeNull();
+             expect(screen.queryByText('Container Engine')).toBeNull();
              expect(screen.getByTitle('Expand Sidebar')).toBeDefined();
         });
     });
@@ -44,7 +44,7 @@ describe('Sidebar', () => {
         // We can check if the button contains the icon or has active class.
         // Or find by text 'Containers' and check parent button.
         
-        const text = screen.getByText('Containers');
+        const text = screen.getByText('Container Engine');
         const button = text.closest('button');
         expect(button).toBeDefined();
         
@@ -67,7 +67,7 @@ describe('Sidebar', () => {
         render(<Sidebar />);
         
         // Should be collapsed initially
-        expect(screen.queryByText('Containers')).toBeNull();
+        expect(screen.queryByText('Container Engine')).toBeNull();
         expect(screen.getByTitle('Expand Sidebar')).toBeDefined();
     });
 });

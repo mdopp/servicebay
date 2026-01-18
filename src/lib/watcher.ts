@@ -2,10 +2,37 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 
 const SYSTEMD_DIR = path.join(os.homedir(), '.config/containers/systemd');
+const PODMAN_EVENT_PATTERNS = [
+  'podman events --format json --filter type=container',
+  'podman events --format json'
+];
+
+let hasCleanedOrphanedPodmanWatchers = false;
+
+const cleanupOrphanedPodmanWatchers = () => {
+  if (hasCleanedOrphanedPodmanWatchers) return;
+  hasCleanedOrphanedPodmanWatchers = true;
+
+  if (process.platform === 'win32') return;
+
+  PODMAN_EVENT_PATTERNS.forEach(pattern => {
+    try {
+      const result = spawnSync('pkill', ['-TERM', '-f', pattern], { stdio: 'ignore' });
+      if (result.status === 0) {
+        console.log(`[Watcher] Cleaned leftover Podman watcher (${pattern})`);
+      }
+    } catch (error) {
+      // Ignore missing pkill binaries but surface other issues for troubleshooting
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error(`[Watcher] Failed to clean Podman watchers for pattern "${pattern}":`, error);
+      }
+    }
+  });
+};
 
 // Singleton to manage event emitters across hot reloads in dev
 declare global {
@@ -49,6 +76,8 @@ class ServiceWatcher extends EventEmitter {
   }
 
   private startPodmanWatcher() {
+    cleanupOrphanedPodmanWatchers();
+
     // Monitor container events to detect starts, stops, failures
     this.podmanProcess = spawn('podman', ['events', '--format', 'json', '--filter', 'type=container']);
 

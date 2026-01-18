@@ -4,7 +4,36 @@ import { EnrichedContainer, ServiceUnit, SystemResources, Volume, WatchedFile, P
 import { logger } from '../logger';
 import type { AgentHealth } from '../agent/handler';
 import type { ServiceBundle } from '../unmanaged/bundleShared';
+import { sanitizeBundleName } from '../unmanaged/bundleShared';
 import { buildServiceBundlesForNode } from '../unmanaged/bundleBuilder';
+
+const normalizeNameToken = (value?: string | null): string | null => {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const stripped = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed;
+    let normalized = sanitizeBundleName(stripped);
+    if (!normalized) return null;
+    normalized = normalized.replace(/^systemd-/, '');
+    normalized = normalized.replace(/-pod$/, '');
+    return normalized || null;
+};
+
+const collectContainerNameTokens = (container: EnrichedContainer): string[] => {
+    const tokens = new Set<string>();
+    const register = (value?: string | null) => {
+        const normalized = normalizeNameToken(value);
+        if (normalized) tokens.add(normalized);
+    };
+    register(container.podName);
+    if (container.labels) {
+        register(container.labels['io.podman.pod.name']);
+        register(container.labels['io.kubernetes.pod.name']);
+        register(container.labels['io.podman.compose.project']);
+    }
+    (container.names || []).forEach(name => register(name));
+    return Array.from(tokens);
+};
 
 export interface MigrationHistoryEntry {
     id: string;
@@ -209,6 +238,13 @@ export class DigitalTwinStore {
     // CONSISTENCY ENFORCEMENT: Link Services to Containers
     const targetServices = data.services || this.nodes[nodeId]?.services || [];
     const targetContainers = data.containers || this.nodes[nodeId]?.containers || [];
+    const containerNameTokenCache = new Map<string, string[]>();
+    const getContainerTokens = (container: EnrichedContainer): string[] => {
+        if (!containerNameTokenCache.has(container.id)) {
+            containerNameTokenCache.set(container.id, collectContainerNameTokens(container));
+        }
+        return containerNameTokenCache.get(container.id)!;
+    };
 
     if (targetServices.length > 0 && targetContainers.length > 0) {
         targetServices.forEach(s => {
@@ -238,6 +274,19 @@ export class DigitalTwinStore {
                  ...podMatches.map(c => c.id),
                  ...nameMatches.map(c => c.id)
              ]);
+
+             if (allIds.size === 0 && s.isManaged) {
+                 const normalizedService = normalizeNameToken(s.name);
+                 if (normalizedService) {
+                     targetContainers.forEach(container => {
+                         const tokens = getContainerTokens(container);
+                         const matchesToken = tokens.some(token => token === normalizedService || token.startsWith(`${normalizedService}-`));
+                         if (matchesToken) {
+                             allIds.add(container.id);
+                         }
+                     });
+                 }
+             }
              
              s.associatedContainerIds = Array.from(allIds);
         });

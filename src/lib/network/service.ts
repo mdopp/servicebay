@@ -551,6 +551,14 @@ export class NetworkService {
          return { nodes: [], edges: [] };
     }
 
+    const containerServiceOwners = new Map<string, string>();
+    services?.forEach(service => {
+        (service.associatedContainerIds || []).forEach(id => {
+            if (!id) return;
+            containerServiceOwners.set(id, prefix(`service-${service.name}`));
+        });
+    });
+
     const nodeIPs = nodeIPsResult;
     // getEnrichedContainers returns [containers, inspects]
     // The lists are already populated above
@@ -566,6 +574,8 @@ export class NetworkService {
     // But we still need containerToPid map for service port logic below.
      
     const containerToPid = new Map<string, number>();
+    const bundleContainerOwners = new Map<string, string>();
+    const bundleServiceOwners = new Map<string, string>();
 
     // Collect PIDs for internal mapping (Iterate ALL containers, no guessing)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -635,6 +645,15 @@ export class NetworkService {
     let nginxConfig = { servers: [] as any[] }; // eslint-disable-line @typescript-eslint/no-explicit-any
     let verifiedDomains: string[] = [];
     const containerUrlMapping = new Map<string, Set<string>>();
+    const unmanagedBundles = Array.isArray(twinNode.unmanagedBundles) ? twinNode.unmanagedBundles : [];
+    const unmanagedBundleContainerIndex = new Map<string, string>();
+    unmanagedBundles.forEach(bundle => {
+        const bundleNodeId = prefix(`bundle-${bundle.id}`);
+        (bundle.containers || []).forEach(containerSummary => {
+            if (!containerSummary?.id) return;
+            unmanagedBundleContainerIndex.set(containerSummary.id, bundleNodeId);
+        });
+    });
 
     const isLocalTargetHost = (host?: string): boolean => {
         if (!host) return false;
@@ -938,6 +957,92 @@ export class NetworkService {
         nodes.push(NodeFactory.createServiceNode(serviceGroupId, serviceRawData, nodeName, serviceMetadata));
     }
 
+    // 2b. Unmanaged Service Bundles (Standalone)
+    for (const bundle of unmanagedBundles) {
+        const bundleId = prefix(`bundle-${bundle.id}`);
+        const normalizedPorts: GraphPortMapping[] = (bundle.ports || []).map(port => {
+            const hostPort = typeof port.hostPort === 'number' ? port.hostPort : (typeof port.containerPort === 'number' ? port.containerPort : 0);
+            const containerPort = typeof port.containerPort === 'number' ? port.containerPort : hostPort;
+            return {
+                host: hostPort,
+                container: containerPort,
+                hostIp: port.hostIp || '0.0.0.0',
+                protocol: port.protocol || 'tcp'
+            };
+        });
+
+        const bundleRawData = {
+            ...bundle,
+            name: bundle.displayName,
+            type: 'unmanaged-service',
+            isRunning: bundle.containers?.some(c => (c.state || '').toLowerCase() === 'running') ?? false,
+            ports: normalizedPorts
+        };
+
+        const bundleMetadata = {
+            source: 'Unmanaged Discovery',
+            severity: bundle.severity,
+            hints: bundle.hints,
+            nodeHost,
+            nodeIPs,
+            bundleId: bundle.id,
+            validations: bundle.validations?.length || 0
+        };
+
+        const bundleDomainUrls = new Set<string>();
+        (bundle.containers || []).forEach(containerSummary => {
+            if (!containerSummary?.id) return;
+            const containerNodeId = prefix(containerSummary.id);
+            const urlSet = containerUrlMapping.get(containerNodeId);
+            if (!urlSet) return;
+            urlSet.forEach(url => bundleDomainUrls.add(url));
+        });
+
+        if (bundleDomainUrls.size > 0) {
+            bundleMetadata.verifiedDomains = Array.from(bundleDomainUrls);
+        }
+
+        const bundleNode = NodeFactory.createUnmanagedBundleNode(bundleId, bundleRawData, nodeName, bundleMetadata);
+
+        nodes.push(bundleNode);
+
+        if (Array.isArray(bundle.containers)) {
+            bundle.containers.forEach(containerSummary => {
+                if (containerSummary.id) {
+                    bundleContainerOwners.set(containerSummary.id, bundleId);
+                }
+            });
+        }
+
+        if (Array.isArray(bundle.services)) {
+            bundle.services.forEach(serviceRef => {
+                if (!serviceRef?.serviceName) return;
+                const variants = new Set<string>();
+                const rawName = serviceRef.serviceName;
+                variants.add(prefix(`service-${rawName}`));
+                const trimmed = rawName.replace(/\.(service|container|pod)$/i, '');
+                if (trimmed && trimmed !== rawName) {
+                    variants.add(prefix(`service-${trimmed}`));
+                }
+                variants.forEach(serviceId => bundleServiceOwners.set(serviceId, bundleId));
+            });
+        }
+    }
+
+    if (bundleServiceOwners.size > 0) {
+        nodes.forEach(node => {
+            if (node.type !== 'service') return;
+            const parentBundleId = bundleServiceOwners.get(node.id);
+            if (!parentBundleId) return;
+            node.parentNode = parentBundleId;
+            node.extent = 'parent';
+            node.metadata = {
+                ...(node.metadata || {}),
+                source: 'Unmanaged Bundle'
+            };
+        });
+    }
+
     // 3. Gateway -> Service Edges (Port Forwarding & Verified Domains)
     // We iterate ALL services to see if they are exposed via the Gateway (FritzBox)
     // Exposure logic:
@@ -1072,8 +1177,13 @@ export class NetworkService {
     // 4. Nginx -> Containers (Only if Nginx is on this node)
     if (nginxContainer) { 
         for (const server of nginxConfig.servers) {
-            // Find verified domains for this server block
-            const serverDomains = server.server_name.filter((name: string) => verifiedDomains.includes(name));
+            // Find verified domains for this server block; fall back to configured domains if verification skipped
+            const serverDomains = server.server_name.filter((name: string) => {
+                if (!Array.isArray(verifiedDomains) || verifiedDomains.length === 0) {
+                    return true;
+                }
+                return verifiedDomains.includes(name);
+            });
             
             for (const loc of server.locations) {
                 // Prioritize explicit structured data from Twin Store
@@ -1198,6 +1308,10 @@ export class NetworkService {
                             }
                         }
 
+                        if (!targetContainer && containerWithMapping) {
+                            targetContainer = containerWithMapping;
+                        }
+
                         if (internalPort > 0 && !targetContainer) {
                             // 2. Find the container that exposes this internal port
                              
@@ -1267,9 +1381,12 @@ export class NetworkService {
                              }
                         }
 
-                        let targetId = targetContainer ? prefix(targetContainer.id) : null;
+                        const containerNodeId = targetContainer ? prefix(targetContainer.id) : null;
+                        const parentBundleId = targetContainer ? unmanagedBundleContainerIndex.get(targetContainer.id) || null : null;
+                        const parentServiceId = targetContainer ? containerServiceOwners.get(targetContainer.id) || null : null;
+                        let targetId = parentServiceId || parentBundleId || containerNodeId;
 
-                        if (!targetId && targetHost) {
+                        if (!parentBundleId && targetHost) {
                             const serviceMatch = findServiceByHostPort(targetHost, targetPort);
                             if (serviceMatch) {
                                 targetId = prefix(`service-${serviceMatch.name}`);
@@ -1416,20 +1533,25 @@ export class NetworkService {
                                 });
                             }
 
-                            // Add URLs to mapping
-                            if (!containerUrlMapping.has(targetId)) {
-                                containerUrlMapping.set(targetId, new Set());
-                            }
-                            const urlSet = containerUrlMapping.get(targetId)!;
-                            
-                            for (const domain of serverDomains) {
-                                // Construct URL: http(s)://domain/path
-                                // Check if ssl is enabled for this server
-                                const isSsl = server.listen.some((l: string) => l.includes('443') || l.includes('ssl'));
-                                const protocol = isSsl ? 'https' : 'http';
-                                const path = loc.path === '/' ? '' : loc.path;
-                                urlSet.add(`${protocol}://${domain}${path}`);
-                            }
+                            const mappingTargets = new Set<string>();
+                            if (targetId) mappingTargets.add(targetId);
+                            if (containerNodeId) mappingTargets.add(containerNodeId);
+                            if (parentBundleId) mappingTargets.add(parentBundleId);
+                            if (parentServiceId) mappingTargets.add(parentServiceId);
+
+                            mappingTargets.forEach(recipientId => {
+                                if (!recipientId) return;
+                                if (!containerUrlMapping.has(recipientId)) {
+                                    containerUrlMapping.set(recipientId, new Set());
+                                }
+                                const urlSet = containerUrlMapping.get(recipientId)!;
+
+                                for (const domain of serverDomains) {
+                                    const cleanedDomain = domain.replace(/^https?:\/\//i, '').split('/')[0];
+                                    if (!cleanedDomain) continue;
+                                    urlSet.add(cleanedDomain);
+                                }
+                            });
                         }
                     }
                 }
@@ -1635,6 +1757,11 @@ export class NetworkService {
             serviceGroupId = isProxyService ? nginxId : prefix(`service-${parentService.name}`);
         }
 
+        const bundleParentId = bundleContainerOwners.get(container.id);
+        if (!serviceGroupId && bundleParentId) {
+            serviceGroupId = bundleParentId;
+        }
+
         // Add Pod info to metadata
         if (podName) {
             if (!node.metadata) node.metadata = {};
@@ -1646,7 +1773,11 @@ export class NetworkService {
         if (serviceGroupId) {
             node.parentNode = serviceGroupId;
             node.extent = 'parent';
-            if (node.metadata) node.metadata.source = 'Managed Service';
+            if (node.metadata) {
+                node.metadata.source = (bundleParentId && serviceGroupId === bundleParentId)
+                    ? 'Unmanaged Bundle'
+                    : 'Managed Service';
+            }
             
             // Note: Container is visually inside the Service Node. No explicit edge needed.
         } else if (podName) {

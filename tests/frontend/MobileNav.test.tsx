@@ -33,8 +33,8 @@ describe('MobileNav', () => {
     it('MobileBottomBar renders plugins except Settings', () => {
         render(<MobileBottomBar />);
         
-        // Should show Containers (via title)
-        expect(screen.getByTitle('Containers')).toBeDefined();
+        // Should show Container Engine (via title)
+        expect(screen.getByTitle('Container Engine')).toBeDefined();
         // Should show Network
         expect(screen.getByTitle('Network Map')).toBeDefined();
         
@@ -52,7 +52,7 @@ describe('MobileNav', () => {
         expect(networkBtn.className).toContain('text-blue-600');
         
         // Inactive
-        const containersBtn = screen.getByTitle('Containers');
+        const containersBtn = screen.getByTitle('Container Engine');
         expect(containersBtn.className).not.toContain('text-blue-600');
     });
 });

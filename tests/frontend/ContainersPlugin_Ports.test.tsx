@@ -7,7 +7,9 @@ import { DigitalTwinSnapshot } from '../../src/providers/DigitalTwinProvider';
 // Mocks
 const mockUseRouter = vi.fn(() => ({ push: vi.fn() }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => mockUseRouter(),
+    useRouter: () => mockUseRouter(),
+    usePathname: () => '/containers',
+    useSearchParams: () => new URLSearchParams()
 }));
 
 vi.mock('../../src/providers/ToastProvider', () => ({

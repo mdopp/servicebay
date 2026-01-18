@@ -160,6 +160,62 @@ describe('Network Graph Generation', () => {
         expect(edge?.port).toBe(2010);
     });
 
+    it('should surface unmanaged bundles as standalone service nodes', async () => {
+        const twinStore = DigitalTwinStore.getInstance() as any;
+        const localNode = twinStore.nodes['Local'];
+
+        const unmanagedContainer = {
+            id: 'abc123',
+            names: ['/compose-app'],
+            image: 'ghcr.io/example/app:latest',
+            state: 'running',
+            status: 'running',
+            ports: [{ hostPort: 8080, containerPort: 8080, protocol: 'tcp', hostIp: '0.0.0.0' }],
+            labels: {},
+            podName: null,
+            podId: undefined,
+            isInfra: false,
+            networks: ['podman'],
+            created: Date.now() / 1000
+        };
+
+        localNode.containers = [unmanagedContainer];
+        localNode.services = [];
+        localNode.unmanagedBundles = [{
+            id: 'compose-app',
+            displayName: 'compose-app',
+            derivedName: 'compose-app',
+            nodeName: 'Local',
+            severity: 'warning',
+            hints: [],
+            validations: [],
+            services: [],
+            containers: [{
+                id: 'abc123',
+                name: 'compose-app',
+                image: 'ghcr.io/example/app:latest',
+                ports: [{ hostPort: 8080, containerPort: 8080, protocol: 'tcp', hostIp: '0.0.0.0' }]
+            }],
+            ports: [{ hostPort: 8080, containerPort: 8080, protocol: 'tcp', hostIp: '0.0.0.0' }],
+            assets: [],
+            graph: []
+        }];
+
+        const graph = await service.getGraph('Local');
+
+        const bundleNode = graph.nodes.find(n => n.type === 'unmanaged-service');
+        expect(bundleNode).toBeDefined();
+        expect(bundleNode?.rawData?.name).toBe('compose-app');
+
+        const unmanagedGroup = graph.nodes.find(n => n.id.includes('group-unmanaged-services'));
+        expect(unmanagedGroup).toBeUndefined();
+        expect(bundleNode?.parentNode).toBeUndefined();
+
+        const containerNode = graph.nodes.find(n => n.id.includes('abc123'));
+        expect(containerNode).toBeDefined();
+        expect(containerNode?.parentNode).toBe(bundleNode?.id);
+    });
+
     it('should connect proxy routes to services when targets use host IPs', async () => {
         const twinStore = DigitalTwinStore.getInstance() as any;
         const localNode = twinStore.nodes['Local'];
@@ -217,6 +273,85 @@ describe('Network Graph Generation', () => {
 
         expect(proxyEdge).toBeDefined();
         expect(proxyEdge?.label).toBe(':2001');
+    });
+
+    it('should connect proxy routes directly to unmanaged bundles when containers lack services', async () => {
+        const twinStore = DigitalTwinStore.getInstance() as any;
+        const localNode = twinStore.nodes['Local'];
+
+        localNode.proxy = [{
+            host: 'vault.dopp.cloud',
+            targetService: '192.168.178.99',
+            targetPort: 8080,
+            ssl: true
+        }];
+
+        localNode.services = [
+            {
+                name: 'nginx-web',
+                active: true,
+                isPrimaryProxy: true,
+                associatedContainerIds: ['nginx-container'],
+                ports: [{ hostPort: 80, containerPort: 80, protocol: 'tcp', hostIp: '0.0.0.0' }],
+                proxyConfiguration: {
+                    servers: [{
+                        server_name: ['vault.dopp.cloud'],
+                        listen: ['443 ssl', '80'],
+                        locations: [{ path: '/', proxy_pass: 'http://192.168.178.99:8080' }]
+                    }]
+                }
+            }
+        ];
+
+        localNode.containers = [
+            {
+                id: 'nginx-container',
+                names: ['/nginx-web'],
+                labels: { 'servicebay.role': 'reverse-proxy' },
+                state: 'running',
+                ports: [{ hostPort: 80, containerPort: 80, protocol: 'tcp', hostIp: '0.0.0.0' }]
+            },
+            {
+                id: 'vault-container',
+                names: ['/vaultwarden'],
+                state: 'running',
+                ports: [{ hostPort: 8080, containerPort: 80, protocol: 'tcp', hostIp: '192.168.178.99' }],
+                labels: { 'io.podman.pod.name': 'pod_vaultwarden' }
+            }
+        ];
+
+        localNode.unmanagedBundles = [{
+            id: 'vault-bundle',
+            displayName: 'Vaultwarden',
+            derivedName: 'vault-bundle',
+            nodeName: 'Local',
+            severity: 'warning',
+            hints: [],
+            validations: [],
+            services: [],
+            containers: [{
+                id: 'vault-container',
+                name: 'vaultwarden',
+                image: 'docker.io/vaultwarden/server:latest',
+                ports: [{ hostPort: 8080, containerPort: 80, protocol: 'tcp', hostIp: '192.168.178.99' }]
+            }],
+            ports: [{ hostPort: 8080, containerPort: 80, protocol: 'tcp', hostIp: '192.168.178.99' }],
+            assets: [],
+            graph: []
+        }];
+
+        const graph = await service.getGraph('Local');
+        const bundleNode = graph.nodes.find(n => n.type === 'unmanaged-service' && n.rawData?.name === 'Vaultwarden');
+        expect(bundleNode).toBeDefined();
+        const bundleDomains = (bundleNode?.metadata?.verifiedDomains || []) as string[];
+        expect(bundleDomains).toContain('vault.dopp.cloud');
+
+        const proxyEdge = graph.edges.find((e) =>
+            e.source.includes('group-nginx') && e.target === bundleNode?.id
+        );
+
+        expect(proxyEdge).toBeDefined();
+        expect(proxyEdge?.label).toBe(':8080');
     });
 
     it('should link proxy routes to configured external links when no managed service exists', async () => {

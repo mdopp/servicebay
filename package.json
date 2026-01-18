@@ -3,6 +3,7 @@
   "version": "0.8.0",
   "private": true,
   "scripts": {
+    "predev": "tsx scripts/pre-dev-cleanup.ts",
     "dev": "fuser -k 3000/tcp || true && tsx server.ts",
     "build": "next build",
     "start": "NODE_ENV=production tsx server.ts",

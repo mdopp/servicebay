@@ -107,26 +107,104 @@ const summarizeService = (
 const collectAssets = (service: ServiceUnit, files: Record<string, WatchedFile>): BundleAsset[] => {
   const assets: BundleAsset[] = [];
   const candidates = new Set<string>();
-  
-  // Only add explicitly referenced paths from the service
-  if (service.path) candidates.add(service.path);
-  if (service.fragmentPath) candidates.add(service.fragmentPath);
-  
-  // REMOVED: Fuzzy filename matching logic
-  // We now ONLY collect files that are explicitly referenced by the service
-  // No more guessing based on filename similarities
-  
+
   const fileList = Object.values(files);
-  const mapByPath = new Map(fileList.map(file => [file.path, file] as const));
+  const mapByPath = new Map<string, WatchedFile>();
+  const normalizedPathLookup = new Map<string, string>();
+  fileList.forEach(file => {
+    mapByPath.set(file.path, file);
+    normalizedPathLookup.set(path.normalize(file.path), file.path);
+  });
+
+  const findExistingPath = (candidate?: string | null): string | null => {
+    if (!candidate) return null;
+    if (mapByPath.has(candidate)) return candidate;
+    const normalized = path.normalize(candidate);
+    const actual = normalizedPathLookup.get(normalized);
+    return actual || null;
+  };
+
+  const addPrimaryCandidate = (candidate?: string | null) => {
+    if (!candidate) return;
+    candidates.add(candidate);
+  };
+
+  const queue: string[] = [];
+  const visited = new Set<string>();
+
+  const enqueueExistingFile = (filePath?: string | null) => {
+    const resolved = findExistingPath(filePath);
+    if (!resolved || visited.has(resolved)) return;
+    visited.add(resolved);
+    queue.push(resolved);
+    candidates.add(resolved);
+  };
+
+  // Always include the direct service paths even if the file wasn't captured yet
+  addPrimaryCandidate(service.path);
+  addPrimaryCandidate(service.fragmentPath);
+
+  // Seed traversal with whichever file we can actually read
+  enqueueExistingFile(service.fragmentPath || service.path);
+
+  while (queue.length > 0) {
+    const currentPath = queue.shift()!;
+    const file = mapByPath.get(currentPath);
+    if (!file?.content) continue;
+    let directives;
+    try {
+      directives = parseQuadletFile(file.content);
+    } catch {
+      continue;
+    }
+
+    const currentDir = path.dirname(currentPath);
+    const currentExt = path.extname(currentPath).toLowerCase();
+    const currentStem = path.basename(currentPath, currentExt);
+
+    const enqueueSibling = (extension: string) => {
+      if (!extension) return;
+      const candidate = path.join(currentDir, `${currentStem}.${extension}`);
+      enqueueExistingFile(candidate);
+    };
+
+    if (currentExt === '.pod') {
+      enqueueSibling('kube');
+    } else if (currentExt === '.kube') {
+      enqueueSibling('pod');
+    }
+
+    const addRelativeReference = (reference?: string | null, fallbackExts: string[] = []) => {
+      if (!reference) return;
+      const trimmed = reference.trim();
+      if (!trimmed) return;
+      const nameCandidates = new Set<string>([trimmed]);
+      fallbackExts.forEach(ext => {
+        const lower = trimmed.toLowerCase();
+        if (!lower.endsWith(`.${ext}`)) {
+          nameCandidates.add(`${trimmed}.${ext}`);
+        }
+      });
+
+      nameCandidates.forEach(name => {
+        const target = path.isAbsolute(name) ? name : path.join(currentDir, name);
+        enqueueExistingFile(target);
+      });
+    };
+
+    addRelativeReference(directives?.pod || service.podReference, ['pod']);
+    addRelativeReference(directives?.kubeYaml, ['yml', 'yaml']);
+  }
 
   candidates.forEach(candidate => {
-    const file = mapByPath.get(candidate);
+    const resolved = mapByPath.get(candidate);
     assets.push({
       path: candidate,
       kind: assetKindFromPath(candidate),
-      modified: file?.modified
+      modified: resolved?.modified
     });
   });
+
   return assets;
 };
 
@@ -181,6 +259,95 @@ const collectBundleKey = (
   const token = sanitizeBundleName(podName || composeProject || dirName || displayName || service.name);
   const display = podName || composeProject || dirName || displayName;
   return { key: token || sanitizeBundleName(service.name), display };
+};
+
+const derivePodNameFromPath = (filePath?: string): string | undefined => {
+  if (!filePath) return undefined;
+  if (!filePath.endsWith('.pod')) return undefined;
+  return path.basename(filePath, '.pod');
+};
+
+const getPodKeyVariants = (raw?: string | null): string[] => {
+  if (!raw) return [];
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const normalized = trimmed.toLowerCase();
+  const variants = new Set<string>([normalized]);
+  if (normalized.startsWith('systemd-')) {
+    variants.add(normalized.replace(/^systemd-/, ''));
+  }
+  if (normalized.endsWith('.pod')) {
+    variants.add(normalized.replace(/\.pod$/, ''));
+  }
+  return Array.from(variants).filter(Boolean);
+};
+
+const registerPodMembership = (
+  service: ServiceUnit,
+  rawKey: string | null | undefined,
+  servicePodKeys: Map<string, Set<string>>,
+  podKeyToServices: Map<string, Set<ServiceUnit>>
+): void => {
+  getPodKeyVariants(rawKey).forEach(key => {
+    if (!servicePodKeys.has(service.name)) {
+      servicePodKeys.set(service.name, new Set());
+    }
+    const podSet = servicePodKeys.get(service.name)!;
+    if (podSet.has(key)) return;
+    podSet.add(key);
+    if (!podKeyToServices.has(key)) {
+      podKeyToServices.set(key, new Set());
+    }
+    podKeyToServices.get(key)!.add(service);
+  });
+};
+
+const expandServicesByPods = (
+  seed: ServiceUnit[],
+  servicePodKeys: Map<string, Set<string>>,
+  podKeyToServices: Map<string, Set<ServiceUnit>>,
+  discoveryLog: string[]
+): ServiceUnit[] => {
+  if (seed.length === 0) return seed;
+
+  const result = new Map<string, ServiceUnit>();
+  const podQueue: string[] = [];
+  const visitedPods = new Set<string>();
+
+  seed.forEach(service => {
+    if (!result.has(service.name)) {
+      result.set(service.name, service);
+    }
+    servicePodKeys.get(service.name)?.forEach(podKey => {
+      if (!visitedPods.has(podKey)) {
+        podQueue.push(podKey);
+      }
+    });
+  });
+
+  while (podQueue.length > 0) {
+    const podKey = podQueue.shift()!;
+    if (visitedPods.has(podKey)) continue;
+    visitedPods.add(podKey);
+    const siblings = podKeyToServices.get(podKey);
+    if (!siblings) continue;
+    siblings.forEach(sibling => {
+      if (result.has(sibling.name)) return;
+      result.set(sibling.name, sibling);
+      discoveryLog.push(`  ➕ Added ${sibling.name} via shared pod "${podKey}"`);
+      servicePodKeys.get(sibling.name)?.forEach(nextPod => {
+        if (!visitedPods.has(nextPod)) {
+          podQueue.push(nextPod);
+        }
+      });
+    });
+  }
+
+  if (result.size > seed.length) {
+    discoveryLog.push(`Pod membership expansion added ${result.size - seed.length} service(s).`);
+  }
+
+  return Array.from(result.values());
 };
 
 const aggregatePorts = (containers: BundleContainerSummary[]): BundlePortSummary[] => {
@@ -290,12 +457,42 @@ const mergeBundlesByPod = (bundles: Map<string, ServiceBundle>): Map<string, Ser
   return merged;
 };
 
-export const buildServiceBundlesForNode = ({ nodeName, services, containers, files }: BundleBuildInput): ServiceBundle[] => {
-  if (!services || services.length === 0) return [];
+export const buildServiceBundlesForNode = ({ nodeName, services = [], containers = [], files = {} }: BundleBuildInput): ServiceBundle[] => {
   const containerMap = new Map<string, EnrichedContainer>();
   containers.forEach(container => containerMap.set(container.id, container));
 
   const drafts = new Map<string, ServiceBundle>();
+  const servicePodKeys = new Map<string, Set<string>>();
+  const podKeyToServices = new Map<string, Set<ServiceUnit>>();
+
+  const registerServicePods = (svc: ServiceUnit): void => {
+    registerPodMembership(svc, svc.podReference, servicePodKeys, podKeyToServices);
+    registerPodMembership(svc, svc.quadletDirectives?.pod, servicePodKeys, podKeyToServices);
+
+    const fragmentPod = derivePodNameFromPath(svc.fragmentPath);
+    if (fragmentPod) registerPodMembership(svc, fragmentPod, servicePodKeys, podKeyToServices);
+    const pathPod = derivePodNameFromPath(svc.path);
+    if (pathPod) registerPodMembership(svc, pathPod, servicePodKeys, podKeyToServices);
+
+    if (svc.quadletSourceType === 'pod' || fragmentPod || pathPod) {
+      registerPodMembership(svc, svc.name, servicePodKeys, podKeyToServices);
+    }
+
+    (svc.associatedContainerIds || []).forEach(id => {
+      const container = containerMap.get(id);
+      if (!container) return;
+      if (container.podId) {
+        registerPodMembership(svc, `pod-id:${container.podId}`, servicePodKeys, podKeyToServices);
+      }
+      registerPodMembership(svc, container.podName, servicePodKeys, podKeyToServices);
+      const composeProject = container.labels?.['io.podman.compose.project'];
+      if (composeProject) {
+        registerPodMembership(svc, composeProject, servicePodKeys, podKeyToServices);
+      }
+    });
+  };
+
+  services.forEach(registerServicePods);
 
   // --- Helper: Walk dependency graph and collect all related services ---
   const walkDependencies = (rootService: ServiceUnit, visited = new Set<string>()): ServiceUnit[] => {
@@ -392,7 +589,8 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
       // Parse relationships from file content on the backend (authoritative single source of truth)
       const rootParsed = parseQuadletAuthoritatively(service, files, discoveryLog);
 
-      const relatedServices = walkDependencies(rootParsed);
+      let relatedServices = walkDependencies(rootParsed);
+      relatedServices = expandServicesByPods(relatedServices, servicePodKeys, podKeyToServices, discoveryLog);
       discoveryLog.push(`Dependency graph walk found ${relatedServices.length} related service(s)`);
       discoveryLog.push(``);
       relatedServices.forEach((s, idx) => {
@@ -553,9 +751,6 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
         if ((svc.bindsTo || []).length > 0) {
           bundleHints.add(`Binding relationships: ${(svc.bindsTo || []).join(', ')}`);
         }
-        if (svc.podReference) {
-          bundleHints.add(`Joins pod: ${svc.podReference}`);
-        }
         if ((svc.publishedPorts || []).length > 0) {
           const portDescs = (svc.publishedPorts || [])
             .map(p => `${p.hostPort || p.containerPort}/${p.protocol || 'tcp'}`)
@@ -568,8 +763,28 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
       const linkedContainers = (service.associatedContainerIds || [])
         .map(id => containerMap.get(id))
         .filter((c): c is EnrichedContainer => Boolean(c));
-      const { key, display } = collectBundleKey(service, linkedContainers);
-      const bundleId = `${nodeName}::${key}`;
+      const { key: initialKey, display: initialDisplay } = collectBundleKey(service, linkedContainers);
+
+      const podRefs = new Set<string>();
+      bundleServices.forEach(svc => {
+        const ref = svc.podReference?.trim();
+        if (ref) {
+          podRefs.add(ref);
+        }
+      });
+
+      let derivedName = initialKey;
+      let displayName = initialDisplay || service.name;
+      const primaryPodName = Array.from(podRefs)[0];
+      if (primaryPodName) {
+        displayName = primaryPodName;
+        const sanitizedPod = sanitizeBundleName(primaryPodName);
+        if (sanitizedPod) {
+          derivedName = sanitizedPod;
+        }
+      }
+
+      const bundleId = `${nodeName}::${derivedName}`;
 
       // Deduplicate containers and assets
       const deduped = dedupeContainers(bundleContainers);
@@ -590,7 +805,7 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
       discoveryLog.push(`BUNDLE SUMMARY`);
       discoveryLog.push(`═══════════════════════════════════════════════════════════`);
       discoveryLog.push(`Bundle ID: ${bundleId}`);
-      discoveryLog.push(`Display Name: ${display}`);
+      discoveryLog.push(`Display Name: ${displayName}`);
       discoveryLog.push(`Total Services: ${bundleServices.length}`);
       discoveryLog.push(`Total Containers: ${deduped.length}`);
       discoveryLog.push(`Total Assets: ${dedupedAssets.length}`);
@@ -599,13 +814,6 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
       discoveryLog.push(``);
 
       // Extract pod references from services
-      const podRefs = new Set<string>();
-      bundleServices.forEach(svc => {
-        if (svc.podReference) {
-          podRefs.add(svc.podReference);
-        }
-      });
-
       if (bundleServices.length === 1 && relatedServices.length > 1) {
         discoveryLog.push(`⚠ WARNING: Started with ${relatedServices.length} services but ended with ${bundleServices.length}`);
         discoveryLog.push(`   This suggests services were found but not all were added to the bundle`);
@@ -620,8 +828,8 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
 
       const bundle: ServiceBundle = {
         id: bundleId,
-        displayName: display,
-        derivedName: key,
+        displayName,
+        derivedName,
         nodeName,
         severity: 'info',
         hints: Array.from(bundleHints),
@@ -643,8 +851,11 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
 
   // --- Merge bundles that share the same pod reference ---
   const mergedDrafts = mergeBundlesByPod(drafts);
+  const baseBundles = Array.from(mergedDrafts.values());
+  const orphanPodBundles = buildSyntheticPodBundles(nodeName, baseBundles, services, containers, files, containerMap);
+  const allBundles = [...baseBundles, ...orphanPodBundles];
 
-  return Array.from(mergedDrafts.values()).sort((a, b) => {
+  return allBundles.sort((a, b) => {
     if (a.severity === b.severity) {
       return a.displayName.localeCompare(b.displayName);
     }
@@ -652,6 +863,207 @@ export const buildServiceBundlesForNode = ({ nodeName, services, containers, fil
     return order[a.severity] - order[b.severity];
   });
 };
+
+  const buildSyntheticPodBundles = (
+    nodeName: string,
+    existingBundles: ServiceBundle[],
+    services: ServiceUnit[],
+    containers: EnrichedContainer[],
+    files: Record<string, WatchedFile>,
+    containerMap: Map<string, EnrichedContainer>
+  ): ServiceBundle[] => {
+    const podsToContainers = new Map<string, {
+      normalized: string;
+      displayName: string;
+      rawNames: Set<string>;
+      containers: EnrichedContainer[];
+    }>();
+
+    containers.forEach(container => {
+      const podName = resolveContainerPodName(container);
+      if (!podName) return;
+      const normalized = normalizePodKey(podName);
+      if (!normalized) return;
+      if (!podsToContainers.has(normalized)) {
+        podsToContainers.set(normalized, {
+          normalized,
+          displayName: sanitizePodDisplayName(podName),
+          rawNames: new Set<string>(),
+          containers: []
+        });
+      }
+      const entry = podsToContainers.get(normalized)!;
+      entry.rawNames.add(podName);
+      if (!entry.displayName) {
+        entry.displayName = sanitizePodDisplayName(podName);
+      }
+      entry.containers.push(container);
+    });
+
+    if (podsToContainers.size === 0) {
+      return [];
+    }
+
+    const podsWithManagedService = new Set<string>();
+    services.forEach(service => {
+      if (!service.isManaged) return;
+      collectPodKeysForService(service, containerMap).forEach(key => podsWithManagedService.add(key));
+    });
+
+    const podsAlreadyBundled = new Set<string>();
+    existingBundles.forEach(bundle => {
+      (bundle.podReferences || []).forEach(ref => {
+        const normalized = normalizePodKey(ref);
+        if (normalized) podsAlreadyBundled.add(normalized);
+      });
+      bundle.containers.forEach(container => {
+        const normalized = normalizePodKey(container.podName);
+        if (normalized) podsAlreadyBundled.add(normalized);
+      });
+    });
+
+    const orphanBundles: ServiceBundle[] = [];
+
+    podsToContainers.forEach(entry => {
+      if (podsWithManagedService.has(entry.normalized)) return;
+      if (podsAlreadyBundled.has(entry.normalized)) return;
+
+      const canonicalName = Array.from(entry.rawNames)[0] || entry.displayName || entry.normalized;
+      const friendlyLabel = sanitizePodDisplayName(entry.displayName || canonicalName) || serviceName || entry.normalized;
+      const serviceName = canonicalName || `${entry.normalized}.pod`;
+      const containerSummaries = entry.containers.map(summarizeContainer);
+      const bundlePorts = aggregatePorts(containerSummaries);
+      const bundleAssets = collectPodAssets(canonicalName, files);
+      const definitionAsset = bundleAssets.find(asset => asset.kind === 'pod')
+        || bundleAssets.find(asset => asset.kind === 'kube' || asset.kind === 'yaml');
+
+      const discoveryHints = [
+        `Pod "${friendlyLabel}" is running ${containerSummaries.length} container(s) without a managed service`,
+        `Containers: ${containerSummaries.map(summary => summary.name).join(', ')}`
+      ];
+
+      const syntheticService: BundleServiceRef = {
+        serviceName,
+        containerNames: containerSummaries.map(summary => summary.name),
+        containerIds: containerSummaries.map(summary => summary.id),
+        podId: entry.containers.find(c => c.podId)?.podId,
+        unitFile: definitionAsset?.path,
+        sourcePath: definitionAsset?.path,
+        description: 'Synthetic bundle generated from orphaned pod',
+        status: 'unmanaged',
+        type: 'pod',
+        nodeName,
+        discoveryHints
+      };
+
+      const graphEdges: BundleGraphEdge[] = containerSummaries.map(summary => ({
+        from: serviceName,
+        to: summary.name,
+        reason: 'Pod → container'
+      }));
+
+      const hints = [
+        'Detected Pod without ServiceBay-managed unit',
+        `Containers: ${containerSummaries.map(summary => summary.name).join(', ')}`
+      ];
+
+      const validations: BundleValidation[] = [{
+        level: 'warning',
+        message: 'No managing service controls this pod'
+      }];
+
+      const derivedName = sanitizeBundleName(friendlyLabel) || `pod-${entry.normalized}`;
+      const bundleId = `${nodeName}::pod-${derivedName}`;
+
+      orphanBundles.push({
+        id: bundleId,
+        displayName: friendlyLabel,
+        derivedName,
+        nodeName,
+        severity: severityFromValidations(validations),
+        hints,
+        validations,
+        services: [syntheticService],
+        containers: containerSummaries,
+        ports: bundlePorts,
+        assets: bundleAssets,
+        graph: graphEdges,
+        podReferences: Array.from(entry.rawNames),
+        discoveryLog: [
+          `Synthetic pod bundle created for ${friendlyLabel}`,
+          `Containers captured: ${containerSummaries.length}`
+        ]
+      });
+    });
+
+    return orphanBundles;
+  };
+
+  const collectPodKeysForService = (
+    service: ServiceUnit,
+    containerMap: Map<string, EnrichedContainer>
+  ): Set<string> => {
+    const keys = new Set<string>();
+    [
+      service.podReference,
+      service.quadletDirectives?.pod,
+      derivePodNameFromPath(service.fragmentPath),
+      derivePodNameFromPath(service.path),
+      service.name
+    ].forEach(value => {
+      const normalized = normalizePodKey(value);
+      if (normalized) keys.add(normalized);
+    });
+
+    (service.associatedContainerIds || []).forEach(id => {
+      const container = containerMap.get(id);
+      const normalized = normalizePodKey(resolveContainerPodName(container));
+      if (normalized) keys.add(normalized);
+    });
+
+    return keys;
+  };
+
+  const resolveContainerPodName = (container?: EnrichedContainer | null): string | null => {
+    if (!container) return null;
+    return container.podName || container.labels?.['io.podman.pod.name'] || container.labels?.['io.kubernetes.pod.name'] || null;
+  };
+
+  const sanitizePodDisplayName = (value: string): string => {
+    if (!value) return '';
+    const trimmed = value.replace(/^systemd-/, '');
+    return trimmed.replace(/\.pod$/i, '') || value;
+  };
+
+  const normalizePodKey = (value?: string | null): string | null => {
+    if (!value) return null;
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return null;
+    let normalized = sanitizeBundleName(trimmed);
+    if (!normalized) normalized = trimmed;
+    normalized = normalized.replace(/^systemd-/, '');
+    normalized = normalized.replace(/-pod$/, '');
+    return normalized || null;
+  };
+
+  const collectPodAssets = (podName: string, files: Record<string, WatchedFile>): BundleAsset[] => {
+    const normalizedTarget = normalizePodKey(podName);
+    const assets: BundleAsset[] = [];
+    Object.values(files || {}).forEach(file => {
+      if (!file?.path) return;
+      const base = path.basename(file.path);
+      const stem = base.replace(/\.(pod|kube|yaml|yml|container)$/i, '');
+      const normalizedStem = normalizePodKey(stem);
+      if (normalizedTarget && normalizedStem && normalizedStem === normalizedTarget) {
+        assets.push({ path: file.path, kind: assetKindFromPath(file.path), modified: file.modified });
+        return;
+      }
+      if (normalizedTarget && file.path.toLowerCase().includes(normalizedTarget)) {
+        assets.push({ path: file.path, kind: assetKindFromPath(file.path), modified: file.modified });
+      }
+    });
+    return dedupeAssets(assets);
+  };
 
 const dedupeContainers = (containers: BundleContainerSummary[]): BundleContainerSummary[] => {
   const map = new Map<string, BundleContainerSummary>();

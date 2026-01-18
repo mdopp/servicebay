@@ -19,6 +19,11 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   const startAction = useCallback(async (signal: AbortSignal, term: Terminal) => {
     try {
@@ -48,20 +53,19 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
       term.writeln('\r\n\x1b[32;1mProcess exited.\x1b[0m');
       // If we got here, we assume success or at least completion of stream
       setStatus('completed');
-      if (onComplete) {
-         // Slight delay
-         setTimeout(onComplete, 1000);
+      if (onCompleteRef.current) {
+        // Slight delay so logs are readable before closing
+        setTimeout(onCompleteRef.current, 1000);
       }
     } catch (err: unknown) {
        if (signal.aborted) {
-           term.writeln('\r\n\x1b[33mAction Cancelled.\x1b[0m');
            return;
        }
        const msg = err instanceof Error ? err.message : String(err);
        term.writeln(`\r\n\x1b[31;1mConnection Error: ${msg}\x1b[0m`);
        setStatus('error');
     }
-  }, [action, nodeName, onComplete, serviceName]);
+  }, [action, nodeName, serviceName]);
 
   useEffect(() => {
     if (isOpen && terminalRef.current) {
@@ -89,6 +93,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           term.loadAddon(fitAddon);
           
           if (terminalRef.current) {
+              terminalRef.current.innerHTML = '';
               term.open(terminalRef.current);
               fitAddon.fit();
               xtermRef.current = term;
@@ -107,6 +112,9 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           controller.abort();
           if (handleResize) window.removeEventListener('resize', handleResize);
           if (term) term.dispose();
+          if (terminalRef.current) {
+            terminalRef.current.innerHTML = '';
+          }
           xtermRef.current = null;
       };
     }

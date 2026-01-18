@@ -171,9 +171,9 @@ type CustomNodeType = Node<GraphNodeData>;
 
 // Custom Node Component
 const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
-  const isGroup = data.type === 'group';
-  // Services, Pods, Proxies can also behave as groups (can be expanded/collapsed)
-  const isExpandable = ['group', 'service', 'pod', 'proxy'].includes(data.type);
+    const isGroup = data.type === 'group';
+    // Services, Pods, Proxies, and unmanaged bundles can also behave as groups (can be expanded/collapsed)
+    const isExpandable = ['group', 'service', 'pod', 'proxy', 'unmanaged-service'].includes(data.type);
   const isCollapsed = data.collapsed;
   const onToggle = data.onToggle;
   
@@ -186,11 +186,15 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   const isMissing = data.rawData?.type === 'missing';
   
   // Determine effective type: if group, try to use rawData.type (service, pod, proxy) to get correct label/color
-  const effectiveType = ((data.type === 'group' && data.rawData?.type) ? data.rawData.type : data.type) as string;
+    const effectiveType = ((data.type === 'group' && data.rawData?.type) ? data.rawData.type : data.type) as string;
+    const isManagedService = effectiveType === 'service';
+    const isUnmanagedService = effectiveType === 'unmanaged-service';
+    const isServiceType = isManagedService || isUnmanagedService;
   
   const typeLabels: Record<string, string> = {
       container: 'Container',
-      service: 'Managed Service',
+    service: 'Managed Service',
+    'unmanaged-service': 'Unmanaged Bundle',
       pod: 'Pod',
       router: 'Internet Gateway',
       link: 'External Link',
@@ -201,8 +205,9 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
 
   // Color Mapping
   const typeColors: Record<string, string> = {
-      container: 'border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/40',
-      service: 'border-purple-400 dark:border-purple-600 bg-purple-100 dark:bg-purple-900/40',
+    container: 'border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/40',
+    service: 'border-purple-400 dark:border-purple-600 bg-purple-100 dark:bg-purple-900/40',
+    'unmanaged-service': 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-900/30',
       pod: 'border-pink-400 dark:border-pink-600 bg-pink-100 dark:bg-pink-900/40',
       router: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-600/60',
       internet: 'border-gray-400 dark:border-gray-600 bg-gray-100 dark:bg-gray-800/60',
@@ -322,15 +327,28 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
           }
           return items;
       }
-      if (effectiveType === 'service') {
+      if (isServiceType) {
           const items = [
               ...common,
-              { label: 'State', value: raw.active ? 'Active' : 'Inactive' },
-              { label: 'Load', value: raw.load },
+              {
+                  label: 'State',
+                  value: isManagedService
+                      ? (raw.active ? 'Active' : 'Inactive')
+                      : (raw.isRunning ? 'Detected' : 'Stopped')
+              }
           ];
-          if (raw.hostNetwork) {
-              items.push({ label: 'Network', value: 'Host' });
+
+          if (isManagedService) {
+              items.push({ label: 'Load', value: raw.load });
+              if (raw.hostNetwork) {
+                  items.push({ label: 'Network', value: 'Host' });
+              }
+          } else {
+              const bundleSize = Array.isArray(raw.services) ? raw.services.length : Array.isArray(raw.containers) ? raw.containers.length : 0;
+              items.push({ label: 'Bundle Size', value: bundleSize || 'Unknown' });
+              items.push({ label: 'Severity', value: (raw.severity || 'info').toString().toUpperCase() });
           }
+
           return items;
       }
       if (effectiveType === 'link') {
@@ -383,10 +401,13 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
           /* Render as "Expanded Group Frame" */
          <div className={`w-full h-full rounded-xl border-2 flex flex-col justify-between p-2 pl-2 transition-all group-border ${
              // Explicit Group Stylings to ensure visibility
-             effectiveType === 'service' ? 'border-purple-400/50 dark:border-purple-500/50 bg-purple-50/50 dark:bg-purple-900/10' :
-             effectiveType === 'pod' ? 'border-pink-400/50 dark:border-pink-500/50 bg-pink-50/50 dark:bg-pink-900/10' :
-             effectiveType === 'proxy' ? 'border-emerald-400/50 dark:border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-900/10' :
-             'border-gray-300 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/10'
+             isServiceType
+                 ? (isUnmanagedService
+                     ? 'border-amber-400/50 dark:border-amber-500/50 bg-amber-50/50 dark:bg-amber-900/10'
+                     : 'border-purple-400/50 dark:border-purple-500/50 bg-purple-50/50 dark:bg-purple-900/10')
+                 : effectiveType === 'pod' ? 'border-pink-400/50 dark:border-pink-500/50 bg-pink-50/50 dark:bg-pink-900/10'
+                 : effectiveType === 'proxy' ? 'border-emerald-400/50 dark:border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-900/10'
+                 : 'border-gray-300 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/10'
          }`}>
             <div className="flex justify-between items-start w-full pointer-events-none">
                 <div className={`self-start px-3 py-1.5 rounded-md text-sm font-bold uppercase tracking-wider border shadow-sm flex items-center gap-2 pointer-events-auto ${
@@ -397,9 +418,13 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                             : 'bg-white text-gray-600 border-gray-200 dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700')
                 } ${
                     // Ensure text color is set for specific types if not already
-                     effectiveType === 'service' ? 'text-purple-700 dark:text-purple-300' :
-                     effectiveType === 'pod' ? 'text-pink-700 dark:text-pink-300' :
-                     effectiveType === 'proxy' ? 'text-emerald-700 dark:text-emerald-300' : ''
+                    isServiceType
+                        ? (isUnmanagedService
+                            ? 'text-amber-700 dark:text-amber-300'
+                            : 'text-purple-700 dark:text-purple-300')
+                        : effectiveType === 'pod' ? 'text-pink-700 dark:text-pink-300'
+                        : effectiveType === 'proxy' ? 'text-emerald-700 dark:text-emerald-300'
+                        : ''
                 }`}>
                     <button
                         onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
@@ -413,9 +438,9 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                     )}
                     {data.label}
                     {/* Visual Tag for Pod/Service */}
-                    {(effectiveType === 'service' || effectiveType === 'pod') ? (
+                    {(isServiceType || effectiveType === 'pod') ? (
                         <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-white/50 dark:bg-black/20 border border-black/10 dark:border-white/10 uppercase tracking-wider font-extrabold opacity-80">
-                            {effectiveType === 'service' ? 'Service' : 'Pod'}
+                            {effectiveType === 'pod' ? 'Pod' : (isUnmanagedService ? 'Bundle' : 'Service')}
                         </span>
                     ) : null}
                     {data.node && data.node !== 'local' && (
@@ -426,7 +451,7 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                 </div>
 
                 {/* Show Ports for Groups if available (Hide for Services/Pods/Proxies as requested) */}
-                {portMap.length > 0 && !['service', 'pod', 'proxy'].includes(effectiveType) && (
+                {portMap.length > 0 && !['service', 'pod', 'proxy', 'unmanaged-service'].includes(effectiveType) && (
                     <div className="flex flex-col gap-1 items-end">
                         {globalIp && (
                              <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 mb-0.5 self-end" title="Host IP">
@@ -501,7 +526,7 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
             
             <div className="flex-1 flex flex-col gap-2 min-h-0">
                 <div className="flex gap-2">
-                  {data.subLabel && !['router', 'service', 'pod', 'proxy'].includes(effectiveType) && (
+                  {data.subLabel && !['router', 'service', 'pod', 'proxy', 'unmanaged-service'].includes(effectiveType) && (
                       <div className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-white/50 dark:bg-black/20 px-2 py-1 rounded break-all" title={data.subLabel}>
                           {data.subLabel}
                       </div>
@@ -655,6 +680,10 @@ const nodeTypes = {
 const edgeTypes = {
   custom: CustomEdge,
 };
+
+const DEFAULT_EDGE_COLOR = '#b1b1b7';
+const DOWN_EDGE_COLOR = '#ef4444';
+const DOWN_EDGE_DASHES = '6 3';
 
 type LinkFormState = {
     name: string;
@@ -847,8 +876,8 @@ export default function NetworkPlugin() {
     // 1. Prepare Nodes (Aggregation & toggles)
      
     const processedNodes = nodes.map(node => {
-        if (['group', 'service', 'pod', 'proxy'].includes(node.data.type)) {
-             const isCollapsed = collapsed.has(node.id);
+           if (['group', 'service', 'pod', 'proxy', 'unmanaged-service'].includes(node.data.type)) {
+               const isCollapsed = collapsed.has(node.id);
              
              // Aggregate Summary
               
@@ -881,8 +910,10 @@ export default function NetworkPlugin() {
                          });
                      }
                  },
-                 // When collapsed, we remove dimensions to let ELK recalculate for the smaller node
-                 style: isCollapsed ? { ...node.style, width: undefined, height: undefined } : node.style 
+                 // Only remove dimensions for actual group containers so card nodes keep auto height
+                 style: (isCollapsed && node.data.type === 'group')
+                     ? { ...node.style, width: undefined, height: undefined }
+                     : node.style
              };
         }
         return node;
@@ -890,7 +921,18 @@ export default function NetworkPlugin() {
 
     // 2. Filter hidden nodes
     // Filter out any node whose parent is collapsed
-    const visibleNodes = processedNodes.filter(n => !n.parentId || !collapsed.has(n.parentId));
+    const visibleNodes = processedNodes.map(node => {
+        if (node.data?.type === 'proxy' && node.style?.height !== undefined) {
+            return {
+                ...node,
+                style: {
+                    ...node.style,
+                    height: undefined
+                }
+            };
+        }
+        return node;
+    }).filter(n => !n.parentId || !collapsed.has(n.parentId));
     const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
 
     // 3. Process Edges (Redirect edges from hidden children to their collapsed parent)
@@ -1023,6 +1065,20 @@ export default function NetworkPlugin() {
   const graphData = useMemo(() => {
       if (!rawData) return null;
       
+      const nodeStatusMap = new Map<string, string | undefined>();
+      rawData.nodes.forEach((node) => {
+          nodeStatusMap.set(node.id, node.status as string | undefined);
+      });
+
+      const coerceStrokeWidth = (value: unknown): number => {
+          if (typeof value === 'number' && Number.isFinite(value)) return value;
+          if (typeof value === 'string') {
+              const parsed = parseFloat(value);
+              if (Number.isFinite(parsed)) return parsed;
+          }
+          return 2;
+      };
+
       const flowNodes: Node<GraphNodeData>[] = rawData.nodes.map((n) => {
         const isGroup = n.type === 'group';
         
@@ -1055,6 +1111,17 @@ export default function NetworkPlugin() {
 
       const flowEdges: Edge[] = rawData.edges.map((e) => {
         const fallbackLabel = Number.isFinite(e.port) && e.port > 0 ? `:${e.port}` : undefined;
+        const targetStatus = nodeStatusMap.get(e.target);
+        const connectsToDownNode = targetStatus === 'down';
+        const baseStyle = e.style as React.CSSProperties | undefined;
+        const edgeStyle = connectsToDownNode
+            ? {
+                ...(baseStyle || {}),
+                stroke: DOWN_EDGE_COLOR,
+                strokeWidth: Math.max(2, coerceStrokeWidth(baseStyle?.strokeWidth)),
+                strokeDasharray: DOWN_EDGE_DASHES
+            }
+            : baseStyle;
 
         return {
             id: e.id,
@@ -1065,13 +1132,13 @@ export default function NetworkPlugin() {
             markerEnd: {
                 type: MarkerType.ArrowClosed,
             },
-            style: e.style,
+            style: edgeStyle,
             data: {
                 isManual: e.isManual,
                 state: e.state,
                 port: e.port
             },
-            animated: e.state === 'active'
+            animated: connectsToDownNode ? true : e.state === 'active'
         };
       });
       
@@ -1085,8 +1152,8 @@ export default function NetworkPlugin() {
 
       let currentCollapsed = collapsedGroups;
       if (!rawGraphData.current && graphData.nodes.length > 0) {
-              const groups = graphData.nodes
-                      .filter(n => ['group', 'service', 'pod', 'proxy'].includes(n.data.type as string))
+                  const groups = graphData.nodes
+                      .filter(n => ['group', 'service', 'pod', 'proxy', 'unmanaged-service'].includes(n.data.type as string))
                       .map(n => n.id);
               currentCollapsed = new Set(groups);
               setCollapsedGroups(currentCollapsed);
@@ -1273,7 +1340,7 @@ export default function NetworkPlugin() {
             defaultEdgeOptions={{
                 type: 'custom',
                 animated: true,
-                style: { stroke: '#b1b1b7', strokeWidth: 2 },
+                style: { stroke: DEFAULT_EDGE_COLOR, strokeWidth: 2 },
             }}
             onNodeClick={(_, node) => {
                 setSelectedNodeData(node.data);
@@ -1297,6 +1364,7 @@ export default function NetworkPlugin() {
                     switch (type) {
                         case 'container': return '#2563eb'; // blue-600
                         case 'service': return '#9333ea'; // purple-600
+                        case 'unmanaged-service': return '#d97706'; // amber-600
                         case 'pod': return '#db2777'; // pink-600
                         case 'router': return '#ea580c'; // orange-600
                         case 'gateway': return '#ea580c'; // orange-600
@@ -1313,6 +1381,7 @@ export default function NetworkPlugin() {
                     switch (type) {
                         case 'container': return '#60a5fa'; // blue-400
                         case 'service': return '#c084fc'; // purple-400
+                        case 'unmanaged-service': return '#fbbf24'; // amber-400
                         case 'pod': return '#f472b6'; // pink-400
                         case 'proxy': return '#34d399'; // emerald-400
                         case 'router': return '#fb923c'; // orange-400

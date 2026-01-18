@@ -1,8 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { render, screen, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import React from 'react';
+
+const mockAddToast = vi.fn<() => string>().mockImplementation(() => 'toast-id');
+const mockUpdateToast = vi.fn();
+const mockRemoveToast = vi.fn();
 
 // 1. Mock Hooks
 vi.mock('@/hooks/useDigitalTwin', () => ({
@@ -10,7 +14,11 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
 }));
 
 vi.mock('@/providers/ToastProvider', () => ({
-  useToast: () => ({ showToast: vi.fn() })
+    useToast: () => ({
+        addToast: mockAddToast,
+        updateToast: mockUpdateToast,
+        removeToast: mockRemoveToast
+    })
 }));
 
 // 2. Mock 'react-highlight-words' used by something imported (RegistryPlugin?) or just in case
@@ -78,10 +86,19 @@ Object.defineProperty(global, 'EventSource', {
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import NetworkPlugin from '../../src/plugins/NetworkPlugin';
 
+const originalFetch = global.fetch;
+
 describe('NetworkPlugin (Graph)', () => {
     
     beforeEach(() => {
         vi.clearAllMocks();
+        mockAddToast.mockImplementation(() => 'toast-id');
+        mockUpdateToast.mockReset();
+        mockRemoveToast.mockReset();
+        global.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ nodes: [], edges: [] })
+        }) as unknown as typeof fetch;
         // Default Mock Return
         (useDigitalTwin as any).mockReturnValue({ 
             data: { 
@@ -155,4 +172,8 @@ describe('NetworkPlugin (Graph)', () => {
             expect(screen.getByTestId('flow-nodes-count').textContent).toBe('0');
         });
     });
+});
+
+afterAll(() => {
+    global.fetch = originalFetch;
 });

@@ -78,6 +78,31 @@ export class NodeFactory {
     }
 
     /**
+     * Create a NetworkNode representing an aggregated unmanaged service bundle.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    static createUnmanagedBundleNode(id: string, rawData: any, nodeName: string, metadata: Record<string, any> = {}): NetworkNode {
+        const label = rawData.displayName || rawData.name || 'Unmanaged Bundle';
+        const host = (metadata.nodeIPs && metadata.nodeIPs[0]) || 'localhost';
+        const subLabel = nodeName === 'local'
+            ? `Unmanaged Bundle (${host})`
+            : `Unmanaged Bundle (${nodeName} - ${host})`;
+
+        const status = rawData.isRunning ? 'up' : 'down';
+
+        return {
+            id,
+            type: 'unmanaged-service',
+            label,
+            subLabel,
+            status,
+            node: nodeName,
+            metadata,
+            rawData
+        };
+    }
+
+    /**
      * Create a NetworkNode representing the Reverse Proxy (Nginx).
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

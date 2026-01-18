@@ -3,6 +3,8 @@ import ELK, { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
 
 const elk = new ELK();
 
+const GROUP_NODE_TYPES = new Set(['group', 'proxy', 'service', 'pod', 'unmanaged-service']);
+
 // ELK options for layout
 const layoutOptions = {
   'elk.algorithm': 'layered',
@@ -38,7 +40,7 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
                 style: { 
                     ...original.style, 
                     width: node.width,
-                    height: (['group', 'proxy', 'service', 'pod'].includes(original.data?.type as string)) ? node.height : undefined
+                    height: (GROUP_NODE_TYPES.has(original.data?.type as string)) ? node.height : undefined
                 }
             });
         }
@@ -68,6 +70,14 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
         // Update Node Property for React Flow Edge Routing
         node.targetPosition = targetHandle;
         node.sourcePosition = sourceHandle;
+
+        // Reverse proxy nodes should always connect from center left/right for readability
+        if (node.data?.type === 'proxy') {
+            node.data.targetHandlePosition = Position.Left;
+            node.data.sourceHandlePosition = Position.Right;
+            node.targetPosition = Position.Left;
+            node.sourcePosition = Position.Right;
+        }
     });
 
     return { nodes: layoutedNodes, edges };
@@ -83,7 +93,7 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
 
     // 1. Create ElkNodes
     nodes.forEach(node => {
-        const isGroup = ['group', 'proxy', 'service', 'pod'].includes(node.data.type as string);
+        const isGroup = GROUP_NODE_TYPES.has(node.data.type as string);
 
         nodeMap.set(node.id, {
             id: node.id,
@@ -143,7 +153,7 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
 }
 
 function calculateNodeHeight(node: Node): number | undefined {
-    if (node.data.type === 'group') return undefined;
+    if (node.data.type === 'group') return 320;
     if (node.data.type === 'internet') return 150;
     
     // Base Header (Title + Status + Padding)
@@ -163,7 +173,7 @@ function calculateNodeHeight(node: Node): number | undefined {
         // Created, Status (1 row) + Network (optional)
         detailRows = 1;
         if (raw.hostNetwork) detailRows += 1;
-    } else if (node.data.type === 'service') {
+    } else if (node.data.type === 'service' || node.data.type === 'unmanaged-service') {
         // State, Load (1 row) + Network (optional)
         detailRows = 1;
         if (raw.hostNetwork) detailRows += 1;
@@ -185,7 +195,7 @@ function calculateNodeHeight(node: Node): number | undefined {
     const domains = (data.metadata as any)?.verifiedDomains as string[];
     if (domains && domains.length > 0) {
         height += 25; // Header "Verified Domains"
-        height += domains.length * 80; // Each domain row
+        height += domains.length * 36; // Each domain row approximation
         height += 10; // Padding
     }
 

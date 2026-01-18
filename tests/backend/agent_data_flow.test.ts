@@ -124,6 +124,65 @@ describe('DigitalTwinStore Data Flow', () => {
      expect(svc.associatedContainerIds).toContain('nginx-cid');
   });
 
+    it('links managed kube stacks to containers sharing the stack prefix', () => {
+      const service: ServiceUnit = {
+        name: 'authentik-stack',
+        active: true,
+        activeState: 'active',
+        subState: 'running',
+        loadState: 'loaded',
+        description: 'Authentik Stack',
+        path: '/home/mdopp/.config/containers/systemd/authentik-stack.kube',
+        isManaged: true,
+        isServiceBay: false,
+        associatedContainerIds: [],
+        ports: []
+      };
+
+      const containers: EnrichedContainer[] = [
+        {
+          id: 'redis-id',
+          names: ['/authentik-stack-redis'],
+          image: 'docker.io/library/redis:alpine',
+          state: 'running',
+          status: 'running',
+          created: Date.now(),
+          ports: [],
+          mounts: [],
+          labels: { 'io.podman.pod.name': 'pod-db59b19ee72e' },
+          networks: [],
+          podId: 'pod-db59b19ee72e',
+          podName: 'pod-db59b19ee72e',
+          isInfra: false,
+          pid: 101
+        },
+        {
+          id: 'worker-id',
+          names: ['/authentik-stack-authentik-worker'],
+          image: 'ghcr.io/goauthentik/server:latest',
+          state: 'running',
+          status: 'running',
+          created: Date.now(),
+          ports: [],
+          mounts: [],
+          labels: { 'io.podman.pod.name': 'pod-db59b19ee72e' },
+          networks: [],
+          podId: 'pod-db59b19ee72e',
+          podName: 'pod-db59b19ee72e',
+          isInfra: false,
+          pid: 202
+        }
+      ];
+
+      store.updateNode('KubeLink', {
+        services: [service],
+        containers
+      });
+
+      const linked = store.nodes['KubeLink'].services[0];
+      expect(new Set(linked.associatedContainerIds)).toEqual(new Set(['redis-id', 'worker-id']));
+    });
+
   it('should enrich Primary Proxy service with Nginx Configuration from Agent Proxy Routes', () => {
       // 1. Setup Data: Proxy Routes + Nginx Service
       const proxyRoutes = [

@@ -62,10 +62,12 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
 
 // Mock Router and Toast
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn() })
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => '/services',
+  useSearchParams: () => new URLSearchParams()
 }));
 vi.mock('@/providers/ToastProvider', () => ({
-  useToast: () => ({ addToast: vi.fn() })
+  useToast: () => ({ addToast: vi.fn(), updateToast: vi.fn() })
 }));
 
 describe('ServicesPlugin', () => {
