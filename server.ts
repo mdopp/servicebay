@@ -7,6 +7,7 @@ import * as pty from 'node-pty';
 import os from 'os';
 import fs from 'fs';
 import { setUpdaterIO } from './src/lib/updater';
+import crypto from 'crypto';
 // Monitoring init moved to Agent logic in V4
 import { MonitoringService } from './src/lib/monitoring/service';
 import { agentManager } from './src/lib/agent/manager';
@@ -17,7 +18,7 @@ import { DigitalTwinStore, NodeTwin } from './src/lib/store/twin';
 import { AgentMessage } from './src/lib/agent/types';
 import { GatewayPoller } from './src/lib/gateway/poller';
 import { logger } from './src/lib/logger';
-import { migrateConfig, getConfig } from './src/lib/config';
+import { migrateConfig, getConfig, updateConfig } from './src/lib/config';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -31,6 +32,19 @@ const formatAgentIdSuffix = (agent?: AgentHandler) => {
     const id = agent.getCurrentRunId?.();
     return id ? ` [id=${id}]` : '';
 };
+
+const ensureSessionId = () => {
+    const existing = process.env.SERVICEBAY_SESSION;
+    if (existing) return existing;
+    const date = new Date().toISOString().split('T')[0];
+    const suffix = crypto.randomBytes(4).toString('hex');
+    const sessionId = `servicebay-${date}-${suffix}`;
+    process.env.SERVICEBAY_SESSION = sessionId;
+    return sessionId;
+};
+
+const sessionId = ensureSessionId();
+logger.info('Server', `Session ID: ${sessionId}`);
 
 
 // Global PTY state
@@ -48,7 +62,15 @@ const resourceViewers = new Map<string, Set<string>>(); // nodeName -> Set<socke
 (async () => {
   try {
     await migrateConfig();
-    const config = await getConfig();
+        const config = await getConfig();
+        if (!config.agent?.sessionId || config.agent.sessionId !== sessionId) {
+            await updateConfig({
+                agent: {
+                    ...config.agent,
+                    sessionId
+                }
+            });
+        }
     if (config.logLevel) {
       logger.setLogLevel(config.logLevel);
       logger.info('Server', `Log level set to ${config.logLevel}`);
@@ -57,6 +79,47 @@ const resourceViewers = new Map<string, Set<string>>(); // nodeName -> Set<socke
     logger.error('Server', 'Config initialization failed', e);
   }
 })();
+
+const scheduleAgentRestart = async () => {
+    try {
+        const config = await getConfig();
+        const schedule = config.agent?.restartSchedule;
+        if (!schedule?.enabled) return;
+
+        const time = schedule.time || '03:00';
+        const [hourStr, minuteStr] = time.split(':');
+        const hour = Number(hourStr);
+        const minute = Number(minuteStr);
+        if (Number.isNaN(hour) || Number.isNaN(minute)) {
+            logger.warn('Server', `Invalid agent restartSchedule time: ${time}`);
+            return;
+        }
+
+        const now = new Date();
+        const next = new Date(now);
+        next.setUTCHours(hour, minute, 0, 0);
+        if (next <= now) {
+            next.setUTCDate(next.getUTCDate() + 1);
+        }
+
+        const delayMs = next.getTime() - now.getTime();
+        logger.info('Server', `Scheduled agent restart at ${next.toISOString()} (${Math.round(delayMs / 1000)}s)`);
+
+        setTimeout(async () => {
+            try {
+                const timeoutSeconds = config.agent?.gracefulShutdownTimeout ?? 30;
+                await agentManager.restartAll('scheduled', timeoutSeconds * 1000);
+                logger.info('Server', 'Scheduled agent restart completed.');
+            } catch (err) {
+                logger.error('Server', 'Scheduled agent restart failed', err);
+            } finally {
+                scheduleAgentRestart();
+            }
+        }, delayMs);
+    } catch (err) {
+        logger.error('Server', 'Failed to schedule agent restart', err);
+    }
+};
 
 app.prepare().then(() => {
   const server = createServer(async (req, res) => {
@@ -201,6 +264,9 @@ app.prepare().then(() => {
   GatewayPoller.getInstance().start().catch(err => {
       logger.error('Server', 'Failed to start Gateway Poller:', err);
   });
+
+    // Schedule agent restarts based on config
+    scheduleAgentRestart();
 
   // Periodic Agent Health Sync (every 30 seconds)
   setInterval(() => {

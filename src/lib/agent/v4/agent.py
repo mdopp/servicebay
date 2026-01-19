@@ -12,8 +12,19 @@ import ctypes
 import struct
 import select
 import tempfile
+import re
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional, Any, Tuple, Callable
+
+try:
+    import psutil
+except Exception:  # pragma: no cover - optional dependency
+    psutil = None
+
+try:
+    import setproctitle
+except Exception:  # pragma: no cover - optional dependency
+    setproctitle = None
 
 # Ensure current directory is in path for local imports
 # (Handle cases where __file__ might not be defined, e.g., exec context)
@@ -33,6 +44,16 @@ IS_CONTAINERIZED = os.path.exists('/.containerenv') or os.path.exists('/.dockere
 HOST_SSH = os.getenv('HOST_SSH', 'host.containers.internal')
 HOST_USER = os.getenv('HOST_USER', '')
 RUN_ID = os.getenv('SERVICEBAY_AGENT_ID')
+SESSION_ID = os.getenv('SERVICEBAY_SESSION') or os.getenv('SERVICEBAY_SESSION_ID')
+
+AGENT_CLEANUP_ON_START = os.getenv('SERVICEBAY_AGENT_CLEANUP_ON_START', 'true').lower() == 'true'
+AGENT_CLEANUP_ENABLED = os.getenv('SERVICEBAY_AGENT_CLEANUP_ENABLED', 'true').lower() == 'true'
+AGENT_CLEANUP_DRY_RUN = os.getenv('SERVICEBAY_AGENT_CLEANUP_DRY_RUN', 'false').lower() == 'true'
+AGENT_CLEANUP_MAX_AGE_MINUTES = os.getenv('SERVICEBAY_AGENT_CLEANUP_MAX_AGE_MINUTES')
+try:
+    AGENT_CLEANUP_MAX_AGE_MINUTES = int(AGENT_CLEANUP_MAX_AGE_MINUTES) if AGENT_CLEANUP_MAX_AGE_MINUTES else None
+except ValueError:
+    AGENT_CLEANUP_MAX_AGE_MINUTES = None
 
 
 def _resolve_timeout_env(var_name: str, default: float) -> Optional[float]:
@@ -86,6 +107,8 @@ def log_message(level: str, msg: str):
     tags = [f"[{level}]"]
     if RUN_ID:
         tags.append(f"[{RUN_ID}]")
+    if SESSION_ID:
+        tags.append(f"[{SESSION_ID}]")
     sys.stderr.write(f"{''.join(tags)} {msg}\n")
     sys.stderr.flush()
 
@@ -111,8 +134,114 @@ def log_structured(event: str, payload: Any):
     }
     if RUN_ID:
         structured['runId'] = RUN_ID
+    if SESSION_ID:
+        structured['sessionId'] = SESSION_ID
     sys.stderr.write(json.dumps(structured) + "\n")
     sys.stderr.flush()
+
+def _extract_session_id(cmdline: str) -> Optional[str]:
+    if not cmdline:
+        return None
+    match = re.search(r'--session-id\s+([^\s]+)', cmdline)
+    if match:
+        return match.group(1)
+    return None
+
+def _should_kill_session(proc_session: Optional[str], current_session: str) -> bool:
+    if not proc_session:
+        return False
+    if not proc_session.startswith('servicebay-'):
+        return False
+    return proc_session != current_session
+
+def cleanup_old_agents(current_session_id: Optional[str]):
+    if not AGENT_CLEANUP_ON_START:
+        log_info("Agent cleanup on start disabled.")
+        return
+    if not AGENT_CLEANUP_ENABLED:
+        log_info("Agent process cleanup disabled.")
+        return
+    if not current_session_id:
+        log_warn("No session ID provided; skipping orphan cleanup.")
+        return
+    if not current_session_id.startswith('servicebay-'):
+        log_warn(f"Session ID '{current_session_id}' does not match expected prefix; skipping cleanup.")
+        return
+
+    now = time.time()
+    killed = 0
+    inspected = 0
+
+    if psutil:
+        for proc in psutil.process_iter(['pid', 'cmdline', 'create_time', 'uids']):
+            inspected += 1
+            try:
+                cmdline = ' '.join(proc.info.get('cmdline') or [])
+                if 'agent.py' not in cmdline:
+                    continue
+                proc_session = _extract_session_id(cmdline)
+                if not _should_kill_session(proc_session, current_session_id):
+                    continue
+                if proc.info.get('uids') and proc.info['uids'].real != os.getuid():
+                    continue
+                if AGENT_CLEANUP_MAX_AGE_MINUTES is not None:
+                    age_minutes = (now - (proc.info.get('create_time') or now)) / 60
+                    if age_minutes < AGENT_CLEANUP_MAX_AGE_MINUTES:
+                        continue
+                log_info(f"Killing orphaned agent PID {proc.pid} (session {proc_session})")
+                if AGENT_CLEANUP_DRY_RUN:
+                    continue
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    proc.kill()
+                killed += 1
+            except Exception as e:
+                log_warn(f"Failed to inspect process: {e}")
+        log_info(f"Orphan cleanup complete. Inspected={inspected}, Terminated={killed}")
+        return
+
+    try:
+        output = subprocess.check_output(['ps', '-eo', 'pid,etimes,args'], text=True)
+        for line in output.splitlines()[1:]:
+            parts = line.strip().split(None, 2)
+            if len(parts) < 3:
+                continue
+            pid_str, etimes_str, cmdline = parts
+            if 'agent.py' not in cmdline:
+                continue
+            proc_session = _extract_session_id(cmdline)
+            if not _should_kill_session(proc_session, current_session_id):
+                continue
+            if AGENT_CLEANUP_MAX_AGE_MINUTES is not None:
+                try:
+                    age_minutes = int(etimes_str) / 60
+                    if age_minutes < AGENT_CLEANUP_MAX_AGE_MINUTES:
+                        continue
+                except ValueError:
+                    pass
+            log_info(f"Killing orphaned agent PID {pid_str} (session {proc_session})")
+            if AGENT_CLEANUP_DRY_RUN:
+                continue
+            try:
+                os.kill(int(pid_str), 15)
+            except Exception as e:
+                log_warn(f"Failed to terminate PID {pid_str}: {e}")
+            killed += 1
+    except Exception as e:
+        log_warn(f"Fallback orphan cleanup failed: {e}")
+
+def _apply_session_args(argv: List[str]):
+    global SESSION_ID
+    import argparse
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--session-id')
+    args, _ = parser.parse_known_args(argv[1:])
+    if args.session_id:
+        SESSION_ID = args.session_id
+        os.environ['SERVICEBAY_SESSION'] = SESSION_ID
+        os.environ['SERVICEBAY_SESSION_ID'] = SESSION_ID
 
 # Log container mode detection after logger is available
 if IS_CONTAINERIZED:
@@ -1512,6 +1641,7 @@ class Agent:
         # Throttling for container scans
         self.scan_scheduled = False
         self.scan_timer = None
+        self.should_shutdown = False
         
     def start(self):
         # Start monitors
@@ -1530,6 +1660,8 @@ class Agent:
         try:
              # Main Loop: Listen for stdin commands
             while True:
+                if self.should_shutdown:
+                    break
                 try:
                     line = sys.stdin.readline()
                     if not line:
@@ -1589,6 +1721,9 @@ class Agent:
         try:
             if cmd == 'ping':
                 reply(result='pong')
+            elif cmd == 'shutdown':
+                self.should_shutdown = True
+                reply(result='ok')
             elif cmd == 'listServices':
                 # Legacy support: return services list immediately
                 with self.lock:
@@ -1986,6 +2121,15 @@ class Agent:
                 pass # Broken pipe?
 
 if __name__ == "__main__":
+    _apply_session_args(sys.argv)
+    if SESSION_ID and setproctitle:
+        try:
+            setproctitle.setproctitle(f"servicebay-agent[{SESSION_ID}]")
+        except Exception as e:
+            log_warn(f"Failed to set process title: {e}")
+    if SESSION_ID:
+        cleanup_old_agents(SESSION_ID)
+
     # Immediate startup signal for debugging
     if RUN_ID:
         log_info(f"Process started (PID: {os.getpid()}, ID: {RUN_ID})")

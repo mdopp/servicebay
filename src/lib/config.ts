@@ -45,11 +45,32 @@ export interface ReverseProxyConfig {
   // Currently managed via system/nginx endpoints
 }
 
+interface AgentRestartSchedule {
+  enabled: boolean;
+  time: string; // HH:MM (UTC)
+  timezone?: string;
+}
+
+interface AgentProcessCleanup {
+  enabled: boolean;
+  dryRun?: boolean;
+  maxAgeMinutes?: number;
+}
+
+export interface AgentConfig {
+  sessionId?: string; // Read-only, auto-generated at server startup
+  cleanupOrphansOnStart?: boolean;
+  restartSchedule?: AgentRestartSchedule;
+  gracefulShutdownTimeout?: number; // seconds
+  processCleanup?: AgentProcessCleanup;
+}
+
 export interface AppConfig {
   logLevel?: LogLevel;
   domain?: string; // Optional domain for display
   gateway?: GatewayConfig;
   reverseProxy?: ReverseProxyConfig;
+  agent?: AgentConfig;
   templateSettings?: Record<string, string>;
   autoUpdate: {
     enabled: boolean;
@@ -93,6 +114,20 @@ const normalizeExternalLinks = (links?: ExternalLink[]): ExternalLink[] | undefi
 const DEFAULT_CONFIG: AppConfig = {
   templateSettings: {},
   logLevel: 'info',
+  agent: {
+    cleanupOrphansOnStart: true,
+    restartSchedule: {
+      enabled: false,
+      time: '03:00',
+      timezone: 'UTC'
+    },
+    gracefulShutdownTimeout: 30,
+    processCleanup: {
+      enabled: true,
+      dryRun: false,
+      maxAgeMinutes: 60
+    }
+  },
   autoUpdate: {
     enabled: false,
     schedule: '0 0 * * *', // Daily at midnight

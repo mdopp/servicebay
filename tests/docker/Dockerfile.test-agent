@@ -5,7 +5,7 @@ FROM quay.io/podman/stable:latest
 # procps-ng: For 'ss' command (port detection)
 # iproute: Network tools
 # systemd: Service manager simulation (generic)
-RUN dnf install -y python3 procps-ng iproute systemd && dnf clean all
+RUN dnf install -y python3 python3-psutil python3-setproctitle procps-ng iproute systemd && dnf clean all
 
 # Setup a fake "user" to match rootless behavior
 # This is crucial as ServiceBay targets rootless Podman

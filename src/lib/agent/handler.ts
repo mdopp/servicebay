@@ -6,6 +6,7 @@ import { ClientChannel } from 'ssh2';
 import { spawn, ChildProcess } from 'child_process';
 import { listNodes } from '../nodes';
 import { logger } from '@/lib/logger';
+import { getConfig } from '@/lib/config';
 
 type AgentLogLevel = 'info' | 'warn' | 'error' | 'debug';
 
@@ -65,6 +66,8 @@ export interface AgentHealth {
   messageCount: number;
   errorCount: number;
   lastError?: string;
+  runId?: string;
+  sessionId?: string;
 }
 
 export class AgentHandler extends EventEmitter {
@@ -101,6 +104,10 @@ export class AgentHandler extends EventEmitter {
     return `${this.nodeName}-${Date.now().toString(36)}-${Math.random().toString(36).slice(-4)}`;
   }
 
+  private getSessionId(): string | undefined {
+    return process.env.SERVICEBAY_SESSION || undefined;
+  }
+
   public getCurrentRunId(): string | undefined {
     return this.currentRunId;
   }
@@ -134,6 +141,8 @@ export class AgentHandler extends EventEmitter {
     this.isStarting = true;
     const runId = this.generateRunId();
     this.currentRunId = runId;
+    this.health.runId = runId;
+    this.health.sessionId = this.getSessionId();
 
     const starter = (async () => {
       // Check if we should use Local Spawn or SSH
@@ -174,6 +183,10 @@ export class AgentHandler extends EventEmitter {
     try {
         const script = getAgentScript();
         const args = ['-u', '-c', `import base64, sys; exec(base64.b64decode("${script}"))`];
+      const sessionId = this.getSessionId();
+      if (sessionId) {
+        args.push('--session-id', sessionId);
+      }
         this.log('Agent:Local', 'info', 'Spawning python3...');
         
         // Ensure XDG_RUNTIME_DIR is set for systemctl --user
@@ -182,7 +195,24 @@ export class AgentHandler extends EventEmitter {
             const uid = process.getuid ? process.getuid() : 0;
             env.XDG_RUNTIME_DIR = `/run/user/${uid}`;
         }
+        const config = await getConfig();
         env.SERVICEBAY_AGENT_ID = runId;
+        if (sessionId) {
+          env.SERVICEBAY_SESSION = sessionId;
+          env.SERVICEBAY_SESSION_ID = sessionId;
+        }
+        if (config.agent?.cleanupOrphansOnStart === false) {
+          env.SERVICEBAY_AGENT_CLEANUP_ON_START = 'false';
+        }
+        if (config.agent?.processCleanup?.enabled === false) {
+          env.SERVICEBAY_AGENT_CLEANUP_ENABLED = 'false';
+        }
+        if (config.agent?.processCleanup?.dryRun) {
+          env.SERVICEBAY_AGENT_CLEANUP_DRY_RUN = 'true';
+        }
+        if (typeof config.agent?.processCleanup?.maxAgeMinutes === 'number') {
+          env.SERVICEBAY_AGENT_CLEANUP_MAX_AGE_MINUTES = String(config.agent?.processCleanup?.maxAgeMinutes);
+        }
 
         const child = spawn('python3', args, { env });
 
@@ -226,12 +256,30 @@ export class AgentHandler extends EventEmitter {
       
       this.log(this.nodeName, 'info', 'SSH connection established, starting Python agent...');
       const script = getAgentScript();
+      const config = await getConfig();
+      const sessionId = this.getSessionId();
       
       // Ensure systemd environment variables are set for the agent process
       // We export XDG_RUNTIME_DIR so systemctl can find the bus.
       // We do NOT manually set DBUS_SESSION_BUS_ADDRESS as it can vary (file vs abstract).
-      const envSetup = `export SERVICEBAY_AGENT_ID="${runId}"; export XDG_RUNTIME_DIR="/run/user/$(id -u)";`;
-      const cmd = `${envSetup} python3 -u -c 'import base64, sys; exec(base64.b64decode("${script}"))'`;
+      const cleanupOnStart = config.agent?.cleanupOrphansOnStart === false ? 'false' : 'true';
+      const cleanupEnabled = config.agent?.processCleanup?.enabled === false ? 'false' : 'true';
+      const cleanupDryRun = config.agent?.processCleanup?.dryRun ? 'true' : 'false';
+      const cleanupMaxAge = typeof config.agent?.processCleanup?.maxAgeMinutes === 'number'
+        ? String(config.agent?.processCleanup?.maxAgeMinutes)
+        : '';
+      const envSetup = [
+        `export SERVICEBAY_AGENT_ID="${runId}"`,
+        `export XDG_RUNTIME_DIR="/run/user/$(id -u)"`,
+        `export SERVICEBAY_AGENT_CLEANUP_ON_START="${cleanupOnStart}"`,
+        `export SERVICEBAY_AGENT_CLEANUP_ENABLED="${cleanupEnabled}"`,
+        `export SERVICEBAY_AGENT_CLEANUP_DRY_RUN="${cleanupDryRun}"`,
+        cleanupMaxAge ? `export SERVICEBAY_AGENT_CLEANUP_MAX_AGE_MINUTES="${cleanupMaxAge}"` : '',
+        sessionId ? `export SERVICEBAY_SESSION="${sessionId}"` : '',
+        sessionId ? `export SERVICEBAY_SESSION_ID="${sessionId}"` : ''
+      ].filter(Boolean).join('; ');
+      const sessionArg = sessionId ? ` --session-id "${sessionId}"` : '';
+      const cmd = `${envSetup}; python3 -u -c 'import base64, sys; exec(base64.b64decode("${script}"))'${sessionArg}`;
 
       return new Promise<void>((resolve, reject) => {
         conn.exec(cmd, (err, stream) => {
@@ -466,6 +514,37 @@ export class AgentHandler extends EventEmitter {
         }
     });
   }
+
+    public async restart(reason: string = 'manual', timeoutMs: number = 30000): Promise<void> {
+      const sessionId = this.getSessionId();
+      this.log(this.nodeName, 'info', `Restarting agent (${reason})${sessionId ? ` [session=${sessionId}]` : ''}`);
+
+      const waitForDisconnect = new Promise<void>((resolve) => {
+        const handler = () => {
+          this.off('disconnected', handler);
+          resolve();
+        };
+        this.on('disconnected', handler);
+      });
+
+      try {
+        await this.sendCommand('shutdown', { reason });
+      } catch (e) {
+        this.log(this.nodeName, 'warn', 'Shutdown command failed, forcing disconnect:', e);
+      }
+
+      await Promise.race([
+        waitForDisconnect,
+        new Promise<void>(resolve => setTimeout(resolve, timeoutMs))
+      ]);
+
+      if (this.isConnected) {
+        this.log(this.nodeName, 'warn', `Shutdown timeout after ${timeoutMs}ms, killing agent process.`);
+        this.disconnect();
+      }
+
+      await this.start();
+    }
 
   public disconnect() {
       if (this.channel) {

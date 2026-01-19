@@ -50,6 +50,17 @@ export class AgentManager extends EventEmitter {
       const updates = Array.from(this.agents.values()).map(agent => agent.setMonitoring(enabled));
       await Promise.allSettled(updates);
   }
+
+    public async restartAgent(nodeName: string, reason: string = 'manual', timeoutMs: number = 30000): Promise<void> {
+      const agent = this.getAgent(nodeName);
+      await agent.restart(reason, timeoutMs);
+    }
+
+    public async restartAll(reason: string = 'manual', timeoutMs: number = 30000): Promise<void> {
+      const agents = Array.from(this.agents.values());
+      logger.info('AgentManager', `Restarting ${agents.length} agents (${reason})`);
+      await Promise.allSettled(agents.map(agent => agent.restart(reason, timeoutMs)));
+    }
 }
 
 export const agentManager = AgentManager.getInstance();
