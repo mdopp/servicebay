@@ -591,7 +591,11 @@ export default function ServicesPlugin() {
                         <div className={`mt-1.5 w-3 h-3 shrink-0 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
                         <div className="flex-1 min-w-0">
                             <div className="flex flex-wrap items-center gap-2 mb-1">
-                                <h3 className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate" title={service.name}>
+                                <h3
+                                    className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate"
+                                    title={service.name}
+                                    data-testid={`service-name-${service.name.replace('.service', '')}`}
+                                >
                                     {service.name.replace('.service', '')}
                                 </h3>
                                 {service.nodeName && service.nodeName !== 'Local' && (
@@ -1505,7 +1509,7 @@ export default function ServicesPlugin() {
                                                 <li key={service.serviceName} className="border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 bg-white dark:bg-gray-950/40">
                                                     <div className="flex flex-col gap-1">
                                                         <div className="flex flex-wrap items-center justify-between gap-2">
-                                                            <p className="font-medium text-gray-900 dark:text-gray-100">{service.serviceName}</p>
+                                                            <p className="font-medium text-gray-900 dark:text-gray-100" data-testid="service-name">{service.serviceName}</p>
                                                         </div>
                                                         <div className="flex flex-col gap-0.5">
                                                             <span className="text-[11px] font-semibold tracking-wide uppercase text-gray-400 dark:text-gray-500">Config File:</span>

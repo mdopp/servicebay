@@ -80,9 +80,8 @@ describe('ServicesPlugin', () => {
     it('displays services with ports', async () => {
         render(<ServicesPlugin />);
         
-        // Find Redis card
-        await waitFor(() => screen.getByText('redis'));
-        
+        // Find Redis card by test id
+        await waitFor(() => screen.getByTestId('service-name-redis'));
         // Check for ports (Ports are rendered as ":HostPort" or "ContainerPort/tcp")
         // In the mock, Redis has hostPort 6379, so we expect ":6379"
         expect(screen.getByText(':6379')).toBeDefined();
