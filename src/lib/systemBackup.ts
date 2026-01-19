@@ -8,6 +8,7 @@ import { DATA_DIR, SERVICEBAY_BACKUP_DIR, getLocalSystemdDir } from './dirs';
 import { logger } from './logger';
 import { listNodes, PodmanConnection } from './nodes';
 import { SSHConnectionPool } from './ssh/pool';
+import { getConfig, updateConfig } from './config';
 
 const execFileAsync = promisify(execFile);
 const BACKUP_PREFIX = 'servicebay-full';
@@ -37,6 +38,92 @@ export interface BackupLogEntry {
 export interface SystemBackupResult {
     entry: SystemBackupEntry;
     log: BackupLogEntry[];
+}
+
+interface BackupPreviewNode {
+    name: string;
+    uri?: string;
+    identity?: string;
+    default?: boolean;
+}
+
+interface BackupPreviewCheck {
+    id: string;
+    name: string;
+    type?: string;
+    target?: string;
+}
+
+interface BackupPreviewExternalLink {
+    name: string;
+    url: string;
+}
+
+interface BackupPreviewRegistry {
+    name: string;
+    url?: string;
+    branch?: string;
+}
+
+interface BackupPreviewGateway {
+    type?: string;
+    host?: string;
+}
+
+interface BackupPreviewNotification {
+    host?: string;
+    from?: string;
+    to?: string[];
+}
+
+export interface BackupPreviewConfig {
+    nodes: BackupPreviewNode[];
+    checks: BackupPreviewCheck[];
+    externalLinks: BackupPreviewExternalLink[];
+    registries: BackupPreviewRegistry[];
+    gateway?: BackupPreviewGateway;
+    notifications?: BackupPreviewNotification;
+    templateSettings: string[];
+    logLevel?: string;
+    update?: {
+        enabled?: boolean;
+        schedule?: string;
+        channel?: string;
+    };
+}
+
+interface BackupPreviewNodeFile {
+    relativePath: string;
+    fileName: string;
+}
+
+export interface BackupPreviewNodeFiles {
+    nodeName: string;
+    files: BackupPreviewNodeFile[];
+}
+
+export interface BackupPreviewResult {
+    config: BackupPreviewConfig;
+    nodeFiles: BackupPreviewNodeFiles[];
+}
+
+export interface BackupRestoreSelection {
+    config: {
+        nodes?: string[];
+        checks?: string[];
+        externalLinks?: boolean;
+        registries?: boolean;
+        gateway?: boolean;
+        notifications?: boolean;
+        templateSettings?: boolean;
+        logLevel?: boolean;
+        update?: boolean;
+    };
+    nodeFiles: Array<{
+        sourceNode: string;
+        targetNode: string;
+        files: string[];
+    }>;
 }
 
 interface BackupNodeDescriptor {
@@ -120,6 +207,14 @@ function decodeNodeFolder(folder: string): string {
     } catch {
         return folder;
     }
+}
+
+function sanitizeRelativePath(relativePath: string): string {
+    const normalized = path.posix.normalize(relativePath).replace(/^(\.\/)+/, '');
+    if (!normalized || normalized.startsWith('..') || path.posix.isAbsolute(normalized)) {
+        throw new Error('Invalid file path');
+    }
+    return normalized;
 }
 
 async function execRemoteCommand(conn: Client, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
@@ -245,6 +340,30 @@ async function readMetadata(stagingDir: string): Promise<BackupMetadata | undefi
     }
 }
 
+async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
+    if (!(await pathExists(filePath))) return undefined;
+    try {
+        const raw = await fs.readFile(filePath, 'utf-8');
+        return JSON.parse(raw) as T;
+    } catch {
+        return undefined;
+    }
+}
+
+async function listFilesRecursive(baseDir: string): Promise<string[]> {
+    const entries = await fs.readdir(baseDir, { withFileTypes: true });
+    const files: string[] = [];
+    for (const entry of entries) {
+        const fullPath = path.join(baseDir, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...(await listFilesRecursive(fullPath)));
+        } else if (entry.isFile()) {
+            files.push(fullPath);
+        }
+    }
+    return files;
+}
+
 async function restoreConfigFiles(sourceDir: string) {
     if (!(await pathExists(sourceDir))) return;
     await fs.mkdir(DATA_DIR, { recursive: true });
@@ -259,6 +378,18 @@ async function restoreConfigFiles(sourceDir: string) {
 async function restoreLocalSystemd(sourceDir: string) {
     if (!(await pathExists(sourceDir))) return;
     await copyDirectory(sourceDir, getLocalSystemdDir());
+}
+
+async function resolveRemoteSystemdDir(conn: Client): Promise<string> {
+    const home = await execRemoteCommand(conn, 'printf "%s" "$HOME"');
+    if (home.code !== 0) {
+        throw new Error(home.stderr || 'Failed to resolve remote home directory');
+    }
+    const trimmed = home.stdout.trim();
+    if (!trimmed) {
+        throw new Error('Remote home directory is empty');
+    }
+    return path.posix.join(trimmed, '.config', 'containers', 'systemd');
 }
 
 async function restoreRemoteSystemd(node: PodmanConnection, sourceDir: string) {
@@ -455,6 +586,245 @@ export async function restoreSystemBackup(fileName: string): Promise<SystemBacku
         }
 
         return entry;
+    } finally {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+    }
+}
+
+export async function previewSystemBackup(archivePath: string): Promise<BackupPreviewResult> {
+    const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-preview-'));
+    try {
+        await runTar(['-xzf', archivePath, '-C', stagingDir]);
+        const configDir = path.join(stagingDir, 'config');
+        const backupConfig = await readJsonFile<Awaited<ReturnType<typeof getConfig>>>(path.join(configDir, 'config.json'));
+        const nodesFile = await readJsonFile<PodmanConnection[]>(path.join(configDir, 'nodes.json'));
+        const checksFile = await readJsonFile<Array<{ id?: string; name?: string; type?: string; target?: string }>>(path.join(configDir, 'checks.json'));
+
+        const registriesItems = Array.isArray(backupConfig?.registries)
+            ? backupConfig.registries
+            : (backupConfig?.registries?.items ?? []);
+
+        const configPreview: BackupPreviewConfig = {
+            nodes: (nodesFile || []).map(node => ({
+                name: node.Name,
+                uri: node.URI,
+                identity: node.Identity,
+                default: node.Default
+            })),
+            checks: (checksFile || []).map(check => ({
+                id: check.id || check.name || 'unknown',
+                name: check.name || check.id || 'Unnamed check',
+                type: check.type,
+                target: check.target
+            })),
+            externalLinks: (backupConfig?.externalLinks || []).map(link => ({
+                name: link.name,
+                url: link.url
+            })),
+            registries: (registriesItems || []).map(registry => ({
+                name: registry.name,
+                url: registry.url,
+                branch: registry.branch
+            })),
+            gateway: backupConfig?.gateway ? {
+                type: backupConfig.gateway.type,
+                host: backupConfig.gateway.host
+            } : undefined,
+            notifications: backupConfig?.notifications?.email ? {
+                host: backupConfig.notifications.email.host,
+                from: backupConfig.notifications.email.from,
+                to: backupConfig.notifications.email.to
+            } : undefined,
+            templateSettings: Object.keys(backupConfig?.templateSettings || {}),
+            logLevel: backupConfig?.logLevel,
+            update: backupConfig?.autoUpdate ? {
+                enabled: backupConfig.autoUpdate.enabled,
+                schedule: backupConfig.autoUpdate.schedule,
+                channel: backupConfig.autoUpdate.channel
+            } : undefined
+        };
+
+        const metadata = await readMetadata(stagingDir);
+        const nodesDir = path.join(stagingDir, 'nodes');
+        const nodeFiles: BackupPreviewNodeFiles[] = [];
+
+        if (await pathExists(nodesDir)) {
+            const entries = await fs.readdir(nodesDir, { withFileTypes: true });
+            for (const dirent of entries) {
+                if (!dirent.isDirectory()) continue;
+                const folder = dirent.name;
+                const nodeName = metadata?.nodes.find(n => n.folder === folder)?.name ?? decodeNodeFolder(folder);
+                const systemdDir = path.join(nodesDir, folder, 'systemd');
+                if (!(await pathExists(systemdDir))) continue;
+                const files = await listFilesRecursive(systemdDir);
+                const mapped = files.map(filePath => {
+                    const relativePath = path.relative(systemdDir, filePath).split(path.sep).join('/');
+                    return {
+                        relativePath,
+                        fileName: path.basename(filePath)
+                    };
+                }).sort((a, b) => a.fileName.localeCompare(b.fileName));
+                nodeFiles.push({ nodeName, files: mapped });
+            }
+        }
+
+        return { config: configPreview, nodeFiles };
+    } finally {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+    }
+}
+
+export async function readSystemBackupFile(archivePath: string, nodeName: string, relativePath: string): Promise<string> {
+    const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-file-preview-'));
+    try {
+        await runTar(['-xzf', archivePath, '-C', stagingDir]);
+        const metadata = await readMetadata(stagingDir);
+        const folder = metadata?.nodes.find(n => n.name === nodeName)?.folder;
+        const resolvedFolder = folder || encodeNodeFolder(nodeName);
+        const systemdDir = path.join(stagingDir, 'nodes', resolvedFolder, 'systemd');
+        if (!(await pathExists(systemdDir))) {
+            throw new Error('Systemd folder not found in backup');
+        }
+        const safeRelative = sanitizeRelativePath(relativePath);
+        const resolvedPath = path.resolve(systemdDir, ...safeRelative.split('/'));
+        const systemdRoot = path.resolve(systemdDir) + path.sep;
+        if (!resolvedPath.startsWith(systemdRoot)) {
+            throw new Error('Invalid file path');
+        }
+        if (!(await pathExists(resolvedPath))) {
+            throw new Error('File not found in backup');
+        }
+        return await fs.readFile(resolvedPath, 'utf8');
+    } finally {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+    }
+}
+
+export async function restoreSystemBackupSelection(archivePath: string, selection: BackupRestoreSelection): Promise<void> {
+    const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-restore-'));
+    try {
+        await runTar(['-xzf', archivePath, '-C', stagingDir]);
+        const configDir = path.join(stagingDir, 'config');
+        const backupConfig = await readJsonFile<Awaited<ReturnType<typeof getConfig>>>(path.join(configDir, 'config.json'));
+
+        const configUpdates: Partial<Awaited<ReturnType<typeof getConfig>>> = {};
+        if (selection.config.externalLinks && backupConfig?.externalLinks) {
+            configUpdates.externalLinks = backupConfig.externalLinks;
+        }
+        if (selection.config.registries && backupConfig?.registries) {
+            configUpdates.registries = backupConfig.registries;
+        }
+        if (selection.config.gateway && backupConfig?.gateway) {
+            configUpdates.gateway = backupConfig.gateway;
+        }
+        if (selection.config.notifications && backupConfig?.notifications) {
+            configUpdates.notifications = backupConfig.notifications;
+        }
+        if (selection.config.templateSettings && backupConfig?.templateSettings) {
+            configUpdates.templateSettings = backupConfig.templateSettings;
+        }
+        if (selection.config.logLevel && backupConfig?.logLevel) {
+            configUpdates.logLevel = backupConfig.logLevel;
+        }
+        if (selection.config.update && backupConfig?.autoUpdate) {
+            configUpdates.autoUpdate = backupConfig.autoUpdate;
+        }
+
+        if (Object.keys(configUpdates).length > 0) {
+            await updateConfig(configUpdates);
+        }
+
+        if (selection.config.nodes?.length) {
+            const backupNodes = await readJsonFile<PodmanConnection[]>(path.join(configDir, 'nodes.json')) || [];
+            const existingNodes = await readJsonFile<PodmanConnection[]>(path.join(DATA_DIR, 'nodes.json')) || [];
+            const nodeMap = new Map(existingNodes.map(node => [node.Name, node]));
+            for (const node of backupNodes) {
+                if (selection.config.nodes.includes(node.Name)) {
+                    nodeMap.set(node.Name, node);
+                }
+            }
+            await fs.writeFile(path.join(DATA_DIR, 'nodes.json'), JSON.stringify(Array.from(nodeMap.values()), null, 2));
+        }
+
+        if (selection.config.checks?.length) {
+            const backupChecks = await readJsonFile<Array<{ id?: string; name?: string }>>(path.join(configDir, 'checks.json')) || [];
+            const existingChecks = await readJsonFile<Array<{ id?: string; name?: string }>>(path.join(DATA_DIR, 'checks.json')) || [];
+            const getKey = (check: { id?: string; name?: string }) => check.id || check.name || '';
+            const checkMap = new Map(existingChecks.map(check => [getKey(check), check]));
+            for (const check of backupChecks) {
+                const key = getKey(check);
+                if (key && selection.config.checks.includes(key)) {
+                    checkMap.set(key, check);
+                }
+            }
+            await fs.writeFile(path.join(DATA_DIR, 'checks.json'), JSON.stringify(Array.from(checkMap.values()), null, 2));
+        }
+
+        if (selection.nodeFiles.length > 0) {
+            const metadata = await readMetadata(stagingDir);
+            const nodesDir = path.join(stagingDir, 'nodes');
+            const nodesFromDisk = await listNodes();
+            const nodesMap = new Map(nodesFromDisk.map(node => [node.Name, node]));
+            const systemdTargets = new Map<string, string[]>();
+
+            for (const group of selection.nodeFiles) {
+                const folder = metadata?.nodes.find(n => n.name === group.sourceNode)?.folder;
+                const resolvedFolder = folder || encodeNodeFolder(group.sourceNode);
+                const sourceDir = path.join(nodesDir, resolvedFolder, 'systemd');
+                if (!(await pathExists(sourceDir))) continue;
+
+                const targetNode = group.targetNode;
+                if (!targetNode) continue;
+
+                const targetEntries = systemdTargets.get(targetNode) || [];
+                systemdTargets.set(targetNode, targetEntries);
+
+                for (const relativePath of group.files) {
+                    const safePath = relativePath.replace(/\\/g, '/');
+                    if (safePath.includes('..')) continue;
+                    const sourceFile = path.join(sourceDir, safePath);
+                    if (!(await pathExists(sourceFile))) continue;
+                    if (targetNode === 'Local') {
+                        const destination = path.join(getLocalSystemdDir(), safePath);
+                        await fs.mkdir(path.dirname(destination), { recursive: true });
+                        await fs.copyFile(sourceFile, destination);
+                    } else {
+                        const node = nodesMap.get(targetNode);
+                        if (!node) {
+                            throw new Error(`Target node ${targetNode} not configured`);
+                        }
+                        const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
+                        const remoteSystemd = await resolveRemoteSystemdDir(conn);
+                        const remotePath = path.posix.join(remoteSystemd, safePath.split(path.sep).join('/'));
+                        const remoteDir = path.posix.dirname(remotePath);
+                        await execRemoteCommand(conn, `mkdir -p "${remoteDir}"`);
+                        const tempLocal = path.join(os.tmpdir(), `servicebay-restore-${Date.now()}-${path.basename(remotePath)}`);
+                        await fs.copyFile(sourceFile, tempLocal);
+                        await uploadRemoteFile(conn, tempLocal, remotePath);
+                        await fs.rm(tempLocal, { force: true });
+                    }
+                    targetEntries.push(safePath);
+                }
+            }
+
+            for (const [targetNode] of systemdTargets) {
+                if (targetNode === 'Local') {
+                    try {
+                        await execFileAsync('systemctl', ['--user', 'daemon-reload']);
+                    } catch (error) {
+                        logger.warn('SystemBackup', 'Failed to reload systemd after restore', error);
+                    }
+                } else {
+                    const node = nodesMap.get(targetNode);
+                    if (!node) continue;
+                    const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
+                    const reload = await execRemoteCommand(conn, 'systemctl --user daemon-reload');
+                    if (reload.code !== 0) {
+                        logger.warn('SystemBackup', `Remote daemon reload failed on ${targetNode}: ${reload.stderr || reload.stdout}`);
+                    }
+                }
+            }
+        }
     } finally {
         await fs.rm(stagingDir, { recursive: true, force: true });
     }

@@ -582,7 +582,7 @@ export default function ServicesPlugin() {
             return Array.from(uniquePortsMap.values());
         }, [service.ports]);
 
-        const ensureContainerContext = useCallback((container: EnrichedContainer) => attachNodeContext(container, service.nodeName), [attachNodeContext, service.nodeName]);
+        const ensureContainerContext = useCallback((container: EnrichedContainer) => attachNodeContext(container, service.nodeName), [service.nodeName]);
 
         return (
             <div className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden flex flex-col h-full min-w-0">

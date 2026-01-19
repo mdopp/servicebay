@@ -52,11 +52,10 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     openssh-client \
     python3 \
-    python3-pip \
+    python3-paramiko \
     procps \
     iproute2 \
     ca-certificates && \
-    pip3 install --no-cache-dir paramiko && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1001 nodejs

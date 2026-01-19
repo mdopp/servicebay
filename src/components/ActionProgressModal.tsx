@@ -68,7 +68,8 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
   }, [action, nodeName, serviceName]);
 
   useEffect(() => {
-    if (isOpen && terminalRef.current) {
+    const terminalElement = terminalRef.current;
+    if (isOpen && terminalElement) {
       let term: Terminal | null = null;
       let handleResize: (() => void) | null = null;
       const controller = new AbortController();
@@ -92,9 +93,9 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           const fitAddon = new FitAddon();
           term.loadAddon(fitAddon);
           
-          if (terminalRef.current) {
-              terminalRef.current.innerHTML = '';
-              term.open(terminalRef.current);
+            if (terminalElement) {
+              terminalElement.innerHTML = '';
+              term.open(terminalElement);
               fitAddon.fit();
               xtermRef.current = term;
 
@@ -112,8 +113,8 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           controller.abort();
           if (handleResize) window.removeEventListener('resize', handleResize);
           if (term) term.dispose();
-          if (terminalRef.current) {
-            terminalRef.current.innerHTML = '';
+          if (terminalElement) {
+            terminalElement.innerHTML = '';
           }
           xtermRef.current = null;
       };

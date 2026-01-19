@@ -1,17 +1,19 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe, HardDrive, RotateCcw } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe, HardDrive, RotateCcw, UploadCloud, X, Eye } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import SSHSetupModal from '@/components/SSHSetupModal';
 import LogLevelControl from '@/components/LogLevelControl';
+import FileViewer from '@/components/FileViewer';
 import { AppConfig } from '@/lib/config';
 import { getNodes, createNode, editNode, deleteNode, setNodeAsDefault } from '@/app/actions/nodes';
 import { checkConnection, checkFullConnection } from '@/app/actions/ssh';
 import { PodmanConnection } from '@/lib/nodes';
-import type { BackupLogEntry, BackupLogStatus } from '@/lib/systemBackup';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
+import type { BackupLogEntry, BackupLogStatus, BackupPreviewResult, BackupRestoreSelection } from '@/lib/systemBackup';
 
 type TemplateSettingsSchemaEntry = {
   default: string;
@@ -121,8 +123,28 @@ export default function SettingsPage() {
   const [backups, setBackups] = useState<SystemBackupEntrySummary[]>([]);
   const [backupsLoading, setBackupsLoading] = useState(true);
   const [creatingBackup, setCreatingBackup] = useState(false);
-  const [restoreTarget, setRestoreTarget] = useState<SystemBackupEntrySummary | null>(null);
+  const [restoreOverlayOpen, setRestoreOverlayOpen] = useState(false);
   const [restoringBackup, setRestoringBackup] = useState(false);
+  const [restorePreview, setRestorePreview] = useState<BackupPreviewResult | null>(null);
+  const [restoreSource, setRestoreSource] = useState<{ type: 'stored' | 'upload'; fileName?: string; token?: string } | null>(null);
+  const [restoreUploadError, setRestoreUploadError] = useState<string | null>(null);
+  const [restoreFilePreview, setRestoreFilePreview] = useState<{ nodeName: string; relativePath: string; content: string; loading: boolean } | null>(null);
+  const [restoreFilePreviewError, setRestoreFilePreviewError] = useState<string | null>(null);
+  const [restoreSelectionState, setRestoreSelectionState] = useState<{
+    nodes: Record<string, boolean>;
+    checks: Record<string, boolean>;
+    configFlags: {
+      externalLinks: boolean;
+      registries: boolean;
+      gateway: boolean;
+      notifications: boolean;
+      templateSettings: boolean;
+      logLevel: boolean;
+      update: boolean;
+    };
+    nodeFiles: Record<string, Record<string, boolean>>;
+    targetNodes: Record<string, string>;
+  } | null>(null);
   const [backupLog, setBackupLog] = useState<BackupLogEntry[]>([]);
   const [backupStatus, setBackupStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [deleteTarget, setDeleteTarget] = useState<SystemBackupEntrySummary | null>(null);
@@ -775,39 +797,223 @@ export default function SettingsPage() {
     document.body.removeChild(link);
   };
 
-  const handleRestoreRequest = (entry: SystemBackupEntrySummary) => {
-    setRestoreTarget(entry);
+  const buildDefaultRestoreState = useCallback((preview: BackupPreviewResult) => {
+    const nodesState = Object.fromEntries(preview.config.nodes.map(node => [node.name, true]));
+    const checksState = Object.fromEntries(preview.config.checks.map(check => [check.id, true]));
+    const nodeFilesState: Record<string, Record<string, boolean>> = {};
+    const targetNodes: Record<string, string> = {};
+
+    const availableTargets = ['Local', ...nodes.map(node => node.Name)];
+
+    preview.nodeFiles.forEach(group => {
+      nodeFilesState[group.nodeName] = Object.fromEntries(group.files.map(file => [file.relativePath, true]));
+      targetNodes[group.nodeName] = availableTargets.includes(group.nodeName) ? group.nodeName : 'Local';
+    });
+
+    setRestoreSelectionState({
+      nodes: nodesState,
+      checks: checksState,
+      configFlags: {
+        externalLinks: preview.config.externalLinks.length > 0,
+        registries: preview.config.registries.length > 0,
+        gateway: Boolean(preview.config.gateway),
+        notifications: Boolean(preview.config.notifications),
+        templateSettings: preview.config.templateSettings.length > 0,
+        logLevel: Boolean(preview.config.logLevel),
+        update: Boolean(preview.config.update)
+      },
+      nodeFiles: nodeFilesState,
+      targetNodes
+    });
+  }, [nodes]);
+
+  const openRestoreOverlay = (reset: boolean = false) => {
+    if (reset) {
+      setRestorePreview(null);
+      setRestoreSource(null);
+      setRestoreSelectionState(null);
+      setRestoreUploadError(null);
+      setRestoreFilePreview(null);
+      setRestoreFilePreviewError(null);
+    }
+    setRestoreOverlayOpen(true);
+    setRestoreUploadError(null);
   };
 
-  const confirmRestoreBackup = async () => {
-    if (!restoreTarget || restoringBackup) return;
+  const closeRestoreOverlay = useCallback(() => {
+    if (restoringBackup) return;
+    setRestoreOverlayOpen(false);
+    setRestorePreview(null);
+    setRestoreSource(null);
+    setRestoreUploadError(null);
+    setRestoreSelectionState(null);
+    setRestoreFilePreview(null);
+    setRestoreFilePreviewError(null);
+  }, [restoringBackup]);
+
+  useEscapeKey(closeRestoreOverlay, restoreOverlayOpen, true);
+  useEscapeKey(() => setRestoreFilePreview(null), Boolean(restoreFilePreview), true);
+
+  const handleRestorePreviewRequest = async (payload: { file?: File; fileName?: string }) => {
+    setRestoreUploadError(null);
+    setRestorePreview(null);
+    setRestoreSource(null);
+    setRestoreSelectionState(null);
+    setRestoreFilePreview(null);
+    setRestoreFilePreviewError(null);
+
+    try {
+      let response: Response;
+      if (payload.file) {
+        const formData = new FormData();
+        formData.append('file', payload.file);
+        response = await fetch('/api/settings/backups/preview', { method: 'POST', body: formData });
+      } else if (payload.fileName) {
+        response = await fetch('/api/settings/backups/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName: payload.fileName })
+        });
+      } else {
+        throw new Error('No backup selected');
+      }
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Unable to read backup');
+      }
+
+      setRestorePreview(data.preview as BackupPreviewResult);
+      setRestoreSource(data.source);
+      buildDefaultRestoreState(data.preview as BackupPreviewResult);
+      openRestoreOverlay(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load backup preview';
+      setRestoreUploadError(message);
+      addToast('error', 'Restore preview failed', message);
+    }
+  };
+
+  const handleRestoreFilePreview = useCallback(async (nodeName: string, relativePath: string) => {
+    if (!restoreSource) return;
+    setRestoreFilePreview({ nodeName, relativePath, content: '', loading: true });
+    setRestoreFilePreviewError(null);
+    try {
+      const payload = restoreSource.type === 'stored'
+        ? { fileName: restoreSource.fileName, nodeName, relativePath }
+        : { uploadToken: restoreSource.token, nodeName, relativePath };
+      const res = await fetch('/api/settings/backups/file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Unable to load file');
+      }
+      setRestoreFilePreview({ nodeName, relativePath, content: data.content ?? '', loading: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load file preview';
+      setRestoreFilePreviewError(message);
+      setRestoreFilePreview({ nodeName, relativePath, content: '', loading: false });
+    }
+  }, [restoreSource]);
+
+  const resolveFilePreviewLanguage = (fileName: string) => {
+    if (fileName.endsWith('.yml') || fileName.endsWith('.yaml')) return 'yaml';
+    if (fileName.endsWith('.kube') || fileName.endsWith('.container') || fileName.endsWith('.pod') || fileName.endsWith('.network') || fileName.endsWith('.volume')) return 'ini';
+    if (fileName.endsWith('.json')) return 'json';
+    if (fileName.endsWith('.sh')) return 'bash';
+    return 'bash';
+  };
+
+  const handleRestoreRequest = (entry: SystemBackupEntrySummary) => {
+    void handleRestorePreviewRequest({ fileName: entry.fileName });
+  };
+
+  const handleRestoreFromFile = (file: File | null) => {
+    if (!file) return;
+    void handleRestorePreviewRequest({ file });
+  };
+
+  const confirmRestoreBackup = useCallback(async () => {
+    if (!restorePreview || !restoreSource || !restoreSelectionState || restoringBackup) return;
     setRestoringBackup(true);
     try {
+      const selectedNodes = Object.entries(restoreSelectionState.nodes).filter(([, enabled]) => enabled).map(([name]) => name);
+      const selectedChecks = Object.entries(restoreSelectionState.checks).filter(([, enabled]) => enabled).map(([id]) => id);
+      const nodeFiles = Object.entries(restoreSelectionState.nodeFiles)
+        .map(([sourceNode, filesMap]) => {
+          const files = Object.entries(filesMap).filter(([, enabled]) => enabled).map(([path]) => path);
+          const targetNode = restoreSelectionState.targetNodes[sourceNode];
+          return { sourceNode, targetNode, files };
+        })
+        .filter(group => group.files.length > 0 && group.targetNode);
+
+      const selection: BackupRestoreSelection = {
+        config: {
+          nodes: selectedNodes,
+          checks: selectedChecks,
+          externalLinks: restoreSelectionState.configFlags.externalLinks,
+          registries: restoreSelectionState.configFlags.registries,
+          gateway: restoreSelectionState.configFlags.gateway,
+          notifications: restoreSelectionState.configFlags.notifications,
+          templateSettings: restoreSelectionState.configFlags.templateSettings,
+          logLevel: restoreSelectionState.configFlags.logLevel,
+          update: restoreSelectionState.configFlags.update
+        },
+        nodeFiles
+      };
+
+      const payload = restoreSource.type === 'stored'
+        ? { fileName: restoreSource.fileName, selection }
+        : { uploadToken: restoreSource.token, selection };
+
       const res = await fetch('/api/settings/backups/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName: restoreTarget.fileName })
+        body: JSON.stringify(payload)
       });
+
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || 'Unable to restore backup');
       }
-      addToast('success', 'Backup restored', 'ServiceBay config and managed services were restored.');
+
+      addToast('success', 'Restore complete', 'Selected settings and files were restored.');
       await fetchBackups();
+      closeRestoreOverlay();
     } catch (error) {
-      console.error(error);
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = error instanceof Error ? error.message : 'Restore failed';
       addToast('error', 'Restore failed', message);
     } finally {
       setRestoringBackup(false);
-      setRestoreTarget(null);
     }
-  };
+  }, [addToast, closeRestoreOverlay, fetchBackups, restorePreview, restoreSelectionState, restoreSource, restoringBackup]);
 
-  const closeRestoreModal = () => {
-    if (restoringBackup) return;
-    setRestoreTarget(null);
-  };
+  const selectAllRestoreItems = useCallback(() => {
+    if (!restorePreview || !restoreSelectionState) return;
+    setRestoreSelectionState({
+      nodes: Object.fromEntries(restorePreview.config.nodes.map(node => [node.name, true])),
+      checks: Object.fromEntries(restorePreview.config.checks.map(check => [check.id, true])),
+      configFlags: {
+        externalLinks: restorePreview.config.externalLinks.length > 0,
+        registries: restorePreview.config.registries.length > 0,
+        gateway: Boolean(restorePreview.config.gateway),
+        notifications: Boolean(restorePreview.config.notifications),
+        templateSettings: restorePreview.config.templateSettings.length > 0,
+        logLevel: Boolean(restorePreview.config.logLevel),
+        update: Boolean(restorePreview.config.update)
+      },
+      nodeFiles: Object.fromEntries(
+        restorePreview.nodeFiles.map(group => [
+          group.nodeName,
+          Object.fromEntries(group.files.map(file => [file.relativePath, true]))
+        ])
+      ),
+      targetNodes: restoreSelectionState.targetNodes
+    });
+  }, [restorePreview, restoreSelectionState]);
 
   const confirmDeleteBackup = async () => {
     if (!deleteTarget || deletingBackup) return;
@@ -831,6 +1037,97 @@ export default function SettingsPage() {
       setDeletingBackup(false);
       setDeleteTarget(null);
     }
+  };
+
+  const availableRestoreTargets = Array.from(new Set(['Local', ...nodes.map(node => node.Name)]));
+
+  const handleRestoreDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (event.dataTransfer.files && event.dataTransfer.files[0]) {
+      handleRestoreFromFile(event.dataTransfer.files[0]);
+    }
+  };
+
+  const handleRestoreDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  };
+
+  const stopRestoreEvent = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+  }, []);
+
+  const handleRestoreBackdrop = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    closeRestoreOverlay();
+  }, [closeRestoreOverlay]);
+
+  const toggleRestoreConfigFlag = (key: keyof BackupRestoreSelection['config']) => {
+    setRestoreSelectionState(prev => {
+      if (!prev) return prev;
+      if (key === 'nodes' || key === 'checks') return prev;
+      return {
+        ...prev,
+        configFlags: {
+          ...prev.configFlags,
+          [key]: !prev.configFlags[key as keyof typeof prev.configFlags]
+        }
+      };
+    });
+  };
+
+  const toggleRestoreNode = (name: string) => {
+    setRestoreSelectionState(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        nodes: {
+          ...prev.nodes,
+          [name]: !prev.nodes[name]
+        }
+      };
+    });
+  };
+
+  const toggleRestoreCheck = (id: string) => {
+    setRestoreSelectionState(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        checks: {
+          ...prev.checks,
+          [id]: !prev.checks[id]
+        }
+      };
+    });
+  };
+
+  const toggleRestoreFile = (nodeName: string, filePath: string) => {
+    setRestoreSelectionState(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        nodeFiles: {
+          ...prev.nodeFiles,
+          [nodeName]: {
+            ...prev.nodeFiles[nodeName],
+            [filePath]: !prev.nodeFiles[nodeName]?.[filePath]
+          }
+        }
+      };
+    });
+  };
+
+  const updateRestoreTargetNode = (sourceNode: string, targetNode: string) => {
+    setRestoreSelectionState(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        targetNodes: {
+          ...prev.targetNodes,
+          [sourceNode]: targetNode
+        }
+      };
+    });
   };
 
   if (loading) {
@@ -1003,6 +1300,13 @@ export default function SettingsPage() {
               <p className="text-[11px] text-gray-500 dark:text-gray-400 bg-white/60 dark:bg-gray-900/40 px-3 py-1 rounded-md border border-gray-200 dark:border-gray-800">
                 Archives stored under <span className="font-mono">~/.config/containers/systemd/backups</span>
               </p>
+              <button
+                onClick={() => openRestoreOverlay(true)}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                <UploadCloud size={16} />
+                Restore from Backup
+              </button>
               <button
                 onClick={handleCreateBackup}
                 disabled={creatingBackup}
@@ -1758,17 +2062,6 @@ export default function SettingsPage() {
       />
 
       <ConfirmModal
-        isOpen={!!restoreTarget}
-        title="Restore Backup"
-        message={`Restoring ${restoreTarget?.fileName || ''} will overwrite existing managed services and ServiceBay configuration. Proceed only if you have noted current changes.`}
-        confirmText={restoringBackup ? 'Restoring...' : 'Restore Backup'}
-        confirmDisabled={restoringBackup}
-        isDestructive
-        onConfirm={confirmRestoreBackup}
-        onCancel={closeRestoreModal}
-      />
-
-      <ConfirmModal
         isOpen={!!deleteTarget}
         title="Delete Backup"
         message={`Delete ${deleteTarget?.fileName || 'this backup'} permanently? This action cannot be undone.`}
@@ -1778,6 +2071,362 @@ export default function SettingsPage() {
         onConfirm={confirmDeleteBackup}
         onCancel={() => !deletingBackup && setDeleteTarget(null)}
       />
+
+      {restoreOverlayOpen && (
+        <div className="fixed inset-0 z-[90] flex items-stretch justify-end" onMouseDown={stopRestoreEvent} onClick={stopRestoreEvent}>
+          <div className="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" onClick={handleRestoreBackdrop} />
+          <aside className="relative z-10 w-full max-w-3xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Restore from Backup</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Select what to restore before applying changes.</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeRestoreOverlay}
+                className="rounded-full p-2 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+                aria-label="Close restore panel"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+              {!restorePreview ? (
+                <div
+                  className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-8 text-center bg-gray-50 dark:bg-gray-900/40"
+                  onDrop={handleRestoreDrop}
+                  onDragOver={handleRestoreDragOver}
+                >
+                  <UploadCloud className="mx-auto text-gray-400" size={28} />
+                  <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200">Drop a backup archive here</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Supports .tar.gz exports from ServiceBay.</p>
+                  <div className="mt-4">
+                    <label
+                      htmlFor="restore-backup-file"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                    >
+                      <UploadCloud size={16} />
+                      Select file
+                    </label>
+                    <input
+                      id="restore-backup-file"
+                      type="file"
+                      accept=".tar.gz"
+                      className="hidden"
+                      onChange={(event) => handleRestoreFromFile(event.target.files?.[0] || null)}
+                    />
+                  </div>
+                  {restoreUploadError && (
+                    <p className="mt-3 text-xs text-red-600 dark:text-red-400">{restoreUploadError}</p>
+                  )}
+                </div>
+              ) : restoreSelectionState ? (
+                <div className="space-y-6">
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 bg-gray-50 dark:bg-gray-900/40">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Backup Source</p>
+                    <p className="text-sm font-mono text-gray-800 dark:text-gray-200 break-all">
+                      {restoreSource?.type === 'stored' ? restoreSource.fileName : 'Uploaded archive'}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-end gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-4 bg-white dark:bg-gray-950">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectAllRestoreItems();
+                        void confirmRestoreBackup();
+                      }}
+                      disabled={restoringBackup}
+                      className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-emerald-500 text-emerald-700 dark:text-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+                    >
+                      <RotateCcw size={16} />
+                      Restore everything
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Settings</h4>
+                    <div className="grid gap-3">
+                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={restoreSelectionState.configFlags.externalLinks}
+                          onChange={() => toggleRestoreConfigFlag('externalLinks')}
+                        />
+                        <span>
+                          <span className="font-medium">External links</span>
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            {restorePreview.config.externalLinks.length === 0
+                              ? 'No external links stored.'
+                              : restorePreview.config.externalLinks.slice(0, 3).map(link => `${link.name} → ${link.url}`).join(' · ')}
+                            {restorePreview.config.externalLinks.length > 3 ? ' · …' : ''}
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={restoreSelectionState.configFlags.registries}
+                          onChange={() => toggleRestoreConfigFlag('registries')}
+                        />
+                        <span>
+                          <span className="font-medium">Registries</span>
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            {restorePreview.config.registries.length === 0
+                              ? 'No registries stored.'
+                              : restorePreview.config.registries.slice(0, 3).map(registry => registry.name).join(' · ')}
+                            {restorePreview.config.registries.length > 3 ? ' · …' : ''}
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={restoreSelectionState.configFlags.gateway}
+                          onChange={() => toggleRestoreConfigFlag('gateway')}
+                        />
+                        <span>
+                          <span className="font-medium">Gateway configuration</span>
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            {restorePreview.config.gateway?.host ? `Host: ${restorePreview.config.gateway.host}` : 'No gateway host stored.'}
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={restoreSelectionState.configFlags.notifications}
+                          onChange={() => toggleRestoreConfigFlag('notifications')}
+                        />
+                        <span>
+                          <span className="font-medium">Notifications</span>
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            {restorePreview.config.notifications
+                              ? `SMTP: ${restorePreview.config.notifications.host || 'unknown'} · From: ${restorePreview.config.notifications.from || 'unknown'} · To: ${(restorePreview.config.notifications.to || []).slice(0, 3).join(', ') || 'none'}${(restorePreview.config.notifications.to?.length || 0) > 3 ? '…' : ''}`
+                              : 'No notification settings stored.'}
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={restoreSelectionState.configFlags.templateSettings}
+                          onChange={() => toggleRestoreConfigFlag('templateSettings')}
+                        />
+                        <span>
+                          <span className="font-medium">Template settings</span>
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            {restorePreview.config.templateSettings.length === 0
+                              ? 'No template keys stored.'
+                              : `${restorePreview.config.templateSettings.length} keys (${restorePreview.config.templateSettings.slice(0, 3).join(', ')}${restorePreview.config.templateSettings.length > 3 ? '…' : ''}).`}
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={restoreSelectionState.configFlags.logLevel}
+                          onChange={() => toggleRestoreConfigFlag('logLevel')}
+                        />
+                        <span>
+                          <span className="font-medium">Log level</span>
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            Restore the saved log level ({restorePreview.config.logLevel || 'default'}).
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={restoreSelectionState.configFlags.update}
+                          onChange={() => toggleRestoreConfigFlag('update')}
+                        />
+                        <span>
+                          <span className="font-medium">Update settings</span>
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            {restorePreview.config.update?.channel ? `${restorePreview.config.update.channel} channel` : 'Update channel'}
+                            {restorePreview.config.update?.schedule ? ` · ${restorePreview.config.update.schedule}` : ''}
+                            {restorePreview.config.update?.enabled === false ? ' · disabled' : ''}
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Nodes</h4>
+                    {restorePreview.config.nodes.length === 0 ? (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">No node records found in backup.</p>
+                    ) : (
+                      <div className="grid gap-2">
+                        {restorePreview.config.nodes.map(node => (
+                          <label key={node.name} className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                            <input
+                              type="checkbox"
+                              className="mt-1"
+                              checked={restoreSelectionState.nodes[node.name]}
+                              onChange={() => toggleRestoreNode(node.name)}
+                            />
+                            <span>
+                              <span className="font-medium">{node.name}</span>
+                              <span className="block text-xs text-gray-500 dark:text-gray-400">
+                                {node.uri ? node.uri : 'No connection URI'}
+                                {node.default ? ' · Default' : ''}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Checks</h4>
+                    {restorePreview.config.checks.length === 0 ? (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">No monitoring checks found in backup.</p>
+                    ) : (
+                      <div className="grid gap-2">
+                        {restorePreview.config.checks.map(check => (
+                          <label key={check.id} className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                            <input
+                              type="checkbox"
+                              className="mt-1"
+                              checked={restoreSelectionState.checks[check.id]}
+                              onChange={() => toggleRestoreCheck(check.id)}
+                            />
+                            <span>
+                              <span className="font-medium">{check.name}</span>
+                              <span className="block text-xs text-gray-500 dark:text-gray-400">
+                                {check.type ? `${check.type.toUpperCase()} check` : 'Check'}
+                                {check.target ? ` · ${check.target}` : ''}
+                                {check.id ? ` · ID: ${check.id}` : ''}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Systemd files</h4>
+                    {restorePreview.nodeFiles.length === 0 ? (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">No systemd files found in backup.</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {restorePreview.nodeFiles.map(group => (
+                          <div key={group.nodeName} className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Source: {group.nodeName}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">{group.files.length} files</p>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                Target node
+                                <select
+                                  value={restoreSelectionState.targetNodes[group.nodeName]}
+                                  onChange={(event) => updateRestoreTargetNode(group.nodeName, event.target.value)}
+                                  className="bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded px-2 py-1 text-xs"
+                                >
+                                  {availableRestoreTargets.map(target => (
+                                    <option key={target} value={target}>{target}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                            <div className="max-h-48 overflow-y-auto space-y-2">
+                              {group.files.map(file => (
+                                <div key={file.relativePath} className="flex items-start gap-3 text-xs text-gray-700 dark:text-gray-200 font-mono">
+                                  <input
+                                    type="checkbox"
+                                    className="mt-1"
+                                    checked={Boolean(restoreSelectionState.nodeFiles[group.nodeName]?.[file.relativePath])}
+                                    onChange={() => toggleRestoreFile(group.nodeName, file.relativePath)}
+                                  />
+                                  <div className="flex-1">
+                                    <div className="break-all">{file.relativePath}</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRestoreFilePreview(group.nodeName, file.relativePath)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-gray-700 px-2 py-1 text-[10px] text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                  >
+                                    <Eye size={12} />
+                                    View
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
+              <p className="text-xs text-gray-500 dark:text-gray-400">Restores selected settings and files to target nodes.</p>
+              <button
+                onClick={confirmRestoreBackup}
+                disabled={restoringBackup || !restorePreview || !restoreSelectionState}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg shadow-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {restoringBackup ? <Loader2 className="animate-spin" size={16} /> : <RotateCcw size={16} />}
+                {restoringBackup ? 'Restoring...' : 'Restore Selected'}
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {restoreFilePreview && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center" onMouseDown={stopRestoreEvent} onClick={stopRestoreEvent}>
+          <div className="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" onClick={() => setRestoreFilePreview(null)} />
+          <div className="relative z-10 w-full max-w-5xl max-h-[85vh] bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-800">
+              <div>
+                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Backup File Preview</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {restoreFilePreview.nodeName} · <span className="font-mono">{restoreFilePreview.relativePath}</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRestoreFilePreview(null)}
+                className="rounded-full p-2 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+                aria-label="Close file preview"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900/40 p-4">
+              {restoreFilePreview.loading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                  <Loader2 size={16} className="animate-spin" />
+                  Loading file...
+                </div>
+              ) : restoreFilePreviewError ? (
+                <p className="text-sm text-red-600 dark:text-red-400">{restoreFilePreviewError}</p>
+              ) : (
+                <FileViewer
+                  content={restoreFilePreview.content}
+                  language={resolveFilePreviewLanguage(restoreFilePreview.relativePath)}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <SSHSetupModal 
         isOpen={isSSHModalOpen}
