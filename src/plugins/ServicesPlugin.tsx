@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import Link from 'next/link';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
+import { useSearchParams } from 'next/navigation';
 import { logger } from '@/lib/logger';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -10,63 +11,23 @@ import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
-import ActionProgressModal from '@/components/ActionProgressModal';
 import PluginHelp from '@/components/PluginHelp';
-import ServiceMonitor from '@/components/ServiceMonitor';
-import ServiceForm, { ServiceFormInitialData } from '@/components/ServiceForm';
 import FileViewerOverlay from '@/components/FileViewerOverlay';
 import RegistryPlugin from '@/plugins/RegistryPlugin';
+import { ServiceActionBar } from '@/components/ServiceActionBar';
+import { AttachedContainerList } from '@/components/AttachedContainerList';
+import { useServiceActions } from '@/hooks/useServiceActions';
+import { useContainerActions } from '@/hooks/useContainerActions';
+import { buildServiceViewModel } from '@/lib/services/serviceViewModel';
+import { ServiceViewModel, ServicePort } from '@/types/serviceView';
+import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
+import type { TerminalRef } from '@/components/Terminal';
+import { EnrichedContainer } from '@/lib/agent/types';
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
-import { Plus, RefreshCw, Activity, Edit, Trash2, MoreVertical, PlayCircle, Power, RotateCw, Box, ArrowLeft, Search, X, AlertCircle, FileCode, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Trash2, Power, Box, Search, X, AlertCircle, FileCode, ArrowRight, ShieldCheck, Terminal as TerminalIcon, Eraser } from 'lucide-react';
 import { ServiceBundle, BundleValidation, BundleStackArtifacts, BundlePortSummary, BundleContainerSummary, generateBundleStackArtifacts, sanitizeBundleName } from '@/lib/unmanaged/bundleShared';
-
-// Define/Import UI Service Type locally or keep using legacy type if compatible
-// Let's redefine locally to be explicit about V4 structure or map to it.
-type ServicePort = {
-    host?: string;
-    container: string;
-    hostIp?: string;
-    protocol?: string;
-    source?: string;
-};
-
-type ServiceVolume = {
-    host: string;
-    container: string;
-    mode?: string;
-};
-
-type TwinContainer = {
-    ports?: Array<{ hostPort?: string | number; containerPort?: string | number }>;
-    labels?: Record<string, string>;
-};
-
-interface Service {
-    name: string;
-    id?: string;
-    description?: string | null;
-    nodeName?: string;
-    active: boolean;
-    status?: string;
-    activeState?: string;
-    subState?: string;
-    kubePath?: string | null;
-    yamlPath?: string | null;
-    type: 'kube' | 'container' | 'link' | 'gateway';
-    ports: ServicePort[];
-    volumes?: ServiceVolume[];
-    monitor?: boolean;
-    labels?: Record<string, string>;
-    verifiedDomains?: string[];
-    externalIP?: string;
-    internalIP?: string;
-    dnsServers?: string[];
-    uptime?: number;
-    url?: string;
-    ipTargets?: string[];
-}
 
 interface MigrationPlan {
     filesToCreate: string[];
@@ -86,17 +47,6 @@ type LinkFormState = {
     description: string;
     monitor: boolean;
     ipTargetsText?: string;
-};
-
-const dedupeValidations = (entries: BundleValidation[]): BundleValidation[] => {
-    const map = new Map<string, BundleValidation>();
-    entries.forEach(entry => {
-        const key = `${entry.level}-${entry.scope || 'global'}-${entry.message}`;
-        if (!map.has(key)) {
-            map.set(key, entry);
-        }
-    });
-    return Array.from(map.values());
 };
 
 const bundleWizardSteps: Array<{ key: 'assets' | 'stack' | 'backup'; label: string; description: string; tooltip: string }> = [
@@ -120,13 +70,26 @@ const bundleWizardSteps: Array<{ key: 'assets' | 'stack' | 'backup'; label: stri
     }
 ];
 
-const MERGE_HELP_ID = 'merge-wizard';
+const dedupeValidations = (entries: BundleValidation[]): BundleValidation[] => {
+    const map = new Map<string, BundleValidation>();
+    entries.forEach(entry => {
+        const key = `${entry.level}-${entry.scope || 'global'}-${entry.message}`;
+        if (!map.has(key)) {
+            map.set(key, entry);
+        }
+    });
+    return Array.from(map.values());
+};
 
 const bundleSeverityClasses: Record<ServiceBundle['severity'], string> = {
     critical: 'border-red-200 dark:border-red-800',
     warning: 'border-amber-200 dark:border-amber-800',
     info: 'border-gray-200 dark:border-gray-800'
 };
+
+const MERGE_HELP_ID = 'merge-wizard';
+
+const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
 
 type ApiLinkPayload = {
     id?: string;
@@ -168,16 +131,11 @@ export default function ServicesPlugin() {
     const { data: twin, isConnected, lastUpdate } = useDigitalTwin();
     const { addToast, updateToast } = useToast();
 
-    const [filteredServices, setFilteredServices] = useState<Service[]>([]);
+    const [filteredServices, setFilteredServices] = useState<ServiceViewModel[]>([]);
     const [filteredBundles, setFilteredBundles] = useState<ServiceBundle[]>([]);
-    const [selectedService, setSelectedService] = useState<Service | null>(null);
-    const [showActions, setShowActions] = useState(false);
-    const [actionLoading, setActionLoading] = useState(false);
-    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-    const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [discoveryLoading, setDiscoveryLoading] = useState(false);
-    const [externalLinks, setExternalLinks] = useState<Service[]>([]);
+    const [externalLinks, setExternalLinks] = useState<ServiceViewModel[]>([]);
     const [serviceBundles, setServiceBundles] = useState<ServiceBundle[]>([]);
     const [selectedBundle, setSelectedBundle] = useState<ServiceBundle | null>(null);
     const [bundlePendingDelete, setBundlePendingDelete] = useState<ServiceBundle | null>(null);
@@ -189,18 +147,16 @@ export default function ServicesPlugin() {
     const [bundleValidations, setBundleValidations] = useState<BundleValidation[]>([]);
     const [bundleActionLoading, setBundleActionLoading] = useState(false);
     const [bundleDeleteLoading, setBundleDeleteLoading] = useState(false);
-    const [actionService, setActionService] = useState<Service | null>(null);
-    const [actionModalOpen, setActionModalOpen] = useState(false);
-    const [currentAction, setCurrentAction] = useState<'start' | 'stop' | 'restart'>('start');
     const [showLinkModal, setShowLinkModal] = useState(false);
     const [isEditingLink, setIsEditingLink] = useState(false);
     const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
     const [linkForm, setLinkForm] = useState<LinkFormState>({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
-    const [drawerState, setDrawerState] = useState<{ mode: 'monitor' | 'edit'; service: Service } | null>(null);
-    const [drawerLoading, setDrawerLoading] = useState(false);
-    const [editInitialData, setEditInitialData] = useState<ServiceFormInitialData | null>(null);
     const [showRegistryOverlay, setShowRegistryOverlay] = useState(false);
     const [filePreview, setFilePreview] = useState<{ path: string; nodeName?: string } | null>(null);
+    const [handledBundleQuery, setHandledBundleQuery] = useState<string | null>(null);
+    const searchParams = useSearchParams();
+    const bundleQueryParam = searchParams?.get('bundle') || null;
+    const bundleNodeParam = searchParams?.get('bundleNode') || null;
 
     const wizardStepIndex = Math.max(0, bundleWizardSteps.findIndex(step => step.key === bundleWizardStep));
 
@@ -282,7 +238,7 @@ export default function ServicesPlugin() {
             }
 
             const payload = await res.json();
-            const parsed: Service[] = Array.isArray(payload)
+            const parsed: ServiceViewModel[] = Array.isArray(payload)
                 ? payload.map((link: ApiLinkPayload) => {
                       const status = typeof link.status === 'string' ? link.status : link.active ? 'active' : 'inactive';
                       const activeState = typeof link.activeState === 'string' ? link.activeState : status;
@@ -320,7 +276,9 @@ export default function ServicesPlugin() {
                           url: link.url,
                           labels: link.labels || {},
                           verifiedDomains: link.verifiedDomains || [],
-                          ipTargets
+                          ipTargets,
+                          containerIds: [],
+                          attachedContainers: []
                       };
                   })
                 : [];
@@ -339,140 +297,142 @@ export default function ServicesPlugin() {
         loadExternalLinks();
     }, [loadExternalLinks]);
 
-    const services = useMemo<Service[]>(() => {
+    const {
+        openMonitorDrawer,
+        openEditDrawer,
+        openActions,
+        requestDelete,
+        overlays: serviceActionOverlays,
+        closeOverlays,
+        hasOpenOverlay
+    } = useServiceActions({ onRefresh: fetchData });
+
+    const {
+        openActions: openContainerActions,
+        closeActions: closeContainerActions,
+        overlay: containerActionsOverlay,
+        isOpen: containerActionsOpen,
+    } = useContainerActions({ onActionComplete: fetchData });
+
+    const [containerDrawerMode, setContainerDrawerMode] = useState<'logs' | 'terminal' | null>(null);
+    const [drawerContainer, setDrawerContainer] = useState<EnrichedContainer | null>(null);
+    const terminalRef = useRef<TerminalRef>(null);
+
+    const attachNodeContext = useCallback((container: EnrichedContainer, fallbackNode?: string | null) => {
+        if (container.nodeName) {
+            return container;
+        }
+        return {
+            ...container,
+            nodeName: fallbackNode || 'Local',
+        };
+    }, []);
+
+    const closeContainerDrawer = useCallback(() => {
+        setContainerDrawerMode(null);
+        setDrawerContainer(null);
+    }, []);
+
+    const openContainerLogs = useCallback((container: EnrichedContainer) => {
+        setDrawerContainer(container);
+        setContainerDrawerMode('logs');
+    }, []);
+
+    const openContainerTerminal = useCallback((container: EnrichedContainer) => {
+        setDrawerContainer(container);
+        setContainerDrawerMode('terminal');
+    }, []);
+
+    const openAttachedContainerActions = useCallback((container: EnrichedContainer) => {
+        openContainerActions({
+            id: container.id,
+            name: container.names?.[0]?.replace(/^\//, '') || container.id.slice(0, 12),
+            nodeName: container.nodeName,
+        });
+    }, [openContainerActions]);
+
+    const drawerNode = drawerContainer?.nodeName && drawerContainer.nodeName !== 'Local'
+        ? drawerContainer.nodeName
+        : drawerContainer
+            ? 'Local'
+            : null;
+
+    const logsPanelData = useMemo<ContainerLogsPanelData | null>(() => {
+        if (!drawerContainer) return null;
+        return {
+            id: drawerContainer.id,
+            name: drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id,
+            image: drawerContainer.image,
+            state: drawerContainer.state,
+            status: drawerContainer.status,
+            created: drawerContainer.created,
+            ports: drawerContainer.ports?.map(port => ({
+                hostIp: port.hostIp,
+                containerPort: port.containerPort || 0,
+                hostPort: port.hostPort,
+                protocol: port.protocol,
+            })),
+            mounts: drawerContainer.mounts as ContainerLogsPanelData['mounts'],
+            hideMeta: true,
+        };
+    }, [drawerContainer]);
+
+    const services = useMemo<ServiceViewModel[]>(() => {
         if (!twin || !twin.nodes) {
             return externalLinks.length > 0 ? [...externalLinks] : [];
         }
 
-        const servicesList: Service[] = [];
+        const servicesList: ServiceViewModel[] = [];
 
         Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
             if (!Array.isArray(nodeState.services)) return;
-            const fileKeys = Object.keys(nodeState.files || {});
-
             nodeState.services.forEach(unit => {
-                const baseName = unit.name.replace('.service', '');
-                const isManaged = Boolean(unit.isManaged);
-
-                if (!isManaged && !unit.isReverseProxy && !unit.isServiceBay) {
-                    return;
-                }
-
-                let yamlPath: string | null = null;
-                if (isManaged) {
-                    const filePath = fileKeys.find(f => f.endsWith(`/${baseName}.kube`));
-                    if (filePath) {
-                        yamlPath = filePath;
-                        const file = nodeState.files?.[filePath];
-                        if (file && file.content) {
-                            const match = file.content.match(/^Yaml=(.+)$/m);
-                            if (match) {
-                                const yamlFile = match[1].trim();
-                                const yamlKey = fileKeys.find(k => k.endsWith(`/${yamlFile}`));
-                                if (yamlKey) {
-                                    yamlPath = yamlKey;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    const fallbackYaml = fileKeys.find(f => f.endsWith(`/${baseName}.yml`) || f.endsWith(`/${baseName}.yaml`));
-                    if (fallbackYaml) {
-                        yamlPath = fallbackYaml;
-                    }
-                }
-
-                let container = undefined;
-                if (unit.associatedContainerIds && unit.associatedContainerIds.length > 0) {
-                    container = nodeState.containers?.find(c => unit.associatedContainerIds?.includes(c.id));
-                }
-
-                const verifiedDomains = unit.verifiedDomains || [];
-                const rawContainer = container as TwinContainer | undefined;
-
-                let ports: ServicePort[] = [];
-                if (unit.ports && unit.ports.length > 0) {
-                    ports = unit.ports.map(p => ({
-                        host: p.hostPort ? String(p.hostPort) : '',
-                        container: p.containerPort ? String(p.containerPort) : ''
-                    }));
-                } else if (rawContainer?.ports) {
-                    ports = rawContainer.ports.map((p: { hostPort?: string | number; containerPort?: string | number }) => ({
-                        host: p.hostPort ? String(p.hostPort) : '',
-                        container: p.containerPort ? String(p.containerPort) : ''
-                    }));
-                }
-
-                const labels = { ...(rawContainer?.labels || {}) };
-                if (unit.isReverseProxy) labels['servicebay.role'] = 'reverse-proxy';
-                if (unit.isServiceBay) labels['servicebay.role'] = 'system';
-
-                let displayName = unit.name;
-                if (unit.isReverseProxy) displayName = 'Reverse Proxy (Nginx)';
-                else if (unit.isServiceBay) displayName = 'ServiceBay System';
-
-                const svc: Service = {
-                    id: unit.name,
-                    name: displayName,
+                const viewModel = buildServiceViewModel({
+                    unit,
                     nodeName,
-                    description: unit.description,
-                    active: unit.activeState === 'active',
-                    status: unit.activeState,
-                    activeState: unit.activeState,
-                    subState: unit.subState,
-                    kubePath: unit.path,
-                    yamlPath,
-                    type: isManaged ? 'kube' : 'container',
-                    ports,
-                    volumes: [],
-                    monitor: false,
-                    labels,
-                    verifiedDomains
-                };
-
-                if (twin.proxy?.routes) {
-                    const route = twin.proxy.routes.find(r => r.targetService === baseName);
-                    if (route) {
-                        svc.url = `https://${route.host}`;
-                    }
+                    nodeState,
+                    proxyRoutes: twin.proxy?.routes
+                });
+                if (viewModel) {
+                    servicesList.push(viewModel);
                 }
-
-                servicesList.push(svc);
             });
         });
 
-        const uniqueServices = new Map<string, Service>();
-        servicesList.forEach(s => {
-            const key = `${s.nodeName}:${s.name}`;
+        const uniqueServices = new Map<string, ServiceViewModel>();
+        servicesList.forEach(service => {
+            const key = `${service.nodeName}:${service.name}`;
             const existing = uniqueServices.get(key);
             if (!existing) {
-                uniqueServices.set(key, s);
+                uniqueServices.set(key, service);
                 return;
             }
 
-            const isNewManaged = s.type === 'kube';
-            const isOldManaged = existing.type === 'kube';
+            const isNewManaged = service.type === 'kube';
+            const isExistingManaged = existing.type === 'kube';
 
-            if (isNewManaged && !isOldManaged) {
-                uniqueServices.set(key, s);
+            if (isNewManaged && !isExistingManaged) {
+                uniqueServices.set(key, service);
                 return;
             }
-            if (isOldManaged && !isNewManaged) return;
-
-            if (s.active && !existing.active) {
-                uniqueServices.set(key, s);
+            if (isExistingManaged && !isNewManaged) {
                 return;
             }
 
-            if (s.yamlPath && !existing.yamlPath) {
-                uniqueServices.set(key, s);
+            if (service.active && !existing.active) {
+                uniqueServices.set(key, service);
+                return;
+            }
+
+            if (service.yamlPath && !existing.yamlPath) {
+                uniqueServices.set(key, service);
             }
         });
 
         const finalServices = Array.from(uniqueServices.values());
 
         if (twin.gateway) {
-            const gatewayService: Service = {
+            finalServices.push({
                 name: twin.gateway.provider === 'fritzbox' ? 'FritzBox Gateway' : 'Internet Gateway',
                 id: 'gateway',
                 nodeName: 'Global',
@@ -493,10 +453,12 @@ export default function ServicesPlugin() {
                 externalIP: twin.gateway.publicIp,
                 internalIP: twin.gateway.internalIp,
                 dnsServers: twin.gateway.dnsServers,
-                uptime: twin.gateway.uptime
-            };
-
-            finalServices.push(gatewayService);
+                uptime: twin.gateway.uptime,
+                labels: {},
+                verifiedDomains: [],
+                containerIds: [],
+                attachedContainers: []
+            });
         }
 
         if (externalLinks.length > 0) {
@@ -538,7 +500,56 @@ export default function ServicesPlugin() {
         setServiceBundles(collectBundlesFromTwin());
     }, [collectBundlesFromTwin]);
 
-    function handleEditLink(service: Service) {
+    const openBundleWizard = useCallback((bundle: ServiceBundle) => {
+        const initialName = sanitizeBundleName(bundle.displayName);
+        setSelectedBundle(bundle);
+        setBundleWizardStep('assets');
+        setBundleTargetName(initialName);
+        setBundleStackArtifacts(generateBundleStackArtifacts(bundle, initialName));
+        setBundleValidations(bundle.validations);
+        setBundlePlan(null);
+    }, []);
+
+      useEffect(() => {
+          if (!bundleQueryParam) {
+              setHandledBundleQuery(null);
+              return;
+          }
+
+          if (handledBundleQuery === bundleQueryParam) {
+              return;
+          }
+
+          if (!serviceBundles.length) {
+              return;
+          }
+
+          const normalizedQuery = bundleQueryParam.trim().toLowerCase();
+          const normalizedNode = bundleNodeParam?.trim().toLowerCase();
+
+          const targetBundle = serviceBundles.find(bundle => {
+              const candidates = [bundle.id, bundle.derivedName, sanitizeBundleName(bundle.displayName)]
+                  .filter((value): value is string => Boolean(value))
+                  .map(value => value.toLowerCase());
+
+              if (!candidates.some(candidate => candidate === normalizedQuery)) {
+                  return false;
+              }
+
+              if (!normalizedNode) {
+                  return true;
+              }
+
+              return (bundle.nodeName || '').toLowerCase() === normalizedNode;
+          });
+
+          if (targetBundle) {
+              openBundleWizard(targetBundle);
+              setHandledBundleQuery(bundleQueryParam);
+          }
+      }, [bundleNodeParam, bundleQueryParam, handledBundleQuery, openBundleWizard, serviceBundles]);
+
+    function handleEditLink(service: ServiceViewModel) {
         setLinkForm({
             name: service.name,
             url: service.url || '',
@@ -551,58 +562,6 @@ export default function ServicesPlugin() {
         setShowLinkModal(true);
     }
 
-    function confirmDelete(service: Service) {
-        setServiceToDelete(service);
-        setDeleteModalOpen(true);
-    }
-
-    function openMonitorDrawer(service: Service) {
-        setDrawerState({ mode: 'monitor', service });
-        setShowActions(false);
-    }
-
-    async function openEditDrawer(service: Service) {
-        const serviceName = service.id || service.name;
-        setDrawerState({ mode: 'edit', service });
-        setShowActions(false);
-        setDrawerLoading(true);
-        setEditInitialData(null);
-
-        try {
-            const nodeParam = service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : '';
-            const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}${nodeParam}`, { cache: 'no-store' });
-            if (!res.ok) {
-                throw new Error('Failed to load service files');
-            }
-
-            const files = await res.json();
-            const yamlFileName = files.yamlPath?.split('/').pop() || `${serviceName.replace('.service', '')}.yml`;
-            const initialData: ServiceFormInitialData = {
-                name: service.name.replace('.service', ''),
-                kubeContent: files.kubeContent || '',
-                yamlContent: files.yamlContent || '',
-                yamlFileName,
-                serviceContent: files.serviceContent,
-                kubePath: files.kubePath,
-                yamlPath: files.yamlPath,
-                servicePath: files.servicePath
-            };
-            setEditInitialData(initialData);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to load service files';
-            addToast('error', message);
-            setDrawerState(null);
-        } finally {
-            setDrawerLoading(false);
-        }
-    }
-
-    const closeDrawer = useCallback(() => {
-        setDrawerState(null);
-        setDrawerLoading(false);
-        setEditInitialData(null);
-    }, []);
-
     const openRegistryOverlay = useCallback(() => {
         setShowRegistryOverlay(true);
     }, []);
@@ -611,7 +570,7 @@ export default function ServicesPlugin() {
         setShowRegistryOverlay(false);
     }, []);
 
-    const ServiceCard = ({ service }: { service: Service }) => {
+    const ServiceCard = ({ service }: { service: ServiceViewModel }) => {
         const dedupedPorts = useMemo(() => {
             const uniquePortsMap = new Map<string, ServicePort>();
             service.ports.forEach(p => {
@@ -622,6 +581,8 @@ export default function ServicesPlugin() {
             });
             return Array.from(uniquePortsMap.values());
         }, [service.ports]);
+
+        const ensureContainerContext = useCallback((container: EnrichedContainer) => attachNodeContext(container, service.nodeName), [attachNodeContext, service.nodeName]);
 
         return (
             <div className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden flex flex-col h-full min-w-0">
@@ -666,55 +627,14 @@ export default function ServicesPlugin() {
                             </div>
                         </div>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0 ml-auto bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
-                        {service.type === 'gateway' ? (
-                            <>
-                                <Link href="/monitor/gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors" title="Monitor Gateway">
-                                    <Activity size={16} />
-                                </Link>
-                                <Link href="/registry?selected=gateway" className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Gateway">
-                                    <Edit size={16} />
-                                </Link>
-                            </>
-                        ) : service.type === 'link' ? (
-                            <>
-                                <button onClick={() => handleEditLink(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Edit Link">
-                                    <Edit size={16} />
-                                </button>
-                                <button onClick={() => confirmDelete(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors" title="Delete">
-                                    <Trash2 size={16} />
-                                </button>
-                            </>
-                        ) : (
-                            <>
-                                <button
-                                    type="button"
-                                    onClick={() => openMonitorDrawer(service)}
-                                    className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors"
-                                    title="Monitor"
-                                >
-                                    <Activity size={16} />
-                                </button>
-                                {service.type === 'kube' ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => openEditDrawer(service)}
-                                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-                                        title="Edit Configuration"
-                                    >
-                                        <Edit size={16} />
-                                    </button>
-                                ) : (
-                                    <div className="p-1.5 text-gray-300 dark:text-gray-700 cursor-not-allowed opacity-50" title="Not Managed via Quadlet Kube">
-                                        <Edit size={16} />
-                                    </div>
-                                )}
-                                <button onClick={() => openActions(service)} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/30 rounded transition-colors" title="Actions">
-                                    <MoreVertical size={16} />
-                                </button>
-                            </>
-                        )}
-                    </div>
+                    <ServiceActionBar
+                        service={service}
+                        onMonitor={openMonitorDrawer}
+                        onEdit={openEditDrawer}
+                        onActions={openActions}
+                        onEditLink={handleEditLink}
+                        onDelete={requestDelete}
+                    />
                 </div>
 
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-4 bg-gray-50/50 dark:bg-gray-800/20 rounded-md p-3 border border-gray-100 dark:border-gray-800/50 flex-1">
@@ -820,6 +740,12 @@ export default function ServicesPlugin() {
                         </div>
                     )}
                 </div>
+                <AttachedContainerList
+                    containers={service.attachedContainers}
+                    onLogs={service.attachedContainers && service.attachedContainers.length > 0 ? (container) => openContainerLogs(ensureContainerContext(container)) : undefined}
+                    onTerminal={service.attachedContainers && service.attachedContainers.length > 0 ? (container) => openContainerTerminal(ensureContainerContext(container)) : undefined}
+                    onActions={service.attachedContainers && service.attachedContainers.length > 0 ? (container) => openAttachedContainerActions(ensureContainerContext(container)) : undefined}
+                />
             </div>
         );
     };
@@ -1082,16 +1008,6 @@ export default function ServicesPlugin() {
         );
     };
 
-  const openBundleWizard = (bundle: ServiceBundle) => {
-      const initialName = sanitizeBundleName(bundle.displayName);
-      setSelectedBundle(bundle);
-      setBundleWizardStep('assets');
-      setBundleTargetName(initialName);
-      setBundleStackArtifacts(generateBundleStackArtifacts(bundle, initialName));
-      setBundleValidations(bundle.validations);
-      setBundlePlan(null);
-  };
-
   const closeBundleWizard = useCallback(() => {
       setSelectedBundle(null);
       setBundlePlan(null);
@@ -1132,8 +1048,16 @@ export default function ServicesPlugin() {
   }, [bundlePendingDelete, addToast, updateToast, discoverUnmanaged]);
 
   const handleEscape = useCallback(() => {
-      if (drawerState) {
-          closeDrawer();
+      if (containerDrawerMode) {
+          closeContainerDrawer();
+          return;
+      }
+      if (containerActionsOpen) {
+          closeContainerActions();
+          return;
+      }
+      if (hasOpenOverlay) {
+          closeOverlays();
           return;
       }
       if (selectedBundle) {
@@ -1144,16 +1068,13 @@ export default function ServicesPlugin() {
           closeRegistryOverlay();
           return;
       }
-      if (showActions) {
-          setShowActions(false);
-          return;
-      }
       if (showLinkModal) {
           setShowLinkModal(false);
       }
-  }, [drawerState, closeDrawer, selectedBundle, closeBundleWizard, showRegistryOverlay, closeRegistryOverlay, showActions, showLinkModal]);
+  }, [closeBundleWizard, closeContainerActions, closeContainerDrawer, closeOverlays, closeRegistryOverlay, containerActionsOpen, containerDrawerMode, hasOpenOverlay, selectedBundle, showRegistryOverlay, showLinkModal]);
 
-  useEscapeKey(handleEscape, Boolean(drawerState || selectedBundle || showRegistryOverlay || showActions || showLinkModal));
+  useEscapeKey(handleEscape, Boolean(containerDrawerMode || containerActionsOpen || hasOpenOverlay || selectedBundle || showRegistryOverlay || showLinkModal), true);
+  useEscapeKey(closeContainerDrawer, Boolean(containerDrawerMode), true);
 
   const fetchBundlePlanForBundle = useCallback(async (bundle: ServiceBundle, target: string, dryRun = true) => {
       if (!target) return;
@@ -1336,93 +1257,74 @@ export default function ServicesPlugin() {
     }
   }
 
-  async function handleDelete() {
-    if (!serviceToDelete) return;
-    setDeleteModalOpen(false);
-    
-    const toastId = addToast('loading', 'Deleting service...', `Removing ${serviceToDelete.name}`, 0);
-
-    try {
-        const serviceName = serviceToDelete.id || serviceToDelete.name;
-        const nodeParam = serviceToDelete.type === 'link' || serviceToDelete.type === 'gateway'
-            ? ''
-            : serviceToDelete.nodeName && serviceToDelete.nodeName !== 'Local'
-                ? serviceToDelete.nodeName
-                : '';
-        const query = nodeParam ? `?node=${nodeParam}` : '';
-        const res = await fetch(`/api/services/${serviceName}${query}`, { method: 'DELETE' });
-        if (res.ok) {
-            updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete.name} has been removed.`);
-            fetchData();
-        } else {
-            const data = await res.json();
-            updateToast(toastId, 'error', 'Delete failed', data.error);
-        }
-    } catch {
-        updateToast(toastId, 'error', 'Delete failed', 'An unexpected error occurred.');
-    }
-  }
-
-  function openActions(service: Service) {
-    setSelectedService(service);
-    setShowActions(true);
-  }
-
-  async function handleAction(action: string) {
-    if (!selectedService) return;
-    
-    if (action === 'start' || action === 'stop' || action === 'restart') {
-        setActionService(selectedService);
-        setCurrentAction(action);
-        setActionModalOpen(true);
-        setShowActions(false);
-        return;
-    }
-
-    setActionLoading(true);
-    
-    const toastId = addToast('loading', 'Action in progress', `Executing ${action} on ${selectedService.name}...`, 0);
-
-    try {
-        const serviceName = selectedService.id || selectedService.name;
-        const nodeParam = selectedService.nodeName === 'Local' ? '' : selectedService.nodeName;
-        const query = nodeParam ? `?node=${nodeParam}` : '';
-        const res = await fetch(`/api/services/${serviceName}/action${query}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action })
-        });
-        
-        if (!res.ok) {
-            const data = await res.json();
-            updateToast(toastId, 'error', 'Action failed', data.error);
-        } else {
-            setShowActions(false);
-            updateToast(toastId, 'success', 'Action initiated', `${action} command sent to ${selectedService.name}`);
-            setTimeout(fetchData, 1000);
-        }
-    } catch (e) {
-        logger.error('ServicesPlugin', 'Action failed', e);
-        updateToast(toastId, 'error', 'Action failed', 'An unexpected error occurred.');
-    } finally {
-        setActionLoading(false);
-    }
-  }
-
   // filteredServices is already computed in useEffect
 
-  return (
-    <div className="h-full flex flex-col relative">
-      <ConfirmModal 
-        isOpen={deleteModalOpen}
-        title="Delete Service"
-        message={`Are you sure you want to delete service "${serviceToDelete?.name}"? This action cannot be undone.`}
-        confirmText="Delete"
-        isDestructive
-        onConfirm={handleDelete}
-        onCancel={() => setDeleteModalOpen(false)}
-      />
-            <ConfirmModal
+    return (
+        <div className="h-full flex flex-col relative">
+            {serviceActionOverlays}
+            {containerActionsOverlay}
+            {containerDrawerMode && drawerContainer && (
+                <div className="fixed inset-0 z-[60] flex justify-end bg-gray-950/70 backdrop-blur-sm">
+                    <div className="w-full max-w-5xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl">
+                        {containerDrawerMode === 'logs' && logsPanelData ? (
+                            <ContainerLogsPanel
+                                container={logsPanelData}
+                                nodeName={drawerNode ?? undefined}
+                                onClose={closeContainerDrawer}
+                            />
+                        ) : (
+                            <div className="h-full flex flex-col bg-gray-950">
+                                <div className="flex items-start justify-between px-6 py-4 border-b border-gray-800 bg-gray-900">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-wider text-gray-500">Terminal</p>
+                                        <div className="flex items-center gap-3 text-white text-lg font-semibold">
+                                            <TerminalIcon size={18} />
+                                            <span>{drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id}</span>
+                                        </div>
+                                        {drawerNode && (
+                                            <div className="mt-2 inline-flex items-center gap-2 text-xs text-gray-400">
+                                                <span className="uppercase tracking-wide">Node</span>
+                                                <span className="px-2 py-0.5 rounded-full bg-gray-800 text-gray-200 border border-gray-700">{drawerNode}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => terminalRef.current?.clear()}
+                                            className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                            title="Clear terminal"
+                                        >
+                                            <Eraser size={18} />
+                                        </button>
+                                        <button
+                                            onClick={() => terminalRef.current?.reconnect()}
+                                            className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                            title="Reconnect"
+                                        >
+                                            <RefreshCw size={18} />
+                                        </button>
+                                        <button
+                                            onClick={closeContainerDrawer}
+                                            className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                            title="Close"
+                                        >
+                                            <X size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-hidden">
+                                    <DynamicTerminal
+                                        ref={terminalRef}
+                                        id={`container:${(drawerNode && drawerNode !== 'Local' ? drawerNode : 'local')}:${drawerContainer.id}`}
+                                        showControls={false}
+                                    />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+                        <ConfirmModal
                 isOpen={!!bundlePendingDelete}
                 title="Delete Unmanaged Bundle"
                 message={`Stop every unmanaged unit in "${bundlePendingDelete?.displayName ?? ''}" and delete its Quadlet files on ${bundlePendingDelete?.nodeName ?? 'Local'}? This cannot be undone.`}
@@ -1436,20 +1338,6 @@ export default function ServicesPlugin() {
                 }}
             />
 
-      {actionService && (
-        <ActionProgressModal
-            isOpen={actionModalOpen}
-            onClose={() => setActionModalOpen(false)}
-            serviceName={actionService.id || actionService.name}
-            nodeName={actionService.nodeName}
-            action={currentAction}
-            onComplete={() => {
-                fetchData();
-                const actionPast = currentAction === 'stop' ? 'stopped' : currentAction === 'start' ? 'started' : 'restarted';
-                addToast('success', `Service ${actionPast} successfully`);
-            }}
-        />
-      )}
       <PageHeader 
         title="Services" 
         showBack={false} 
@@ -1966,87 +1854,6 @@ export default function ServicesPlugin() {
         </div>
       )}
 
-      {/* Actions Overlay */}
-      {showActions && selectedService && (
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-6">
-                <div className="flex justify-between items-center mb-6">
-                    <div className="flex items-center gap-4">
-                        <button onClick={() => setShowActions(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1 text-sm font-medium">
-                            <ArrowLeft size={18} />
-                            Back
-                        </button>
-                        <h3 className="text-lg font-bold">Service Actions</h3>
-                    </div>
-                    <button onClick={() => setShowActions(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                        <X size={20} />
-                    </button>
-                </div>
-                
-                <div className="mb-6">
-                    <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg mb-4">
-                        <Box className="text-blue-500" />
-                        <div>
-                            <div className="font-medium">{selectedService.name}</div>
-                            <div className="text-xs text-gray-500 font-mono">Systemd Service</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                        <button 
-                            onClick={() => handleAction('start')}
-                            disabled={actionLoading}
-                            className="flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                        >
-                            <PlayCircle size={18} className="text-green-500" />
-                            <span className="font-medium">Start</span>
-                        </button>
-                        <button 
-                            onClick={() => handleAction('stop')}
-                            disabled={actionLoading}
-                            className="flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                        >
-                            <Power size={18} className="text-red-500" />
-                            <span className="font-medium">Stop</span>
-                        </button>
-                    </div>
-                    
-                    <button 
-                        onClick={() => handleAction('restart')}
-                        disabled={actionLoading}
-                        className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                    >
-                        <RotateCw size={18} className="text-blue-500" />
-                        <span className="font-medium">Restart Service</span>
-                    </button>
-
-                    <button 
-                        onClick={() => handleAction('update')}
-                        disabled={actionLoading}
-                        className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                    >
-                        <RefreshCw size={18} className="text-orange-500" />
-                        <span className="font-medium">Update & Restart</span>
-                    </button>
-
-                    <button 
-                        onClick={() => {
-                            setShowActions(false);
-                            if (selectedService) confirmDelete(selectedService);
-                        }}
-                        disabled={actionLoading}
-                        className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-red-600 dark:text-red-400"
-                    >
-                        <Trash2 size={18} />
-                        <span className="font-medium">Delete Service</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-      )}
-
       {/* Link Modal */}
       <ExternalLinkModal 
         isOpen={showLinkModal}
@@ -2056,67 +1863,6 @@ export default function ServicesPlugin() {
         form={linkForm}
         setForm={setLinkForm}
       />
-
-      {drawerState && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/70 backdrop-blur-sm">
-            <div className="w-full max-w-6xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col">
-                <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-                    <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">
-                            {drawerState.mode === 'monitor' ? 'Service Monitor' : 'Edit Service'}
-                        </p>
-                        <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1 flex items-center gap-2">
-                            {drawerState.service.name.replace('.service', '')}
-                            {drawerState.service.nodeName && (
-                                <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                                    {drawerState.service.nodeName}
-                                </span>
-                            )}
-                        </h3>
-                        {drawerState.service.description && (
-                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-2xl">
-                                {drawerState.service.description}
-                            </p>
-                        )}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={closeDrawer}
-                        className="p-2 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800"
-                        aria-label="Close drawer"
-                    >
-                        <X size={20} />
-                    </button>
-                </div>
-                <div className="flex-1 overflow-hidden">
-                    {drawerState.mode === 'monitor' ? (
-                        <ServiceMonitor
-                            serviceName={drawerState.service.id || drawerState.service.name}
-                            initialNode={drawerState.service.nodeName}
-                            onBack={closeDrawer}
-                            variant="embedded"
-                        />
-                    ) : drawerLoading || !editInitialData ? (
-                        <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500 dark:text-gray-400">
-                            <RefreshCw className="animate-spin" />
-                            Loading configuration...
-                        </div>
-                    ) : (
-                        <div className="h-full overflow-y-auto p-6 bg-gray-50 dark:bg-gray-950/30">
-                            <ServiceForm
-                                key={`${drawerState.service.id || drawerState.service.name}-${drawerState.service.nodeName || 'Local'}`}
-                                initialData={editInitialData}
-                                isEdit
-                                defaultNode={drawerState.service.nodeName && drawerState.service.nodeName !== 'Local' ? drawerState.service.nodeName : ''}
-                                onClose={closeDrawer}
-                                variant="embedded"
-                            />
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-      )}
 
       {showRegistryOverlay && (
         <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/70 backdrop-blur-sm">

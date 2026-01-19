@@ -15,6 +15,7 @@ A Next.js web interface to manage Podman Quadlet services (Systemd).
 - **Backups:** Multi-node configuration snapshots with streaming progress logs and one-click restore.
 - **Mobile Ready:** Fully responsive design with dedicated mobile navigation.
 - **Auto-Update:** Keep ServiceBay and your containers up to date.
+- **Overlay UX:** All modals, drawers, and overlays now support proper z-index stacking and ESC key handling. FileViewer overlays can be closed with ESC or backdrop click without closing underlying sidebars or overlays.
 
 ## Installation
 
