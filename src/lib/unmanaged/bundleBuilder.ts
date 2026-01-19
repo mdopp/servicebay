@@ -929,8 +929,8 @@ export const buildServiceBundlesForNode = ({ nodeName, services = [], containers
       if (podsAlreadyBundled.has(entry.normalized)) return;
 
       const canonicalName = Array.from(entry.rawNames)[0] || entry.displayName || entry.normalized;
-      const friendlyLabel = sanitizePodDisplayName(entry.displayName || canonicalName) || serviceName || entry.normalized;
       const serviceName = canonicalName || `${entry.normalized}.pod`;
+      const friendlyLabel = sanitizePodDisplayName(entry.displayName || canonicalName) || serviceName || entry.normalized;
       const containerSummaries = entry.containers.map(summarizeContainer);
       const bundlePorts = aggregatePorts(containerSummaries);
       const bundleAssets = collectPodAssets(canonicalName, files);

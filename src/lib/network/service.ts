@@ -979,7 +979,16 @@ export class NetworkService {
             ports: normalizedPorts
         };
 
-        const bundleMetadata = {
+        const bundleMetadata: {
+            source: string;
+            severity: 'info' | 'warning' | 'critical';
+            hints: string[];
+            nodeHost: string;
+            nodeIPs: string[];
+            bundleId: string;
+            validations: number;
+            verifiedDomains?: string[];
+        } = {
             source: 'Unmanaged Discovery',
             severity: bundle.severity,
             hints: bundle.hints,
