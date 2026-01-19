@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.8.0...servicebay-v0.9.0) (2026-01-19)
+
+
+### Features
+
+* add comprehensive SSH error logging to prevent silent failures ([78b82f2](https://github.com/mdopp/servicebay/commit/78b82f24262f17cc9161a281e98a8d9759089226))
+* add container mode support with SSH execution to host ([41a6451](https://github.com/mdopp/servicebay/commit/41a6451f37a9d228d4b904aa016ce84bb9398f66))
+* enhance service discovery pipeline ([6ab0266](https://github.com/mdopp/servicebay/commit/6ab0266a53904dd8ce513e540b510a50d31cfbd3))
+* enrich twin and network metadata ([5ba0f79](https://github.com/mdopp/servicebay/commit/5ba0f790fc0d593a535e1b181a6e2c07171d1a9f))
+* improve managed bundle linking and network ui ([b632081](https://github.com/mdopp/servicebay/commit/b63208164e6507f7a87ec9f5fd7761600590894c))
+* improve unmanaged bundle review ([d53e438](https://github.com/mdopp/servicebay/commit/d53e4389a911ff70c4e2e4f177708025457497be))
+* merge unmanaged service bundles that share the same pod ([1f5d9da](https://github.com/mdopp/servicebay/commit/1f5d9daf8a5caf13e07ac27db112ed364f0e950f))
+* refine backup restore previews ([f6a0bd6](https://github.com/mdopp/servicebay/commit/f6a0bd6cf7c5b99cf830adf47e3b919577b55eec))
+* surface referenced service urls ([1ae7c04](https://github.com/mdopp/servicebay/commit/1ae7c045e0b0f591adb70f76848466a69db879cd))
+* **ui:** container actions, overlays, and ESC handling\n\n- Add shared container action overlays and ESC handling to all plugins\n- Refactor AttachedContainerList and ServiceActionBar for consistent UX\n- Add and update hooks (useContainerActions, useServiceActions)\n- Update types and serviceViewModel for container context\n- Improve overlay stacking and event propagation\n- Update ServiceForm and escape key logic for reliability ([53d2793](https://github.com/mdopp/servicebay/commit/53d279364d0765cce68164aece5dd08df270172c))
+* **ui:** improve overlay ESC handling and FileViewer UX\n\n- FileViewerOverlay now closes on ESC without closing underlying overlays\n- Overlay stacking and event propagation improved for all modals/drawers\n- Updated README to document overlay/ESC UX improvements ([a20a980](https://github.com/mdopp/servicebay/commit/a20a980e50377e5933940d488068a5100e02a635))
+
+
+### Bug Fixes
+
+* add agent session tracking and cleanup ([9922bda](https://github.com/mdopp/servicebay/commit/9922bda28a7fac41e3471fcb7dd685682e11f839))
+* **agent:** guard logger binding ([d156f43](https://github.com/mdopp/servicebay/commit/d156f433da32e978d833a7d77c46c08f935338a9))
+* ensure remote backup staging dir exists ([1a1762b](https://github.com/mdopp/servicebay/commit/1a1762b682f72b99188bbfbdbd04988cdd091f77))
+* improve pod reference detection for bundle merging ([52560ca](https://github.com/mdopp/servicebay/commit/52560caa342bdb1166b7d12fd3b9df3e059b817e))
+* remove unused backend helpers ([5257429](https://github.com/mdopp/servicebay/commit/52574292aa1ff2c8580b3aa7c96fb48ca1edf98c))
+* resolve build errors in unmanaged bundles ([773c92d](https://github.com/mdopp/servicebay/commit/773c92d2e9682862fc815e9364d71dfdb1d7f19e))
+* resolve hydration mismatch in Terminal plugin ([7b5d268](https://github.com/mdopp/servicebay/commit/7b5d26878413976f39f93da76d47f1108aea9576))
+* stabilize services plugin test selectors ([a7898c9](https://github.com/mdopp/servicebay/commit/a7898c955e758c23ee3c21b28195cd289319eab9))
+* stabilize structured log rendering ([d2ca2c0](https://github.com/mdopp/servicebay/commit/d2ca2c088d5419756db000d923762bd80d90876d))
+* unblock build errors ([ccec38a](https://github.com/mdopp/servicebay/commit/ccec38ad08f8533797e562c441af8d1932c2e309))
+
 ## [0.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.7.1...servicebay-v0.8.0) (2026-01-14)
 
 
