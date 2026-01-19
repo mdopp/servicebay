@@ -77,6 +77,7 @@ export interface EnrichedContainer {
   isInfra?: boolean;
   pid?: number;
   verifiedDomains?: string[]; // Enriched by TwinStore (Nginx/Traefik Reverse Lookup)
+  nodeName?: string; // Assigned client-side when containers are associated with a node context
 }
 
 export interface ServiceUnit {

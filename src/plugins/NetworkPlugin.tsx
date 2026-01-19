@@ -1,9 +1,23 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+
+const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
+import dynamic from 'next/dynamic';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import { PortMapping } from '@/lib/agent/types';
+import { PortMapping, EnrichedContainer, ServiceUnit } from '@/lib/agent/types';
 import { NetworkGraph } from '@/lib/network/types'; 
+import { buildServiceViewModel } from '@/lib/services/serviceViewModel';
+import type { ServiceViewModel } from '@/types/serviceView';
+import { useServiceActions } from '@/hooks/useServiceActions';
+import { useContainerActions } from '@/hooks/useContainerActions';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
+import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
+import type { TerminalRef } from '@/components/Terminal';
+import { ServiceActionBar } from '@/components/ServiceActionBar';
+import { AttachedContainerList } from '@/components/AttachedContainerList';
 
 import { 
   ReactFlow, 
@@ -28,11 +42,10 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@/lib/network/layout';
-import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus } from 'lucide-react';
+import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, Terminal as TerminalIcon, RefreshCw, Eraser, ArrowRight } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
-import Link from 'next/link';
 
 interface GraphNodeData extends Record<string, unknown> {
   id?: string;
@@ -694,6 +707,7 @@ type LinkFormState = {
 };
 
 export default function NetworkPlugin() {
+    const router = useRouter();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -703,6 +717,12 @@ export default function NetworkPlugin() {
   const rawGraphData = React.useRef<{ nodes: Node[], edges: Edge[] } | null>(null);
     const activeToastRef = React.useRef<string | null>(null);
     const { addToast, updateToast, removeToast } = useToast();
+    const {
+        openActions: openContainerActions,
+        closeActions: closeContainerActions,
+        overlay: containerActionsOverlay,
+        isOpen: containerActionsOpen,
+    } = useContainerActions();
 
   const startReloadToast = useCallback((description = 'Reloading network graph...') => {
       if (activeToastRef.current) {
@@ -740,6 +760,9 @@ export default function NetworkPlugin() {
   const [pendingConnection, setPendingConnection] = useState<Connection | null>(null);
   const [connectionPort, setConnectionPort] = useState('');
   const [availablePorts, setAvailablePorts] = useState<number[]>([]);
+    const [containerDrawerMode, setContainerDrawerMode] = useState<'logs' | 'terminal' | null>(null);
+    const [drawerContainer, setDrawerContainer] = useState<EnrichedContainer | null>(null);
+    const terminalRef = useRef<TerminalRef>(null);
     const selectedEdgeDetails = useMemo(() => {
         if (!selectedEdge) return null;
         return edges.find(edge => edge.id === selectedEdge) || null;
@@ -1030,6 +1053,14 @@ export default function NetworkPlugin() {
      }
   }, [startReloadToast, resolveReloadToast]);
 
+  const {
+      openMonitorDrawer,
+      openEditDrawer,
+      openActions: openServiceActions,
+      requestDelete: requestServiceDelete,
+      overlays: serviceActionOverlays,
+  } = useServiceActions({ onRefresh: fetchGraph });
+
   // Kick off the first render as soon as the plugin mounts so the toast shows immediately
   useEffect(() => {
       fetchGraph();
@@ -1145,6 +1176,68 @@ export default function NetworkPlugin() {
       return { nodes: flowNodes, edges: flowEdges };
   }, [rawData, handleCreateExternalLink]);
 
+  const selectedNodeName = useMemo(() => deriveNodeNameFromGraph(selectedNodeData), [selectedNodeData]);
+
+  const selectedServiceViewModel = useMemo<ServiceViewModel | null>(() => {
+      if (!selectedNodeData || selectedNodeData.type !== 'service') return null;
+      if (!selectedNodeData.rawData) return null;
+      if (!selectedNodeName) return null;
+      const nodeState = twin?.nodes?.[selectedNodeName];
+      if (!nodeState) return null;
+
+      try {
+          return buildServiceViewModel({
+              unit: selectedNodeData.rawData as ServiceUnit,
+              nodeName: selectedNodeName,
+              nodeState,
+          });
+      } catch {
+          return null;
+      }
+  }, [selectedNodeData, selectedNodeName, twin]);
+
+  const nodeAttachedContainers = useMemo<EnrichedContainer[]>(() => {
+      if (selectedServiceViewModel?.attachedContainers?.length) {
+          return selectedServiceViewModel.attachedContainers;
+      }
+
+      if (selectedNodeData?.rawData?.containers) {
+          const containers = selectedNodeData.rawData.containers as EnrichedContainer[];
+          return containers.map(container => ({
+              ...container,
+              nodeName: container.nodeName || selectedNodeName || container.nodeName,
+          }));
+      }
+
+      return [];
+  }, [selectedNodeData, selectedNodeName, selectedServiceViewModel]);
+
+  const drawerNode = drawerContainer?.nodeName && drawerContainer.nodeName !== 'Local'
+      ? drawerContainer.nodeName
+      : drawerContainer
+          ? 'Local'
+          : null;
+
+  const logsPanelData = useMemo<ContainerLogsPanelData | null>(() => {
+      if (!drawerContainer) return null;
+      return {
+          id: drawerContainer.id,
+          name: drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id,
+          image: drawerContainer.image,
+          state: drawerContainer.state,
+          status: drawerContainer.status,
+          created: drawerContainer.created,
+          ports: drawerContainer.ports?.map(port => ({
+              hostIp: port.hostIp,
+              containerPort: port.containerPort || 0,
+              hostPort: port.hostPort,
+              protocol: port.protocol,
+          })),
+          mounts: drawerContainer.mounts as ContainerLogsPanelData['mounts'],
+          hideMeta: true,
+      };
+  }, [drawerContainer]);
+
 
 
   useEffect(() => {
@@ -1203,22 +1296,23 @@ export default function NetworkPlugin() {
     };
   }, [updateToast]);
 
-    useEffect(() => {
-            if (!selectedNodeData && !selectedEdge) return;
-            const handleKeyDown = (event: KeyboardEvent) => {
-                    if (event.key === 'Escape') {
-                            event.preventDefault();
-                            if (selectedNodeData) {
-                                    setSelectedNodeData(null);
-                            }
-                            if (selectedEdge) {
-                                    setSelectedEdge(null);
-                            }
-                    }
-            };
-            window.addEventListener('keydown', handleKeyDown);
-            return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [selectedNodeData, selectedEdge, setSelectedNodeData, setSelectedEdge]);
+    const closeContainerDrawer = useCallback(() => {
+            setContainerDrawerMode(null);
+            setDrawerContainer(null);
+    }, []);
+
+        const closeNodeDetails = useCallback(() => {
+            setSelectedNodeData(null);
+        }, []);
+
+        const closeEdgeDetails = useCallback(() => {
+            setSelectedEdge(null);
+        }, []);
+
+        useEscapeKey(closeContainerActions, containerActionsOpen, true);
+        useEscapeKey(closeContainerDrawer, Boolean(containerDrawerMode), true);
+        useEscapeKey(closeNodeDetails, Boolean(selectedNodeData), true);
+        useEscapeKey(closeEdgeDetails, Boolean(selectedEdge), true);
 
   const handleEditLink = () => {
       if (!selectedNodeData || !selectedNodeData.rawData) return;
@@ -1282,6 +1376,48 @@ export default function NetworkPlugin() {
         addToast('error', 'Failed to update link');
     }
   };
+
+  const handleNavigateToBundleMigration = useCallback((node: GraphNodeData) => {
+      if (!node) return;
+      const metadataId = typeof node.metadata?.bundleId === 'string' ? node.metadata.bundleId : undefined;
+      const rawId = typeof node.rawData?.id === 'string' ? node.rawData.id : undefined;
+      const fallbackId = typeof node.id === 'string' && node.id.includes('bundle-')
+          ? node.id.slice(node.id.lastIndexOf('bundle-') + 'bundle-'.length)
+          : undefined;
+      const bundleId = metadataId || rawId || fallbackId;
+
+      if (!bundleId) {
+          addToast('error', 'Unable to locate bundle metadata');
+          return;
+      }
+
+      const params = new URLSearchParams({ bundle: bundleId });
+      const nodeContext = deriveNodeNameFromGraph(node) || selectedNodeName;
+      if (nodeContext) {
+          params.set('bundleNode', nodeContext);
+      }
+
+      setSelectedNodeData(null);
+      router.push(`/services?${params.toString()}`);
+  }, [addToast, router, selectedNodeName]);
+
+  const openContainerLogs = useCallback((container: EnrichedContainer) => {
+      setDrawerContainer(container);
+      setContainerDrawerMode('logs');
+  }, []);
+
+  const openContainerTerminal = useCallback((container: EnrichedContainer) => {
+      setDrawerContainer(container);
+      setContainerDrawerMode('terminal');
+  }, []);
+
+  const openAttachedContainerActions = useCallback((container: EnrichedContainer) => {
+      openContainerActions({
+          id: container.id,
+          name: container.names?.[0]?.replace(/^\//, '') || container.id,
+          nodeName: container.nodeName,
+      });
+  }, [openContainerActions]);
 
 
 
@@ -1594,6 +1730,70 @@ export default function NetworkPlugin() {
             </div>
         </div>
       )}
+
+      {containerDrawerMode && drawerContainer && (
+          <div className="fixed inset-0 z-[60] flex justify-end bg-gray-950/70 backdrop-blur-sm">
+              <div className="w-full max-w-5xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl animate-in slide-in-from-right-10">
+                  {containerDrawerMode === 'logs' && logsPanelData ? (
+                      <ContainerLogsPanel
+                          container={logsPanelData}
+                          nodeName={drawerNode ?? undefined}
+                          onClose={closeContainerDrawer}
+                      />
+                  ) : (
+                      <div className="h-full flex flex-col bg-gray-950">
+                          <div className="flex items-start justify-between px-6 py-4 border-b border-gray-800 bg-gray-900">
+                              <div>
+                                  <p className="text-xs uppercase tracking-wider text-gray-500">Terminal</p>
+                                  <div className="flex items-center gap-3 text-white text-lg font-semibold">
+                                      <TerminalIcon size={18} />
+                                      <span>{drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id}</span>
+                                  </div>
+                                  {drawerNode && (
+                                      <div className="mt-2 inline-flex items-center gap-2 text-xs text-gray-400">
+                                          <span className="uppercase tracking-wide">Node</span>
+                                          <span className="px-2 py-0.5 rounded-full bg-gray-800 text-gray-200 border border-gray-700">{drawerNode}</span>
+                                      </div>
+                                  )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                  <button
+                                      onClick={() => terminalRef.current?.clear()}
+                                      className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                      title="Clear terminal"
+                                  >
+                                      <Eraser size={18} />
+                                  </button>
+                                  <button
+                                      onClick={() => terminalRef.current?.reconnect()}
+                                      className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                      title="Reconnect"
+                                  >
+                                      <RefreshCw size={18} />
+                                  </button>
+                                  <button
+                                      onClick={closeContainerDrawer}
+                                      className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                      title="Close"
+                                  >
+                                      <X size={18} />
+                                  </button>
+                              </div>
+                          </div>
+                          <div className="flex-1 overflow-hidden">
+                              <DynamicTerminal
+                                  ref={terminalRef}
+                                  id={`container:${(drawerNode && drawerNode !== 'Local' ? drawerNode : 'local')}:${drawerContainer.id}`}
+                                  showControls={false}
+                              />
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+      )}
+      {serviceActionOverlays}
+      {containerActionsOverlay}
       
       {/* Context Menu / Details Panel */}
       {selectedNodeData && (
@@ -1655,6 +1855,16 @@ export default function NetworkPlugin() {
                             </button>
                         )}
 
+                        {selectedNodeData.type === 'unmanaged-service' && (
+                            <button
+                                onClick={() => handleNavigateToBundleMigration(selectedNodeData)}
+                                className="w-full flex items-center justify-center gap-2 p-2 bg-purple-50 text-purple-600 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-200 dark:hover:bg-purple-900/50 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                <ArrowRight size={14} />
+                                Migrate Bundle
+                            </button>
+                        )}
+
                         {selectedNodeData.type === 'link' && (
                             <button 
                                 onClick={handleEditLink}
@@ -1705,6 +1915,31 @@ export default function NetworkPlugin() {
                             </Link>
                         )}
                       </div>
+
+                      {selectedServiceViewModel && (
+                          <div className="border border-gray-100 dark:border-gray-800 rounded-lg p-3 space-y-3">
+                              <div className="flex items-center gap-3">
+                                  <div>
+                                      <p className="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 font-semibold">Managed Service</p>
+                                      <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{selectedServiceViewModel.name}</p>
+                                  </div>
+                                  <ServiceActionBar
+                                      service={selectedServiceViewModel}
+                                      onMonitor={openMonitorDrawer}
+                                      onEdit={openEditDrawer}
+                                      onActions={openServiceActions}
+                                      onDelete={requestServiceDelete}
+                                      className="ml-auto"
+                                  />
+                              </div>
+                              <AttachedContainerList
+                                  containers={nodeAttachedContainers}
+                                  onLogs={openContainerLogs}
+                                  onTerminal={openContainerTerminal}
+                                  onActions={openAttachedContainerActions}
+                              />
+                          </div>
+                      )}
 
                       {/* Network Info */}
                       <div className="border-t border-gray-100 dark:border-gray-800 pt-3">

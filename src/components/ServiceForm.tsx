@@ -780,9 +780,15 @@ WantedBy=default.target`;
 
       <div className="flex flex-col gap-4">
         <div className="flex justify-end gap-3">
-            <button type="button" onClick={() => router.back()} className="px-6 py-3 border border-gray-300 dark:border-gray-700 rounded-md text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
-            Cancel
-            </button>
+            {variant !== 'embedded' && (
+                <button
+                    type="button"
+                    onClick={() => router.back()}
+                    className="px-6 py-3 border border-gray-300 dark:border-gray-700 rounded-md text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                >
+                    Cancel
+                </button>
+            )}
             <button 
                 type="submit" 
                 disabled={!!yamlError || !name || !selectedNode}

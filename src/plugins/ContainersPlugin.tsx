@@ -2,16 +2,17 @@ import { useState, useEffect, useMemo, useCallback, FormEvent, useRef } from 're
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import { logger } from '@/lib/logger';
 import PluginLoading from '@/components/PluginLoading';
-import { Box, Terminal as TerminalIcon, MoreVertical, X, Power, RotateCw, Trash2, AlertTriangle, Activity, ArrowLeft, Search, HardDrive, Plus, RefreshCw, Eraser } from 'lucide-react';
+import { Box, Terminal as TerminalIcon, MoreVertical, X, Trash2, Activity, Search, HardDrive, Plus, RefreshCw, Eraser } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import { Volume } from '@/lib/agent/types';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { useContainerActions } from '@/hooks/useContainerActions';
 import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
 import type { TerminalRef } from '@/components/Terminal';
+import type { ServiceBundle } from '@/lib/unmanaged/bundleShared';
 
 const DynamicTerminal = dynamic(() => import('@/components/Terminal'), {
     ssr: false,
@@ -37,6 +38,10 @@ interface Container {
   NetworkMode?: string;
   IsHostNetwork?: boolean;
   nodeName?: string;
+    parent?: {
+        type: 'service' | 'bundle';
+        name: string;
+    };
 }
 
 type ContainerEngineTab = 'containers' | 'volumes';
@@ -51,11 +56,7 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
     const searchParams = useSearchParams();
   const { data: twin, isConnected, isNodeSynced } = useDigitalTwin();
 
-  const [filteredContainers, setFilteredContainers] = useState<Container[]>([]);
-  const [selectedContainer, setSelectedContainer] = useState<Container | null>(null);
-  const [showActions, setShowActions] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [filteredContainers, setFilteredContainers] = useState<Container[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
     const [showInfra, setShowInfra] = useState(false);
     const [activeTab, setActiveTab] = useState<ContainerEngineTab>(defaultTab);
@@ -76,11 +77,6 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
             ? (tabParam as ContainerEngineTab)
             : null;
 
-    const closeActionsOverlay = useCallback(() => {
-        if (deleteModalOpen) return;
-        setShowActions(false);
-    }, [deleteModalOpen]);
-
     const closeCreateModal = useCallback(() => {
         setIsCreateOpen(false);
     }, []);
@@ -90,10 +86,17 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
         setDrawerContainer(null);
     }, []);
 
-    useEscapeKey(closeActionsOverlay, showActions);
-    useEscapeKey(closeCreateModal, isCreateOpen);
+    const {
+        openActions: openContainerActions,
+        closeActions: closeContainerActions,
+        overlay: containerActionsOverlay,
+        isOpen: containerActionsOpen,
+    } = useContainerActions();
+
+    useEscapeKey(closeContainerActions, containerActionsOpen, true);
+    useEscapeKey(closeCreateModal, isCreateOpen, true);
     const shouldCloseDrawerOnEscape = Boolean(drawerMode) && drawerMode !== 'terminal' && drawerMode !== 'logs';
-    useEscapeKey(closeDrawer, shouldCloseDrawerOnEscape);
+    useEscapeKey(closeDrawer, shouldCloseDrawerOnEscape, true);
 
     useEffect(() => {
         if (!normalizedTab) return;
@@ -122,6 +125,33 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
         const nextQuery = params.toString();
         router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
     }, [activeTab, pathname, router, searchString]);
+
+  const containerParentMap = useMemo(() => {
+    const map = new Map<string, { type: 'service' | 'bundle'; name: string }>();
+    if (!twin || !twin.nodes) return map;
+
+    Object.values(twin.nodes).forEach(nodeState => {
+        (nodeState.services || []).forEach(service => {
+            (service.associatedContainerIds || []).forEach(containerId => {
+                if (!containerId) return;
+                const displayName = service.name.replace(/\.service$/, '');
+                map.set(containerId, { type: 'service', name: displayName });
+            });
+        });
+
+        const unmanagedBundles = Array.isArray((nodeState as { unmanagedBundles?: ServiceBundle[] }).unmanagedBundles)
+            ? (nodeState as { unmanagedBundles?: ServiceBundle[] }).unmanagedBundles!
+            : [];
+        unmanagedBundles.forEach(bundle => {
+            (bundle.containers || []).forEach(containerSummary => {
+                if (!containerSummary.id) return;
+                map.set(containerSummary.id, { type: 'bundle', name: bundle.displayName });
+            });
+        });
+    });
+
+    return map;
+  }, [twin]);
 
   const containers = useMemo(() => {
     if (!twin || !twin.nodes) return [];
@@ -152,12 +182,13 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
                 NetworkMode: (ec.networks && ec.networks.length > 0) ? ec.networks[0] : 'default',
                 IsHostNetwork: ec.isHostNetwork,
                 Pod: ec.podId,
-                PodName: ec.podName
+                PodName: ec.podName,
+                parent: containerParentMap.get(ec.id)
             });
         });
     });
     return list;
-  }, [twin]);
+  }, [containerParentMap, twin]);
 
     const volumes = useMemo(() => {
         if (!twin || !twin.nodes) return [];
@@ -237,49 +268,13 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
         setDrawerMode('terminal');
     };
 
-  const openActions = (container: Container) => {
-    setSelectedContainer(container);
-    setShowActions(true);
-  };
-
-  const handleAction = async (action: string) => {
-    if (!selectedContainer) return;
-    
-    if (action === 'delete' && !deleteModalOpen) {
-        setDeleteModalOpen(true);
-        return;
-    }
-
-    if (action === 'delete') {
-        setDeleteModalOpen(false);
-    }
-
-    setActionLoading(true);
-    const toastId = addToast('loading', 'Action in progress', `Executing ${action} on container...`, 0);
-
-    try {
-        const nodeParam = selectedContainer.nodeName === 'Local' ? '' : selectedContainer.nodeName;
-        const query = nodeParam ? `?node=${nodeParam}` : '';
-        const res = await fetch(`/api/containers/${selectedContainer.Id}/action${query}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action })
+  const openActions = useCallback((container: Container) => {
+        openContainerActions({
+            id: container.Id,
+            name: container.Names[0]?.replace(/^\//, '') || container.Id,
+            nodeName: container.nodeName,
         });
-        
-        if (!res.ok) {
-            const data = await res.json();
-            updateToast(toastId, 'error', 'Action failed', data.error);
-        } else {
-            setShowActions(false);
-            updateToast(toastId, 'success', 'Action initiated', `${action} command sent to container`);
-        }
-    } catch (e) {
-        logger.error('ContainersPlugin', 'Action failed', e);
-        updateToast(toastId, 'error', 'Action failed', 'An unexpected error occurred.');
-    } finally {
-        setActionLoading(false);
-    }
-  };
+    }, [openContainerActions]);
 
   const handleDeleteVolume = async () => {
     if (!volumeToDelete) return;
@@ -397,15 +392,6 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
     return (
         <div className="h-full flex flex-col relative">
             <ConfirmModal
-                isOpen={deleteModalOpen}
-                title="Delete Container"
-                message={`Are you sure you want to delete container "${selectedContainer?.Names[0].replace(/^\//, '')}"? This action cannot be undone.`}
-                confirmText="Delete"
-                isDestructive
-                onConfirm={() => handleAction('delete')}
-                onCancel={() => setDeleteModalOpen(false)}
-            />
-            <ConfirmModal
                 isOpen={!!volumeToDelete}
                 title="Delete Volume"
                 message={`Delete volume "${volumeToDelete?.Name ?? ''}"? This cannot be undone.`}
@@ -513,6 +499,21 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
                                                                     {c.nodeName && (
                                                                         <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 border border-blue-200 dark:border-blue-800">
                                                                             {c.nodeName}
+                                                                        </span>
+                                                                    )}
+                                                                    {c.parent && (
+                                                                        <span
+                                                                            className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border truncate max-w-[180px] ${
+                                                                                c.parent.type === 'service'
+                                                                                    ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-200 border-purple-200 dark:border-purple-800'
+                                                                                    : 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-200 border-amber-200 dark:border-amber-800'
+                                                                            }`}
+                                                                            title={`${c.parent.type === 'service' ? 'Service' : 'Bundle'}: ${c.parent.name}`}
+                                                                        >
+                                                                            <span className="uppercase tracking-wide mr-1 text-[10px] opacity-80">
+                                                                                {c.parent.type === 'service' ? 'Svc' : 'Bundle'}
+                                                                            </span>
+                                                                            <span className="font-mono text-[10px]">{c.parent.name}</span>
                                                                         </span>
                                                                     )}
                                                                 </div>
@@ -651,88 +652,7 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
                 )}
             </div>
 
-            {showActions && selectedContainer && (
-                <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="relative bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-5">
-                        <div className="flex justify-between items-center mb-5">
-                            <div className="flex items-center gap-3">
-                                <button onClick={closeActionsOverlay} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1 text-sm font-medium">
-                                    <ArrowLeft size={18} />
-                                    Back
-                                </button>
-                                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Container Actions</h3>
-                            </div>
-                            <button onClick={closeActionsOverlay} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg mb-5">
-                            <Box className="text-blue-500" />
-                            <div>
-                                <div className="font-medium text-gray-900 dark:text-gray-100">{selectedContainer.Names[0].replace(/^\//, '')}</div>
-                                <div className="text-xs text-gray-500 font-mono">{selectedContainer.Id.substring(0, 12)}</div>
-                            </div>
-                        </div>
-                        <div className="space-y-3">
-                            <div className="grid grid-cols-2 gap-3">
-                                <button
-                                    onClick={() => handleAction('stop')}
-                                    disabled={actionLoading}
-                                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                                >
-                                    <Power size={18} className="text-orange-500" />
-                                    <span>Stop</span>
-                                </button>
-                                <button
-                                    onClick={() => handleAction('restart')}
-                                    disabled={actionLoading}
-                                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                                >
-                                    <RotateCw size={18} className="text-blue-500" />
-                                    <span>Restart</span>
-                                </button>
-                            </div>
-                            <div className="border-t border-gray-200 dark:border-gray-800 pt-4">
-                                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-3 flex items-center gap-2">
-                                    <AlertTriangle size={12} />
-                                    Destructive Actions
-                                </h4>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button
-                                        onClick={() => handleAction('force-stop')}
-                                        disabled={actionLoading}
-                                        className="flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/30 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-700 dark:text-red-400 transition-colors"
-                                    >
-                                        <Power size={18} />
-                                        <span>Force Stop</span>
-                                    </button>
-                                    <button
-                                        onClick={() => handleAction('force-restart')}
-                                        disabled={actionLoading}
-                                        className="flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/30 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-700 dark:text-red-400 transition-colors"
-                                    >
-                                        <RotateCw size={18} />
-                                        <span>Force Restart</span>
-                                    </button>
-                                </div>
-                                <button
-                                    onClick={() => handleAction('delete')}
-                                    disabled={actionLoading}
-                                    className="w-full mt-3 flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/30 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-700 dark:text-red-400 transition-colors"
-                                >
-                                    <Trash2 size={18} />
-                                    <span>Delete Container</span>
-                                </button>
-                            </div>
-                        </div>
-                        {actionLoading && (
-                            <div className="absolute inset-0 bg-white/50 dark:bg-gray-900/50 flex items-center justify-center rounded-lg">
-                                <RefreshCw className="animate-spin text-blue-500" size={32} />
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
+            {containerActionsOverlay}
 
             {isCreateOpen && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
