@@ -86,7 +86,8 @@ export class NetworkService {
     } else {
         // Global view: Local + Configured Nodes
         targets.push({ name: 'Local', connection: undefined });
-        for (const conn of connections) {
+        // Filter out any "Local" entries from connections to avoid duplicates
+        for (const conn of connections.filter(c => c.Name.toLowerCase() !== 'local')) {
             targets.push({ name: conn.Name, connection: conn });
         }
     }
