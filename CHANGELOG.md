@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.0...servicebay-v0.10.1) (2026-01-20)
+
+
+### Bug Fixes
+
+* remove duplicate Local node entries in selectors ([d1728b6](https://github.com/mdopp/servicebay/commit/d1728b68a4a3e19633f3a75b7c2e37b9803263a5))
+
 ## [0.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.9.0...servicebay-v0.10.0) (2026-01-20)
 
 
