@@ -107,7 +107,7 @@ class ServiceWatcher extends EventEmitter {
           this.scheduleWatcherRestart();
         });
 
-        stream.on('error', (errorStream) => {
+        stream.on('error', (errorStream: Error) => {
           console.error(`[Watcher] Remote Podman watcher error (${node.Name}):`, errorStream);
           this.podmanWatcherActive = false;
           this.scheduleWatcherRestart();
