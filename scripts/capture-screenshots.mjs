@@ -87,7 +87,8 @@ function sanitizeData(data) {
 
 async function captureScreenshots() {
   console.log('🚀 Starting ServiceBay screenshot capture...\n');
-  console.log('📝 Using sanitized example data for sensitive information\n');
+  console.log('📝 Using sanitized example data for sensitive information');
+  console.log('🌙 Dark mode enabled for better documentation\n');
 
   const browser = await chromium.launch({ 
     headless: true,
@@ -102,14 +103,14 @@ async function captureScreenshots() {
   const page = await context.newPage();
 
   try {
-    // Inject data sanitization script into page context
-    await page.addInitScript(() => {
-      // Store original fetch and localStorage
-      const originalFetch = window.fetch;
-      const originalLocalStorage = { ...window.localStorage };
+    // Inject initialization script before page loads via context
+    await context.addInitScript(() => {
+      // Set dark mode preference in localStorage before app initializes
+      localStorage.setItem('theme', 'dark');
+      localStorage.setItem('darkMode', 'true');
       
-      // Data sanitization map (same as in Node.js script)
-      const SANITIZATION_MAP = {
+      // Data sanitization map
+      window.SANITIZATION_MAP = {
         '192.168.178.99': '192.168.1.100',
         '172.28.100.77': '192.168.1.50',
         'fe80::215:5dff:feb9:943c': 'fe80::1',
@@ -124,66 +125,123 @@ async function captureScreenshots() {
         'korgraph-couchdb': 'database-service',
       };
       
-      function sanitizeString(str) {
+      window.sanitizeString = function(str) {
         if (typeof str !== 'string') return str;
         let result = str;
-        for (const [real, example] of Object.entries(SANITIZATION_MAP)) {
-          const regex = new RegExp(real.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+        for (const [real, example] of Object.entries(window.SANITIZATION_MAP)) {
+          const regex = new RegExp(real.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
           result = result.replace(regex, example);
         }
         return result;
-      }
+      };
       
-      function sanitizeData(data) {
-        if (typeof data === 'string') return sanitizeString(data);
-        if (Array.isArray(data)) return data.map(sanitizeData);
+      window.sanitizeData = function(data) {
+        if (typeof data === 'string') return window.sanitizeString(data);
+        if (Array.isArray(data)) return data.map(window.sanitizeData);
         if (data !== null && typeof data === 'object') {
           const result = {};
           for (const [key, value] of Object.entries(data)) {
-            result[key] = sanitizeData(value);
+            result[key] = window.sanitizeData(value);
           }
           return result;
         }
         return data;
-      }
+      };
       
-      // Intercept fetch calls to sanitize responses
+      // Intercept fetch to sanitize API responses
+      const originalFetch = window.fetch;
       window.fetch = async (...args) => {
         const response = await originalFetch.apply(window, args);
-        
-        // Only sanitize JSON responses from API endpoints
         const url = typeof args[0] === 'string' ? args[0] : args[0].url;
+        
         if (!url.includes('/api/')) return response;
         
-        // Clone response to read body
         const cloned = response.clone();
         try {
           const json = await cloned.json();
-          const sanitized = sanitizeData(json);
+          const sanitized = window.sanitizeData(json);
           
-          // Create new response with sanitized data
           return new Response(JSON.stringify(sanitized), {
             status: response.status,
             headers: response.headers,
           });
         } catch {
-          // If not JSON, return original
           return response;
         }
       };
       
-      // Also sanitize localStorage and sessionStorage
+      // Sanitize localStorage access
       const originalSetItem = Storage.prototype.setItem;
       const originalGetItem = Storage.prototype.getItem;
       
       Storage.prototype.setItem = function(key, value) {
-        return originalSetItem.call(this, key, sanitizeString(value));
+        const sanitized = window.sanitizeString(String(value));
+        return originalSetItem.call(this, key, sanitized);
       };
       
       Storage.prototype.getItem = function(key) {
         const value = originalGetItem.call(this, key);
-        return value ? sanitizeString(value) : value;
+        return value ? window.sanitizeString(value) : value;
       };
+    });
+    
+    // Additional script to sanitize DOM content after page loads
+    await page.addInitScript(() => {
+      // Periodically sanitize visible text nodes
+      function sanitizeDOM() {
+        const walker = document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT,
+          null,
+          false
+        );
+        
+        let node;
+        while (node = walker.nextNode()) {
+          if (node.nodeValue && node.nodeValue.trim()) {
+            node.nodeValue = window.sanitizeString(node.nodeValue);
+          }
+        }
+      }
+      
+      // Sanitize on page ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', sanitizeDOM);
+      } else {
+        sanitizeDOM();
+      }
+      
+      // Also sanitize after a delay for React-rendered content
+      setTimeout(sanitizeDOM, 1000);
+      setTimeout(sanitizeDOM, 2000);
+      
+      // Watch for mutations and sanitize new content
+      const observer = new MutationObserver(() => {
+        sanitizeDOM();
+      });
+      observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: false,
+      });
+    });
+    
+    // Set dark mode via CSS injection
+    await page.addStyleTag({
+      content: `
+        html, body {
+          background-color: #0f172a !important;
+          color: #e2e8f0 !important;
+        }
+        * {
+          border-color: #334155 !important;
+        }
+        [class*="dark"] {
+          --tw-bg-opacity: 1 !important;
+          background-color: rgb(15 23 42 / var(--tw-bg-opacity)) !important;
+          color: rgb(226 232 240) !important;
+        }
+      `
     });
 
     // 1. Dashboard

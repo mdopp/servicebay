@@ -1,0 +1,18 @@
+{
+    "chat.mcp.serverSampling": {
+        "podcli/.vscode/mcp.json: io.github.ChromeDevTools/chrome-devtools-mcp": {
+            "allowedModels": [
+                "copilot/claude-sonnet-4.5",
+                "copilot/auto",
+                "copilot/gemini-2.5-pro",
+                "copilot/gemini-3-pro-preview",
+                "copilot/gpt-5",
+                "copilot/gpt-5-codex",
+                "copilot/gpt-5.1-codex",
+                "copilot/gpt-5.1-codex-max",
+                "copilot/gpt-5.2",
+                "copilot/gpt-5.2-codex"
+            ]
+        }
+    }
+}
