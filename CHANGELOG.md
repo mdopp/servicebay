@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.2...servicebay-v0.10.3) (2026-01-20)
+
+
+### Bug Fixes
+
+* extend timeout for long-running commands (image pull during update) ([1a65743](https://github.com/mdopp/servicebay/commit/1a65743de30c168b338dfc18fffa0976dc9ff606))
+* restart update via systemctl and surface pull output ([57d6b5c](https://github.com/mdopp/servicebay/commit/57d6b5c184d5cf09264631cccbc60287d70f5c52))
+
 ## [0.10.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.1...servicebay-v0.10.2) (2026-01-20)
 
 
