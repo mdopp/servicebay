@@ -35,6 +35,7 @@ const SANITIZATION_MAP = {
   '127.0.0.1': '192.168.1.1',
   
   // Real domain names → Example domains
+  'dopp.cloud': 'example.local',
   'travel.korgraph.io': 'travel.example.local',
   'korgraph.io': 'example.local',
   'mdopp-surface': 'homeserver',
@@ -114,6 +115,7 @@ async function captureScreenshots() {
         '192.168.178.99': '192.168.1.100',
         '172.28.100.77': '192.168.1.50',
         'fe80::215:5dff:feb9:943c': 'fe80::1',
+        'dopp.cloud': 'example.local',
         'travel.korgraph.io': 'travel.example.local',
         'korgraph.io': 'example.local',
         'mdopp-surface': 'homeserver',
