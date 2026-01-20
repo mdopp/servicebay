@@ -3,7 +3,6 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { EventEmitter } from 'events';
-import type { ClientChannel } from 'ssh2';
 import { SSHConnectionPool } from './ssh/pool';
 import { listNodes, PodmanConnection } from './nodes';
 
@@ -16,7 +15,6 @@ declare global {
 }
 
 class ServiceWatcher extends EventEmitter {
-  private remoteStream: ClientChannel | null = null;
   private isWatching = false;
   private podmanWatcherActive = false;
   private restartTimer: NodeJS.Timeout | null = null;
@@ -95,7 +93,6 @@ class ServiceWatcher extends EventEmitter {
           return;
         }
 
-        this.remoteStream = stream;
         this.podmanWatcherActive = true;
         console.log(`[Watcher] Monitoring Podman events via SSH node ${node.Name}`);
 
@@ -106,14 +103,12 @@ class ServiceWatcher extends EventEmitter {
 
         stream.on('close', (code: number) => {
           console.log(`[Watcher] Remote Podman watcher closed for ${node.Name} (code=${code})`);
-          this.remoteStream = null;
           this.podmanWatcherActive = false;
           this.scheduleWatcherRestart();
         });
 
         stream.on('error', (errorStream) => {
           console.error(`[Watcher] Remote Podman watcher error (${node.Name}):`, errorStream);
-          this.remoteStream = null;
           this.podmanWatcherActive = false;
           this.scheduleWatcherRestart();
         });
