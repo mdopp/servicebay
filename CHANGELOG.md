@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.9.0...servicebay-v0.10.0) (2026-01-20)
+
+
+### Features
+
+* dark mode screenshots with improved sanitization ([e318f12](https://github.com/mdopp/servicebay/commit/e318f125751265ce9def6c927d04202b7f49daac))
+* enforce ssh-only control ([775b1c9](https://github.com/mdopp/servicebay/commit/775b1c91bba0a5852fa717efc196470775b97bc3))
+* sanitize sensitive data in screenshot captures ([9792e29](https://github.com/mdopp/servicebay/commit/9792e29dc3d498657c2b37e65228f2411f6213fb))
+
+
+### Bug Fixes
+
+* add explicit Error type to stream error handler ([aaf7950](https://github.com/mdopp/servicebay/commit/aaf7950f09f446a2902a0a860e9f93d98e4581a3))
+* correct nodes.test.ts assertion for auto-seeded default node ([9feff46](https://github.com/mdopp/servicebay/commit/9feff464f99592f8bb551acdd1255fa1bc5ec74a))
+* remove unused remoteStream variable from watcher ([d529547](https://github.com/mdopp/servicebay/commit/d5295472eac733e606791a069055cb6ac27601df))
+
 ## [0.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.8.0...servicebay-v0.9.0) (2026-01-19)
 
 
