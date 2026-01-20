@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.1...servicebay-v0.10.2) (2026-01-20)
+
+
+### Bug Fixes
+
+* prevent duplicate Local node in network graph generation ([10c7c41](https://github.com/mdopp/servicebay/commit/10c7c41710e03724fa16a313732f47380db79bc4))
+
 ## [0.10.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.0...servicebay-v0.10.1) (2026-01-20)
 
 
