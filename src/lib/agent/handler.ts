@@ -3,8 +3,6 @@ import { SSHConnectionPool } from '../ssh/pool';
 import fs from 'fs';
 import path from 'path';
 import { ClientChannel } from 'ssh2';
-import { spawn, ChildProcess } from 'child_process';
-import { listNodes } from '../nodes';
 import { logger } from '@/lib/logger';
 import { getConfig } from '@/lib/config';
 
@@ -73,7 +71,6 @@ export interface AgentHealth {
 export class AgentHandler extends EventEmitter {
   public nodeName: string;
   private channel: ClientChannel | null = null;
-  private process: ChildProcess | null = null;
   private buffer: Buffer = Buffer.alloc(0);
   private logBuffer: string = '';
     private isStarting = false;
@@ -145,30 +142,8 @@ export class AgentHandler extends EventEmitter {
     this.health.sessionId = this.getSessionId();
 
     const starter = (async () => {
-      // Check if we should use Local Spawn or SSH
-      let useLocalSpawn = false;
-      try {
-        const nodes = await listNodes();
-        const configured = nodes.find(n => n.Name === this.nodeName);
-            
-        // Use local spawn if:
-        // 1. Node is named 'Local' and NOT configured (implicit local)
-        // 2. Node is configured with URI 'local'
-        if ((!configured && this.nodeName === 'Local') || (configured && configured.URI === 'local')) {
-          useLocalSpawn = true;
-        }
-      } catch {
-        // Fallback for implicit Local
-        if (this.nodeName === 'Local') useLocalSpawn = true;
-      }
-
-      if (useLocalSpawn) {
-        this.log('AgentHandler', 'info', 'Starting Local Agent...');
-        await this.startLocal(runId);
-      } else {
-        this.log('AgentHandler', 'info', `Starting SSH Agent for ${this.nodeName}...`);
-        await this.startSSH(runId);
-      }
+      this.log('AgentHandler', 'info', `Starting SSH Agent for ${this.nodeName}...`);
+      await this.startSSH(runId);
     })();
 
     this.startPromise = starter.finally(() => {
@@ -177,75 +152,6 @@ export class AgentHandler extends EventEmitter {
     });
 
     return this.startPromise;
-  }
-
-  private async startLocal(runId: string): Promise<void> {
-    try {
-        const script = getAgentScript();
-        const args = ['-u', '-c', `import base64, sys; exec(base64.b64decode("${script}"))`];
-      const sessionId = this.getSessionId();
-      if (sessionId) {
-        args.push('--session-id', sessionId);
-      }
-        this.log('Agent:Local', 'info', 'Spawning python3...');
-        
-        // Ensure XDG_RUNTIME_DIR is set for systemctl --user
-        const env = { ...process.env };
-        if (!env.XDG_RUNTIME_DIR) {
-            const uid = process.getuid ? process.getuid() : 0;
-            env.XDG_RUNTIME_DIR = `/run/user/${uid}`;
-        }
-        const config = await getConfig();
-        env.SERVICEBAY_AGENT_ID = runId;
-        if (sessionId) {
-          env.SERVICEBAY_SESSION = sessionId;
-          env.SERVICEBAY_SESSION_ID = sessionId;
-        }
-        if (config.agent?.cleanupOrphansOnStart === false) {
-          env.SERVICEBAY_AGENT_CLEANUP_ON_START = 'false';
-        }
-        if (config.agent?.processCleanup?.enabled === false) {
-          env.SERVICEBAY_AGENT_CLEANUP_ENABLED = 'false';
-        }
-        if (config.agent?.processCleanup?.dryRun) {
-          env.SERVICEBAY_AGENT_CLEANUP_DRY_RUN = 'true';
-        }
-        if (typeof config.agent?.processCleanup?.maxAgeMinutes === 'number') {
-          env.SERVICEBAY_AGENT_CLEANUP_MAX_AGE_MINUTES = String(config.agent?.processCleanup?.maxAgeMinutes);
-        }
-
-        const child = spawn('python3', args, { env });
-
-        this.process = child;
-        this.isConnected = true;
-        this.health.isConnected = true;
-        this.health.lastSync = Date.now();
-        this.emit('connected');
-
-        child.stdout.on('data', (data) => {
-             // console.log(`[Agent:Local] Raw Data (${data.length} bytes)`); // Debug disabled
-             this.handleData(data);
-        });
-        child.stderr.on('data', (data) => {
-             this.handleLog(data);
-        });
-        
-        child.on('close', (code) => {
-          this.log('Agent:Local', 'info', `Closed. Code: ${code}`);
-            this.handleDisconnect();
-        });
-        
-        child.on('error', (err) => {
-            this.health.errorCount++;
-            this.health.lastError = err.message;
-          this.log('Agent:Local', 'error', 'Spawn Error:', err);
-            this.emit('error', err);
-        });
-
-    } catch (e) {
-        this.emit('error', e);
-        throw e;
-    }
   }
 
   private async startSSH(runId: string) {
@@ -384,7 +290,6 @@ export class AgentHandler extends EventEmitter {
       this.isConnected = false;
       this.health.isConnected = false;
       this.channel = null;
-      this.process = null;
       const runLabel = this.currentRunId ? ` (runId=${this.currentRunId})` : '';
       this.log(this.nodeName, 'warn', `Agent disconnected${runLabel}. Health: ${JSON.stringify(this.health)}`);
       this.emit('disconnected');
@@ -503,9 +408,7 @@ export class AgentHandler extends EventEmitter {
         }, 10000);
 
         const payload = cmd + '\n';
-        if (this.process && this.process.stdin) {
-            this.process.stdin.write(payload);
-        } else if (this.channel) {
+        if (this.channel) {
             this.channel.write(payload);
         } else {
              this.health.errorCount++;
@@ -549,9 +452,6 @@ export class AgentHandler extends EventEmitter {
   public disconnect() {
       if (this.channel) {
           this.channel.close(); // sends EOF
-      }
-      if (this.process) {
-          this.process.kill();
       }
   }
   

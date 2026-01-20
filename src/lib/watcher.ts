@@ -2,37 +2,12 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { spawn, spawnSync, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import type { ClientChannel } from 'ssh2';
+import { SSHConnectionPool } from './ssh/pool';
+import { listNodes, PodmanConnection } from './nodes';
 
 const SYSTEMD_DIR = path.join(os.homedir(), '.config/containers/systemd');
-const PODMAN_EVENT_PATTERNS = [
-  'podman events --format json --filter type=container',
-  'podman events --format json'
-];
-
-let hasCleanedOrphanedPodmanWatchers = false;
-
-const cleanupOrphanedPodmanWatchers = () => {
-  if (hasCleanedOrphanedPodmanWatchers) return;
-  hasCleanedOrphanedPodmanWatchers = true;
-
-  if (process.platform === 'win32') return;
-
-  PODMAN_EVENT_PATTERNS.forEach(pattern => {
-    try {
-      const result = spawnSync('pkill', ['-TERM', '-f', pattern], { stdio: 'ignore' });
-      if (result.status === 0) {
-        console.log(`[Watcher] Cleaned leftover Podman watcher (${pattern})`);
-      }
-    } catch (error) {
-      // Ignore missing pkill binaries but surface other issues for troubleshooting
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`[Watcher] Failed to clean Podman watchers for pattern "${pattern}":`, error);
-      }
-    }
-  });
-};
 
 // Singleton to manage event emitters across hot reloads in dev
 declare global {
@@ -41,8 +16,10 @@ declare global {
 }
 
 class ServiceWatcher extends EventEmitter {
-  private podmanProcess: ChildProcess | null = null;
+  private remoteStream: ClientChannel | null = null;
   private isWatching = false;
+  private podmanWatcherActive = false;
+  private restartTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -72,49 +49,102 @@ class ServiceWatcher extends EventEmitter {
     }
 
     // 2. Watch Podman Events
-    this.startPodmanWatcher();
+    void this.startPodmanWatcher();
   }
 
-  private startPodmanWatcher() {
-    cleanupOrphanedPodmanWatchers();
+  private async startPodmanWatcher() {
+    if (this.podmanWatcherActive || !this.isWatching) return;
 
-    // Monitor container events to detect starts, stops, failures
-    this.podmanProcess = spawn('podman', ['events', '--format', 'json', '--filter', 'type=container']);
+    try {
+      await this.startRemotePodmanWatcher();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[Watcher] Podman watcher unavailable via SSH: ${message}`);
+      this.podmanWatcherActive = false;
+      this.scheduleWatcherRestart();
+    }
+  }
 
-    if (this.podmanProcess.stdout) {
-        this.podmanProcess.stdout.on('data', (data: Buffer) => {
-        const lines = data.toString().split('\n');
-        for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-            const event = JSON.parse(line);
-            // event.Status can be: create, init, start, kill, die, stop, remove, ...
-            // We are interested in anything that changes state
-            if (['start', 'stop', 'die', 'remove', 'create'].includes(event.Status)) {
-                console.log(`[Watcher] Podman event: ${event.Status} on ${event.Name}`);
-                this.emit('change', { type: 'container', message: `Container ${event.Name} ${event.Status}` });
-            }
-            } catch {
-            // Ignore parse errors
-            }
+  private async resolveDefaultNode(): Promise<PodmanConnection | null> {
+    try {
+      const nodes = await listNodes();
+      if (!nodes.length) return null;
+      return nodes.find((n) => n.Default) || nodes[0];
+    } catch (error) {
+      console.error('[Watcher] Failed to read nodes.json:', error);
+      return null;
+    }
+  }
+
+  private async startRemotePodmanWatcher(): Promise<void> {
+    const node = await this.resolveDefaultNode();
+    if (!node) {
+      throw new Error('No nodes configured');
+    }
+    if (node.URI === 'local') {
+      throw new Error(`Node ${node.Name} still uses the legacy 'local' URI. Edit the node to use ssh://user@host`);
+    }
+
+    const pool = SSHConnectionPool.getInstance();
+    const conn = await pool.getConnection(node.Name);
+
+    await new Promise<void>((resolve, reject) => {
+      conn.exec('podman events --format json --filter type=container', (err, stream) => {
+        if (err || !stream) {
+          reject(err || new Error('Failed to open remote stream'));
+          return;
         }
-        });
-    }
 
-    if (this.podmanProcess.stderr) {
-        this.podmanProcess.stderr.on('data', (data: Buffer) => {
-            console.error(`[Watcher] Podman stderr: ${data}`);
-        });
-    }
+        this.remoteStream = stream;
+        this.podmanWatcherActive = true;
+        console.log(`[Watcher] Monitoring Podman events via SSH node ${node.Name}`);
 
-    this.podmanProcess.on('close', (code: number) => {
-      console.log(`[Watcher] Podman events exited with code ${code}`);
-      this.isWatching = false;
-      // Retry after delay if it crashed
-      setTimeout(() => {
-          if (!this.isWatching) this.startPodmanWatcher();
-      }, 5000);
+        stream.on('data', (data: Buffer) => this.processPodmanChunk(node.Name, data));
+        stream.stderr.on('data', (data: Buffer) => {
+          console.error(`[Watcher][${node.Name}] Podman stderr: ${data}`);
+        });
+
+        stream.on('close', (code: number) => {
+          console.log(`[Watcher] Remote Podman watcher closed for ${node.Name} (code=${code})`);
+          this.remoteStream = null;
+          this.podmanWatcherActive = false;
+          this.scheduleWatcherRestart();
+        });
+
+        stream.on('error', (errorStream) => {
+          console.error(`[Watcher] Remote Podman watcher error (${node.Name}):`, errorStream);
+          this.remoteStream = null;
+          this.podmanWatcherActive = false;
+          this.scheduleWatcherRestart();
+        });
+
+        resolve();
+      });
     });
+  }
+
+  private processPodmanChunk(source: string, data: Buffer) {
+    const lines = data.toString().split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (['start', 'stop', 'die', 'remove', 'create'].includes(event.Status)) {
+          console.log(`[Watcher] Podman event (${source}): ${event.Status} on ${event.Name}`);
+          this.emit('change', { type: 'container', message: `Container ${event.Name} ${event.Status}` });
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+  }
+
+  private scheduleWatcherRestart() {
+    if (!this.isWatching || this.restartTimer) return;
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      void this.startPodmanWatcher();
+    }, 5000);
   }
 }
 

@@ -11,6 +11,8 @@ SERVICE_NAME="servicebay"
 PORT=3000
 SYSTEMD_DIR="$HOME/.config/containers/systemd"
 CONFIG_DIR="$HOME/.servicebay"
+SSH_DIR="$CONFIG_DIR/ssh"
+IDENTITY_PATH="$SSH_DIR/id_rsa"
 
 # Colors
 GREEN='\033[0;32m'
@@ -44,6 +46,7 @@ fi
 
 mkdir -p "$SYSTEMD_DIR"
 mkdir -p "$CONFIG_DIR"
+mkdir -p "$SSH_DIR"
 
 # --- Configuration Prompt ---
 
@@ -145,18 +148,39 @@ EOF
     fi
 fi
 
+# --- SSH Key Setup ---
+
+if [ ! -f "$IDENTITY_PATH" ]; then
+        log "Generating dedicated SSH key for ServiceBay..."
+        ssh-keygen -t rsa -b 4096 -f "$IDENTITY_PATH" -N "" >/dev/null
+fi
+
+HOST_SSH_DIR="$HOME/.ssh"
+HOST_AUTH_KEYS="$HOST_SSH_DIR/authorized_keys"
+mkdir -p "$HOST_SSH_DIR"
+touch "$HOST_AUTH_KEYS"
+chmod 700 "$HOST_SSH_DIR"
+chmod 600 "$HOST_AUTH_KEYS"
+
+PUB_KEY_CONTENT=$(cat "$IDENTITY_PATH.pub")
+if ! grep -qxF "$PUB_KEY_CONTENT" "$HOST_AUTH_KEYS"; then
+        log "Authorizing ServiceBay SSH key for $(id -un)@localhost"
+        echo "$PUB_KEY_CONTENT" >> "$HOST_AUTH_KEYS"
+fi
+
 # --- Create nodes.json if not exists ---
 NODES_FILE="$CONFIG_DIR/nodes.json"
 if [ ! -f "$NODES_FILE" ]; then
-    log "Configuring Local node..."
-    cat > "$NODES_FILE" <<NODESEOF
+        log "Configuring Local node (SSH)..."
+        SSH_USER=$(id -un)
+        cat > "$NODES_FILE" <<NODESEOF
 [
-  {
-    "Name": "Local",
-    "URI": "local",
-    "Identity": "",
-    "Default": true
-  }
+    {
+        "Name": "Local",
+        "URI": "ssh://$SSH_USER@127.0.0.1",
+        "Identity": "/app/data/ssh/id_rsa",
+        "Default": true
+    }
 ]
 NODESEOF
 fi
@@ -177,7 +201,6 @@ AutoUpdate=registry
 UserNS=keep-id
 Network=host
 Volume=$CONFIG_DIR:/app/data
-Volume=$HOME/.ssh:/root/.ssh:ro
 Volume=/run/user/$(id -u)/podman/podman.sock:/run/podman/podman.sock
 Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
 Environment=NODE_ENV=production

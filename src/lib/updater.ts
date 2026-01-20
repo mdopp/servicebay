@@ -1,8 +1,8 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { spawn } from 'child_process';
 import semver from 'semver';
 import { Server } from 'socket.io';
+import { getExecutor } from '@/lib/executor';
 
 declare global {
    
@@ -90,39 +90,16 @@ export async function checkForUpdates() {
   };
 }
 
-function spawnCommand(command: string, args: string[]) {
-  return new Promise<void>((resolve, reject) => {
-    const proc = spawn(command, args);
-    
-    proc.stdout.on('data', (data) => {
-      const msg = data.toString().trim();
-      if (msg) console.log(`[${command}]: ${msg}`);
-    });
-    
-    proc.stderr.on('data', (data) => {
-      const msg = data.toString().trim();
-      if (msg) console.error(`[${command}]: ${msg}`);
-    });
-
-    proc.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${command} failed with code ${code}`));
-    });
-
-    proc.on('error', (err) => reject(err));
-  });
-}
-
 export async function performUpdate(version: string) {
   try {
     emitProgress('init', 0, 'Initializing update...');
+    const executor = getExecutor('Local');
     
     // 1. Pull new image
     console.log(`Pulling new image for version ${version}...`);
     emitProgress('download', 0, 'Pulling new image...');
     
-    // We use spawn instead of exec to stream output and avoid buffer buffer overflows/hangs
-    await spawnCommand('podman', ['pull', 'ghcr.io/mdopp/servicebay:latest']);
+    await executor.exec('podman pull ghcr.io/mdopp/servicebay:latest');
     emitProgress('download', 100, 'Image pulled successfully');
 
     // 2. Restart
@@ -133,18 +110,9 @@ export async function performUpdate(version: string) {
     // This requires the service to be running with AutoUpdate=registry (which we set in install.sh)
     // And the image to be updated.
     
-    // We use 'podman auto-update' which restarts containers if image is new.
-    // Since we just pulled it, it should be new.
-    // We use --force to ensure it restarts even if it thinks it's up to date (e.g. if we pulled manually)
-    // Actually, auto-update only restarts if image changed.
-    // If we pulled manually, the running container is using the old image ID.
-    // The new image tag points to a new ID.
-    // So auto-update should detect that.
-    const subprocess = spawn('podman', ['auto-update'], {
-      detached: true,
-      stdio: 'ignore'
-    });
-    subprocess.unref();
+    // Run auto-update asynchronously over SSH so the container can restart itself safely.
+    await executor.exec('nohup podman auto-update >/tmp/servicebay-auto-update.log 2>&1 &');
+    emitProgress('restart', 100, 'Auto-update triggered');
 
     return { success: true };
   } catch (e) {

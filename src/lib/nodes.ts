@@ -26,7 +26,9 @@ async function loadNodes(): Promise<PodmanConnection[]> {
     try {
         await fs.access(NODES_FILE);
     } catch {
-        return [];
+        const defaultNode = buildDefaultLocalNode();
+        await saveNodes([defaultNode]);
+        return [defaultNode];
     }
 
     const content = await fs.readFile(NODES_FILE, 'utf-8');
@@ -57,6 +59,12 @@ async function loadNodes(): Promise<PodmanConnection[]> {
         return node;
     });
 
+      if (nodes.length === 0) {
+        const defaultNode = buildDefaultLocalNode();
+        nodes = [defaultNode];
+        await saveNodes(nodes);
+      }
+
     if (migrated) {
         // We can't call saveNodes here comfortably if it causes recursive issues or hoisting, 
         // but since we are inside an async function executing at runtime, saveNodes (hoisted) is fine.
@@ -73,6 +81,16 @@ async function loadNodes(): Promise<PodmanConnection[]> {
 async function saveNodes(nodes: PodmanConnection[]) {
   await ensureDataDir();
   await fs.writeFile(NODES_FILE, JSON.stringify(nodes, null, 2), 'utf-8');
+}
+
+function buildDefaultLocalNode(): PodmanConnection {
+  const username = process.env.HOST_USER || process.env.USER || 'root';
+  return {
+    Name: 'Local',
+    URI: `ssh://${username}@127.0.0.1`,
+    Identity: '/app/data/ssh/id_rsa',
+    Default: true
+  };
 }
 
 export async function listNodes(): Promise<PodmanConnection[]> {
@@ -132,8 +150,6 @@ export async function verifyNodeConnection(name: string): Promise<{ success: boo
         const { getExecutor } = await import('./executor');
         const executor = getExecutor(node);
         // We run 'podman info' remotely to verify both SSH access and Podman installation
-        // For Local node (V4), this runs via local python agent which typically manages the host if configured correctly via SSH or Socket.
-        // If Local is using internal container scope (URI=local), 'podman info' returns info about the container's podman instance.
         await executor.exec('podman info'); 
         
         return { success: true };
@@ -177,7 +193,7 @@ export async function setDefaultNode(name: string): Promise<void> {
 }
 
 export async function getNodeConnection(name?: string): Promise<PodmanConnection | undefined> {
-  if (!name || name === 'local') return undefined; // 'local' is reserved/internal
+  if (!name) return undefined;
   const nodes = await loadNodes();
   return nodes.find(n => n.Name === name);
 }

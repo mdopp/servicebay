@@ -546,9 +546,16 @@ export default function SettingsPage() {
     const node = nodes.find(n => n.Name === nodeName);
     if (!node) return;
     
-    // Quick local check
     if (node.URI === 'local') {
-         setNodeHealth(prev => ({ ...prev, [nodeName]: { loading: false, online: true, auth: true } }));
+         setNodeHealth(prev => ({
+           ...prev,
+           [nodeName]: {
+             loading: false,
+             online: false,
+             auth: false,
+             error: 'Legacy local nodes are unsupported. Edit this node to use ssh://user@host.'
+           }
+         }));
          return;
     }
 

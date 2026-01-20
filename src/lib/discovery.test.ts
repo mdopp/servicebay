@@ -8,6 +8,8 @@ import { getPodmanPs } from './manager';
 vi.mock('./executor');
 vi.mock('./manager');
 
+const MOCK_NODE = { Name: 'Local', URI: 'ssh://user@127.0.0.1', Identity: '/app/data/ssh/id_rsa', Default: true };
+
 describe('Discovery', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -41,7 +43,7 @@ describe('Discovery', () => {
             return { stdout: '' };
         });
 
-        const services = await discoverSystemdServices({ Name: 'Local', URI: 'local', Identity: '', Default: true });
+        const services = await discoverSystemdServices(MOCK_NODE);
 
         expect(services).toHaveLength(1);
         expect(services[0].serviceName).toBe('servicebay.service');
@@ -76,7 +78,7 @@ describe('Discovery', () => {
             return { stdout: '' };
         });
 
-        const services = await discoverSystemdServices({ Name: 'Local', URI: 'local', Identity: '', Default: true });
+        const services = await discoverSystemdServices(MOCK_NODE);
 
         expect(services).toHaveLength(1);
         expect(services[0].status).toBe('unmanaged');

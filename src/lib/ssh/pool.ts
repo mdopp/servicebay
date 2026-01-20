@@ -63,6 +63,12 @@ export class SSHConnectionPool {
       throw new Error(error);
     }
 
+    if (node.URI === 'local') {
+      const error = `Node '${nodeName}' is configured with legacy URI 'local'. Configure an SSH URI via Settings > Nodes.`;
+      logger.error('SSH', error);
+      throw new Error(error);
+    }
+
     logger.info('SSH', `Establishing connection to ${nodeName} (${node.URI})...`);
     const config = await this.parseConnectionConfig(node);
 
