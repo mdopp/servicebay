@@ -79,6 +79,41 @@ That's it! Open [http://localhost:3000](http://localhost:3000) in your browser. 
 
 **Need production-grade setup?** Try [Fedora CoreOS installation](#1-fedora-coreos-recommended--production) for full immutable infrastructure.
 
+---
+
+## 📸 Screenshots
+
+### Dashboard - Service Overview
+![ServiceBay Dashboard](docs/screenshots/dashboard.png)
+
+*The main dashboard showing all managed services, their status, ports, and quick actions. Health check indicators show which services are online.*
+
+### Network Map - Infrastructure Visualization
+![Network Topology](docs/screenshots/network-map.png)
+
+*Interactive graph showing how containers, services, and reverse proxy rules connect. Click any node to drill down into details.*
+
+### Services Plugin - Container Management
+![Services Plugin](docs/screenshots/services-plugin.png)
+
+*Manage Quadlet services with real-time systemd status. Deploy from templates, edit YAML configurations, and view live logs.*
+
+### Monitoring - Health Checks
+![Health Monitoring](docs/screenshots/monitoring.png)
+
+*Configure HTTP/TCP health checks for services. Track uptime history and receive alerts when services fail.*
+
+### Settings - Multi-Node Management
+![Settings Panel](docs/screenshots/settings.png)
+
+*Add SSH nodes, configure template variables, manage backups, and control auto-update settings.*
+
+> 💡 **Note**: Screenshots show ServiceBay v0.9.0 running on Fedora. The UI is fully responsive and works on mobile devices.
+> 
+> 🔧 **To generate screenshots**: Run `node scripts/capture-screenshots.js` while the dev server is running. See [docs/screenshots/README.md](docs/screenshots/README.md) for manual capture instructions.
+
+---
+
 ## ⚡ Installation & Getting Started
 
 ```

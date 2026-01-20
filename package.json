@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:agent": "chmod +x scripts/test-agent.sh && ./scripts/test-agent.sh",
     "logs": "tsx scripts/logs.ts",
+    "screenshots": "node scripts/capture-screenshots.mjs",
     "prepare": "husky || true"
   },
   "lint-staged": {
@@ -71,6 +72,7 @@
     "jsdom": "^27.4.0",
     "knip": "^5.81.0",
     "lint-staged": "^16.2.7",
+    "playwright": "^1.49.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
