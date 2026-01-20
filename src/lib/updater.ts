@@ -100,20 +100,17 @@ export async function performUpdate(version: string) {
     emitProgress('download', 0, 'Pulling new image...');
     
     // Pulls can take time on slower links; extend timeout to avoid premature failure
-    await executor.exec('podman pull ghcr.io/mdopp/servicebay:latest', { timeoutMs: 5 * 60 * 1000 });
-    emitProgress('download', 100, 'Image pulled successfully');
+    const { stdout, stderr } = await executor.exec('podman pull ghcr.io/mdopp/servicebay:latest', { timeoutMs: 5 * 60 * 1000 });
+    const pullOutput = [stdout.trim(), stderr.trim()].filter(Boolean).join(' | ');
+    const safeOutput = pullOutput.length > 800 ? `${pullOutput.slice(0, 800)}...` : pullOutput;
+    const downloadMessage = safeOutput ? `Image pulled successfully. podman pull output: ${safeOutput}` : 'Image pulled successfully.';
+    emitProgress('download', 100, downloadMessage);
 
-    // 2. Restart
+    // 2. Restart via systemd instead of auto-update to ensure deterministic restart
     console.log('Restarting service...');
-    emitProgress('restart', 0, 'Restarting service...');
-    
-    // Trigger auto-update to restart the service
-    // This requires the service to be running with AutoUpdate=registry (which we set in install.sh)
-    // And the image to be updated.
-    
-    // Run auto-update asynchronously over SSH so the container can restart itself safely.
-    await executor.exec('nohup podman auto-update >/tmp/servicebay-auto-update.log 2>&1 &');
-    emitProgress('restart', 100, 'Auto-update triggered');
+    emitProgress('restart', 0, 'Restarting service via systemctl --user restart --no-block servicebay.service');
+    await executor.exec('systemctl --user restart --no-block servicebay.service');
+    emitProgress('restart', 100, 'Restart triggered. ServiceBay will restart with the new image.');
 
     return { success: true };
   } catch (e) {
