@@ -1,23 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import path from 'path';
-import os from 'os';
 import yaml from 'js-yaml';
 import { getExecutor } from './executor';
 import { PodmanConnection } from './nodes';
 
-// We assume standard paths for now. In a real remote scenario, we might need to discover these.
-// For SSH connections, we assume the user is the same, so paths are relative to their home.
-// But wait, os.homedir() returns the container's home dir.
-// We need a way to get the remote home dir.
-// For now, let's assume ~/.config/containers/systemd is the standard.
-// If running in container, this path is relative to /root (or whatever user).
-// But we are not mounting host's systemd dir.
-// So "Local" management is effectively disabled/empty unless we mount it.
+// V4: All commands execute through the Agent (Local or Remote).
+// The agent always runs on the target host as the host user.
+// Relative paths like .config/containers/systemd resolve to the agent user's home directory,
+// which is the correct location for Quadlet files on both Local and Remote nodes.
 function getSystemdDir(connection?: PodmanConnection) {
-    if (connection) {
-        return '.config/containers/systemd';
-    }
-    return path.join(os.homedir(), '.config/containers/systemd');
+    return '.config/containers/systemd';
 }
 
 export interface ServiceInfo {

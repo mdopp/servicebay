@@ -3,17 +3,15 @@ import { getExecutor, Executor } from './executor';
 import { PodmanConnection } from './nodes';
 import path from 'path';
 import yaml from 'js-yaml';
-import os from 'os';
 import { randomUUID } from 'crypto';
 import { saveSnapshot } from './history';
 import { DigitalTwinStore, MigrationHistoryEntry } from './store/twin';
 import type { ServiceBundle } from './unmanaged/bundleShared';
 
 function getSystemdDir(connection?: PodmanConnection) {
-    if (connection) {
-        return '.config/containers/systemd';
-    }
-    return path.join(os.homedir(), '.config/containers/systemd');
+    // V4: All operations go through the agent which runs on the host.
+    // Always use relative path - it resolves to the host user's home directory.
+    return '.config/containers/systemd';
 }
 
 function getBackupDir(connection?: PodmanConnection) {
