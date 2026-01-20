@@ -57,7 +57,7 @@ describe('Terminal Backend Logic (via AgentExecutor)', () => {
         const { stdout } = await executor.exec('echo hi');
         
         expect(stdout).toBe('hi');
-        expect(mockAgent.sendCommand).toHaveBeenCalledWith('exec', { command: 'echo hi' });
+        expect(mockAgent.sendCommand).toHaveBeenCalledWith('exec', { command: 'echo hi' }, { timeoutMs: undefined });
     });
 
     it('should handle execution errors', async () => {

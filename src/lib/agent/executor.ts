@@ -15,12 +15,12 @@ export class AgentExecutor implements Executor {
     await this.agent.start();
   }
 
-  async exec(command: string): Promise<{ stdout: string; stderr: string }> {
+  async exec(command: string, options: { timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
     await this.ensureConnected();
     const truncatedCmd = command.length > 100 ? command.substring(0, 100) + '...' : command;
     logger.info(`Executor:${this.agent.nodeName}`, `Executing: ${truncatedCmd}`);
     
-    const res = await this.agent.sendCommand('exec', { command });
+    const res = await this.agent.sendCommand('exec', { command }, { timeoutMs: options.timeoutMs });
     // Agent returns { code, stdout, stderr }
     if (res.code !== 0) {
         // Mimic child_process.exec error

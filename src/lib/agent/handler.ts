@@ -364,7 +364,7 @@ export class AgentHandler extends EventEmitter {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public async sendCommand(action: string, params: any = {}): Promise<any> {
+  public async sendCommand(action: string, params: any = {}, options: { timeoutMs?: number } = {}): Promise<any> {
     if (!this.isConnected) {
         this.log(this.nodeName, 'warn', 'Not connected, attempting to reconnect...');
         try {
@@ -396,7 +396,8 @@ export class AgentHandler extends EventEmitter {
         // maintain pending map
         this.pendingRequests.set(id, { resolve, reject });
         
-        // Timeout
+        // Timeout (extendable per command; defaults to 10s)
+        const timeoutMs = options.timeoutMs ?? 10000;
         setTimeout(() => {
             if (this.pendingRequests.has(id)) {
                 this.pendingRequests.delete(id);
@@ -405,7 +406,7 @@ export class AgentHandler extends EventEmitter {
                 this.log(this.nodeName, 'warn', `Command timeout for '${action}' (id: ${id})`);
                 reject(new Error('Agent request timeout'));
             }
-        }, 10000);
+        }, timeoutMs);
 
         const payload = cmd + '\n';
         if (this.channel) {

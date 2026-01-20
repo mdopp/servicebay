@@ -51,7 +51,7 @@ describe('System Robustness Tests', () => {
             // Wait for streams to flush
             await new Promise(resolve => setTimeout(resolve, 10));
 
-            expect(mockAgent.sendCommand).toHaveBeenCalledWith('exec', { command: 'echo test' });
+            expect(mockAgent.sendCommand).toHaveBeenCalledWith('exec', { command: 'echo test' }, { timeoutMs: undefined });
             expect(output).toBe('test output');
         });
 

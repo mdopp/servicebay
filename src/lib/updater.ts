@@ -99,7 +99,8 @@ export async function performUpdate(version: string) {
     console.log(`Pulling new image for version ${version}...`);
     emitProgress('download', 0, 'Pulling new image...');
     
-    await executor.exec('podman pull ghcr.io/mdopp/servicebay:latest');
+    // Pulls can take time on slower links; extend timeout to avoid premature failure
+    await executor.exec('podman pull ghcr.io/mdopp/servicebay:latest', { timeoutMs: 5 * 60 * 1000 });
     emitProgress('download', 100, 'Image pulled successfully');
 
     // 2. Restart
