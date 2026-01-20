@@ -4,6 +4,8 @@ import { DATA_DIR } from './dirs';
 
 const NODES_FILE = path.join(DATA_DIR, 'nodes.json');
 
+const normalizeName = (name: string) => name.trim().toLowerCase();
+
 export interface PodmanConnection {
   Name: string;
   URI: string;
@@ -59,13 +61,35 @@ async function loadNodes(): Promise<PodmanConnection[]> {
         return node;
     });
 
+      // Deduplicate nodes by name (case-insensitive) to avoid duplicate "Local" entries
+      const deduped = new Map<string, PodmanConnection>();
+      for (const node of nodes) {
+        const key = normalizeName(node.Name);
+        const existing = deduped.get(key);
+        if (!existing) {
+          deduped.set(key, node);
+        } else {
+          deduped.set(key, { ...existing, Default: existing.Default || node.Default });
+        }
+      }
+      const dedupedNodes = Array.from(deduped.values());
+      const dedupedChanged = dedupedNodes.length !== nodes.length;
+      nodes = dedupedNodes;
+
       if (nodes.length === 0) {
         const defaultNode = buildDefaultLocalNode();
         nodes = [defaultNode];
         await saveNodes(nodes);
       }
 
-    if (migrated) {
+      // Ensure exactly one default node remains
+      let normalizedDefault = false;
+      if (nodes.length > 0 && !nodes.some(n => n.Default)) {
+        nodes[0].Default = true;
+        normalizedDefault = true;
+      }
+
+      if (migrated || dedupedChanged || normalizedDefault) {
         // We can't call saveNodes here comfortably if it causes recursive issues or hoisting, 
         // but since we are inside an async function executing at runtime, saveNodes (hoisted) is fine.
         await fs.writeFile(NODES_FILE, JSON.stringify(nodes, null, 2), 'utf-8');
@@ -99,7 +123,11 @@ export async function listNodes(): Promise<PodmanConnection[]> {
 
 export async function addNode(name: string, destination: string, identity?: string): Promise<void> {
   const nodes = await loadNodes();
-  if (nodes.find(n => n.Name === name)) {
+  const normalizedName = normalizeName(name);
+  if (normalizedName === 'local') {
+      throw new Error('The Local node is managed automatically and cannot be added again.');
+  }
+  if (nodes.find(n => normalizeName(n.Name) === normalizedName)) {
       throw new Error(`Node ${name} already exists`);
   }
   
@@ -117,14 +145,19 @@ export async function addNode(name: string, destination: string, identity?: stri
 
 export async function updateNode(oldName: string, newNode: Partial<PodmanConnection>): Promise<void> {
   const nodes = await loadNodes();
-  const index = nodes.findIndex(n => n.Name === oldName);
+  const normalizedOldName = normalizeName(oldName);
+  const index = nodes.findIndex(n => normalizeName(n.Name) === normalizedOldName);
   
   if (index === -1) {
     throw new Error(`Node ${oldName} not found`);
   }
 
-  // Check name collision if name is changing
-  if (newNode.Name && newNode.Name !== oldName && nodes.some(n => n.Name === newNode.Name)) {
+    // Check name collision if name is changing (case-insensitive)
+    const targetName = newNode.Name ? normalizeName(newNode.Name) : normalizedOldName;
+    if (targetName === 'local' && normalizedOldName !== 'local') {
+      throw new Error('The Local node name is reserved.');
+    }
+    if (newNode.Name && nodes.some((n, idx) => idx !== index && normalizeName(n.Name) === targetName)) {
       throw new Error(`Node name ${newNode.Name} already taken`);
   }
 
@@ -141,7 +174,7 @@ export async function updateNode(oldName: string, newNode: Partial<PodmanConnect
 export async function verifyNodeConnection(name: string): Promise<{ success: boolean; error?: string }> {
     try {
         const nodes = await loadNodes();
-        const node = nodes.find(n => n.Name === name);
+    const node = nodes.find(n => normalizeName(n.Name) === normalizeName(name));
         if (!node) {
             throw new Error(`Node ${name} not found`);
         }
@@ -162,7 +195,8 @@ export async function verifyNodeConnection(name: string): Promise<{ success: boo
 
 export async function removeNode(name: string): Promise<void> {
   let nodes = await loadNodes();
-  nodes = nodes.filter(n => n.Name !== name);
+  const target = normalizeName(name);
+  nodes = nodes.filter(n => normalizeName(n.Name) !== target);
   
   // If we removed the default node, make the first one default if exists
   if (nodes.length > 0 && !nodes.some(n => n.Default)) {
@@ -175,9 +209,10 @@ export async function removeNode(name: string): Promise<void> {
 export async function setDefaultNode(name: string): Promise<void> {
   const nodes = await loadNodes();
   let found = false;
+  const target = normalizeName(name);
   
   for (const node of nodes) {
-      if (node.Name === name) {
+      if (normalizeName(node.Name) === target) {
           node.Default = true;
           found = true;
       } else {
@@ -195,5 +230,6 @@ export async function setDefaultNode(name: string): Promise<void> {
 export async function getNodeConnection(name?: string): Promise<PodmanConnection | undefined> {
   if (!name) return undefined;
   const nodes = await loadNodes();
-  return nodes.find(n => n.Name === name);
+  const target = normalizeName(name);
+  return nodes.find(n => normalizeName(n.Name) === target);
 }

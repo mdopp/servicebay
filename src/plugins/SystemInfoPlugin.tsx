@@ -157,13 +157,16 @@ export default function SystemInfoPlugin() {
     };
 
     const nodeOptions = useMemo<SelectOption[]>(() => {
-        const remote = nodes.map(node => ({
-            label: node.Name,
-            value: node.Name,
-            description: node.URI,
-            badge: node.Default ? 'Default' : undefined,
-            icon: <Server size={16} className="text-blue-600 dark:text-blue-300" />
-        }));
+        // Filter out any "Local" from nodes list to avoid duplicates
+        const remote = nodes
+            .filter(node => node.Name.toLowerCase() !== 'local')
+            .map(node => ({
+                label: node.Name,
+                value: node.Name,
+                description: node.URI,
+                badge: node.Default ? 'Default' : undefined,
+                icon: <Server size={16} className="text-blue-600 dark:text-blue-300" />
+            }));
         return [
             {
                 label: 'Local',

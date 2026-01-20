@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe, HardDrive, RotateCcw, UploadCloud, X, Eye } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
@@ -174,6 +175,8 @@ export default function SettingsPage() {
   const [newVarKey, setNewVarKey] = useState('');
   const [newVarValue, setNewVarValue] = useState('');
 
+  const router = useRouter();
+
   // Nodes State
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [newNodeName, setNewNodeName] = useState('');
@@ -192,6 +195,25 @@ export default function SettingsPage() {
   // SSH Setup Modal
   const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
   const [sshModalDefaults, setSshModalDefaults] = useState({ host: '', port: 22, user: 'root' });
+
+    const normalizeNodeName = useCallback((name: string) => name.trim().toLowerCase(), []);
+    const dedupeNodes = useCallback((list: PodmanConnection[]) => {
+    const seen = new Map<string, PodmanConnection>();
+    for (const node of list) {
+      const key = normalizeNodeName(node.Name);
+      const existing = seen.get(key);
+      if (!existing) {
+        seen.set(key, node);
+      } else {
+        seen.set(key, { ...existing, Default: existing.Default || node.Default });
+      }
+    }
+    const result = Array.from(seen.values());
+    if (result.length > 0 && !result.some(n => n.Default)) {
+      result[0].Default = true;
+    }
+    return result;
+    }, [normalizeNodeName]);
 
   // Update sshModalDefaults when adding node inputs change, to have valid defaults if user clicks the sidebar button manually
   useEffect(() => {
@@ -254,7 +276,7 @@ export default function SettingsPage() {
       // Fetch nodes
       try {
         const nodesList = await getNodes();
-        setNodes(nodesList);
+        setNodes(dedupeNodes(nodesList));
       } catch (e) {
         console.error('Failed to fetch nodes', e);
       }
@@ -278,7 +300,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, dedupeNodes]);
 
   useEffect(() => {
     fetchConfig();
@@ -433,12 +455,30 @@ export default function SettingsPage() {
     return { host, port, user };
   };
 
+  const handleDeploySSHKey = (node: PodmanConnection) => {
+    const { host, port, user } = parseDestination(node.URI);
+    setSshModalDefaults({ host, port, user });
+    setIsSSHModalOpen(true);
+  };
+
+  const handleOpenTerminal = (node: PodmanConnection) => {
+    const target = encodeURIComponent(node.Name);
+    router.push(`/terminal?node=${target}`);
+  };
+
   const submitNode = useCallback(async (mode: 'create' | 'edit', payload: { name: string; destination: string; identity: string; originalName?: string }) => {
     if (!payload.name || !payload.destination || !payload.identity) return false;
 
     const { host, port, user } = parseDestination(payload.destination);
     const setBusy = mode === 'create' ? setAddingNode : setSavingNode;
     setBusy(true);
+
+    const normalizedName = normalizeNodeName(payload.name);
+    if (normalizedName === 'local') {
+      addToast('error', 'Local is reserved', 'The Local node is managed automatically. Please use a different name.');
+      setBusy(false);
+      return false;
+    }
 
     if (host) {
       const check = await checkConnection(host, port);
@@ -455,7 +495,7 @@ export default function SettingsPage() {
         : await createNode(payload.name, payload.destination, payload.identity);
 
       if (result.success) {
-        setNodes(await getNodes());
+        setNodes(dedupeNodes(await getNodes()));
         if (mode === 'create') {
           setNewNodeName('');
           setNewNodeDest('');
@@ -491,7 +531,7 @@ export default function SettingsPage() {
     } finally {
       setBusy(false);
     }
-  }, [addToast, setSshModalDefaults]);
+  }, [addToast, dedupeNodes, normalizeNodeName, setSshModalDefaults]);
 
   const handleAddRegistry = () => {
     if (newRegName && newRegUrl) {
@@ -606,7 +646,7 @@ export default function SettingsPage() {
   const handleDeleteNode = async (name: string) => {
     const res = await deleteNode(name);
     if (res.success) {
-      setNodes(await getNodes());
+      setNodes(dedupeNodes(await getNodes()));
       addToast('success', 'Node removed');
     } else {
       addToast('error', 'Failed to remove node');
@@ -616,7 +656,7 @@ export default function SettingsPage() {
   const handleSetDefaultNode = async (name: string) => {
     const res = await setNodeAsDefault(name);
     if (res.success) {
-      setNodes(await getNodes());
+      setNodes(dedupeNodes(await getNodes()));
       addToast('success', 'Default node updated');
     } else {
       addToast('error', 'Failed to set default node');
@@ -1720,6 +1760,20 @@ export default function SettingsPage() {
                                 <CheckCircle2 size={16} />
                               </button>
                             )}
+                            <button
+                              onClick={() => handleDeploySSHKey(node)}
+                              className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded transition-colors"
+                              title="Deploy SSH key to this node"
+                            >
+                              <Key size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleOpenTerminal(node)}
+                              className="p-2 text-gray-500 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors"
+                              title="Open SSH terminal for this node"
+                            >
+                              <Terminal size={16} />
+                            </button>
                             <button 
                               onClick={() => startEditingNode(node)}
                               className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"

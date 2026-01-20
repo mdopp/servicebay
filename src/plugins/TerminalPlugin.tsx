@@ -87,13 +87,24 @@ export default function TerminalPlugin() {
         updateNodeQuery(value);
     };
 
+    const normalizeName = useCallback((name: string) => name.trim().toLowerCase(), []);
+
     const nodeOptions = useMemo<SelectOption[]>(() => {
-        const remote = nodes.map(node => ({
-            label: node.Name,
-            value: node.Name,
-            description: node.URI,
-            icon: <Server size={16} className="text-blue-600 dark:text-blue-300" />
-        }));
+        const seen = new Set<string>();
+        const remote = nodes
+            .filter(node => normalizeName(node.Name) !== 'local')
+            .filter(node => {
+                const key = normalizeName(node.Name);
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .map(node => ({
+                label: node.Name,
+                value: node.Name,
+                description: node.URI,
+                icon: <Server size={16} className="text-blue-600 dark:text-blue-300" />
+            }));
         return [
             {
                 label: 'Local',
@@ -103,7 +114,7 @@ export default function TerminalPlugin() {
             },
             ...remote
         ];
-    }, [nodes]);
+    }, [nodes, normalizeName]);
 
     const terminalTarget = selectedNode === 'Local' ? 'host' : `node:${selectedNode}`;
 
