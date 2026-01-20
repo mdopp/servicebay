@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.3...servicebay-v0.10.4) (2026-01-20)
+
+
+### Bug Fixes
+
+* use correct systemd path for agent-based operations ([f9ce34c](https://github.com/mdopp/servicebay/commit/f9ce34c9442bbdaeb8988670e31212d571fc585e))
+
 ## [0.10.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.2...servicebay-v0.10.3) (2026-01-20)
 
 
