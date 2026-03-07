@@ -356,50 +356,6 @@ ${SERVICEBAY_SSH_PRIV}
         inline: |
           ${SERVICEBAY_SSH_PUB}
 
-    # Script to backup Quadlet service definitions to RAID
-    - path: /usr/local/bin/backup-quadlets.sh
-      mode: 0755
-      contents:
-        inline: |
-          #!/bin/bash
-          set -euo pipefail
-          QUADLET_DIR="/var/home/${HOST_USER}/.config/containers/systemd"
-          BACKUP_DIR="${DATA_ROOT}/servicebay/quadlet-backup"
-          if [[ ! -d "$QUADLET_DIR" ]]; then
-            exit 0
-          fi
-          mkdir -p "$BACKUP_DIR"
-          # Sync all quadlet files to backup (delete removed ones)
-          rsync -a --delete --include='*.kube' --include='*.yml' --include='*.container' --exclude='*' "$QUADLET_DIR/" "$BACKUP_DIR/"
-          echo "backup-quadlets: synced to $BACKUP_DIR"
-
-    # Systemd service to backup Quadlet files
-    - path: /etc/systemd/system/backup-quadlets.service
-      mode: 0644
-      contents:
-        inline: |
-          [Unit]
-          Description=Backup Quadlet service definitions to RAID
-
-          [Service]
-          Type=oneshot
-          ExecStart=/bin/bash /usr/local/bin/backup-quadlets.sh
-
-    # Timer to run Quadlet backup every 5 minutes
-    - path: /etc/systemd/system/backup-quadlets.timer
-      mode: 0644
-      contents:
-        inline: |
-          [Unit]
-          Description=Periodic Quadlet backup to RAID
-
-          [Timer]
-          OnBootSec=2min
-          OnUnitActiveSec=5min
-
-          [Install]
-          WantedBy=timers.target
-
     # First-boot script to install Python3 (required by ServiceBay agent)
     - path: /usr/local/bin/install-python.sh
       mode: 0755
@@ -530,10 +486,6 @@ ${SERVICEBAY_SSH_PRIV}
         name: ${HOST_USER}
       group:
         name: ${HOST_USER}
-
-    # Enable Quadlet backup timer
-    - path: /etc/systemd/system/timers.target.wants/backup-quadlets.timer
-      target: /etc/systemd/system/backup-quadlets.timer
 
     # Enable Python3 install on first boot
     - path: /etc/systemd/system/multi-user.target.wants/install-python.service
