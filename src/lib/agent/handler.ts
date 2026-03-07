@@ -81,7 +81,8 @@ export class AgentHandler extends EventEmitter {
   private isConnected: boolean = false;
   private consecutiveParseErrors = 0;
   private readonly MAX_PARSE_ERRORS = 5;
-  
+  private deferredCommands: Array<() => void> = [];
+
   // Health tracking
   private health: AgentHealth = {
     nodeName: '',
@@ -205,6 +206,7 @@ export class AgentHandler extends EventEmitter {
           this.health.lastSync = Date.now();
           this.health.lastError = '';
           this.log(this.nodeName, 'info', '✓ Python agent started successfully via SSH');
+          this.flushDeferredCommands();
           this.emit('connected');
           resolve();
 
@@ -457,7 +459,10 @@ export class AgentHandler extends EventEmitter {
   }
   
   public async setMonitoring(enabled: boolean): Promise<void> {
-      if (!this.isConnected) return;
+      if (!this.isConnected) {
+          this.deferredCommands.push(() => { this.setMonitoring(enabled); });
+          return;
+      }
       try {
           await this.sendCommand(enabled ? 'startMonitoring' : 'stopMonitoring');
       } catch (e) {
@@ -466,11 +471,21 @@ export class AgentHandler extends EventEmitter {
   }
 
   public async setResourceMode(active: boolean): Promise<void> {
-      if (!this.isConnected) return;
+      if (!this.isConnected) {
+          this.deferredCommands.push(() => { this.setResourceMode(active); });
+          return;
+      }
       try {
           await this.sendCommand('setResourceMode', { active });
       } catch (e) {
           this.log(this.nodeName, 'warn', 'Failed to set resource mode:', e);
+      }
+  }
+
+  private flushDeferredCommands() {
+      const commands = this.deferredCommands.splice(0);
+      for (const cmd of commands) {
+          cmd();
       }
   }
 
@@ -479,5 +494,6 @@ export class AgentHandler extends EventEmitter {
           req.reject(new Error('Agent disconnected'));
       }
       this.pendingRequests.clear();
+      this.deferredCommands = [];
   }
 }

@@ -180,12 +180,13 @@ export class CheckRunner {
   }
 
   private static async runScriptCheck(script: string) {
+    const safeSetTimeout = (fn: (...args: unknown[]) => void, ms: number) => setTimeout(fn, Math.min(ms, 5000));
+    const safeClearTimeout = (id: ReturnType<typeof setTimeout>) => clearTimeout(id);
     const sandbox = {
         fetch: global.fetch,
         console: { log: () => {} },
-        setTimeout,
-        clearTimeout,
-        Buffer,
+        setTimeout: safeSetTimeout,
+        clearTimeout: safeClearTimeout,
     };
     
     const context = vm.createContext(sandbox);

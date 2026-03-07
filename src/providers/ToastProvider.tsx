@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { X, CheckCircle, AlertCircle, Info, AlertTriangle, Loader2 } from 'lucide-react';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning' | 'loading';
@@ -31,32 +31,39 @@ export function useToast() {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const timerMap = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const clearTimer = useCallback((id: string) => {
+    const existing = timerMap.current.get(id);
+    if (existing) {
+      clearTimeout(existing);
+      timerMap.current.delete(id);
+    }
+  }, []);
+
+  const setTimer = useCallback((id: string, duration: number, onExpire: () => void) => {
+    clearTimer(id);
+    if (duration > 0) {
+      timerMap.current.set(id, setTimeout(onExpire, duration));
+    }
+  }, [clearTimer]);
 
   const removeToast = useCallback((id: string) => {
+    clearTimer(id);
     setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  }, [clearTimer]);
 
   const addToast = useCallback((type: ToastType, title: string, message?: string, duration: number = 5000) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, type, title, message, duration }]);
-
-    if (duration > 0) {
-      setTimeout(() => {
-        removeToast(id);
-      }, duration);
-    }
+    setTimer(id, duration, () => removeToast(id));
     return id;
-  }, [removeToast]);
+  }, [removeToast, setTimer]);
 
   const updateToast = useCallback((id: string, type: ToastType, title: string, message?: string, duration: number = 5000) => {
     setToasts((prev) => prev.map(t => t.id === id ? { ...t, type, title, message, duration } : t));
-    
-    if (duration > 0) {
-      setTimeout(() => {
-        removeToast(id);
-      }, duration);
-    }
-  }, [removeToast]);
+    setTimer(id, duration, () => removeToast(id));
+  }, [removeToast, setTimer]);
 
   return (
     <ToastContext.Provider value={{ addToast, removeToast, updateToast }}>

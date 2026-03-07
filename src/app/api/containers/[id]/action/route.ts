@@ -20,11 +20,16 @@ export async function POST(
           return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
       }
 
+      // Validate container ID: hex hash, short name, or alphanumeric with hyphens/underscores/dots
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$/.test(id)) {
+          return NextResponse.json({ error: 'Invalid container ID' }, { status: 400 });
+      }
+
       const agent = agentManager.getAgent(nodeName);
       if (!agent) {
           return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
       }
-      
+
       let cmd = '';
       if (action === 'delete') {
           cmd = `podman rm -f ${id}`;

@@ -48,15 +48,15 @@ export async function GET(
       }
   }
 
-  const [serviceLogs, podmanLogs, podmanPs] = await Promise.all([
+  const [serviceLogsResult, podmanLogsResult, podmanPsResult] = await Promise.allSettled([
     getServiceLogs(name, connection),
     getPodmanLogs(connection),
     getPodmanPs(connection)
   ]);
 
   return NextResponse.json({
-    serviceLogs,
-    podmanLogs,
-    podmanPs
+    serviceLogs: serviceLogsResult.status === 'fulfilled' ? serviceLogsResult.value : `Error: ${serviceLogsResult.reason}`,
+    podmanLogs: podmanLogsResult.status === 'fulfilled' ? podmanLogsResult.value : `Error: ${podmanLogsResult.reason}`,
+    podmanPs: podmanPsResult.status === 'fulfilled' ? podmanPsResult.value : []
   });
 }

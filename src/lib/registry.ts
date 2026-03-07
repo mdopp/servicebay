@@ -2,11 +2,12 @@
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import { getConfig, RegistryConfig } from './config';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 const STACKS_PATH = path.join(process.cwd(), 'stacks');
@@ -105,7 +106,7 @@ export async function syncRegistries() {
         } catch {
             // Doesn't exist, clone
             console.log(`Cloning registry ${reg.name}...`);
-            await execAsync(`git clone ${reg.url} "${regPath}"`);
+            await execFileAsync('git', ['clone', reg.url, regPath]);
         }
     }
 }

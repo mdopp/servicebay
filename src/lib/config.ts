@@ -212,10 +212,27 @@ export async function migrateConfig(): Promise<void> {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function deepMerge(target: any, source: any): any {
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    const srcVal = source[key];
+    const tgtVal = target[key];
+    if (
+      srcVal !== null && typeof srcVal === 'object' && !Array.isArray(srcVal) &&
+      tgtVal !== null && typeof tgtVal === 'object' && !Array.isArray(tgtVal)
+    ) {
+      result[key] = deepMerge(tgtVal, srcVal);
+    } else {
+      result[key] = srcVal;
+    }
+  }
+  return result;
+}
+
 export async function updateConfig(updates: Partial<AppConfig>): Promise<AppConfig> {
   const current = await getConfig();
-  // TODO: Deep merge would be safer, but for now top-level merge is sufficient if used carefully
-  const updated = { ...current, ...updates };
+  const updated: AppConfig = deepMerge(current, updates);
   await saveConfig(updated);
   return updated;
 }
