@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.3...servicebay-v0.12.4) (2026-03-07)
+
+
+### Bug Fixes
+
+* log mount details and accept all mount types for proxy backup ([570e5b8](https://github.com/mdopp/servicebay/commit/570e5b8350ead770851dfa41732b1876e723271b))
+
 ## [0.12.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.2...servicebay-v0.12.3) (2026-03-07)
 
 
