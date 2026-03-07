@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.14.0...servicebay-v0.15.0) (2026-03-07)
+
+
+### Features
+
+* show restore target path and node in service data UI ([b964f63](https://github.com/mdopp/servicebay/commit/b964f63f3df7c8464a17e0b2967a967abce93831))
+
+
+### Bug Fixes
+
+* deploy nginx to target node and start service after install ([e93a97e](https://github.com/mdopp/servicebay/commit/e93a97e09c3761a9357fd0b8c004b589f1068ffe))
+
 ## [0.14.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.13.0...servicebay-v0.14.0) (2026-03-07)
 
 
