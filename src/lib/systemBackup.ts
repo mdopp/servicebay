@@ -566,7 +566,9 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
                 if (!c.mounts) continue;
 
                 for (const m of c.mounts) {
-                    if ((m.Type === 'bind') && m.Source && m.Destination) {
+                    pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name,
+                        message: `Mount: Type=${m.Type} Source=${m.Source} Dest=${m.Destination}` });
+                    if (m.Source && m.Destination) {
                         // Label from container destination path for readability
                         const label = m.Destination.replace(/^\//, '').replace(/\//g, '-');
                         proxyMounts.push({ source: m.Source, label });
