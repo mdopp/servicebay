@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe, HardDrive, RotateCcw, UploadCloud, X, Eye } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe, HardDrive, RotateCcw, UploadCloud, X, Eye, ChevronDown, ChevronRight, Settings, Activity, FolderOpen, Database } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -103,6 +103,42 @@ const formatBytes = (size: number): string => {
   return `${value.toFixed(precision)} ${units[unitIndex]}`;
 };
 
+const QUADLET_EXTENSIONS = ['.container', '.service', '.kube', '.yml', '.yaml', '.pod', '.network', '.volume'];
+
+function groupFilesByService(files: { relativePath: string; fileName: string }[]): { service: string; files: { relativePath: string; fileName: string }[] }[] {
+  const groups = new Map<string, { relativePath: string; fileName: string }[]>();
+  for (const file of files) {
+    const name = file.fileName;
+    let service = '';
+    // Try to extract a service prefix: strip known quadlet extensions, then take the base name
+    for (const ext of QUADLET_EXTENSIONS) {
+      if (name.endsWith(ext)) {
+        // e.g. "immich-database.container" → "immich-database" → prefix "immich"
+        // e.g. "adguard.kube" → "adguard"
+        const stem = name.slice(0, -ext.length);
+        // Take part before first hyphen as the service group, or the whole stem
+        const dashIdx = stem.indexOf('-');
+        service = dashIdx > 0 ? stem.slice(0, dashIdx) : stem;
+        // Handle dotted names like "korgraph.io.full-stack.service" → "korgraph"
+        const dotIdx = service.indexOf('.');
+        if (dotIdx > 0) service = service.slice(0, dotIdx);
+        break;
+      }
+    }
+    if (!service) service = '_other';
+    if (!groups.has(service)) groups.set(service, []);
+    groups.get(service)!.push(file);
+  }
+  // Sort: named groups first (alphabetical), _other last
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => {
+      if (a === '_other') return 1;
+      if (b === '_other') return -1;
+      return a.localeCompare(b);
+    })
+    .map(([service, files]) => ({ service, files }));
+}
+
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -151,6 +187,7 @@ export default function SettingsPage() {
   const [backupStatus, setBackupStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [deleteTarget, setDeleteTarget] = useState<SystemBackupEntrySummary | null>(null);
   const [deletingBackup, setDeletingBackup] = useState(false);
+  const [restoreExpandedSections, setRestoreExpandedSections] = useState<Record<string, boolean>>({});
 
   // Email Form State
   const [emailEnabled, setEmailEnabled] = useState(false);
@@ -892,6 +929,7 @@ export default function SettingsPage() {
     }
     setRestoreOverlayOpen(true);
     setRestoreUploadError(null);
+    setRestoreExpandedSections({});
   };
 
   const closeRestoreOverlay = useCallback(() => {
@@ -1188,6 +1226,53 @@ export default function SettingsPage() {
         }
       };
     });
+  };
+
+  const toggleRestoreSection = (section: string) => {
+    setRestoreExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const toggleAllNodeFiles = (nodeName: string, selected: boolean) => {
+    if (!restorePreview) return;
+    const group = restorePreview.nodeFiles.find(g => g.nodeName === nodeName);
+    if (!group) return;
+    setRestoreSelectionState(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        nodeFiles: {
+          ...prev.nodeFiles,
+          [nodeName]: Object.fromEntries(group.files.map(f => [f.relativePath, selected]))
+        }
+      };
+    });
+  };
+
+  const toggleServiceGroupFiles = (nodeName: string, files: { relativePath: string }[], selected: boolean) => {
+    setRestoreSelectionState(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev.nodeFiles[nodeName] };
+      for (const f of files) updated[f.relativePath] = selected;
+      return { ...prev, nodeFiles: { ...prev.nodeFiles, [nodeName]: updated } };
+    });
+  };
+
+  const getRestoreSelectionSummary = () => {
+    if (!restorePreview || !restoreSelectionState) return null;
+    const configCount = Object.values(restoreSelectionState.configFlags).filter(Boolean).length;
+    const nodeCount = Object.values(restoreSelectionState.nodes).filter(Boolean).length;
+    const checkCount = Object.values(restoreSelectionState.checks).filter(Boolean).length;
+    const fileCount = Object.values(restoreSelectionState.nodeFiles).reduce(
+      (sum, files) => sum + Object.values(files).filter(Boolean).length, 0
+    );
+    const dataCount = Object.values(restoreSelectionState.serviceData).filter(Boolean).length;
+    const parts: string[] = [];
+    if (configCount > 0) parts.push(`${configCount} setting${configCount !== 1 ? 's' : ''}`);
+    if (nodeCount > 0) parts.push(`${nodeCount} node${nodeCount !== 1 ? 's' : ''}`);
+    if (checkCount > 0) parts.push(`${checkCount} check${checkCount !== 1 ? 's' : ''}`);
+    if (fileCount > 0) parts.push(`${fileCount} file${fileCount !== 1 ? 's' : ''}`);
+    if (dataCount > 0) parts.push(`${dataCount} data dir${dataCount !== 1 ? 's' : ''}`);
+    return parts.length > 0 ? parts.join(', ') : 'Nothing selected';
   };
 
   if (loading) {
@@ -2196,299 +2281,299 @@ export default function SettingsPage() {
                   )}
                 </div>
               ) : restoreSelectionState ? (
-                <div className="space-y-6">
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 bg-gray-50 dark:bg-gray-900/40">
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Backup Source</p>
-                    <p className="text-sm font-mono text-gray-800 dark:text-gray-200 break-all">
-                      {restoreSource?.type === 'stored' ? restoreSource.fileName : 'Uploaded archive'}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-end gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-4 bg-white dark:bg-gray-950">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        selectAllRestoreItems();
-                        void confirmRestoreBackup();
-                      }}
-                      disabled={restoringBackup}
-                      className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-emerald-500 text-emerald-700 dark:text-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
-                    >
-                      <RotateCcw size={16} />
-                      Restore everything
-                    </button>
-                  </div>
-
-                  <div className="space-y-4">
-                    <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Settings</h4>
-                    <div className="grid gap-3">
-                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={restoreSelectionState.configFlags.externalLinks}
-                          onChange={() => toggleRestoreConfigFlag('externalLinks')}
-                        />
-                        <span>
-                          <span className="font-medium">External links</span>
-                          <span className="block text-xs text-gray-500 dark:text-gray-400">
-                            {restorePreview.config.externalLinks.length === 0
-                              ? 'No external links stored.'
-                              : restorePreview.config.externalLinks.slice(0, 3).map(link => `${link.name} → ${link.url}`).join(' · ')}
-                            {restorePreview.config.externalLinks.length > 3 ? ' · …' : ''}
-                          </span>
-                        </span>
-                      </label>
-                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={restoreSelectionState.configFlags.registries}
-                          onChange={() => toggleRestoreConfigFlag('registries')}
-                        />
-                        <span>
-                          <span className="font-medium">Registries</span>
-                          <span className="block text-xs text-gray-500 dark:text-gray-400">
-                            {restorePreview.config.registries.length === 0
-                              ? 'No registries stored.'
-                              : restorePreview.config.registries.slice(0, 3).map(registry => registry.name).join(' · ')}
-                            {restorePreview.config.registries.length > 3 ? ' · …' : ''}
-                          </span>
-                        </span>
-                      </label>
-                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={restoreSelectionState.configFlags.gateway}
-                          onChange={() => toggleRestoreConfigFlag('gateway')}
-                        />
-                        <span>
-                          <span className="font-medium">Gateway configuration</span>
-                          <span className="block text-xs text-gray-500 dark:text-gray-400">
-                            {restorePreview.config.gateway?.host ? `Host: ${restorePreview.config.gateway.host}` : 'No gateway host stored.'}
-                          </span>
-                        </span>
-                      </label>
-                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={restoreSelectionState.configFlags.notifications}
-                          onChange={() => toggleRestoreConfigFlag('notifications')}
-                        />
-                        <span>
-                          <span className="font-medium">Notifications</span>
-                          <span className="block text-xs text-gray-500 dark:text-gray-400">
-                            {restorePreview.config.notifications
-                              ? `SMTP: ${restorePreview.config.notifications.host || 'unknown'} · From: ${restorePreview.config.notifications.from || 'unknown'} · To: ${(restorePreview.config.notifications.to || []).slice(0, 3).join(', ') || 'none'}${(restorePreview.config.notifications.to?.length || 0) > 3 ? '…' : ''}`
-                              : 'No notification settings stored.'}
-                          </span>
-                        </span>
-                      </label>
-                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={restoreSelectionState.configFlags.templateSettings}
-                          onChange={() => toggleRestoreConfigFlag('templateSettings')}
-                        />
-                        <span>
-                          <span className="font-medium">Template settings</span>
-                          <span className="block text-xs text-gray-500 dark:text-gray-400">
-                            {restorePreview.config.templateSettings.length === 0
-                              ? 'No template keys stored.'
-                              : `${restorePreview.config.templateSettings.length} keys (${restorePreview.config.templateSettings.slice(0, 3).join(', ')}${restorePreview.config.templateSettings.length > 3 ? '…' : ''}).`}
-                          </span>
-                        </span>
-                      </label>
-                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={restoreSelectionState.configFlags.logLevel}
-                          onChange={() => toggleRestoreConfigFlag('logLevel')}
-                        />
-                        <span>
-                          <span className="font-medium">Log level</span>
-                          <span className="block text-xs text-gray-500 dark:text-gray-400">
-                            Restore the saved log level ({restorePreview.config.logLevel || 'default'}).
-                          </span>
-                        </span>
-                      </label>
-                      <label className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={restoreSelectionState.configFlags.update}
-                          onChange={() => toggleRestoreConfigFlag('update')}
-                        />
-                        <span>
-                          <span className="font-medium">Update settings</span>
-                          <span className="block text-xs text-gray-500 dark:text-gray-400">
-                            {restorePreview.config.update?.channel ? `${restorePreview.config.update.channel} channel` : 'Update channel'}
-                            {restorePreview.config.update?.schedule ? ` · ${restorePreview.config.update.schedule}` : ''}
-                            {restorePreview.config.update?.enabled === false ? ' · disabled' : ''}
-                          </span>
-                        </span>
-                      </label>
+                <div className="space-y-3">
+                  {/* Source & Summary Bar */}
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 bg-gray-50 dark:bg-gray-900/40 flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Backup Source</p>
+                      <p className="text-sm font-mono text-gray-800 dark:text-gray-200 truncate">
+                        {restoreSource?.type === 'stored' ? restoreSource.fileName : 'Uploaded archive'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 dark:text-gray-400">{getRestoreSelectionSummary()}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          selectAllRestoreItems();
+                          void confirmRestoreBackup();
+                        }}
+                        disabled={restoringBackup}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border border-emerald-500 text-emerald-700 dark:text-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+                      >
+                        <RotateCcw size={14} />
+                        Restore all
+                      </button>
                     </div>
                   </div>
 
-                  <div className="space-y-4">
-                    <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Nodes</h4>
-                    {restorePreview.config.nodes.length === 0 ? (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">No node records found in backup.</p>
-                    ) : (
-                      <div className="grid gap-2">
-                        {restorePreview.config.nodes.map(node => (
-                          <label key={node.name} className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                  {/* === Settings Section === */}
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => toggleRestoreSection('settings')}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-colors"
+                    >
+                      {restoreExpandedSections.settings ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
+                      <Settings size={16} className="text-gray-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Settings</span>
+                        <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                          {Object.values(restoreSelectionState.configFlags).filter(Boolean).length} of {Object.keys(restoreSelectionState.configFlags).length} selected
+                        </span>
+                      </div>
+                    </button>
+                    {restoreExpandedSections.settings && (
+                      <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 grid gap-2.5">
+                        {([
+                          { key: 'externalLinks' as const, label: 'External links', summary: restorePreview.config.externalLinks.length === 0 ? 'None' : `${restorePreview.config.externalLinks.length} link${restorePreview.config.externalLinks.length !== 1 ? 's' : ''}` },
+                          { key: 'registries' as const, label: 'Registries', summary: restorePreview.config.registries.length === 0 ? 'None' : restorePreview.config.registries.map(r => r.name).join(', ') },
+                          { key: 'gateway' as const, label: 'Gateway', summary: restorePreview.config.gateway?.host || 'Not configured' },
+                          { key: 'notifications' as const, label: 'Notifications', summary: restorePreview.config.notifications ? `${restorePreview.config.notifications.host || 'SMTP'} → ${(restorePreview.config.notifications.to || []).join(', ') || 'no recipients'}` : 'Not configured' },
+                          { key: 'templateSettings' as const, label: 'Template settings', summary: restorePreview.config.templateSettings.length === 0 ? 'None' : `${restorePreview.config.templateSettings.length} key${restorePreview.config.templateSettings.length !== 1 ? 's' : ''}` },
+                          { key: 'logLevel' as const, label: 'Log level', summary: restorePreview.config.logLevel || 'default' },
+                          { key: 'update' as const, label: 'Auto-update', summary: restorePreview.config.update ? `${restorePreview.config.update.channel || 'stable'}${restorePreview.config.update.enabled === false ? ' (disabled)' : ''}` : 'Not configured' },
+                        ]).map(item => (
+                          <label key={item.key} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200 py-1">
                             <input
                               type="checkbox"
-                              className="mt-1"
-                              checked={restoreSelectionState.nodes[node.name]}
-                              onChange={() => toggleRestoreNode(node.name)}
+                              className="rounded"
+                              checked={restoreSelectionState.configFlags[item.key]}
+                              onChange={() => toggleRestoreConfigFlag(item.key)}
                             />
-                            <span>
-                              <span className="font-medium">{node.name}</span>
-                              <span className="block text-xs text-gray-500 dark:text-gray-400">
-                                {node.uri ? node.uri : 'No connection URI'}
-                                {node.default ? ' · Default' : ''}
-                              </span>
-                            </span>
+                            <span className="font-medium min-w-[120px]">{item.label}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{item.summary}</span>
                           </label>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  <div className="space-y-4">
-                    <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Checks</h4>
-                    {restorePreview.config.checks.length === 0 ? (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">No monitoring checks found in backup.</p>
-                    ) : (
-                      <div className="grid gap-2">
-                        {restorePreview.config.checks.map(check => (
-                          <label key={check.id} className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                            <input
-                              type="checkbox"
-                              className="mt-1"
-                              checked={restoreSelectionState.checks[check.id]}
-                              onChange={() => toggleRestoreCheck(check.id)}
-                            />
-                            <span>
-                              <span className="font-medium">{check.name}</span>
-                              <span className="block text-xs text-gray-500 dark:text-gray-400">
-                                {check.type ? `${check.type.toUpperCase()} check` : 'Check'}
-                                {check.target ? ` · ${check.target}` : ''}
-                                {check.id ? ` · ID: ${check.id}` : ''}
-                              </span>
-                            </span>
-                          </label>
-                        ))}
+                  {/* === Nodes & Checks Section === */}
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => toggleRestoreSection('infrastructure')}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-colors"
+                    >
+                      {restoreExpandedSections.infrastructure ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
+                      <Activity size={16} className="text-gray-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Nodes & Monitoring</span>
+                        <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                          {Object.values(restoreSelectionState.nodes).filter(Boolean).length} node{Object.values(restoreSelectionState.nodes).filter(Boolean).length !== 1 ? 's' : ''},
+                          {' '}{Object.values(restoreSelectionState.checks).filter(Boolean).length} check{Object.values(restoreSelectionState.checks).filter(Boolean).length !== 1 ? 's' : ''}
+                        </span>
                       </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-4">
-                    <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Systemd files</h4>
-                    {restorePreview.nodeFiles.length === 0 ? (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">No systemd files found in backup.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {restorePreview.nodeFiles.map(group => (
-                          <div key={group.nodeName} className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 space-y-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Source: {group.nodeName}</p>
-                                <p className="text-xs text-gray-500 dark:text-gray-400">{group.files.length} files</p>
-                              </div>
-                              <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                                Target node
-                                <select
-                                  value={restoreSelectionState.targetNodes[group.nodeName]}
-                                  onChange={(event) => updateRestoreTargetNode(group.nodeName, event.target.value)}
-                                  className="bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded px-2 py-1 text-xs"
-                                >
-                                  {availableRestoreTargets.map(target => (
-                                    <option key={target} value={target}>{target}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                            <div className="max-h-48 overflow-y-auto space-y-2">
-                              {group.files.map(file => (
-                                <div key={file.relativePath} className="flex items-start gap-3 text-xs text-gray-700 dark:text-gray-200 font-mono">
-                                  <input
-                                    type="checkbox"
-                                    className="mt-1"
-                                    checked={Boolean(restoreSelectionState.nodeFiles[group.nodeName]?.[file.relativePath])}
-                                    onChange={() => toggleRestoreFile(group.nodeName, file.relativePath)}
-                                  />
-                                  <div className="flex-1">
-                                    <div className="break-all">{file.relativePath}</div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRestoreFilePreview(group.nodeName, file.relativePath)}
-                                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-gray-700 px-2 py-1 text-[10px] text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-                                  >
-                                    <Eye size={12} />
-                                    View
-                                  </button>
-                                </div>
+                    </button>
+                    {restoreExpandedSections.infrastructure && (
+                      <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 space-y-4">
+                        {restorePreview.config.nodes.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Nodes</p>
+                            <div className="grid gap-2">
+                              {restorePreview.config.nodes.map(node => (
+                                <label key={node.name} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+                                  <input type="checkbox" className="rounded" checked={restoreSelectionState.nodes[node.name]} onChange={() => toggleRestoreNode(node.name)} />
+                                  <Server size={14} className="text-gray-400 shrink-0" />
+                                  <span className="font-medium">{node.name}</span>
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">{node.uri}{node.default ? ' · Default' : ''}</span>
+                                </label>
                               ))}
                             </div>
                           </div>
-                        ))}
+                        )}
+                        {restorePreview.config.checks.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Monitoring Checks</p>
+                            <div className="grid gap-2">
+                              {restorePreview.config.checks.map(check => (
+                                <label key={check.id} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+                                  <input type="checkbox" className="rounded" checked={restoreSelectionState.checks[check.id]} onChange={() => toggleRestoreCheck(check.id)} />
+                                  <span className="font-medium">{check.name}</span>
+                                  {check.type && <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{check.type}</span>}
+                                  {check.target && <span className="text-xs text-gray-500 dark:text-gray-400">{check.target}</span>}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {restorePreview.config.nodes.length === 0 && restorePreview.config.checks.length === 0 && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 italic">No nodes or checks in this backup.</p>
+                        )}
                       </div>
                     )}
                   </div>
 
+                  {/* === Systemd Files Section === */}
+                  {restorePreview.nodeFiles.length > 0 && (
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => toggleRestoreSection('files')}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-colors"
+                      >
+                        {restoreExpandedSections.files ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
+                        <FolderOpen size={16} className="text-gray-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Systemd Files</span>
+                          <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                            {Object.values(restoreSelectionState.nodeFiles).reduce((sum, files) => sum + Object.values(files).filter(Boolean).length, 0)} of {restorePreview.nodeFiles.reduce((sum, g) => sum + g.files.length, 0)} files selected
+                          </span>
+                        </div>
+                      </button>
+                      {restoreExpandedSections.files && (
+                        <div className="border-t border-gray-100 dark:border-gray-800/50">
+                          {restorePreview.nodeFiles.map(group => {
+                            const selectedCount = Object.values(restoreSelectionState.nodeFiles[group.nodeName] || {}).filter(Boolean).length;
+                            const allSelected = selectedCount === group.files.length;
+                            const serviceGroups = groupFilesByService(group.files);
+                            return (
+                              <div key={group.nodeName} className="border-b border-gray-100 dark:border-gray-800/50 last:border-b-0">
+                                <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50/50 dark:bg-gray-900/20">
+                                  <div className="flex items-center gap-3">
+                                    <input
+                                      type="checkbox"
+                                      className="rounded"
+                                      checked={allSelected}
+                                      onChange={() => toggleAllNodeFiles(group.nodeName, !allSelected)}
+                                    />
+                                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{group.nodeName}</span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">{selectedCount}/{group.files.length} files</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                    <span>Target:</span>
+                                    <select
+                                      value={restoreSelectionState.targetNodes[group.nodeName]}
+                                      onChange={(event) => updateRestoreTargetNode(group.nodeName, event.target.value)}
+                                      className="bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded px-2 py-1 text-xs"
+                                    >
+                                      {availableRestoreTargets.map(target => (
+                                        <option key={target} value={target}>{target}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                                <div className="max-h-80 overflow-y-auto">
+                                  {serviceGroups.map(sg => {
+                                    const sgSelectedCount = sg.files.filter(f => restoreSelectionState.nodeFiles[group.nodeName]?.[f.relativePath]).length;
+                                    const sgAllSelected = sgSelectedCount === sg.files.length;
+                                    const sgKey = `files-${group.nodeName}-${sg.service}`;
+                                    const sgExpanded = restoreExpandedSections[sgKey];
+                                    const displayName = sg.service === '_other' ? 'Other files' : sg.service;
+                                    return (
+                                      <div key={sg.service} className="border-b border-gray-50 dark:border-gray-800/30 last:border-b-0">
+                                        <div className="flex items-center gap-2 px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-900/30">
+                                          <input
+                                            type="checkbox"
+                                            className="rounded"
+                                            checked={sgAllSelected}
+                                            onChange={() => toggleServiceGroupFiles(group.nodeName, sg.files, !sgAllSelected)}
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => toggleRestoreSection(sgKey)}
+                                            className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
+                                          >
+                                            {sgExpanded ? <ChevronDown size={12} className="text-gray-400 shrink-0" /> : <ChevronRight size={12} className="text-gray-400 shrink-0" />}
+                                            <span className="text-xs font-medium text-gray-800 dark:text-gray-200 capitalize">{displayName}</span>
+                                            <span className="text-[10px] text-gray-400 dark:text-gray-500">{sgSelectedCount}/{sg.files.length}</span>
+                                          </button>
+                                        </div>
+                                        {sgExpanded && (
+                                          <div className="pl-10 pr-4 pb-1">
+                                            {sg.files.map(file => (
+                                              <div key={file.relativePath} className="flex items-center gap-3 py-1 text-xs text-gray-600 dark:text-gray-300">
+                                                <input
+                                                  type="checkbox"
+                                                  className="rounded"
+                                                  checked={Boolean(restoreSelectionState.nodeFiles[group.nodeName]?.[file.relativePath])}
+                                                  onChange={() => toggleRestoreFile(group.nodeName, file.relativePath)}
+                                                />
+                                                <span className="flex-1 font-mono truncate">{file.fileName}</span>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleRestoreFilePreview(group.nodeName, file.relativePath)}
+                                                  className="shrink-0 p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                                  title="Preview file"
+                                                >
+                                                  <Eye size={14} />
+                                                </button>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* === Service Data Section === */}
                   {restorePreview.serviceData && restorePreview.serviceData.length > 0 && (
-                    <div className="space-y-4">
-                      <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Service Data</h4>
-                      <div className="space-y-2">
-                        {restorePreview.serviceData.map(sd => {
-                          const label = sd.name.replace(/-/g, '/').replace(/^\//, '');
-                          return (
-                            <label key={sd.name} className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                              <input
-                                type="checkbox"
-                                className="mt-1"
-                                checked={Boolean(restoreSelectionState.serviceData[sd.name])}
-                                onChange={() => setRestoreSelectionState(prev => prev ? {
-                                  ...prev,
-                                  serviceData: { ...prev.serviceData, [sd.name]: !prev.serviceData[sd.name] }
-                                } : prev)}
-                              />
-                              <span>
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => toggleRestoreSection('serviceData')}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-colors"
+                      >
+                        {restoreExpandedSections.serviceData ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
+                        <Database size={16} className="text-gray-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Service Data</span>
+                          <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                            {Object.values(restoreSelectionState.serviceData).filter(Boolean).length} of {restorePreview.serviceData.length} selected
+                          </span>
+                        </div>
+                      </button>
+                      {restoreExpandedSections.serviceData && (
+                        <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 grid gap-2">
+                          {restorePreview.serviceData.map(sd => {
+                            const label = sd.name.replace(/-/g, '/').replace(/^\//, '');
+                            return (
+                              <label key={sd.name} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200 py-1">
+                                <input
+                                  type="checkbox"
+                                  className="rounded"
+                                  checked={Boolean(restoreSelectionState.serviceData[sd.name])}
+                                  onChange={() => setRestoreSelectionState(prev => prev ? {
+                                    ...prev,
+                                    serviceData: { ...prev.serviceData, [sd.name]: !prev.serviceData[sd.name] }
+                                  } : prev)}
+                                />
+                                <HardDrive size={14} className="text-gray-400 shrink-0" />
                                 <span className="font-medium">{label}</span>
-                                <span className="block text-xs text-gray-500 dark:text-gray-400">
-                                  {sd.files.length} file{sd.files.length !== 1 ? 's' : ''}: {sd.files.join(', ')}
-                                </span>
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
+                                <span className="text-xs text-gray-500 dark:text-gray-400">{sd.files.length} file{sd.files.length !== 1 ? 's' : ''}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               ) : null}
             </div>
 
-            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
-              <p className="text-xs text-gray-500 dark:text-gray-400">Restores selected settings and files to target nodes.</p>
-              <button
-                onClick={confirmRestoreBackup}
-                disabled={restoringBackup || !restorePreview || !restoreSelectionState}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg shadow-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {restoringBackup ? <Loader2 className="animate-spin" size={16} /> : <RotateCcw size={16} />}
-                {restoringBackup ? 'Restoring...' : 'Restore Selected'}
-              </button>
-            </div>
+            {restorePreview && restoreSelectionState && (
+              <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
+                <p className="text-xs text-gray-500 dark:text-gray-400">{getRestoreSelectionSummary()}</p>
+                <button
+                  onClick={confirmRestoreBackup}
+                  disabled={restoringBackup}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg shadow-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {restoringBackup ? <Loader2 className="animate-spin" size={16} /> : <RotateCcw size={16} />}
+                  {restoringBackup ? 'Restoring...' : 'Restore Selected'}
+                </button>
+              </div>
+            )}
           </aside>
         </div>
       )}
