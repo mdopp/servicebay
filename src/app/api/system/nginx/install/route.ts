@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getTemplateYaml } from '@/lib/registry';
-import { saveService } from '@/lib/manager';
+import { saveService, startService } from '@/lib/manager';
 import { getConfig } from '@/lib/config';
+import { listNodes } from '@/lib/nodes';
 
 export async function POST() {
     try {
@@ -15,7 +16,12 @@ export async function POST() {
         const config = await getConfig();
         const dataDir = config.templateSettings?.DATA_DIR || '/mnt/data';
 
-        // 3. Prepare the service configuration
+        // 3. Find the target node (default node, or first available)
+        const nodes = await listNodes();
+        const targetNode = nodes.find(n => n.Default) || nodes[0];
+        const connection = targetNode?.URI ? targetNode : undefined;
+
+        // 4. Prepare the service configuration
         const name = 'nginx-web';
         // Replace variables (8080/8443 standard for rootless)
         const yamlContent = templateContent
@@ -34,10 +40,11 @@ Yaml=${name}.yml
 WantedBy=default.target
 `;
 
-        // 4. Save the service
-        await saveService(name, kubeContent, yamlContent, `${name}.yml`);
+        // 5. Save the service to the target node and start it
+        await saveService(name, kubeContent, yamlContent, `${name}.yml`, connection);
+        await startService(name, connection);
 
-        return NextResponse.json({ success: true });
+        return NextResponse.json({ success: true, node: targetNode?.Name });
     } catch (error) {
         console.error('Failed to install nginx container:', error);
         return NextResponse.json({ error: 'Failed to install nginx container' }, { status: 500 });
