@@ -542,6 +542,7 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
         metadata.serviceData = [];
 
         const { DigitalTwinStore } = await import('./store/twin');
+        const { default: yamlLib } = await import('js-yaml');
         const twinStore = DigitalTwinStore.getInstance();
         const allNodes = await listNodes();
         const sshNodes = allNodes.filter(node => node.URI?.startsWith('ssh://'));
@@ -559,7 +560,6 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
                 if (!file.content) continue;
 
                 try {
-                    const { default: yamlLib } = await import('js-yaml');
                     const docs = yamlLib.loadAll(file.content) as Record<string, unknown>[];
                     for (const doc of docs) {
                         if (!doc?.spec) continue;
