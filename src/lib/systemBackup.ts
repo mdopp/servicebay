@@ -130,7 +130,12 @@ export interface BackupRestoreSelection {
         targetNode: string;
         files: string[];
     }>;
-    serviceData?: string[];
+    serviceData?: string[] | ServiceDataSelection[];
+}
+
+export interface ServiceDataSelection {
+    name: string;
+    files?: string[]; // if omitted, restore all files
 }
 
 interface BackupNodeDescriptor {
@@ -972,7 +977,13 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
             const serviceDataDir = path.join(stagingDir, 'service-data');
             const sshNodes2 = (await listNodes()).filter(n => n.URI?.startsWith('ssh://'));
 
-            for (const dirName of selection.serviceData) {
+            // Normalize selection: support both string[] (all files) and ServiceDataSelection[]
+            const normalizedSelections: ServiceDataSelection[] = selection.serviceData.map(item =>
+                typeof item === 'string' ? { name: item } : item
+            );
+
+            for (const sdSelection of normalizedSelections) {
+                const dirName = sdSelection.name;
                 const localDir = path.join(serviceDataDir, dirName);
                 if (!(await pathExists(localDir))) continue;
 
@@ -998,20 +1009,42 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                     continue;
                 }
 
-                for (const node of targetNodes) {
-                    const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
-                    const tmpArchive = path.join(os.tmpdir(), `servicebay-svcdata-${Date.now()}.tar.gz`);
-                    await runTar(['-czf', tmpArchive, '-C', localDir, '.']);
-                    const mktemp = await execRemoteCommand(conn, 'mktemp /tmp/servicebay-svcdata-XXXXXX.tar.gz');
-                    if (mktemp.code !== 0) {
-                        await fs.rm(tmpArchive, { force: true });
-                        continue;
+                // If specific files requested, create a filtered staging directory
+                let archiveSourceDir = localDir;
+                let filteredDir: string | undefined;
+                if (sdSelection.files && sdSelection.files.length > 0) {
+                    filteredDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-sdfilter-'));
+                    for (const relFile of sdSelection.files) {
+                        const safePath = sanitizeRelativePath(relFile);
+                        const srcFile = path.join(localDir, safePath);
+                        const destFile = path.join(filteredDir, safePath);
+                        if (await pathExists(srcFile)) {
+                            await fs.mkdir(path.dirname(destFile), { recursive: true });
+                            await fs.copyFile(srcFile, destFile);
+                        }
                     }
-                    const remoteTmp = mktemp.stdout.trim();
-                    await uploadRemoteFile(conn, tmpArchive, remoteTmp);
-                    await fs.rm(tmpArchive, { force: true });
-                    await execRemoteCommand(conn, `mkdir -p "${remotePath}" && tar -xzf "${remoteTmp}" -C "${remotePath}" && rm -f "${remoteTmp}"`);
-                    logger.info('SystemBackup', `Restored ${dirName} to ${node.Name}:${remotePath}`);
+                    archiveSourceDir = filteredDir;
+                }
+
+                try {
+                    for (const node of targetNodes) {
+                        const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
+                        const tmpArchive = path.join(os.tmpdir(), `servicebay-svcdata-${Date.now()}.tar.gz`);
+                        await runTar(['-czf', tmpArchive, '-C', archiveSourceDir, '.']);
+                        const mktemp = await execRemoteCommand(conn, 'mktemp /tmp/servicebay-svcdata-XXXXXX.tar.gz');
+                        if (mktemp.code !== 0) {
+                            await fs.rm(tmpArchive, { force: true });
+                            continue;
+                        }
+                        const remoteTmp = mktemp.stdout.trim();
+                        await uploadRemoteFile(conn, tmpArchive, remoteTmp);
+                        await fs.rm(tmpArchive, { force: true });
+                        await execRemoteCommand(conn, `mkdir -p "${remotePath}" && tar -xzf "${remoteTmp}" -C "${remotePath}" && rm -f "${remoteTmp}"`);
+                        const fileDesc = sdSelection.files ? `${sdSelection.files.length} files from ${dirName}` : dirName;
+                        logger.info('SystemBackup', `Restored ${fileDesc} to ${node.Name}:${remotePath}`);
+                    }
+                } finally {
+                    if (filteredDir) await fs.rm(filteredDir, { recursive: true, force: true });
                 }
             }
         }

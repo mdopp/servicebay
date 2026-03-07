@@ -105,6 +105,69 @@ const formatBytes = (size: number): string => {
 
 const QUADLET_EXTENSIONS = ['.container', '.service', '.kube', '.yml', '.yaml', '.pod', '.network', '.volume'];
 
+type ServiceDataFileCategory = 'config' | 'logs' | 'certs' | 'data' | 'other';
+
+const SERVICE_DATA_CATEGORY_LABELS: Record<ServiceDataFileCategory, string> = {
+  config: 'Configuration',
+  logs: 'Logs',
+  certs: 'Certificates',
+  data: 'Database',
+  other: 'Other Files'
+};
+
+const SERVICE_DATA_CATEGORY_ICONS: Record<ServiceDataFileCategory, string> = {
+  config: '⚙️',
+  logs: '📋',
+  certs: '🔒',
+  data: '🗄️',
+  other: '📄'
+};
+
+function categorizeServiceDataFile(filePath: string): ServiceDataFileCategory {
+  const lower = filePath.toLowerCase();
+  const fileName = lower.split('/').pop() || '';
+  const dir = lower.split('/').slice(0, -1).join('/');
+
+  // Config files
+  if (dir.includes('proxy_host') || dir.includes('conf.d') || dir.includes('nginx') && fileName.endsWith('.conf'))
+    return 'config';
+  if (fileName.endsWith('.conf') || fileName.endsWith('.json') || fileName.endsWith('.yml') || fileName.endsWith('.yaml'))
+    return 'config';
+  if (fileName === 'settings' || fileName === 'config' || dir.includes('settings'))
+    return 'config';
+
+  // Logs
+  if (dir.includes('logs') || dir.includes('log') || fileName.endsWith('.log'))
+    return 'logs';
+
+  // Certificates
+  if (dir.includes('letsencrypt') || dir.includes('certs') || dir.includes('ssl') || dir.includes('tls'))
+    return 'certs';
+  if (fileName.endsWith('.pem') || fileName.endsWith('.crt') || fileName.endsWith('.key') || fileName.endsWith('.cert'))
+    return 'certs';
+
+  // Database
+  if (fileName.endsWith('.sqlite') || fileName.endsWith('.db') || fileName.endsWith('.sql'))
+    return 'data';
+  if (dir.includes('database') || dir.includes('db'))
+    return 'data';
+
+  return 'other';
+}
+
+function groupServiceDataFiles(files: string[]): { category: ServiceDataFileCategory; files: string[] }[] {
+  const groups = new Map<ServiceDataFileCategory, string[]>();
+  for (const file of files) {
+    const cat = categorizeServiceDataFile(file);
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push(file);
+  }
+  const order: ServiceDataFileCategory[] = ['config', 'certs', 'data', 'logs', 'other'];
+  return order
+    .filter(cat => groups.has(cat))
+    .map(cat => ({ category: cat, files: groups.get(cat)! }));
+}
+
 function groupFilesByService(files: { relativePath: string; fileName: string }[]): { service: string; files: { relativePath: string; fileName: string }[] }[] {
   const groups = new Map<string, { relativePath: string; fileName: string }[]>();
   for (const file of files) {
@@ -181,7 +244,7 @@ export default function SettingsPage() {
     };
     nodeFiles: Record<string, Record<string, boolean>>;
     targetNodes: Record<string, string>;
-    serviceData: Record<string, boolean>;
+    serviceData: Record<string, Record<string, boolean>>;
   } | null>(null);
   const [backupLog, setBackupLog] = useState<BackupLogEntry[]>([]);
   const [backupStatus, setBackupStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
@@ -895,9 +958,9 @@ export default function SettingsPage() {
       targetNodes[group.nodeName] = availableTargets.includes(group.nodeName) ? group.nodeName : 'Local';
     });
 
-    const serviceDataState: Record<string, boolean> = {};
+    const serviceDataState: Record<string, Record<string, boolean>> = {};
     (preview.serviceData || []).forEach(sd => {
-      serviceDataState[sd.name] = true;
+      serviceDataState[sd.name] = Object.fromEntries(sd.files.map(f => [f, true]));
     });
 
     setRestoreSelectionState({
@@ -1042,9 +1105,18 @@ export default function SettingsPage() {
         })
         .filter(group => group.files.length > 0 && group.targetNode);
 
-      const selectedServiceData = Object.entries(restoreSelectionState.serviceData)
-        .filter(([, enabled]) => enabled)
-        .map(([name]) => name);
+      const selectedServiceData: { name: string; files?: string[] }[] = [];
+      for (const [name, filesMap] of Object.entries(restoreSelectionState.serviceData)) {
+        const selectedFiles = Object.entries(filesMap).filter(([, enabled]) => enabled).map(([f]) => f);
+        if (selectedFiles.length === 0) continue;
+        const sdPreview = restorePreview.serviceData?.find(sd => sd.name === name);
+        // If all files selected, omit files array (restore entire directory)
+        if (sdPreview && selectedFiles.length === sdPreview.files.length) {
+          selectedServiceData.push({ name });
+        } else {
+          selectedServiceData.push({ name, files: selectedFiles });
+        }
+      }
 
       const selection: BackupRestoreSelection = {
         config: {
@@ -1109,7 +1181,7 @@ export default function SettingsPage() {
         ])
       ),
       targetNodes: restoreSelectionState.targetNodes,
-      serviceData: Object.fromEntries((restorePreview.serviceData || []).map(sd => [sd.name, true]))
+      serviceData: Object.fromEntries((restorePreview.serviceData || []).map(sd => [sd.name, Object.fromEntries(sd.files.map(f => [f, true]))]))
     });
   }, [restorePreview, restoreSelectionState]);
 
@@ -1265,13 +1337,15 @@ export default function SettingsPage() {
     const fileCount = Object.values(restoreSelectionState.nodeFiles).reduce(
       (sum, files) => sum + Object.values(files).filter(Boolean).length, 0
     );
-    const dataCount = Object.values(restoreSelectionState.serviceData).filter(Boolean).length;
+    const dataCount = Object.values(restoreSelectionState.serviceData).reduce(
+      (sum, filesMap) => sum + Object.values(filesMap).filter(Boolean).length, 0
+    );
     const parts: string[] = [];
     if (configCount > 0) parts.push(`${configCount} setting${configCount !== 1 ? 's' : ''}`);
     if (nodeCount > 0) parts.push(`${nodeCount} node${nodeCount !== 1 ? 's' : ''}`);
     if (checkCount > 0) parts.push(`${checkCount} check${checkCount !== 1 ? 's' : ''}`);
     if (fileCount > 0) parts.push(`${fileCount} file${fileCount !== 1 ? 's' : ''}`);
-    if (dataCount > 0) parts.push(`${dataCount} data dir${dataCount !== 1 ? 's' : ''}`);
+    if (dataCount > 0) parts.push(`${dataCount} data file${dataCount !== 1 ? 's' : ''}`);
     return parts.length > 0 ? parts.join(', ') : 'Nothing selected';
   };
 
@@ -2528,29 +2602,135 @@ export default function SettingsPage() {
                         <div className="flex-1 min-w-0">
                           <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Service Data</span>
                           <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-                            {Object.values(restoreSelectionState.serviceData).filter(Boolean).length} of {restorePreview.serviceData.length} selected
+                            {Object.values(restoreSelectionState.serviceData).reduce((sum, fm) => sum + Object.values(fm).filter(Boolean).length, 0)} file{Object.values(restoreSelectionState.serviceData).reduce((sum, fm) => sum + Object.values(fm).filter(Boolean).length, 0) !== 1 ? 's' : ''} selected
                           </span>
                         </div>
                       </button>
                       {restoreExpandedSections.serviceData && (
-                        <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 grid gap-2">
+                        <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 space-y-3">
                           {restorePreview.serviceData.map(sd => {
                             const label = sd.name.replace(/-/g, '/').replace(/^\//, '');
+                            const fileCategories = groupServiceDataFiles(sd.files);
+                            const sdKey = `sd-${sd.name}`;
+                            const sdExpanded = restoreExpandedSections[sdKey];
+                            const selectedCount = restoreSelectionState.serviceData[sd.name]
+                              ? Object.values(restoreSelectionState.serviceData[sd.name]).filter(Boolean).length
+                              : 0;
+                            const allSelected = selectedCount === sd.files.length;
+
                             return (
-                              <label key={sd.name} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200 py-1">
-                                <input
-                                  type="checkbox"
-                                  className="rounded"
-                                  checked={Boolean(restoreSelectionState.serviceData[sd.name])}
-                                  onChange={() => setRestoreSelectionState(prev => prev ? {
-                                    ...prev,
-                                    serviceData: { ...prev.serviceData, [sd.name]: !prev.serviceData[sd.name] }
-                                  } : prev)}
-                                />
-                                <HardDrive size={14} className="text-gray-400 shrink-0" />
-                                <span className="font-medium">{label}</span>
-                                <span className="text-xs text-gray-500 dark:text-gray-400">{sd.files.length} file{sd.files.length !== 1 ? 's' : ''}</span>
-                              </label>
+                              <div key={sd.name} className="rounded border border-gray-100 dark:border-gray-800/50">
+                                <div className="flex items-center gap-2 px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    className="rounded"
+                                    checked={allSelected}
+                                    onChange={() => setRestoreSelectionState(prev => {
+                                      if (!prev) return prev;
+                                      const newVal = !allSelected;
+                                      return {
+                                        ...prev,
+                                        serviceData: {
+                                          ...prev.serviceData,
+                                          [sd.name]: Object.fromEntries(sd.files.map(f => [f, newVal]))
+                                        }
+                                      };
+                                    })}
+                                  />
+                                  <button type="button" onClick={() => toggleRestoreSection(sdKey)} className="flex items-center gap-2 flex-1 min-w-0">
+                                    {sdExpanded ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
+                                    <HardDrive size={14} className="text-gray-400 shrink-0" />
+                                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{label}</span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">{selectedCount}/{sd.files.length}</span>
+                                  </button>
+                                  {/* Quick-select buttons for categories */}
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {fileCategories.map(cat => (
+                                      <button
+                                        key={cat.category}
+                                        type="button"
+                                        title={`Select only ${SERVICE_DATA_CATEGORY_LABELS[cat.category].toLowerCase()} (${cat.files.length} files)`}
+                                        onClick={() => setRestoreSelectionState(prev => {
+                                          if (!prev) return prev;
+                                          // Select only files in this category, deselect everything else
+                                          const newFiles: Record<string, boolean> = {};
+                                          for (const f of sd.files) newFiles[f] = false;
+                                          for (const f of cat.files) newFiles[f] = true;
+                                          return {
+                                            ...prev,
+                                            serviceData: { ...prev.serviceData, [sd.name]: newFiles }
+                                          };
+                                        })}
+                                        className="px-1.5 py-0.5 text-xs rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                                      >
+                                        {SERVICE_DATA_CATEGORY_ICONS[cat.category]}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {sdExpanded && (
+                                  <div className="px-3 pb-3 pt-1 border-t border-gray-100 dark:border-gray-800/50 space-y-2">
+                                    {fileCategories.map(cat => {
+                                      const catKey = `sd-${sd.name}-${cat.category}`;
+                                      const catExpanded = restoreExpandedSections[catKey];
+                                      const catSelectedCount = cat.files.filter(f => restoreSelectionState.serviceData[sd.name]?.[f]).length;
+                                      const catAllSelected = catSelectedCount === cat.files.length;
+
+                                      return (
+                                        <div key={cat.category}>
+                                          <div className="flex items-center gap-2">
+                                            <input
+                                              type="checkbox"
+                                              className="rounded"
+                                              checked={catAllSelected}
+                                              onChange={() => setRestoreSelectionState(prev => {
+                                                if (!prev) return prev;
+                                                const updated = { ...prev.serviceData[sd.name] };
+                                                const newVal = !catAllSelected;
+                                                for (const f of cat.files) updated[f] = newVal;
+                                                return {
+                                                  ...prev,
+                                                  serviceData: { ...prev.serviceData, [sd.name]: updated }
+                                                };
+                                              })}
+                                            />
+                                            <button type="button" onClick={() => toggleRestoreSection(catKey)} className="flex items-center gap-1.5 flex-1 min-w-0">
+                                              {catExpanded ? <ChevronDown size={12} className="text-gray-400 shrink-0" /> : <ChevronRight size={12} className="text-gray-400 shrink-0" />}
+                                              <span className="text-xs">{SERVICE_DATA_CATEGORY_ICONS[cat.category]}</span>
+                                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{SERVICE_DATA_CATEGORY_LABELS[cat.category]}</span>
+                                              <span className="text-xs text-gray-500 dark:text-gray-400">{catSelectedCount}/{cat.files.length}</span>
+                                            </button>
+                                          </div>
+                                          {catExpanded && (
+                                            <div className="ml-6 mt-1 space-y-0.5">
+                                              {cat.files.map(file => (
+                                                <label key={file} className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 py-0.5">
+                                                  <input
+                                                    type="checkbox"
+                                                    className="rounded"
+                                                    checked={Boolean(restoreSelectionState.serviceData[sd.name]?.[file])}
+                                                    onChange={() => setRestoreSelectionState(prev => {
+                                                      if (!prev) return prev;
+                                                      const updated = { ...prev.serviceData[sd.name] };
+                                                      updated[file] = !updated[file];
+                                                      return {
+                                                        ...prev,
+                                                        serviceData: { ...prev.serviceData, [sd.name]: updated }
+                                                      };
+                                                    })}
+                                                  />
+                                                  <span className="font-mono truncate">{file}</span>
+                                                </label>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
                             );
                           })}
                         </div>
