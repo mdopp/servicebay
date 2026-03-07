@@ -2450,9 +2450,7 @@ export default function SettingsPage() {
                       <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Service Data</h4>
                       <div className="space-y-2">
                         {restorePreview.serviceData.map(sd => {
-                          const label = sd.name === 'nginx-conf.d' ? 'Nginx Config (conf.d)'
-                            : sd.name === 'nginx-ssl' ? 'Nginx SSL Certificates'
-                            : sd.name;
+                          const label = sd.name.replace(/-/g, '/').replace(/^\//, '');
                           return (
                             <label key={sd.name} className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
                               <input

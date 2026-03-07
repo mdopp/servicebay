@@ -16,7 +16,6 @@ const CONFIG_FILES = ['config.json', 'nodes.json', 'checks.json'];
 const REMOTE_SYSTEMD_DIR = '$HOME/.config/containers/systemd';
 const METADATA_FILE = 'metadata.json';
 const METADATA_VERSION = 2;
-const NGINX_DIRS = ['nginx/conf.d', 'nginx/ssl'];
 
 export interface SystemBackupEntry {
     fileName: string;
@@ -140,12 +139,18 @@ interface BackupNodeDescriptor {
     scope: 'local' | 'remote';
 }
 
+interface ServiceDataEntry {
+    label: string;
+    sourcePath: string;
+    nodeName: string;
+}
+
 interface BackupMetadata {
     version: number;
     createdAt: string;
     nodes: BackupNodeDescriptor[];
     configFiles: string[];
-    serviceData?: string[];
+    serviceData?: string[] | ServiceDataEntry[];
 }
 
 type ProgressCallback = (entry: BackupLogEntry) => void;
@@ -532,35 +537,57 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
             }
         }
 
-        // Stage nginx / reverse-proxy config from DATA_DIR on all SSH-reachable nodes
-        const config = await getConfig();
-        const remoteDataDir = config.templateSettings?.DATA_DIR || '/mnt/data';
+        // Stage reverse-proxy bind mounts (nginx config, SSL, etc.) from Digital Twin
         const serviceDataDir = path.join(stagingDir, 'service-data');
         metadata.serviceData = [];
 
+        const { DigitalTwinStore } = await import('./store/twin');
+        const twinStore = DigitalTwinStore.getInstance();
         const allNodes = await listNodes();
         const sshNodes = allNodes.filter(node => node.URI?.startsWith('ssh://'));
-        logger.info('SystemBackup', `Staging service data from ${sshNodes.length} SSH node(s), DATA_DIR=${remoteDataDir}`);
 
         for (const node of sshNodes) {
+            const twin = twinStore.nodes[node.Name];
+            if (!twin?.containers) continue;
+
+            // Find reverse-proxy container mounts (same logic as agent._get_nginx_config_dirs)
+            const proxyMounts: { source: string; label: string }[] = [];
+            for (const c of twin.containers) {
+                const isProxy = c.labels?.['servicebay.role'] === 'reverse-proxy'
+                    || c.names?.some(n => /nginx|proxy/i.test(n));
+                if (!isProxy || !c.mounts) continue;
+
+                for (const m of c.mounts) {
+                    if ((m.Type === 'bind') && m.Source && m.Destination) {
+                        // Label from container destination path for readability
+                        const label = m.Destination.replace(/^\//, '').replace(/\//g, '-');
+                        proxyMounts.push({ source: m.Source, label });
+                    }
+                }
+            }
+
+            if (proxyMounts.length === 0) {
+                pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: 'No reverse-proxy bind mounts found' });
+                continue;
+            }
+
             const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
-            for (const nginxDir of NGINX_DIRS) {
-                const remotePath = `${remoteDataDir}/${nginxDir}`;
-                const checkResult = await execRemoteCommand(conn, `test -d "${remotePath}" && ls -A "${remotePath}" 2>/dev/null | head -1`);
+            for (const mount of proxyMounts) {
+                const checkResult = await execRemoteCommand(conn, `test -d "${mount.source}" && ls -A "${mount.source}" 2>/dev/null | head -1`);
                 if (checkResult.code !== 0 || !checkResult.stdout.trim()) {
-                    pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: `${remotePath} not found or empty` });
+                    pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: `${mount.source} is empty` });
                     continue;
                 }
 
-                const dirName = nginxDir.replace('/', '-');
+                const dirName = mount.label;
                 const localDir = path.join(serviceDataDir, dirName);
                 await fs.mkdir(localDir, { recursive: true });
 
                 const tmpArchive = path.join(localDir, 'data.tgz');
                 const script = [
                     'set -e',
-                    `tmpfile=$(mktemp /tmp/servicebay-nginx-XXXXXX.tar.gz)`,
-                    `tar -czf "$tmpfile" -C "${remotePath}" .`,
+                    `tmpfile=$(mktemp /tmp/servicebay-svcdata-XXXXXX.tar.gz)`,
+                    `tar -czf "$tmpfile" -C "${mount.source}" .`,
                     `echo "$tmpfile"`
                 ].join('\n');
                 const archiveResult = await execRemoteCommand(conn, script);
@@ -573,11 +600,16 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
                 await runTar(['-xzf', tmpArchive, '-C', localDir]);
                 await fs.rm(tmpArchive, { force: true });
 
-                if (!metadata.serviceData.includes(dirName)) {
-                    metadata.serviceData.push(dirName);
+                const existing = (metadata.serviceData as ServiceDataEntry[]).find(e => e.label === dirName);
+                if (!existing) {
+                    (metadata.serviceData as ServiceDataEntry[]).push({
+                        label: dirName,
+                        sourcePath: mount.source,
+                        nodeName: node.Name
+                    });
                 }
                 stagedSomething = true;
-                pushLog(logs, progress, { scope: 'remote', status: 'success', node: node.Name, message: `Captured ${nginxDir}` });
+                pushLog(logs, progress, { scope: 'remote', status: 'success', node: node.Name, message: `Captured ${mount.source} (${dirName})` });
             }
         }
 
@@ -900,24 +932,40 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
             }
         }
 
-        // Restore service-data (nginx config etc.) to remote DATA_DIR
+        // Restore service-data (nginx config etc.) to original host paths
         if (selection.serviceData?.length) {
-            const backupConfig = await readJsonFile<Awaited<ReturnType<typeof getConfig>>>(path.join(stagingDir, 'config', 'config.json'));
-            const remoteDataDir = backupConfig?.templateSettings?.DATA_DIR || (await getConfig()).templateSettings?.DATA_DIR || '/mnt/data';
+            const backupMetadata = await readMetadata(stagingDir);
             const serviceDataDir = path.join(stagingDir, 'service-data');
-            const remoteNodes2 = (await listNodes()).filter(n => n.URI?.startsWith('ssh://'));
+            const sshNodes2 = (await listNodes()).filter(n => n.URI?.startsWith('ssh://'));
 
             for (const dirName of selection.serviceData) {
                 const localDir = path.join(serviceDataDir, dirName);
                 if (!(await pathExists(localDir))) continue;
 
-                // Map dir name back to path: nginx-conf.d -> nginx/conf.d, nginx-ssl -> nginx/ssl
-                const remoteSub = dirName.replace(/^nginx-/, 'nginx/');
-                const remotePath = `${remoteDataDir}/${remoteSub}`;
+                // Resolve target path from metadata (v2+) or fall back to current twin mounts
+                let remotePath: string | undefined;
+                let targetNodeName: string | undefined;
 
-                for (const node of remoteNodes2) {
+                const sdEntries = backupMetadata?.serviceData;
+                if (sdEntries && sdEntries.length > 0 && typeof sdEntries[0] === 'object') {
+                    const entry = (sdEntries as ServiceDataEntry[]).find(e => e.label === dirName);
+                    if (entry) {
+                        remotePath = entry.sourcePath;
+                        targetNodeName = entry.nodeName;
+                    }
+                }
+
+                const targetNodes = targetNodeName
+                    ? sshNodes2.filter(n => n.Name === targetNodeName)
+                    : sshNodes2;
+
+                if (!remotePath) {
+                    logger.warn('SystemBackup', `No source path found for service-data "${dirName}", skipping`);
+                    continue;
+                }
+
+                for (const node of targetNodes) {
                     const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
-                    // Create tar locally, upload, extract remotely
                     const tmpArchive = path.join(os.tmpdir(), `servicebay-svcdata-${Date.now()}.tar.gz`);
                     await runTar(['-czf', tmpArchive, '-C', localDir, '.']);
                     const mktemp = await execRemoteCommand(conn, 'mktemp /tmp/servicebay-svcdata-XXXXXX.tar.gz');
