@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.6...servicebay-v0.13.0) (2026-03-07)
+
+
+### Features
+
+* redesign restore overlay with collapsible sections and service grouping ([d514bea](https://github.com/mdopp/servicebay/commit/d514beaf65d628fe54558e1c791a73580c8a4251))
+
+
+### Bug Fixes
+
+* drop os.hostname() fallback for browser title, use plain "ServiceBay" ([b2a77d6](https://github.com/mdopp/servicebay/commit/b2a77d6b864fb771414c0260285e286c91a73e31))
+* resolve server name from config, env var, or reverse DNS on LAN IP ([373578a](https://github.com/mdopp/servicebay/commit/373578a70eba0ccdc9f76f72ea6ba76de9e71240))
+* security hardening and architecture fixes from review ([d518add](https://github.com/mdopp/servicebay/commit/d518add9f11384c0bbf5573bbb0999f90e8e5e70))
+* use configured domain name for browser tab title instead of hostname ([9337907](https://github.com/mdopp/servicebay/commit/9337907e0c201a36345f2ac125cbed9ddd2848ff))
+
 ## [0.12.6](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.5...servicebay-v0.12.6) (2026-03-07)
 
 
