@@ -548,14 +548,22 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
 
         for (const node of sshNodes) {
             const twin = twinStore.nodes[node.Name];
-            if (!twin?.containers) continue;
+            if (!twin?.containers) {
+                logger.info('SystemBackup', `No twin containers for node ${node.Name}`);
+                continue;
+            }
 
             // Find reverse-proxy container mounts (same logic as agent._get_nginx_config_dirs)
             const proxyMounts: { source: string; label: string }[] = [];
+            pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name, message: `Scanning ${twin.containers.length} containers for reverse-proxy mounts` });
             for (const c of twin.containers) {
-                const isProxy = c.labels?.['servicebay.role'] === 'reverse-proxy'
-                    || c.names?.some(n => /nginx|proxy/i.test(n));
-                if (!isProxy || !c.mounts) continue;
+                const names = c.names || [];
+                const labels = c.labels || {};
+                const isProxy = labels['servicebay.role'] === 'reverse-proxy'
+                    || names.some(n => /nginx|proxy/i.test(n));
+                if (!isProxy) continue;
+                pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name, message: `Proxy container: ${names.join(',')} — ${c.mounts?.length ?? 0} mounts` });
+                if (!c.mounts) continue;
 
                 for (const m of c.mounts) {
                     if ((m.Type === 'bind') && m.Source && m.Destination) {
