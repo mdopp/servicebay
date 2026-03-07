@@ -548,40 +548,62 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
 
         for (const node of sshNodes) {
             const twin = twinStore.nodes[node.Name];
-            if (!twin?.containers) {
-                logger.info('SystemBackup', `No twin containers for node ${node.Name}`);
-                continue;
-            }
+            if (!twin) continue;
 
-            // Find reverse-proxy container mounts (same logic as agent._get_nginx_config_dirs)
+            // Parse hostPath volumes from reverse-proxy YAML files in twin.files
             const proxyMounts: { source: string; label: string }[] = [];
-            pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name, message: `Scanning ${twin.containers.length} containers for reverse-proxy mounts` });
-            for (const c of twin.containers) {
-                const names = c.names || [];
-                const labels = c.labels || {};
-                const isProxy = labels['servicebay.role'] === 'reverse-proxy'
-                    || names.some(n => /nginx|proxy/i.test(n));
-                if (!isProxy) continue;
-                pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name, message: `Proxy container: ${names.join(',')} — ${c.mounts?.length ?? 0} mounts` });
-                if (!c.mounts) continue;
+            const proxyState = twinStore.proxy;
 
-                for (const m of c.mounts) {
-                    const mAny = m as Record<string, unknown>;
-                    pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name,
-                        message: `Mount keys: ${Object.keys(mAny).join(',')} = ${JSON.stringify(mAny)}` });
-                    const src = mAny.Source || mAny.source || mAny.src;
-                    const dst = mAny.Destination || mAny.destination || mAny.dst || mAny.target;
-                    if (src && dst) {
-                        const label = String(dst).replace(/^\//, '').replace(/\//g, '-');
-                        proxyMounts.push({ source: String(src), label });
+            for (const [filePath, file] of Object.entries(twin.files || {})) {
+                if (!filePath.endsWith('.yml') && !filePath.endsWith('.yaml')) continue;
+                if (!file.content) continue;
+
+                try {
+                    const { default: yamlLib } = await import('js-yaml');
+                    const docs = yamlLib.loadAll(file.content) as Record<string, unknown>[];
+                    for (const doc of docs) {
+                        if (!doc?.spec) continue;
+                        const spec = doc.spec as Record<string, unknown>;
+                        const metadata = doc.metadata as Record<string, unknown> | undefined;
+                        const labels = (metadata?.labels || {}) as Record<string, string>;
+                        const podName = (metadata?.name || '') as string;
+
+                        // Check if this is a reverse-proxy pod
+                        const isProxy = labels['servicebay.role'] === 'reverse-proxy'
+                            || /nginx|proxy/i.test(podName)
+                            || (proxyState?.provider === 'nginx' && /nginx/i.test(podName));
+                        if (!isProxy) continue;
+
+                        // Extract hostPath volumes
+                        const volumes = (spec.volumes || []) as Array<Record<string, unknown>>;
+                        const containers = (spec.containers || []) as Array<Record<string, unknown>>;
+                        const mountMap = new Map<string, string>();
+                        for (const ct of containers) {
+                            for (const vm of (ct.volumeMounts || []) as Array<Record<string, string>>) {
+                                if (vm.name && vm.mountPath) mountMap.set(vm.name, vm.mountPath);
+                            }
+                        }
+
+                        for (const vol of volumes) {
+                            const hp = vol.hostPath as Record<string, string> | undefined;
+                            if (!hp?.path) continue;
+                            const volName = vol.name as string;
+                            const containerDest = mountMap.get(volName) || volName;
+                            const label = containerDest.replace(/^\//, '').replace(/\//g, '-');
+                            proxyMounts.push({ source: hp.path, label });
+                        }
                     }
+                } catch {
+                    // skip unparseable files
                 }
             }
 
             if (proxyMounts.length === 0) {
-                pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: 'No reverse-proxy bind mounts found' });
+                pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: 'No reverse-proxy hostPath volumes found in YAML files' });
                 continue;
             }
+
+            pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name, message: `Found ${proxyMounts.length} proxy volume(s): ${proxyMounts.map(m => m.source).join(', ')}` });
 
             const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
             for (const mount of proxyMounts) {
