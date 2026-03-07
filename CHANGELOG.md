@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.2...servicebay-v0.12.3) (2026-03-07)
+
+
+### Bug Fixes
+
+* add diagnostic logging for reverse-proxy mount detection in backup ([8dab1f7](https://github.com/mdopp/servicebay/commit/8dab1f701299132dff33df72c406d6c46986a502))
+
 ## [0.12.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.1...servicebay-v0.12.2) (2026-03-07)
 
 
