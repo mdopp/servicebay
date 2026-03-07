@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.13.0...servicebay-v0.14.0) (2026-03-07)
+
+
+### Features
+
+* selective file restore for service data with category-based UI ([7762c70](https://github.com/mdopp/servicebay/commit/7762c706dfb394b3ec9625777565d1a84670ccb9))
+
+
+### Bug Fixes
+
+* remove reverse DNS for title, use systemd %H to pass host hostname ([9dc92df](https://github.com/mdopp/servicebay/commit/9dc92df0ee9520e9149171bbb62f74360c57a657))
+
 ## [0.13.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.6...servicebay-v0.13.0) (2026-03-07)
 
 
