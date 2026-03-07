@@ -1,7 +1,8 @@
 import { agentManager } from '../agent/manager';
 import path from 'path';
-import yaml from 'js-yaml'; 
+import yaml from 'js-yaml';
 import { logger } from '../logger';
+import { getConfig } from '../config';
 
 export interface ServiceInfo {
   name: string;
@@ -458,21 +459,23 @@ export class ServiceManager {
         } catch(e) {
              logger.warn('ServiceManager', `Service ${name} deployed but start failed:`, e);
         }
+        this.backupQuadlets(nodeName);
     }
 
     static async deployService(nodeName: string, filename: string, content: string) {
         const agent = await agentManager.ensureAgent(nodeName);
         const targetPath = `~/.config/containers/systemd/${filename}`;
-        
+
         // agent.py "write_file" returns "ok"
         const res = await agent.sendCommand('write_file', { path: targetPath, content });
         if (res !== "ok") {
              throw new Error('Failed to write service file');
         }
-        
+
         await this.reloadDaemon(nodeName);
+        this.backupQuadlets(nodeName);
     }
-    
+
     static async removeService(nodeName: string, filename: string) {
         const agent = await agentManager.ensureAgent(nodeName);
         // Use variable to avoid quoting issues
@@ -482,7 +485,25 @@ export class ServiceManager {
         `;
         const res = await agent.sendCommand('exec', { command: cmd });
          if (res.code !== 0) throw new Error(res.stderr);
-         
+
         await this.reloadDaemon(nodeName);
+        this.backupQuadlets(nodeName);
+    }
+
+    /** Backup Quadlet files to data directory (survives OS reinstall) */
+    private static async backupQuadlets(nodeName: string) {
+        try {
+            const config = await getConfig();
+            const dataDir = config.templateSettings?.DATA_DIR || '/mnt/data';
+            const backupDir = `${dataDir}/servicebay/quadlet-backup`;
+            const quadletDir = '$HOME/.config/containers/systemd';
+            const agent = await agentManager.ensureAgent(nodeName);
+            await agent.sendCommand('exec', {
+                command: `mkdir -p ${backupDir} && rsync -a --delete --include='*.kube' --include='*.yml' --include='*.container' --exclude='*' ${quadletDir}/ ${backupDir}/ 2>/dev/null || true`
+            });
+            logger.info('ServiceManager', `Quadlet backup synced for ${nodeName}`);
+        } catch (e) {
+            logger.debug('ServiceManager', 'Quadlet backup skipped:', e);
+        }
     }
 }

@@ -532,28 +532,6 @@ app.prepare().then(() => {
     });
   });
 
-  // Periodic Quadlet backup to data directory (every 5 minutes)
-  // Ensures service definitions survive OS reinstall (data is on RAID)
-  const backupQuadlets = async () => {
-    try {
-      const config = await getConfig();
-      const dataDir = config.templateSettings?.DATA_DIR || '/mnt/data';
-      const executor = (await import('./src/lib/executor')).getExecutor('Local');
-      const quadletDir = '$HOME/.config/containers/systemd';
-      const backupDir = `${dataDir}/servicebay/quadlet-backup`;
-
-      await executor.exec(`mkdir -p ${backupDir}`);
-      await executor.exec(
-        `rsync -a --delete --include='*.kube' --include='*.yml' --include='*.container' --exclude='*' ${quadletDir}/ ${backupDir}/ 2>/dev/null || true`
-      );
-    } catch (e) {
-      // Silent fail – backup is best-effort
-      logger.debug('Server', 'Quadlet backup skipped:', e);
-    }
-  };
-  setTimeout(backupQuadlets, 120000); // First run after 2 minutes
-  setInterval(backupQuadlets, 300000); // Then every 5 minutes
-
   // Cleanup inactive container sessions
   setInterval(() => {
       const now = Date.now();
