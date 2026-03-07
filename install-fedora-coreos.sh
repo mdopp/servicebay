@@ -401,7 +401,7 @@ ${SERVICEBAY_SSH_PRIV}
         inline: |
           #!/bin/bash
           set -euo pipefail
-          PORT="${SERVICEBAY_PORT}"
+          PORT="${SERVICEBAY_PORT:-3000}"
           MAX_WAIT=120
           WAITED=0
           echo "install-nginx: waiting for ServiceBay on port $PORT..."
