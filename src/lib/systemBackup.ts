@@ -532,18 +532,25 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
             }
         }
 
-        // Stage nginx / reverse-proxy config from remote DATA_DIR
+        // Stage nginx / reverse-proxy config from DATA_DIR on all SSH-reachable nodes
         const config = await getConfig();
         const remoteDataDir = config.templateSettings?.DATA_DIR || '/mnt/data';
         const serviceDataDir = path.join(stagingDir, 'service-data');
         metadata.serviceData = [];
 
-        for (const node of remoteNodes) {
+        const allNodes = await listNodes();
+        const sshNodes = allNodes.filter(node => node.URI?.startsWith('ssh://'));
+        logger.info('SystemBackup', `Staging service data from ${sshNodes.length} SSH node(s), DATA_DIR=${remoteDataDir}`);
+
+        for (const node of sshNodes) {
             const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
             for (const nginxDir of NGINX_DIRS) {
                 const remotePath = `${remoteDataDir}/${nginxDir}`;
                 const checkResult = await execRemoteCommand(conn, `test -d "${remotePath}" && ls -A "${remotePath}" 2>/dev/null | head -1`);
-                if (checkResult.code !== 0 || !checkResult.stdout.trim()) continue;
+                if (checkResult.code !== 0 || !checkResult.stdout.trim()) {
+                    pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: `${remotePath} not found or empty` });
+                    continue;
+                }
 
                 const dirName = nginxDir.replace('/', '-');
                 const localDir = path.join(serviceDataDir, dirName);
