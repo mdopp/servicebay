@@ -410,7 +410,13 @@ ${SERVICEBAY_SSH_PRIV}
               exit 1
             fi
           done
-          echo "install-nginx: ServiceBay is up, installing nginx..."
+          # Check if nginx is already installed (e.g. restored from Quadlet backup)
+          INSTALLED=$(curl -sf "http://localhost:$PORT/api/system/nginx/status" | grep -o '"installed":true' || true)
+          if [[ -n "$INSTALLED" ]]; then
+            echo "install-nginx: nginx already installed, skipping"
+            exit 0
+          fi
+          echo "install-nginx: installing nginx..."
           curl -sf -X POST "http://localhost:$PORT/api/system/nginx/install"
           echo "install-nginx: done"
 
