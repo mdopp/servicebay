@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.3...servicebay-v0.11.0) (2026-03-07)
+
+
+### Features
+
+* auto-backup and restore Quadlet services across reinstalls ([c510d6a](https://github.com/mdopp/servicebay/commit/c510d6aeb9519180ff72c45e87033d481320611e))
+* complete unattended install with boot loop prevention and settings persistence ([7645078](https://github.com/mdopp/servicebay/commit/764507808b4a60b530ffdb24e2bb556dfea5c571))
+* FCOS installer dependency check, templates, nginx export/import ([b52378f](https://github.com/mdopp/servicebay/commit/b52378fc5a9f43a10adefef38b2ef3f720e2fd50))
+
+
+### Bug Fixes
+
+* skip nginx install if already present from Quadlet backup ([a2f52e4](https://github.com/mdopp/servicebay/commit/a2f52e48f43e84f5e6b3a7f69bb2ce40e2e65108))
+* use correct systemd path for agent-based operations ([f9ce34c](https://github.com/mdopp/servicebay/commit/f9ce34c9442bbdaeb8988670e31212d571fc585e))
+
 ## [0.10.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.2...servicebay-v0.10.3) (2026-01-20)
 
 
