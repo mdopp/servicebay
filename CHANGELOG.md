@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 * backup restore workflow for FCOS install, fix nginx status detection ([65b9033](https://github.com/mdopp/servicebay/commit/65b9033d2538a3bda8fe95443533d9a5e1577cf0))
+* include nginx reverse proxy config in full system backup ([ed1a6e9](https://github.com/mdopp/servicebay/commit/ed1a6e99259f1cf028ea2c2384b5895df4d5607a))
 
 ## [0.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.10.3...servicebay-v0.11.0) (2026-03-07)
 
