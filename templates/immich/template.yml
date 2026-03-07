@@ -8,14 +8,13 @@ spec:
   containers:
     - name: immich-server
       image: ghcr.io/immich-app/immich-server:release
-      args: ["start-server.sh"]
       env:
         - name: DB_HOSTNAME
           value: "localhost"
         - name: DB_USERNAME
           value: "postgres"
         - name: DB_PASSWORD
-          value: "postgres"
+          value: "{{DB_PASSWORD}}"
         - name: DB_DATABASE_NAME
           value: "immich"
         - name: REDIS_HOSTNAME
@@ -25,26 +24,6 @@ spec:
       ports:
         - containerPort: 2283
           hostPort: {{PORT}}
-      volumeMounts:
-        - mountPath: /usr/src/app/upload
-          name: immich-upload
-    
-    - name: immich-microservices
-      image: ghcr.io/immich-app/immich-server:release
-      args: ["start-microservices.sh"]
-      env:
-        - name: DB_HOSTNAME
-          value: "localhost"
-        - name: DB_USERNAME
-          value: "postgres"
-        - name: DB_PASSWORD
-          value: "postgres"
-        - name: DB_DATABASE_NAME
-          value: "immich"
-        - name: REDIS_HOSTNAME
-          value: "localhost"
-        - name: IMMICH_MACHINE_LEARNING_URL
-          value: "http://localhost:3003"
       volumeMounts:
         - mountPath: /usr/src/app/upload
           name: immich-upload
@@ -62,7 +41,7 @@ spec:
       image: docker.io/tensorchord/pgvecto-rs:pg14-v0.2.0
       env:
         - name: POSTGRES_PASSWORD
-          value: "postgres"
+          value: "{{DB_PASSWORD}}"
         - name: POSTGRES_USER
           value: "postgres"
         - name: POSTGRES_DB
@@ -73,11 +52,14 @@ spec:
 
   volumes:
     - name: immich-upload
-      persistentVolumeClaim:
-        claimName: immich-upload-pvc
+      hostPath:
+        path: {{DATA_DIR}}/immich/upload
+        type: DirectoryOrCreate
     - name: model-cache
-      persistentVolumeClaim:
-        claimName: immich-model-cache-pvc
+      hostPath:
+        path: {{DATA_DIR}}/immich/model-cache
+        type: DirectoryOrCreate
     - name: pgdata
-      persistentVolumeClaim:
-        claimName: immich-pgdata-pvc
+      hostPath:
+        path: {{DATA_DIR}}/immich/pgdata
+        type: DirectoryOrCreate

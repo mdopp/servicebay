@@ -192,13 +192,41 @@ storage:
           # Persist mdadm config
           mdadm --detail --scan >> /etc/mdadm.conf
 
-          # Mount
+          # Ignition writes ServiceBay config to the OS disk at $MOUNT_POINT/servicebay.
+          # Before mounting the RAID over $MOUNT_POINT, save those files so we can
+          # copy them into the RAID afterwards.
+          IGNITION_TMP=""
+          if [[ -d "$MOUNT_POINT/servicebay" ]]; then
+            IGNITION_TMP=$(mktemp -d)
+            cp -a "$MOUNT_POINT/servicebay" "$IGNITION_TMP/"
+            echo "setup-raid: saved Ignition config from OS disk"
+          fi
+
+          # Mount RAID over $MOUNT_POINT
           mkdir -p "$MOUNT_POINT"
           mount /dev/md/data "$MOUNT_POINT"
 
           # Create data directories (no-op if they already exist)
-          mkdir -p "$MOUNT_POINT/servicebay" "$MOUNT_POINT/stacks"
-          chown "$HOST_USER:$HOST_USER" "$MOUNT_POINT/servicebay" "$MOUNT_POINT/stacks"
+          mkdir -p "$MOUNT_POINT/servicebay/ssh" "$MOUNT_POINT/stacks"
+
+          # Apply Ignition config into RAID
+          if [[ -n "$IGNITION_TMP" && -d "$IGNITION_TMP/servicebay" ]]; then
+            # Always overwrite nodes.json and SSH keys (may change between installs)
+            for f in nodes.json ssh/id_rsa ssh/id_rsa.pub; do
+              if [[ -f "$IGNITION_TMP/servicebay/$f" ]]; then
+                cp "$IGNITION_TMP/servicebay/$f" "$MOUNT_POINT/servicebay/$f"
+              fi
+            done
+            # Only write config.json if it doesn't exist (preserve user changes)
+            if [[ ! -f "$MOUNT_POINT/servicebay/config.json" && -f "$IGNITION_TMP/servicebay/config.json" ]]; then
+              cp "$IGNITION_TMP/servicebay/config.json" "$MOUNT_POINT/servicebay/config.json"
+            fi
+            rm -rf "$IGNITION_TMP"
+            echo "setup-raid: applied Ignition config to RAID"
+          fi
+
+          chmod 600 "$MOUNT_POINT/servicebay/ssh/id_rsa" 2>/dev/null || true
+          chown -R "$HOST_USER:$HOST_USER" "$MOUNT_POINT/servicebay" "$MOUNT_POINT/stacks"
 
           # Persist mount via fstab
           grep -q '/dev/md/data' /etc/fstab || \
@@ -214,16 +242,14 @@ storage:
           [Unit]
           Description=First-boot RAID1 setup (auto-detect largest disk)
           ConditionPathExists=!/var/lib/setup-raid-done
-          DefaultDependencies=no
+          After=sysinit.target systemd-udevd.service
           Before=local-fs.target
-          After=systemd-udevd.service
-          RequiresMountsFor=/etc
 
           [Service]
           Type=oneshot
           RemainAfterExit=yes
-          ExecStart=/usr/local/bin/setup-raid.sh
-          ExecStartPost=/usr/bin/touch /var/lib/setup-raid-done
+          ExecStart=/bin/bash /usr/local/bin/setup-raid.sh
+          ExecStartPost=/bin/touch /var/lib/setup-raid-done
 
           [Install]
           WantedBy=local-fs.target
@@ -255,6 +281,7 @@ storage:
           Volume=${DATA_ROOT}/servicebay:/app/data:Z
           Environment=PORT=${SERVICEBAY_PORT}
           Environment=NODE_ENV=production
+          Environment=HOST_USER=${HOST_USER}
           SecurityLabelDisable=true
 
           [Service]
@@ -275,6 +302,24 @@ storage:
       contents:
         inline: |
 ${SERVICEBAY_CONFIG_JSON}
+
+    # ServiceBay nodes config (Local node with correct user)
+    - path: ${DATA_ROOT}/servicebay/nodes.json
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          [
+            {
+              "Name": "Local",
+              "URI": "ssh://${HOST_USER}@127.0.0.1",
+              "Identity": "/app/data/ssh/id_rsa",
+              "Default": true
+            }
+          ]
 
     # ServiceBay SSH private key (pre-authorized for host access)
     - path: ${DATA_ROOT}/servicebay/ssh/id_rsa
@@ -297,6 +342,87 @@ ${SERVICEBAY_SSH_PRIV}
       contents:
         inline: |
           ${SERVICEBAY_SSH_PUB}
+
+    # First-boot script to install Python3 (required by ServiceBay agent)
+    - path: /usr/local/bin/install-python.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+          echo "install-python: installing python3 via rpm-ostree..."
+          rpm-ostree install --apply-live --allow-inactive python3
+          echo "install-python: done"
+
+    # Systemd unit to install Python3 on first boot
+    - path: /etc/systemd/system/install-python.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Install Python3 for ServiceBay agent
+          ConditionPathExists=!/var/lib/install-python-done
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/bin/bash /usr/local/bin/install-python.sh
+          ExecStartPost=/bin/touch /var/lib/install-python-done
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # First-boot script to install Nginx reverse proxy via ServiceBay API
+    - path: /usr/local/bin/install-nginx.sh
+      mode: 0755
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+          PORT="${SERVICEBAY_PORT}"
+          MAX_WAIT=120
+          WAITED=0
+          echo "install-nginx: waiting for ServiceBay on port $PORT..."
+          while ! curl -sf "http://localhost:$PORT/api/system/nginx/status" >/dev/null 2>&1; do
+            sleep 5
+            WAITED=$((WAITED + 5))
+            if (( WAITED >= MAX_WAIT )); then
+              echo "install-nginx: timeout waiting for ServiceBay" >&2
+              exit 1
+            fi
+          done
+          echo "install-nginx: ServiceBay is up, installing nginx..."
+          curl -sf -X POST "http://localhost:$PORT/api/system/nginx/install"
+          echo "install-nginx: done"
+
+    # Systemd user unit to install Nginx on first boot
+    - path: /var/home/${HOST_USER}/.config/systemd/user/install-nginx.service
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          [Unit]
+          Description=Install Nginx reverse proxy via ServiceBay
+          ConditionPathExists=!/var/home/${HOST_USER}/.config/install-nginx-done
+          After=servicebay.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/bin/bash /usr/local/bin/install-nginx.sh
+          ExecStartPost=/bin/touch /var/home/${HOST_USER}/.config/install-nginx-done
+
+          [Install]
+          WantedBy=default.target
 
     # First-boot script to restore USB as first boot device (enables reinstall via USB)
     - path: /usr/local/bin/restore-usb-boot.sh
@@ -348,24 +474,171 @@ ${SERVICEBAY_SSH_PRIV}
       group:
         name: ${HOST_USER}
 
+    # Enable Python3 install on first boot
+    - path: /etc/systemd/system/multi-user.target.wants/install-python.service
+      target: /etc/systemd/system/install-python.service
+
+    # Enable Nginx install on first boot (user service)
+    - path: /var/home/${HOST_USER}/.config/systemd/user/default.target.wants/install-nginx.service
+      target: /var/home/${HOST_USER}/.config/systemd/user/install-nginx.service
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+
     # Enable restore-usb-boot on first boot
     - path: /etc/systemd/system/multi-user.target.wants/restore-usb-boot.service
       target: /etc/systemd/system/restore-usb-boot.service
 EOF
 
-if ! command -v butane >/dev/null 2>&1; then
-  echo "butane is required. Install from https://github.com/coreos/butane/releases" >&2
-  exit 1
-fi
+# --- Dependency check ---
+# All tools required to build the Ignition ISO
+declare -A DEPS=(
+  [butane]="Transpile Butane YAML to Ignition JSON"
+  [openssl]="Hash passwords (passwd -6)"
+  [coreos-installer]="Download ISO and embed Ignition"
+  [envsubst]="Render template variables"
+  [ssh-keygen]="Generate SSH keypair for ServiceBay"
+)
 
-if ! command -v openssl >/dev/null 2>&1; then
-  echo "openssl is required to hash passwords" >&2
-  exit 1
-fi
+MISSING=()
+for cmd in "${!DEPS[@]}"; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    MISSING+=("$cmd")
+  fi
+done
 
-if ! command -v coreos-installer >/dev/null 2>&1; then
-  echo "coreos-installer is required. Install from https://github.com/coreos/coreos-installer/releases" >&2
-  exit 1
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  echo ""
+  echo "========== Missing Dependencies =========="
+  for cmd in "${MISSING[@]}"; do
+    echo "  - $cmd  (${DEPS[$cmd]})"
+  done
+  echo "==========================================="
+  echo ""
+
+  # Detect package manager and map commands to packages
+  install_packages() {
+    local pkgs=()
+    for cmd in "${MISSING[@]}"; do
+      case "$cmd" in
+        butane)
+          # butane is not in standard repos, install from GitHub
+          echo "Installing butane from GitHub releases..."
+          local arch
+          arch=$(uname -m)
+          [[ "$arch" == "x86_64" ]] && arch="x86_64" || arch="aarch64"
+          local url="https://github.com/coreos/butane/releases/latest/download/butane-${arch}-unknown-linux-gnu"
+          if command -v curl >/dev/null 2>&1; then
+            sudo curl -sSL -o /usr/local/bin/butane "$url"
+          elif command -v wget >/dev/null 2>&1; then
+            sudo wget -qO /usr/local/bin/butane "$url"
+          else
+            echo "ERROR: neither curl nor wget available to download butane" >&2
+            return 1
+          fi
+          sudo chmod +x /usr/local/bin/butane
+          echo "  butane installed to /usr/local/bin/butane"
+          ;;
+        coreos-installer)
+          # coreos-installer has no standalone binary; use distro package or cargo
+          if command -v dnf >/dev/null 2>&1; then
+            echo "Installing coreos-installer via dnf..."
+            sudo dnf install -y -q coreos-installer
+          elif command -v apt-get >/dev/null 2>&1; then
+            echo "Installing coreos-installer via cargo (no apt package available)..."
+            # Ensure build tools and SSL headers are present
+            sudo apt-get update -qq && sudo apt-get install -y -qq build-essential pkg-config libssl-dev zlib1g-dev libzstd-dev
+            if ! command -v cargo >/dev/null 2>&1; then
+              echo "Installing Rust toolchain first..."
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+              # shellcheck disable=SC1091
+              source "$HOME/.cargo/env"
+            fi
+            cargo install coreos-installer
+          elif command -v pacman >/dev/null 2>&1; then
+            echo "Installing coreos-installer via cargo..."
+            if ! command -v cargo >/dev/null 2>&1; then
+              sudo pacman -S --noconfirm rust
+            fi
+            sudo pacman -S --noconfirm base-devel openssl pkg-config
+            cargo install coreos-installer
+          else
+            echo "ERROR: cannot auto-install coreos-installer on this distro." >&2
+            echo "Install manually: cargo install coreos-installer" >&2
+            echo "  or: sudo dnf install coreos-installer (Fedora)" >&2
+            return 1
+          fi
+          echo "  coreos-installer installed"
+          ;;
+        openssl)   pkgs+=("openssl") ;;
+        envsubst)  pkgs+=("gettext") ;;
+        ssh-keygen) pkgs+=("openssh-client" "openssh") ;;  # Debian/Ubuntu vs Fedora/RHEL
+      esac
+    done
+
+    if [[ ${#pkgs[@]} -gt 0 ]]; then
+      if command -v apt-get >/dev/null 2>&1; then
+        # Debian/Ubuntu: openssh is called openssh-client
+        local apt_pkgs=()
+        for p in "${pkgs[@]}"; do
+          [[ "$p" == "openssh" ]] && continue  # skip Fedora name
+          apt_pkgs+=("$p")
+        done
+        echo "Installing via apt: ${apt_pkgs[*]}"
+        sudo apt-get update -qq && sudo apt-get install -y -qq "${apt_pkgs[@]}"
+      elif command -v dnf >/dev/null 2>&1; then
+        # Fedora/RHEL: openssh-client is called openssh-clients, gettext is gettext
+        local dnf_pkgs=()
+        for p in "${pkgs[@]}"; do
+          case "$p" in
+            openssh-client) dnf_pkgs+=("openssh-clients") ;;
+            *) dnf_pkgs+=("$p") ;;
+          esac
+        done
+        echo "Installing via dnf: ${dnf_pkgs[*]}"
+        sudo dnf install -y -q "${dnf_pkgs[@]}"
+      elif command -v pacman >/dev/null 2>&1; then
+        local pac_pkgs=()
+        for p in "${pkgs[@]}"; do
+          case "$p" in
+            openssh-client|openssh) pac_pkgs+=("openssh") ;;
+            *) pac_pkgs+=("$p") ;;
+          esac
+        done
+        echo "Installing via pacman: ${pac_pkgs[*]}"
+        sudo pacman -S --noconfirm "${pac_pkgs[@]}"
+      else
+        echo "ERROR: no supported package manager found (apt-get, dnf, pacman)" >&2
+        echo "Please install manually: ${pkgs[*]}" >&2
+        return 1
+      fi
+    fi
+  }
+
+  read -r -p "Install missing dependencies now? [Y/n]: " DO_INSTALL
+  DO_INSTALL=${DO_INSTALL:-Y}
+  if [[ "${DO_INSTALL^^}" =~ ^Y ]]; then
+    install_packages
+    # Verify all dependencies are now available
+    STILL_MISSING=()
+    for cmd in "${MISSING[@]}"; do
+      if ! command -v "$cmd" >/dev/null 2>&1; then
+        STILL_MISSING+=("$cmd")
+      fi
+    done
+    if [[ ${#STILL_MISSING[@]} -gt 0 ]]; then
+      echo ""
+      echo "ERROR: still missing after install: ${STILL_MISSING[*]}" >&2
+      exit 1
+    fi
+    echo ""
+    echo "All dependencies installed successfully."
+  else
+    echo ""
+    echo "Cannot continue without: ${MISSING[*]}" >&2
+    exit 1
+  fi
 fi
 
 SETTINGS_FILE="$BUILD_DIR/install-settings.env"
@@ -535,6 +808,16 @@ if $USE_SAVED; then
     prompt_secret EMAIL_PASS "SMTP password ($EMAIL_USER)"
   fi
 
+  # Nginx config import (also available in saved-settings mode)
+  echo ""
+  read -r -p "Import an existing nginx config export? (JSON file) [N]: " IMPORT_NGINX
+  IMPORT_NGINX=${IMPORT_NGINX:-N}
+  if [[ "${IMPORT_NGINX^^}" =~ ^Y ]]; then
+    prompt NGINX_IMPORT_FILE "Path to nginx config JSON" ""
+  else
+    NGINX_IMPORT_FILE=""
+  fi
+
 else
   # --- Full interactive prompts ---
 
@@ -661,6 +944,19 @@ else
     prompt EMAIL_FROM "From address" "$(prev EMAIL_FROM "")"
     prompt EMAIL_RECIPIENTS "Recipients (comma separated)" "$(prev EMAIL_RECIPIENTS "")"
   fi
+
+  # --- Nginx Config Import ---
+
+  echo ""
+  echo "--- Nginx Reverse Proxy ---"
+  echo "Nginx will be installed automatically on first boot."
+  read -r -p "Import an existing nginx config export? (JSON file) [N]: " IMPORT_NGINX
+  IMPORT_NGINX=${IMPORT_NGINX:-N}
+  if [[ "${IMPORT_NGINX^^}" =~ ^Y ]]; then
+    prompt NGINX_IMPORT_FILE "Path to nginx config JSON" ""
+  else
+    NGINX_IMPORT_FILE=""
+  fi
 fi
 
 # --- Save settings for next run ---
@@ -743,6 +1039,7 @@ SERVICEBAY_SSH_DIR="$BUILD_DIR/servicebay-ssh"
 mkdir -p "$SERVICEBAY_SSH_DIR"
 if [[ ! -f "$SERVICEBAY_SSH_DIR/id_rsa" ]]; then
   ssh-keygen -t rsa -b 4096 -f "$SERVICEBAY_SSH_DIR/id_rsa" -N "" -q
+  chmod 600 "$SERVICEBAY_SSH_DIR/id_rsa"
   echo "Generated ServiceBay SSH keypair"
 fi
 SERVICEBAY_SSH_PUB="$(cat "$SERVICEBAY_SSH_DIR/id_rsa.pub")"
@@ -754,6 +1051,48 @@ export HOST_USER SSH_AUTHORIZED_KEY PASSWORD_HASH NET_INTERFACE STATIC_IP STATIC
 
 # Render Butane template
 envsubst < "$TEMPLATE" > "$RENDERED_BU"
+
+# --- Inject imported nginx config files into Butane ---
+if [[ -n "${NGINX_IMPORT_FILE:-}" && -f "$NGINX_IMPORT_FILE" ]]; then
+  echo "Embedding nginx config from $NGINX_IMPORT_FILE..."
+  # Parse JSON and create Butane file entries for each .conf file
+  # The JSON format is { "filename.conf": "content", ... }
+  NGINX_CONF_DIR="${DATA_ROOT}/nginx/conf.d"
+  NGINX_BUTANE_EXTRA=""
+  while IFS='=' read -r filename; do
+    # Extract content for this key using python3 or a simple approach
+    content=$(python3 -c "
+import json, sys
+with open('$NGINX_IMPORT_FILE') as f:
+    data = json.load(f)
+print(data.get('$filename', ''))
+" 2>/dev/null || echo "")
+    if [[ -n "$content" ]]; then
+      NGINX_BUTANE_EXTRA+="
+    - path: ${NGINX_CONF_DIR}/${filename}
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+$(echo "$content" | sed 's/^/          /')"
+    fi
+  done < <(python3 -c "
+import json
+with open('$NGINX_IMPORT_FILE') as f:
+    data = json.load(f)
+for key in data:
+    print(key)
+" 2>/dev/null)
+
+  if [[ -n "$NGINX_BUTANE_EXTRA" ]]; then
+    # Append the extra file entries before the 'links:' section
+    sed -i "/^  links:/i\\${NGINX_BUTANE_EXTRA}" "$RENDERED_BU"
+    echo "  Embedded $(echo "$NGINX_BUTANE_EXTRA" | grep -c '^\    - path:') nginx config file(s)"
+  fi
+fi
 
 # Transpile to Ignition
 butane --pretty --strict "$RENDERED_BU" > "$IGNITION_OUT"
@@ -878,8 +1217,52 @@ echo ""
 echo "Done! Ready-to-boot ISO:"
 echo "  $CUSTOM_ISO"
 echo ""
-echo "Write it to a USB stick with:"
-echo "  sudo dd if=$CUSTOM_ISO of=/dev/sdX bs=4M status=progress oflag=sync"
+
+# --- Write to USB ---
+
+# Find removable USB drives
+mapfile -t USB_DEVS < <(
+  for dev in /sys/block/sd*; do
+    [[ -e "$dev/removable" ]] || continue
+    [[ "$(cat "$dev/removable" 2>/dev/null)" == "1" ]] || continue
+    name=$(basename "$dev")
+    size_bytes=$(blockdev --getsize64 "/dev/$name" 2>/dev/null || echo 0)
+    (( size_bytes > 0 )) || continue
+    size_gib=$(( size_bytes / 1073741824 ))
+    model=$(cat "$dev/device/model" 2>/dev/null | xargs || echo "Unknown")
+    echo "/dev/$name ${size_gib}GiB ${model}"
+  done
+)
+
+if [[ ${#USB_DEVS[@]} -eq 0 ]]; then
+  echo "No USB drives detected. You can write manually with:"
+  echo "  sudo dd if=$CUSTOM_ISO of=/dev/sdX bs=4M status=progress oflag=sync"
+else
+  echo "Available USB drives:"
+  for i in "${!USB_DEVS[@]}"; do
+    echo "  $((i+1))) ${USB_DEVS[$i]}"
+  done
+  echo "  0) Skip (don't write to USB)"
+  echo ""
+  read -r -p "Select drive to write ISO to [0]: " USB_CHOICE
+  USB_CHOICE=${USB_CHOICE:-0}
+
+  if [[ "$USB_CHOICE" =~ ^[1-9][0-9]*$ ]] && (( USB_CHOICE <= ${#USB_DEVS[@]} )); then
+    USB_TARGET=$(echo "${USB_DEVS[$((USB_CHOICE-1))]}" | awk '{print $1}')
+    echo ""
+    echo "WARNING: This will ERASE ALL DATA on $USB_TARGET (${USB_DEVS[$((USB_CHOICE-1))]})"
+    read -r -p "Are you sure? Type YES to confirm: " CONFIRM_USB
+    if [[ "$CONFIRM_USB" == "YES" ]]; then
+      echo "Writing ISO to $USB_TARGET..."
+      sudo dd if="$CUSTOM_ISO" of="$USB_TARGET" bs=4M status=progress oflag=sync
+      echo ""
+      echo "Done! USB drive is ready."
+    else
+      echo "Skipped."
+    fi
+  fi
+fi
+
 echo ""
 echo "Boot the target machine from this USB. It will:"
 echo "  1. Auto-detect the smallest disk and install CoreOS there"

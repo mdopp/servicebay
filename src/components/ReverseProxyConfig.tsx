@@ -1,14 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Shield, Download, Server, Check, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Shield, Download, Upload, Server, Check, RefreshCw } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import { useToast } from '@/providers/ToastProvider';
 
 export default function ReverseProxyConfig() {
     const [loading, setLoading] = useState(false);
     const [installing, setInstalling] = useState(false);
+    const [exporting, setExporting] = useState(false);
+    const [importing, setImporting] = useState(false);
     const [status, setStatus] = useState<'installed' | 'not-installed' | 'unknown'>('unknown');
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const { addToast } = useToast();
 
     useEffect(() => {
@@ -34,13 +37,70 @@ export default function ReverseProxyConfig() {
         try {
             const res = await fetch('/api/system/nginx/install', { method: 'POST' });
             if (!res.ok) throw new Error('Installation failed');
-            
+
             addToast('success', 'Nginx installed successfully');
             checkStatus();
         } catch {
             addToast('error', 'Failed to install Nginx');
         } finally {
             setInstalling(false);
+        }
+    };
+
+    const handleExport = async () => {
+        setExporting(true);
+        try {
+            const res = await fetch('/api/system/nginx/export');
+            if (!res.ok) throw new Error('Export failed');
+            const data = await res.json();
+
+            if (!data.files || Object.keys(data.files).length === 0) {
+                addToast('info', 'No nginx configuration files found to export');
+                return;
+            }
+
+            const blob = new Blob([JSON.stringify(data.files, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `nginx-config-${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            addToast('success', `Exported ${Object.keys(data.files).length} config file(s)`);
+        } catch {
+            addToast('error', 'Failed to export nginx config');
+        } finally {
+            setExporting(false);
+        }
+    };
+
+    const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setImporting(true);
+        try {
+            const text = await file.text();
+            const files = JSON.parse(text);
+
+            if (typeof files !== 'object' || Array.isArray(files)) {
+                throw new Error('Invalid format');
+            }
+
+            const res = await fetch('/api/system/nginx/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ files })
+            });
+
+            if (!res.ok) throw new Error('Import failed');
+            const data = await res.json();
+            addToast('success', `Imported ${data.imported?.length || 0} config file(s)`);
+        } catch {
+            addToast('error', 'Failed to import nginx config. Expected JSON with { "filename.conf": "content" } format.');
+        } finally {
+            setImporting(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
 
@@ -51,7 +111,7 @@ export default function ReverseProxyConfig() {
                     <Shield className="text-green-500" />
                     Reverse Proxy (Nginx)
                 </h2>
-                <button 
+                <button
                     onClick={checkStatus}
                     disabled={loading}
                     className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
@@ -110,6 +170,37 @@ export default function ReverseProxyConfig() {
                             </div>
                         )}
                     </div>
+
+                    {/* Export / Import Card */}
+                    {status === 'installed' && (
+                        <div className="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-200 dark:border-gray-800 p-6">
+                            <h3 className="font-semibold text-lg mb-2">Configuration</h3>
+                            <p className="text-gray-500 text-sm mb-4">
+                                Export your nginx server configs to transfer to another system, or import a previously exported configuration.
+                            </p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={handleExport}
+                                    disabled={exporting}
+                                    className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                    {exporting ? <RefreshCw size={16} className="animate-spin" /> : <Download size={16} />}
+                                    Export Config
+                                </button>
+                                <label className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg transition-colors cursor-pointer">
+                                    {importing ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
+                                    Import Config
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept=".json"
+                                        onChange={handleImport}
+                                        className="hidden"
+                                    />
+                                </label>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

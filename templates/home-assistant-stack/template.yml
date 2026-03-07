@@ -20,7 +20,7 @@ spec:
       name: dbus
       readOnly: true
     securityContext:
-      privileged: true # Often needed for discovery
+      privileged: true
 
   # 2. Z-Wave JS UI
   - name: zwave-js
@@ -38,7 +38,6 @@ spec:
     - mountPath: /dev/serial-device
       name: zwave-stick
     securityContext:
-      # Required for USB access in Rootless
       privileged: true
 
   # 3. Matter Server
@@ -56,8 +55,50 @@ spec:
     securityContext:
       privileged: true
 
+  # 4. Whisper (Speech-to-Text via Wyoming protocol)
+  - name: whisper
+    image: ghcr.io/home-assistant/addon-wyoming-whisper:latest
+    env:
+    - name: TZ
+      value: "Europe/Berlin"
+    - name: WHISPER_MODEL
+      value: "{{WHISPER_MODEL}}"
+    - name: WHISPER_LANGUAGE
+      value: "{{WHISPER_LANGUAGE}}"
+    ports:
+    - containerPort: 10300
+      hostPort: 10300
+    volumeMounts:
+    - mountPath: /data
+      name: whisper-data
+
+  # 5. Piper (Text-to-Speech via Wyoming protocol)
+  - name: piper
+    image: ghcr.io/home-assistant/addon-wyoming-piper:latest
+    env:
+    - name: TZ
+      value: "Europe/Berlin"
+    - name: PIPER_VOICE
+      value: "{{PIPER_VOICE}}"
+    ports:
+    - containerPort: 10200
+      hostPort: 10200
+    volumeMounts:
+    - mountPath: /data
+      name: piper-data
+
+  # 6. openWakeWord (Wake-word detection via Wyoming protocol)
+  - name: openwakeword
+    image: ghcr.io/home-assistant/addon-wyoming-openwakeword:latest
+    env:
+    - name: TZ
+      value: "Europe/Berlin"
+    ports:
+    - containerPort: 10400
+      hostPort: 10400
+
   volumes:
-  # Persistence (Mapped to Host directories)
+  # Persistence
   - name: ha-config
     hostPath:
       path: {{DATA_DIR}}/home-assistant/homeassistant
@@ -69,6 +110,14 @@ spec:
   - name: matter-config
     hostPath:
       path: {{DATA_DIR}}/home-assistant/matter-server
+      type: DirectoryOrCreate
+  - name: whisper-data
+    hostPath:
+      path: {{DATA_DIR}}/home-assistant/whisper
+      type: DirectoryOrCreate
+  - name: piper-data
+    hostPath:
+      path: {{DATA_DIR}}/home-assistant/piper
       type: DirectoryOrCreate
 
   # System Mounts

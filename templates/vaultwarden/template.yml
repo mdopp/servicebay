@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vaultwarden
+  labels:
+    app: vaultwarden
+spec:
+  containers:
+  - name: vaultwarden
+    image: docker.io/vaultwarden/server:latest
+    env:
+    - name: DOMAIN
+      value: "{{DOMAIN}}"
+    - name: SIGNUPS_ALLOWED
+      value: "{{SIGNUPS_ALLOWED}}"
+    ports:
+    - containerPort: 80
+      hostPort: {{PORT}}
+    volumeMounts:
+    - mountPath: /data
+      name: vaultwarden-data
+  volumes:
+  - name: vaultwarden-data
+    hostPath:
+      path: {{DATA_DIR}}/vaultwarden
+      type: DirectoryOrCreate

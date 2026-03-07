@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getTemplateYaml } from '@/lib/registry';
 import { saveService } from '@/lib/manager';
+import { getConfig } from '@/lib/config';
 
 export async function POST() {
     try {
@@ -10,10 +11,17 @@ export async function POST() {
             throw new Error('Nginx template not found');
         }
 
-        // 2. Prepare the service configuration
+        // 2. Read DATA_DIR from config
+        const config = await getConfig();
+        const dataDir = config.templateSettings?.DATA_DIR || '/mnt/data';
+
+        // 3. Prepare the service configuration
         const name = 'nginx-web';
-        // Replace {{PORT}} with 8080 (standard for rootless)
-        const yamlContent = templateContent.replace('{{PORT}}', '8080');
+        // Replace variables (8080/8443 standard for rootless)
+        const yamlContent = templateContent
+            .replace(/\{\{PORT\}\}/g, '8080')
+            .replace(/\{\{SSL_PORT\}\}/g, '8443')
+            .replace(/\{\{DATA_DIR\}\}/g, dataDir);
 
         const kubeContent = `[Unit]
 Description=Nginx Reverse Proxy
@@ -26,7 +34,7 @@ Yaml=${name}.yml
 WantedBy=default.target
 `;
 
-        // 3. Save the service
+        // 4. Save the service
         await saveService(name, kubeContent, yamlContent, `${name}.yml`);
 
         return NextResponse.json({ success: true });

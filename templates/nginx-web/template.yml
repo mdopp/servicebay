@@ -12,11 +12,25 @@ spec:
     ports:
     - containerPort: 80
       hostPort: {{PORT}}
+    - containerPort: 443
+      hostPort: {{SSL_PORT}}
     volumeMounts:
+    - mountPath: /etc/nginx/conf.d
+      name: nginx-conf
+    - mountPath: /etc/nginx/ssl
+      name: nginx-ssl
     - mountPath: /usr/share/nginx/html
       name: nginx-data
   volumes:
+  - name: nginx-conf
+    hostPath:
+      path: {{DATA_DIR}}/nginx/conf.d
+      type: DirectoryOrCreate
+  - name: nginx-ssl
+    hostPath:
+      path: {{DATA_DIR}}/nginx/ssl
+      type: DirectoryOrCreate
   - name: nginx-data
-    persistentVolumeClaim:
-      claimName: nginx-data-pvc
-
+    hostPath:
+      path: {{DATA_DIR}}/nginx/html
+      type: DirectoryOrCreate

@@ -297,6 +297,7 @@ app.prepare().then(() => {
 
     let shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || 'bash');
     let args: string[] = [];
+    let containerFallbackWarning = '';
 
     if (id.startsWith('container:')) {
         const parts = id.split(':');
@@ -348,8 +349,10 @@ app.prepare().then(() => {
             // Try to use bash if available, otherwise sh. Pass TERM env var.
             args = ['exec', '-it', '-e', 'TERM=xterm-256color', containerId, 'sh', '-c', 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'];
         }
-    } else if (id.startsWith('node:')) {
-        const nodeName = id.split(':')[1];
+    } else if (id === 'host' || id.startsWith('node:')) {
+        // 'host' uses the Local node; 'node:X' uses the named node
+        const nodeName = id === 'host' ? 'Local' : id.split(':')[1];
+        let nodeResolved = false;
         try {
             const nodes = await listNodes();
             const node = nodes.find(n => n.Name === nodeName);
@@ -359,27 +362,34 @@ app.prepare().then(() => {
                 if (uri.protocol === 'ssh:') {
                     shell = 'ssh';
                     args = [];
-                    
+
                     // Identity file
                     if (node.Identity) {
                         args.push('-i', node.Identity);
                     }
-                    
+
                     // Port
                     if (uri.port) {
                         args.push('-p', uri.port);
                     }
-                    
+
                     // StrictHostKeyChecking=no to avoid interactive prompts on first connect
                     args.push('-o', 'StrictHostKeyChecking=no');
                     args.push('-o', 'UserKnownHostsFile=/dev/null');
-                    
+
                     // User and Host
                     args.push(`${uri.username}@${uri.hostname}`);
+                    nodeResolved = true;
                 }
+            } else {
+                logger.warn('Server', `Node "${nodeName}" not found. Available nodes: ${nodes.map(n => n.Name).join(', ') || '(none)'}`);
             }
         } catch (e) {
             logger.error('Server', 'Failed to resolve node connection', e);
+        }
+        if (!nodeResolved) {
+            containerFallbackWarning = `\x1b[33m⚠ WARNING: Could not connect to node "${nodeName}" via SSH. Falling back to container shell.\x1b[0m\r\n\x1b[33m  This is the ServiceBay container, not the host system. Check your node configuration.\x1b[0m\r\n\r\n`;
+            logger.warn('Server', `Terminal fallback to container shell for "${id}" – node "${nodeName}" could not be resolved`);
         }
     }
     
@@ -409,7 +419,7 @@ app.prepare().then(() => {
 
     const session: PtySession = {
         process: ptyProcess,
-        history: `\r\n\x1b[32m>>> Connected to terminal session: ${id}\x1b[0m\r\n`,
+        history: `\r\n\x1b[32m>>> Connected to terminal session: ${id}\x1b[0m\r\n${containerFallbackWarning}`,
         lastActive: Date.now()
     };
 
