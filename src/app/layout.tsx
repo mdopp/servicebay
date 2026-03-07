@@ -4,7 +4,6 @@ import "./globals.css";
 import { ToastProvider } from "@/providers/ToastProvider";
 import { DigitalTwinProvider } from "@/providers/DigitalTwinProvider";
 import { getConfig } from "@/lib/config";
-import os from 'os';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,17 +18,15 @@ const geistMono = Geist_Mono({
 });
 
 export async function generateMetadata(): Promise<Metadata> {
-  let name = os.hostname();
   try {
     const config = await getConfig();
-    if (config.domain) name = config.domain;
+    if (config.domain) {
+      return { title: `${config.domain} - ServiceBay`, description: "Manage Podman Quadlet Services" };
+    }
   } catch {
-    // fallback to hostname
+    // config not available yet
   }
-  return {
-    title: `${name} - ServiceBay`,
-    description: "Manage Podman Quadlet Services",
-  };
+  return { title: "ServiceBay", description: "Manage Podman Quadlet Services" };
 }
 
 export default function RootLayout({
