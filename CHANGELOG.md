@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.6](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.5...servicebay-v0.12.6) (2026-03-07)
+
+
+### Bug Fixes
+
+* parse proxy hostPath volumes from YAML files instead of container mounts ([3f61fce](https://github.com/mdopp/servicebay/commit/3f61fceab1669ba01eef8c7d25b28bb0c19ff95f))
+
 ## [0.12.5](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.4...servicebay-v0.12.5) (2026-03-07)
 
 
