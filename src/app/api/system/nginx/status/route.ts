@@ -6,11 +6,16 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
     try {
         const services = await ServiceManager.listServices('Local');
-        const nginxService = services.find(s => s.name === 'nginx-web');
-        
-        return NextResponse.json({ 
+        const nginxService = services.find(s =>
+            s.name === 'nginx-web' ||
+            s.name.includes('nginx') ||
+            s.description?.toLowerCase().includes('nginx')
+        );
+
+        return NextResponse.json({
             installed: !!nginxService,
-            active: nginxService?.active || false
+            active: nginxService?.active || false,
+            name: nginxService?.name
         });
     } catch (error) {
         console.error('Failed to check nginx status:', error);

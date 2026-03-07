@@ -827,14 +827,14 @@ if $USE_SAVED; then
     prompt_secret EMAIL_PASS "SMTP password ($EMAIL_USER)"
   fi
 
-  # Nginx config import (also available in saved-settings mode)
+  # Backup restore (also available in saved-settings mode)
   echo ""
-  read -r -p "Import an existing nginx config export? (JSON file) [N]: " IMPORT_NGINX
-  IMPORT_NGINX=${IMPORT_NGINX:-N}
-  if [[ "${IMPORT_NGINX^^}" =~ ^Y ]]; then
-    prompt NGINX_IMPORT_FILE "Path to nginx config JSON" ""
+  read -r -p "Include a ServiceBay backup for restore? [N]: " INCLUDE_BACKUP
+  INCLUDE_BACKUP=${INCLUDE_BACKUP:-N}
+  if [[ "${INCLUDE_BACKUP^^}" =~ ^Y ]]; then
+    prompt BACKUP_FILE "Path to ServiceBay backup (.tar.gz)" ""
   else
-    NGINX_IMPORT_FILE=""
+    BACKUP_FILE=""
   fi
 
 else
@@ -964,17 +964,19 @@ else
     prompt EMAIL_RECIPIENTS "Recipients (comma separated)" "$(prev EMAIL_RECIPIENTS "")"
   fi
 
-  # --- Nginx Config Import ---
+  # --- Backup Restore ---
 
   echo ""
-  echo "--- Nginx Reverse Proxy ---"
-  echo "Nginx will be installed automatically on first boot."
-  read -r -p "Import an existing nginx config export? (JSON file) [N]: " IMPORT_NGINX
-  IMPORT_NGINX=${IMPORT_NGINX:-N}
-  if [[ "${IMPORT_NGINX^^}" =~ ^Y ]]; then
-    prompt NGINX_IMPORT_FILE "Path to nginx config JSON" ""
+  echo "--- Restore from Backup ---"
+  echo "If you have a ServiceBay backup (.tar.gz), it will be placed on the"
+  echo "data volume. After first boot, use Settings > Backups > Restore to"
+  echo "cherry-pick what to restore (services, configs, nginx, monitoring)."
+  read -r -p "Include a backup file for restore? [N]: " INCLUDE_BACKUP
+  INCLUDE_BACKUP=${INCLUDE_BACKUP:-N}
+  if [[ "${INCLUDE_BACKUP^^}" =~ ^Y ]]; then
+    prompt BACKUP_FILE "Path to ServiceBay backup (.tar.gz)" ""
   else
-    NGINX_IMPORT_FILE=""
+    BACKUP_FILE=""
   fi
 fi
 
@@ -1071,46 +1073,13 @@ export HOST_USER SSH_AUTHORIZED_KEY PASSWORD_HASH NET_INTERFACE STATIC_IP STATIC
 # Render Butane template
 envsubst < "$TEMPLATE" > "$RENDERED_BU"
 
-# --- Inject imported nginx config files into Butane ---
-if [[ -n "${NGINX_IMPORT_FILE:-}" && -f "$NGINX_IMPORT_FILE" ]]; then
-  echo "Embedding nginx config from $NGINX_IMPORT_FILE..."
-  # Parse JSON and create Butane file entries for each .conf file
-  # The JSON format is { "filename.conf": "content", ... }
-  NGINX_CONF_DIR="${DATA_ROOT}/nginx/conf.d"
-  NGINX_BUTANE_EXTRA=""
-  while IFS='=' read -r filename; do
-    # Extract content for this key using python3 or a simple approach
-    content=$(python3 -c "
-import json, sys
-with open('$NGINX_IMPORT_FILE') as f:
-    data = json.load(f)
-print(data.get('$filename', ''))
-" 2>/dev/null || echo "")
-    if [[ -n "$content" ]]; then
-      NGINX_BUTANE_EXTRA+="
-    - path: ${NGINX_CONF_DIR}/${filename}
-      mode: 0644
-      user:
-        name: ${HOST_USER}
-      group:
-        name: ${HOST_USER}
-      contents:
-        inline: |
-$(echo "$content" | sed 's/^/          /')"
-    fi
-  done < <(python3 -c "
-import json
-with open('$NGINX_IMPORT_FILE') as f:
-    data = json.load(f)
-for key in data:
-    print(key)
-" 2>/dev/null)
-
-  if [[ -n "$NGINX_BUTANE_EXTRA" ]]; then
-    # Append the extra file entries before the 'links:' section
-    sed -i "/^  links:/i\\${NGINX_BUTANE_EXTRA}" "$RENDERED_BU"
-    echo "  Embedded $(echo "$NGINX_BUTANE_EXTRA" | grep -c '^\    - path:') nginx config file(s)"
-  fi
+# --- Stage backup file for post-install restore ---
+BACKUP_STAGED=""
+if [[ -n "${BACKUP_FILE:-}" && -f "$BACKUP_FILE" ]]; then
+  BACKUP_BASENAME="$(basename "$BACKUP_FILE")"
+  cp "$BACKUP_FILE" "$BUILD_DIR/$BACKUP_BASENAME"
+  BACKUP_STAGED="$BACKUP_BASENAME"
+  echo "Staged backup: $BACKUP_BASENAME ($(du -h "$BACKUP_FILE" | cut -f1))"
 fi
 
 # Transpile to Ignition
@@ -1288,5 +1257,15 @@ echo "  1. Auto-detect the smallest disk and install CoreOS there"
 echo "  2. On first boot, auto-detect the largest disk and create a degraded RAID1"
 echo "  3. Mount RAID at $DATA_ROOT, start ServiceBay on port $SERVICEBAY_PORT"
 echo ""
+if [[ -n "${BACKUP_STAGED:-}" ]]; then
+  echo "=== Restore from Backup ==="
+  echo "After first boot, copy the backup to the server and restore:"
+  echo ""
+  echo "  scp $BUILD_DIR/$BACKUP_STAGED ${HOST_USER}@${STATIC_IP}:$DATA_ROOT/servicebay/backups/"
+  echo ""
+  echo "Then open ServiceBay > Settings > Backups > Restore and cherry-pick"
+  echo "which services, configs, and settings to restore."
+  echo ""
+fi
 echo "After install, add the second SSD to the RAID:"
 echo "  sudo mdadm --add /dev/md/data /dev/disk/by-partlabel/raid1-ssd2"
