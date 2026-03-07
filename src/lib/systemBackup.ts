@@ -566,12 +566,14 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
                 if (!c.mounts) continue;
 
                 for (const m of c.mounts) {
+                    const mAny = m as Record<string, unknown>;
                     pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name,
-                        message: `Mount: Type=${m.Type} Source=${m.Source} Dest=${m.Destination}` });
-                    if (m.Source && m.Destination) {
-                        // Label from container destination path for readability
-                        const label = m.Destination.replace(/^\//, '').replace(/\//g, '-');
-                        proxyMounts.push({ source: m.Source, label });
+                        message: `Mount keys: ${Object.keys(mAny).join(',')} = ${JSON.stringify(mAny)}` });
+                    const src = mAny.Source || mAny.source || mAny.src;
+                    const dst = mAny.Destination || mAny.destination || mAny.dst || mAny.target;
+                    if (src && dst) {
+                        const label = String(dst).replace(/^\//, '').replace(/\//g, '-');
+                        proxyMounts.push({ source: String(src), label });
                     }
                 }
             }
