@@ -2640,8 +2640,17 @@ export default function SettingsPage() {
                                   <button type="button" onClick={() => toggleRestoreSection(sdKey)} className="flex items-center gap-2 flex-1 min-w-0">
                                     {sdExpanded ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
                                     <HardDrive size={14} className="text-gray-400 shrink-0" />
-                                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{label}</span>
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">{selectedCount}/{sd.files.length}</span>
+                                    <div className="flex flex-col items-start min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{label}</span>
+                                        <span className="text-xs text-gray-500 dark:text-gray-400">{selectedCount}/{sd.files.length}</span>
+                                      </div>
+                                      {(sd.sourcePath || sd.nodeName) && (
+                                        <span className="text-[11px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-full">
+                                          → {sd.nodeName ? `${sd.nodeName}:` : ''}{sd.sourcePath}
+                                        </span>
+                                      )}
+                                    </div>
                                   </button>
                                   {/* Quick-select buttons for categories */}
                                   <div className="flex items-center gap-1 shrink-0">

@@ -105,6 +105,8 @@ export interface BackupPreviewNodeFiles {
 export interface BackupPreviewServiceData {
     name: string;
     files: string[];
+    sourcePath?: string;
+    nodeName?: string;
 }
 
 export interface BackupPreviewResult {
@@ -801,14 +803,23 @@ export async function previewSystemBackup(archivePath: string): Promise<BackupPr
         const serviceDataDir = path.join(stagingDir, 'service-data');
         const serviceData: BackupPreviewServiceData[] = [];
         if (await pathExists(serviceDataDir)) {
+            const backupMeta = await readMetadata(stagingDir);
+            const sdEntries = backupMeta?.serviceData;
+            const sdMeta = (sdEntries && sdEntries.length > 0 && typeof sdEntries[0] === 'object')
+                ? sdEntries as ServiceDataEntry[]
+                : undefined;
+
             const dataDirs = await fs.readdir(serviceDataDir, { withFileTypes: true });
             for (const dirent of dataDirs) {
                 if (!dirent.isDirectory()) continue;
                 const dirPath = path.join(serviceDataDir, dirent.name);
                 const files = await listFilesRecursive(dirPath);
+                const metaEntry = sdMeta?.find(e => e.label === dirent.name);
                 serviceData.push({
                     name: dirent.name,
-                    files: files.map(f => path.relative(dirPath, f).split(path.sep).join('/'))
+                    files: files.map(f => path.relative(dirPath, f).split(path.sep).join('/')),
+                    sourcePath: metaEntry?.sourcePath,
+                    nodeName: metaEntry?.nodeName
                 });
             }
         }
