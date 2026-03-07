@@ -228,6 +228,19 @@ storage:
           chmod 600 "$MOUNT_POINT/servicebay/ssh/id_rsa" 2>/dev/null || true
           chown -R "$HOST_USER:$HOST_USER" "$MOUNT_POINT/servicebay" "$MOUNT_POINT/stacks"
 
+          # Restore Quadlet service definitions from RAID backup (reinstall scenario)
+          QUADLET_BACKUP="$MOUNT_POINT/servicebay/quadlet-backup"
+          QUADLET_DIR="/var/home/$HOST_USER/.config/containers/systemd"
+          if [[ -d "$QUADLET_BACKUP" ]] && ls "$QUADLET_BACKUP"/*.{kube,yml,container} &>/dev/null; then
+            echo "setup-raid: restoring Quadlet service definitions from RAID backup..."
+            mkdir -p "$QUADLET_DIR"
+            cp -a "$QUADLET_BACKUP"/*.kube "$QUADLET_DIR/" 2>/dev/null || true
+            cp -a "$QUADLET_BACKUP"/*.yml "$QUADLET_DIR/" 2>/dev/null || true
+            cp -a "$QUADLET_BACKUP"/*.container "$QUADLET_DIR/" 2>/dev/null || true
+            chown -R "$HOST_USER:$HOST_USER" "$QUADLET_DIR"
+            echo "setup-raid: restored $(ls "$QUADLET_DIR"/*.kube 2>/dev/null | wc -l) service(s)"
+          fi
+
           # Persist mount via fstab
           grep -q '/dev/md/data' /etc/fstab || \
             echo "/dev/md/data $MOUNT_POINT xfs defaults,nofail 0 2" >> /etc/fstab
@@ -342,6 +355,50 @@ ${SERVICEBAY_SSH_PRIV}
       contents:
         inline: |
           ${SERVICEBAY_SSH_PUB}
+
+    # Script to backup Quadlet service definitions to RAID
+    - path: /usr/local/bin/backup-quadlets.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+          QUADLET_DIR="/var/home/${HOST_USER}/.config/containers/systemd"
+          BACKUP_DIR="${DATA_ROOT}/servicebay/quadlet-backup"
+          if [[ ! -d "$QUADLET_DIR" ]]; then
+            exit 0
+          fi
+          mkdir -p "$BACKUP_DIR"
+          # Sync all quadlet files to backup (delete removed ones)
+          rsync -a --delete --include='*.kube' --include='*.yml' --include='*.container' --exclude='*' "$QUADLET_DIR/" "$BACKUP_DIR/"
+          echo "backup-quadlets: synced to $BACKUP_DIR"
+
+    # Systemd service to backup Quadlet files
+    - path: /etc/systemd/system/backup-quadlets.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Backup Quadlet service definitions to RAID
+
+          [Service]
+          Type=oneshot
+          ExecStart=/bin/bash /usr/local/bin/backup-quadlets.sh
+
+    # Timer to run Quadlet backup every 5 minutes
+    - path: /etc/systemd/system/backup-quadlets.timer
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Periodic Quadlet backup to RAID
+
+          [Timer]
+          OnBootSec=2min
+          OnUnitActiveSec=5min
+
+          [Install]
+          WantedBy=timers.target
 
     # First-boot script to install Python3 (required by ServiceBay agent)
     - path: /usr/local/bin/install-python.sh
@@ -473,6 +530,10 @@ ${SERVICEBAY_SSH_PRIV}
         name: ${HOST_USER}
       group:
         name: ${HOST_USER}
+
+    # Enable Quadlet backup timer
+    - path: /etc/systemd/system/timers.target.wants/backup-quadlets.timer
+      target: /etc/systemd/system/backup-quadlets.timer
 
     # Enable Python3 install on first boot
     - path: /etc/systemd/system/multi-user.target.wants/install-python.service
