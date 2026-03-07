@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.1...servicebay-v0.12.2) (2026-03-07)
+
+
+### Bug Fixes
+
+* read nginx backup paths from Digital Twin container mounts ([d2d79d6](https://github.com/mdopp/servicebay/commit/d2d79d6b7b0892c88af1e0ec81746e2c43399490))
+
 ## [0.12.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.0...servicebay-v0.12.1) (2026-03-07)
 
 
