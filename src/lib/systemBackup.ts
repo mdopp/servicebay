@@ -15,7 +15,8 @@ const BACKUP_PREFIX = 'servicebay-full';
 const CONFIG_FILES = ['config.json', 'nodes.json', 'checks.json'];
 const REMOTE_SYSTEMD_DIR = '$HOME/.config/containers/systemd';
 const METADATA_FILE = 'metadata.json';
-const METADATA_VERSION = 1;
+const METADATA_VERSION = 2;
+const NGINX_DIRS = ['nginx/conf.d', 'nginx/ssl'];
 
 export interface SystemBackupEntry {
     fileName: string;
@@ -102,9 +103,15 @@ export interface BackupPreviewNodeFiles {
     files: BackupPreviewNodeFile[];
 }
 
+export interface BackupPreviewServiceData {
+    name: string;
+    files: string[];
+}
+
 export interface BackupPreviewResult {
     config: BackupPreviewConfig;
     nodeFiles: BackupPreviewNodeFiles[];
+    serviceData?: BackupPreviewServiceData[];
 }
 
 export interface BackupRestoreSelection {
@@ -124,6 +131,7 @@ export interface BackupRestoreSelection {
         targetNode: string;
         files: string[];
     }>;
+    serviceData?: string[];
 }
 
 interface BackupNodeDescriptor {
@@ -137,6 +145,7 @@ interface BackupMetadata {
     createdAt: string;
     nodes: BackupNodeDescriptor[];
     configFiles: string[];
+    serviceData?: string[];
 }
 
 type ProgressCallback = (entry: BackupLogEntry) => void;
@@ -523,6 +532,48 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
             }
         }
 
+        // Stage nginx / reverse-proxy config from remote DATA_DIR
+        const config = await getConfig();
+        const remoteDataDir = config.templateSettings?.DATA_DIR || '/mnt/data';
+        const serviceDataDir = path.join(stagingDir, 'service-data');
+        metadata.serviceData = [];
+
+        for (const node of remoteNodes) {
+            const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
+            for (const nginxDir of NGINX_DIRS) {
+                const remotePath = `${remoteDataDir}/${nginxDir}`;
+                const checkResult = await execRemoteCommand(conn, `test -d "${remotePath}" && ls -A "${remotePath}" 2>/dev/null | head -1`);
+                if (checkResult.code !== 0 || !checkResult.stdout.trim()) continue;
+
+                const dirName = nginxDir.replace('/', '-');
+                const localDir = path.join(serviceDataDir, dirName);
+                await fs.mkdir(localDir, { recursive: true });
+
+                const tmpArchive = path.join(localDir, 'data.tgz');
+                const script = [
+                    'set -e',
+                    `tmpfile=$(mktemp /tmp/servicebay-nginx-XXXXXX.tar.gz)`,
+                    `tar -czf "$tmpfile" -C "${remotePath}" .`,
+                    `echo "$tmpfile"`
+                ].join('\n');
+                const archiveResult = await execRemoteCommand(conn, script);
+                if (archiveResult.code !== 0) continue;
+                const remoteTmp = archiveResult.stdout.trim().split('\n').pop();
+                if (!remoteTmp) continue;
+
+                await downloadRemoteFile(conn, remoteTmp, tmpArchive);
+                await execRemoteCommand(conn, `rm -f "${remoteTmp}"`);
+                await runTar(['-xzf', tmpArchive, '-C', localDir]);
+                await fs.rm(tmpArchive, { force: true });
+
+                if (!metadata.serviceData.includes(dirName)) {
+                    metadata.serviceData.push(dirName);
+                }
+                stagedSomething = true;
+                pushLog(logs, progress, { scope: 'remote', status: 'success', node: node.Name, message: `Captured ${nginxDir}` });
+            }
+        }
+
         if (!stagedSomething) {
             throw new Error('Nothing to backup');
         }
@@ -668,7 +719,23 @@ export async function previewSystemBackup(archivePath: string): Promise<BackupPr
             }
         }
 
-        return { config: configPreview, nodeFiles };
+        // Preview service-data (nginx config etc.)
+        const serviceDataDir = path.join(stagingDir, 'service-data');
+        const serviceData: BackupPreviewServiceData[] = [];
+        if (await pathExists(serviceDataDir)) {
+            const dataDirs = await fs.readdir(serviceDataDir, { withFileTypes: true });
+            for (const dirent of dataDirs) {
+                if (!dirent.isDirectory()) continue;
+                const dirPath = path.join(serviceDataDir, dirent.name);
+                const files = await listFilesRecursive(dirPath);
+                serviceData.push({
+                    name: dirent.name,
+                    files: files.map(f => path.relative(dirPath, f).split(path.sep).join('/'))
+                });
+            }
+        }
+
+        return { config: configPreview, nodeFiles, serviceData };
     } finally {
         await fs.rm(stagingDir, { recursive: true, force: true });
     }
@@ -822,6 +889,40 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                     if (reload.code !== 0) {
                         logger.warn('SystemBackup', `Remote daemon reload failed on ${targetNode}: ${reload.stderr || reload.stdout}`);
                     }
+                }
+            }
+        }
+
+        // Restore service-data (nginx config etc.) to remote DATA_DIR
+        if (selection.serviceData?.length) {
+            const backupConfig = await readJsonFile<Awaited<ReturnType<typeof getConfig>>>(path.join(stagingDir, 'config', 'config.json'));
+            const remoteDataDir = backupConfig?.templateSettings?.DATA_DIR || (await getConfig()).templateSettings?.DATA_DIR || '/mnt/data';
+            const serviceDataDir = path.join(stagingDir, 'service-data');
+            const remoteNodes2 = (await listNodes()).filter(n => n.URI?.startsWith('ssh://'));
+
+            for (const dirName of selection.serviceData) {
+                const localDir = path.join(serviceDataDir, dirName);
+                if (!(await pathExists(localDir))) continue;
+
+                // Map dir name back to path: nginx-conf.d -> nginx/conf.d, nginx-ssl -> nginx/ssl
+                const remoteSub = dirName.replace(/^nginx-/, 'nginx/');
+                const remotePath = `${remoteDataDir}/${remoteSub}`;
+
+                for (const node of remoteNodes2) {
+                    const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
+                    // Create tar locally, upload, extract remotely
+                    const tmpArchive = path.join(os.tmpdir(), `servicebay-svcdata-${Date.now()}.tar.gz`);
+                    await runTar(['-czf', tmpArchive, '-C', localDir, '.']);
+                    const mktemp = await execRemoteCommand(conn, 'mktemp /tmp/servicebay-svcdata-XXXXXX.tar.gz');
+                    if (mktemp.code !== 0) {
+                        await fs.rm(tmpArchive, { force: true });
+                        continue;
+                    }
+                    const remoteTmp = mktemp.stdout.trim();
+                    await uploadRemoteFile(conn, tmpArchive, remoteTmp);
+                    await fs.rm(tmpArchive, { force: true });
+                    await execRemoteCommand(conn, `mkdir -p "${remotePath}" && tar -xzf "${remoteTmp}" -C "${remotePath}" && rm -f "${remoteTmp}"`);
+                    logger.info('SystemBackup', `Restored ${dirName} to ${node.Name}:${remotePath}`);
                 }
             }
         }

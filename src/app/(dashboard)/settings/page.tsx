@@ -145,6 +145,7 @@ export default function SettingsPage() {
     };
     nodeFiles: Record<string, Record<string, boolean>>;
     targetNodes: Record<string, string>;
+    serviceData: Record<string, boolean>;
   } | null>(null);
   const [backupLog, setBackupLog] = useState<BackupLogEntry[]>([]);
   const [backupStatus, setBackupStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
@@ -857,6 +858,11 @@ export default function SettingsPage() {
       targetNodes[group.nodeName] = availableTargets.includes(group.nodeName) ? group.nodeName : 'Local';
     });
 
+    const serviceDataState: Record<string, boolean> = {};
+    (preview.serviceData || []).forEach(sd => {
+      serviceDataState[sd.name] = true;
+    });
+
     setRestoreSelectionState({
       nodes: nodesState,
       checks: checksState,
@@ -870,7 +876,8 @@ export default function SettingsPage() {
         update: Boolean(preview.config.update)
       },
       nodeFiles: nodeFilesState,
-      targetNodes
+      targetNodes,
+      serviceData: serviceDataState
     });
   }, [nodes]);
 
@@ -997,6 +1004,10 @@ export default function SettingsPage() {
         })
         .filter(group => group.files.length > 0 && group.targetNode);
 
+      const selectedServiceData = Object.entries(restoreSelectionState.serviceData)
+        .filter(([, enabled]) => enabled)
+        .map(([name]) => name);
+
       const selection: BackupRestoreSelection = {
         config: {
           nodes: selectedNodes,
@@ -1009,7 +1020,8 @@ export default function SettingsPage() {
           logLevel: restoreSelectionState.configFlags.logLevel,
           update: restoreSelectionState.configFlags.update
         },
-        nodeFiles
+        nodeFiles,
+        serviceData: selectedServiceData.length > 0 ? selectedServiceData : undefined
       };
 
       const payload = restoreSource.type === 'stored'
@@ -1058,7 +1070,8 @@ export default function SettingsPage() {
           Object.fromEntries(group.files.map(file => [file.relativePath, true]))
         ])
       ),
-      targetNodes: restoreSelectionState.targetNodes
+      targetNodes: restoreSelectionState.targetNodes,
+      serviceData: Object.fromEntries((restorePreview.serviceData || []).map(sd => [sd.name, true]))
     });
   }, [restorePreview, restoreSelectionState]);
 
@@ -2431,6 +2444,38 @@ export default function SettingsPage() {
                       </div>
                     )}
                   </div>
+
+                  {restorePreview.serviceData && restorePreview.serviceData.length > 0 && (
+                    <div className="space-y-4">
+                      <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Service Data</h4>
+                      <div className="space-y-2">
+                        {restorePreview.serviceData.map(sd => {
+                          const label = sd.name === 'nginx-conf.d' ? 'Nginx Config (conf.d)'
+                            : sd.name === 'nginx-ssl' ? 'Nginx SSL Certificates'
+                            : sd.name;
+                          return (
+                            <label key={sd.name} className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
+                              <input
+                                type="checkbox"
+                                className="mt-1"
+                                checked={Boolean(restoreSelectionState.serviceData[sd.name])}
+                                onChange={() => setRestoreSelectionState(prev => prev ? {
+                                  ...prev,
+                                  serviceData: { ...prev.serviceData, [sd.name]: !prev.serviceData[sd.name] }
+                                } : prev)}
+                              />
+                              <span>
+                                <span className="font-medium">{label}</span>
+                                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                                  {sd.files.length} file{sd.files.length !== 1 ? 's' : ''}: {sd.files.join(', ')}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : null}
             </div>

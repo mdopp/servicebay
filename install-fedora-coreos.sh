@@ -241,6 +241,9 @@ storage:
             echo "setup-raid: restored $(ls "$QUADLET_DIR"/*.kube 2>/dev/null | wc -l) service(s)"
           fi
 
+          # Note: nginx config lives directly on RAID at DATA_DIR/nginx/ — no restore needed,
+          # it survives reinstalls by being on the RAID mount itself.
+
           # Persist mount via fstab
           grep -q '/dev/md/data' /etc/fstab || \
             echo "/dev/md/data $MOUNT_POINT xfs defaults,nofail 0 2" >> /etc/fstab

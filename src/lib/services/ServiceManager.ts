@@ -490,7 +490,9 @@ export class ServiceManager {
         this.backupQuadlets(nodeName);
     }
 
-    /** Backup Quadlet files to data directory (survives OS reinstall) */
+    /** Backup Quadlet files to data directory (survives OS reinstall).
+     *  Note: nginx config already lives on DATA_DIR (RAID) and needs no extra backup here.
+     *  It is included in the downloadable full system backup (systemBackup.ts). */
     private static async backupQuadlets(nodeName: string) {
         try {
             const config = await getConfig();
