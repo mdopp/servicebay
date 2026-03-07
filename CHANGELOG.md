@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.0...servicebay-v0.12.1) (2026-03-07)
+
+
+### Bug Fixes
+
+* scan all SSH nodes for nginx config during backup, add logging ([28caf9c](https://github.com/mdopp/servicebay/commit/28caf9cc1f2eafa07e48356f4cc1d6979ec3fb2e))
+
 ## [0.12.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.11.0...servicebay-v0.12.0) (2026-03-07)
 
 
