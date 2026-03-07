@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.5](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.4...servicebay-v0.12.5) (2026-03-07)
+
+
+### Bug Fixes
+
+* dump mount object keys and try multiple property name variants ([7f857e3](https://github.com/mdopp/servicebay/commit/7f857e398f6033993ce56674700e51b5de051ec4))
+
 ## [0.12.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.12.3...servicebay-v0.12.4) (2026-03-07)
 
 
