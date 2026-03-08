@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.6](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.5...servicebay-v0.17.6) (2026-03-08)
+
+
+### Bug Fixes
+
+* switch to Nginx Proxy Manager and fix auto-install timing ([ba0ccaa](https://github.com/mdopp/servicebay/commit/ba0ccaa7ce70424fce58d4dc7316294278e62753))
+
 ## [0.17.5](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.4...servicebay-v0.17.5) (2026-03-08)
 
 
