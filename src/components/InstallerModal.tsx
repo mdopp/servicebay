@@ -154,7 +154,11 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
         setLogs(prev => [...prev, `Installing ${item.name}...`]);
 
         const view = variables.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {});
+        // Disable HTML escaping — we're rendering YAML, not HTML
+        const savedEscape = Mustache.escape;
+        Mustache.escape = (text: string) => text;
         const content = Mustache.render(item.yaml, view);
+        Mustache.escape = savedEscape;
 
         const kubeContent = `[Kube]
 Yaml=${item.name}.yml

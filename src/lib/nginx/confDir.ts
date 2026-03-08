@@ -2,6 +2,7 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getExecutor } from '@/lib/executor';
 import { parseQuadletFile } from '@/lib/quadlet/parser';
+import { getConfig } from '@/lib/config';
 import yaml from 'js-yaml';
 import path from 'path';
 import { logger } from '@/lib/logger';
@@ -19,6 +20,8 @@ interface YamlResolution {
     exactConfDir: string | null;
     /** All hostPath mounts from the proxy pod, for probing */
     proxyHostPaths: { hostPath: string; containerDest: string }[];
+    /** True when the proxy uses Nginx Proxy Manager (data lives under /data) */
+    isNpm: boolean;
 }
 
 /**
@@ -61,8 +64,8 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
 
         const nginxService = services.find(s =>
             s.name === 'nginx-web' ||
-            s.name.includes('nginx') ||
-            s.description?.toLowerCase().includes('nginx')
+            (s.name.includes('nginx') && !s.name.startsWith('install-')) ||
+            (s.description?.toLowerCase().includes('nginx') && !s.name.startsWith('install-'))
         );
         if (!nginxService) {
             debug.push(`Node "${nodeName}": no nginx service`);
@@ -72,6 +75,7 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
 
         // Try resolving from Digital Twin YAML
         const yamlResult = resolveFromTwinFiles(twinStore, nodeName, debug);
+
         if (yamlResult.exactConfDir) {
             logger.info('NginxConfDir', `Resolved conf.d from YAML: ${yamlResult.exactConfDir} on ${nodeName}`);
             return { nodeName, confDir: yamlResult.exactConfDir, debug };
@@ -87,6 +91,21 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
             }
         }
 
+        // NPM fallback: if we detected Nginx Proxy Manager but YAML volume extraction
+        // failed (e.g. named volumes without hostPath), construct the data path from
+        // template settings DATA_DIR and probe NPM's known config subdirectories.
+        if (yamlResult.isNpm && yamlResult.proxyHostPaths.length === 0) {
+            debug.push(`Node "${nodeName}": NPM detected but no hostPath volumes extracted, trying DATA_DIR fallback`);
+            const npmPaths = await buildNpmFallbackPaths(debug);
+            if (npmPaths.length > 0) {
+                const probed = await probeProxyVolumes(nodeName, npmPaths, debug);
+                if (probed) {
+                    logger.info('NginxConfDir', `Resolved conf.d via NPM DATA_DIR fallback: ${probed} on ${nodeName}`);
+                    return { nodeName, confDir: probed, debug };
+                }
+            }
+        }
+
         // Fallback: probe common filesystem paths
         debug.push(`Node "${nodeName}": probing common system paths`);
         const probed = await probeCommonPaths(nodeName, debug);
@@ -95,14 +114,14 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
             return { nodeName, confDir: probed, debug };
         }
 
-        const isNative = yamlResult.proxyHostPaths.length === 0;
-        const reason = `Found nginx service "${nginxService.name}" on "${nodeName}" but could not locate the conf.d directory. `
-            + (isNative
-                ? 'This appears to be a native (non-containerized) nginx install. '
+        const hasVolumes = yamlResult.proxyHostPaths.length > 0 || yamlResult.isNpm;
+        const reason = `Found nginx service "${nginxService.name}" on "${nodeName}" but could not locate the nginx config directory. `
+            + (hasVolumes
+                ? 'Probed proxy data volumes and common system paths but found no .conf files. '
+                  + 'Make sure the service has started at least once so the config directories are created.'
+                : 'This appears to be a native (non-containerized) nginx install. '
                   + `The standard paths (${COMMON_CONF_DIRS.join(', ')}) could not be read — `
-                  + 'make sure nginx is fully installed and the conf.d directory exists.'
-                : 'No /etc/nginx/conf.d volume mount was found in the service YAML, '
-                  + 'and probing proxy data volumes and common system paths found no .conf files.');
+                  + 'make sure nginx is fully installed and the conf.d directory exists.');
         debug.push(reason);
         return { nodeName, confDir: '', reason, debug };
     }
@@ -118,7 +137,7 @@ function resolveFromTwinFiles(
     nodeName: string,
     debug: string[],
 ): YamlResolution {
-    const result: YamlResolution = { exactConfDir: null, proxyHostPaths: [] };
+    const result: YamlResolution = { exactConfDir: null, proxyHostPaths: [], isNpm: false };
     const twin = twinStore.nodes[nodeName];
     if (!twin?.files) {
         debug.push(`Node "${nodeName}": no files in twin store`);
@@ -244,6 +263,12 @@ function resolveFromKubeYaml(
             const containers = (spec.containers || []) as Array<Record<string, unknown>>;
             const mountMap = new Map<string, string>();
             for (const ct of containers) {
+                const ctName = (ct.name || '') as string;
+                const ctImage = (ct.image || '') as string;
+                // Detect Nginx Proxy Manager by container name or image
+                if (/nginx-proxy-manager|jc21\/nginx-proxy-manager/i.test(`${ctName} ${ctImage}`)) {
+                    result.isNpm = true;
+                }
                 for (const vm of (ct.volumeMounts || []) as Array<Record<string, string>>) {
                     if (vm.name && vm.mountPath) mountMap.set(vm.name, vm.mountPath);
                 }
@@ -253,8 +278,11 @@ function resolveFromKubeYaml(
 
             for (const vol of volumes) {
                 const hp = vol.hostPath as Record<string, string> | undefined;
-                if (!hp?.path) continue;
                 const volName = vol.name as string;
+                if (!hp?.path) {
+                    debug.push(`  ${filePath}: volume "${volName}" has no hostPath.path (keys: ${hp ? Object.keys(hp).join(',') : 'no hostPath'})`);
+                    continue;
+                }
                 const containerDest = mountMap.get(volName) || '';
 
                 if (containerDest === '/etc/nginx/conf.d') {
@@ -270,6 +298,34 @@ function resolveFromKubeYaml(
         debug.push(`  ${filePath}: YAML parse error: ${e}`);
     }
     return false;
+}
+
+/**
+ * Build fallback probe paths for NPM from template settings DATA_DIR.
+ * NPM's data volume is typically at DATA_DIR/nginx-proxy-manager/data.
+ */
+async function buildNpmFallbackPaths(debug: string[]): Promise<{ hostPath: string; containerDest: string }[]> {
+    const paths: { hostPath: string; containerDest: string }[] = [];
+    try {
+        const config = await getConfig();
+        const dataDir = config.templateSettings?.DATA_DIR;
+        if (dataDir) {
+            const npmDataPath = `${dataDir}/nginx-proxy-manager/data`;
+            debug.push(`  DATA_DIR from settings: "${dataDir}" → probing ${npmDataPath}`);
+            paths.push({ hostPath: npmDataPath, containerDest: '/data' });
+        } else {
+            debug.push('  No DATA_DIR in template settings');
+        }
+    } catch {
+        debug.push('  Could not read config for DATA_DIR');
+    }
+    // Also try the common default
+    if (paths.length === 0) {
+        const defaultPath = '/mnt/data/nginx-proxy-manager/data';
+        debug.push(`  Trying default NPM data path: ${defaultPath}`);
+        paths.push({ hostPath: defaultPath, containerDest: '/data' });
+    }
+    return paths;
 }
 
 async function probeProxyVolumes(

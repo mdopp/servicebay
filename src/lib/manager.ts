@@ -512,6 +512,10 @@ export async function deleteService(name: string, connection?: PodmanConnection)
   }
 
   await executor.exec('systemctl --user daemon-reload');
+  // Clear failed unit from systemd's memory so it stops appearing in listings
+  try {
+    await executor.exec(`systemctl --user reset-failed ${name}.service`);
+  } catch { /* unit may not be in failed state */ }
 }
 
 export async function getServiceLogs(name: string, connection?: PodmanConnection) {
