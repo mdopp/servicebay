@@ -71,7 +71,9 @@ async function cleanupInstallerService(nodeName: string) {
     } catch { /* may not be enabled */ }
     try {
         await executor.exec('rm -f ~/.config/systemd/user/install-nginx.service');
+        await executor.exec('rm -f ~/.config/systemd/user/default.target.wants/install-nginx.service');
         await executor.exec('systemctl --user daemon-reload');
+        await executor.exec('systemctl --user reset-failed install-nginx.service 2>/dev/null || true');
         logger.info('NginxInstall', `Cleaned up install-nginx oneshot on ${nodeName}`);
     } catch (e) {
         logger.warn('NginxInstall', `Could not fully clean up install-nginx service: ${e}`);

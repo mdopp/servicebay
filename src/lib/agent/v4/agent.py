@@ -1021,12 +1021,16 @@ def fetch_services(containers=None):
             # Known proxy software
             known_proxies = ['nginx', 'haproxy', 'traefik', 'caddy', 'envoy']
             is_known_proxy = any(kp in clean_lower for kp in known_proxies)
-            
+
             # Fuzzy check: 'proxy' in name, but exclude known system services like 'mpris-proxy'
             is_fuzzy_proxy = 'proxy' in clean_lower and 'mpris-proxy' not in clean_lower
-            
+
             is_proxy = is_known_proxy or is_fuzzy_proxy
             if clean_name == 'nginx' or clean_name == 'nginx-web': is_proxy = True
+
+            # Exclude installer/oneshot helper services (e.g. install-nginx)
+            if clean_lower.startswith('install-'):
+                is_proxy = False
 
             # Robust ServiceBay detection (inc. dev/prod/service)
             is_sb = 'servicebay' in clean_lower
