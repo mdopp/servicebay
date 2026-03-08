@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.3...servicebay-v0.17.4) (2026-03-08)
+
+
+### Bug Fixes
+
+* clean up install-nginx oneshot service after successful nginx install ([88d34c7](https://github.com/mdopp/servicebay/commit/88d34c77d8f70eeb52f37d8b55483623603af3cf))
+
 ## [0.17.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.2...servicebay-v0.17.3) (2026-03-08)
 
 
