@@ -42,7 +42,9 @@ export async function POST(request: Request) {
 
         if (!confDir) {
             return NextResponse.json({
-                error: result?.reason || 'Could not locate nginx conf.d directory'
+                error: result?.reason || 'Could not locate nginx conf.d directory',
+                debug: result?.debug || [],
+                node: nodeName
             }, { status: 404 });
         }
 
