@@ -41,7 +41,7 @@ export function MobileBottomBar() {
   const bottomPlugins = plugins.filter(p => p.id !== 'settings');
 
   return (
-    <div className="h-16 bg-gray-100 dark:bg-black border-t border-gray-200 dark:border-gray-800 flex items-center justify-around px-2 shrink-0 md:hidden z-20 pb-2">
+    <div className="h-[72px] bg-gray-100 dark:bg-black border-t border-gray-200 dark:border-gray-800 flex items-center justify-around px-2 shrink-0 md:hidden z-20 pb-2">
        {bottomPlugins.map(p => {
           const Icon = p.icon;
           const isActive = pathname?.startsWith(p.path);
@@ -56,7 +56,8 @@ export function MobileBottomBar() {
                     : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
                 }`}
              >
-                <Icon size={24} strokeWidth={isActive ? 2.5 : 2} />
+                <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
+                <span className={`text-[9px] leading-none font-medium ${isActive ? '' : 'opacity-70'}`}>{p.name.split(' ')[0]}</span>
              </button>
           )
        })}

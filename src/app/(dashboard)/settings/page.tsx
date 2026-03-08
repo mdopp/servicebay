@@ -206,6 +206,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [configReady, setConfigReady] = useState(false);
+  const [activeTab, setActiveTab] = useState<'nodes' | 'backups' | 'notifications' | 'updates' | 'advanced'>('nodes');
   const { addToast } = useToast();
 
   // App Update State
@@ -1372,9 +1373,32 @@ export default function SettingsPage() {
         }
       />
 
+      <div className="flex border-b border-gray-200 dark:border-gray-700 px-6 bg-white dark:bg-gray-900 sticky top-0 z-10">
+        {([
+          { id: 'nodes', label: 'Nodes', icon: Server },
+          { id: 'backups', label: 'Backups', icon: Database },
+          { id: 'notifications', label: 'Notifications', icon: Mail },
+          { id: 'updates', label: 'Updates', icon: RefreshCw },
+          { id: 'advanced', label: 'Advanced', icon: Settings },
+        ] as const).map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === tab.id
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300'
+            }`}
+          >
+            <tab.icon size={16} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <div className="px-4 pb-8 w-full space-y-6">
         {/* ServiceBay Updates */}
-        {appUpdate && (
+        {activeTab === 'updates' && appUpdate && (
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
                   <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
@@ -1482,6 +1506,7 @@ export default function SettingsPage() {
         )}
 
         {/* System Backups */}
+        {activeTab === 'backups' && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
           <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
             <div className="flex items-center gap-3 flex-1">
@@ -1645,8 +1670,10 @@ export default function SettingsPage() {
                 )}
           </div>
         </div>
+        )}
 
         {/* Template Settings Section */}
+        {activeTab === 'advanced' && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
           <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
             <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
@@ -1735,9 +1762,11 @@ export default function SettingsPage() {
 
           </div>
         </div>
+        )}
 
 
   {/* System Connections (Nodes) */}
+        {activeTab === 'nodes' && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
                 <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
@@ -1974,8 +2003,10 @@ export default function SettingsPage() {
                 </div>
             </div>
         </div>
+        )}
 
         {/* Template Registries */}
+        {activeTab === 'advanced' && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
                 <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
@@ -2074,10 +2105,12 @@ export default function SettingsPage() {
                 </div>
             )}
         </div>
+        )}
 
 
 
         {/* Email Notifications Section */}
+        {activeTab === 'notifications' && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
                 <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
@@ -2228,9 +2261,12 @@ export default function SettingsPage() {
                 </div>
             )}
         </div>
+        )}
 
         {/* Log Level Control */}
+        {activeTab === 'advanced' && (
         <LogLevelControl />
+        )}
       </div>
 
       {/* Update Progress Modal */}

@@ -16,6 +16,7 @@ interface ActionProgressModalProps {
 
 export default function ActionProgressModal({ isOpen, onClose, serviceName, nodeName, action, onComplete }: ActionProgressModalProps) {
   const [status, setStatus] = useState<'running' | 'completed' | 'error'>('running');
+  const [elapsed, setElapsed] = useState(0);
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -24,6 +25,13 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
   useEffect(() => {
     onCompleteRef.current = onComplete;
   }, [onComplete]);
+
+  useEffect(() => {
+    if (!isOpen || status !== 'running') return;
+    const start = Date.now();
+    const interval = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(interval);
+  }, [isOpen, status]);
 
   const startAction = useCallback(async (signal: AbortSignal, term: Terminal) => {
     try {
@@ -134,6 +142,11 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
             {action === 'start' && 'Starting'}
             {action === 'stop' && 'Stopping'}
             {action === 'restart' && 'Restarting'} {serviceName}
+            {status === 'running' && elapsed > 0 && (
+                <span className="text-sm font-normal text-gray-400 ml-2">
+                    {elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`}
+                </span>
+            )}
           </h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
             <X size={20} />

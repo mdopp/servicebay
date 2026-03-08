@@ -26,6 +26,7 @@ export default function OnboardingWizard() {
   
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showSkipConfirm, setShowSkipConfirm] = useState(false);
   const { addToast } = useToast();
   const router = useRouter();
 
@@ -190,6 +191,23 @@ export default function OnboardingWizard() {
              </div>
              ServiceBay Setup
            </h2>
+           {(() => {
+             const order: WizardStep[] = ['welcome', 'gateway', 'ssh', 'updates', 'registries', 'email', 'finish'];
+             const activeSteps = order.filter(step => {
+               if (step === 'welcome' || step === 'finish') return true;
+               return selection[step as keyof typeof selection];
+             });
+             const currentIndex = activeSteps.indexOf(currentStep);
+             const total = activeSteps.length;
+             return (
+               <div className="flex items-center gap-3 mt-2">
+                 <span className="text-sm text-gray-500 dark:text-gray-400">Step {currentIndex + 1} of {total}</span>
+                 <div className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                   <div className="h-full bg-blue-600 rounded-full transition-all duration-300" style={{ width: `${((currentIndex + 1) / total) * 100}%` }} />
+                 </div>
+               </div>
+             );
+           })()}
         </div>
 
         {/* Content */}
@@ -316,14 +334,20 @@ export default function OnboardingWizard() {
                      <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-3">
                              <Input label="SMTP Host" value={emailConfig.host} onChange={(v: string) => setEmailConfig(c => ({...c, host: v}))} placeholder="smtp.gmail.com" />
-                             <Input label="Port" value={String(emailConfig.port)} onChange={(v: string) => setEmailConfig(c => ({...c, port: parseInt(v) || 587}))} placeholder="587" />
+                             <Input label="Port" value={String(emailConfig.port)} onChange={(v: string) => setEmailConfig(c => ({...c, port: parseInt(v) || 587}))} placeholder="587" type="number" hint="587 for TLS, 465 for SSL" />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                              <Input label="Username" value={emailConfig.user} onChange={(v: string) => setEmailConfig(c => ({...c, user: v}))} placeholder="user@example.com" />
                              <Input label="Password" type="password" value={emailConfig.pass} onChange={(v: string) => setEmailConfig(c => ({...c, pass: v}))} />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
-                             <Input label="From Address" value={emailConfig.from} onChange={(v: string) => setEmailConfig(c => ({...c, from: v}))} placeholder="servicebay@example.com" />
+                             <Input
+                               label="From Address"
+                               value={emailConfig.from}
+                               onChange={(v: string) => setEmailConfig(c => ({...c, from: v}))}
+                               placeholder="servicebay@example.com"
+                               error={emailConfig.from && !emailConfig.from.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/) ? 'Invalid email format' : undefined}
+                             />
                              <div className="flex items-end pb-2">
                                 <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
                                     <input type="checkbox" checked={emailConfig.secure} onChange={e => setEmailConfig(c => ({...c, secure: e.target.checked}))} className="rounded border-gray-300" />
@@ -353,12 +377,30 @@ export default function OnboardingWizard() {
         {/* Footer */}
         <div className="p-4 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
             {currentStep === 'welcome' ? (
-                <button 
-                  onClick={handleSkip}
-                  className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
-                >
-                    <SkipForward className="w-4 h-4" /> Skip Setup
-                </button>
+                showSkipConfirm ? (
+                    <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleSkip}
+                          className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 dark:text-red-400 font-medium"
+                        >
+                            Yes, skip
+                        </button>
+                        <button
+                          onClick={() => setShowSkipConfirm(false)}
+                          className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                        >
+                            Back
+                        </button>
+                        <span className="text-xs text-gray-400">You can configure later in Settings.</span>
+                    </div>
+                ) : (
+                    <button
+                      onClick={() => setShowSkipConfirm(true)}
+                      className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
+                    >
+                        <SkipForward className="w-4 h-4" /> Skip Setup
+                    </button>
+                )
             ) : (
                 <button 
                   onClick={handleBack}
@@ -437,19 +479,25 @@ interface InputProps {
     onChange: (value: string) => void;
     placeholder?: string;
     type?: string;
+    hint?: string;
+    error?: string;
 }
 
-function Input({ label, value, onChange, placeholder, type = 'text' }: InputProps) {
+function Input({ label, value, onChange, placeholder, type = 'text', hint, error }: InputProps) {
    return (
       <div>
         <label className="block text-xs font-medium text-gray-500 uppercase mb-1">{label}</label>
-        <input 
+        <input
             type={type}
-            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+            className={`w-full px-3 py-2 bg-white dark:bg-gray-900 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm ${
+                error ? 'border-red-400 dark:border-red-600' : 'border-gray-300 dark:border-gray-700'
+            }`}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder}
         />
+        {hint && !error && <p className="text-[11px] text-gray-400 mt-1">{hint}</p>}
+        {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
     </div>
    )
 }

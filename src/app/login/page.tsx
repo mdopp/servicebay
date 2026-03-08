@@ -97,6 +97,9 @@ export default function LoginPage() {
               {loading ? <Loader2 size={20} className="animate-spin" /> : <>Login <ArrowRight size={18} /></>}
             </button>
           </form>
+          <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-4">
+            Use your system (Linux) username and password to log in.
+          </p>
         </div>
 
         {/* Footer */}

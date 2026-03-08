@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Box, RefreshCw, X } from 'lucide-react';
+import { Box, RefreshCw, X, Copy, Check } from 'lucide-react';
 import { logger } from '@/lib/logger';
 
 type ContainerMount = string | { Source?: string; Destination?: string; Type?: string };
@@ -28,6 +28,15 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
   const [details, setDetails] = useState<unknown>(null);
   const [logs, setLogs] = useState('');
   const [logsLoading, setLogsLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyLogs = () => {
+    if (logs) {
+      navigator.clipboard.writeText(logs);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   useEffect(() => {
     const query = nodeName && nodeName !== 'Local' ? `?node=${encodeURIComponent(nodeName)}` : '';
@@ -199,7 +208,15 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
         <div className="flex-1 flex flex-col bg-gray-950 text-gray-200">
           <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 text-xs text-gray-400 uppercase tracking-wide">
             <span>Live Logs</span>
-            {logsLoading && <RefreshCw size={14} className="animate-spin" />}
+            <div className="flex items-center gap-2">
+              {logs && (
+                <button onClick={handleCopyLogs} className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800 transition-colors normal-case" title="Copy logs">
+                  {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+                  <span className="text-[10px]">{copied ? 'Copied' : 'Copy'}</span>
+                </button>
+              )}
+              {logsLoading && <RefreshCw size={14} className="animate-spin" />}
+            </div>
           </div>
           <div className="flex-1 overflow-auto p-4 whitespace-pre-wrap font-mono text-xs">
             {logs ? logs : logsLoading ? 'Connecting to log stream...' : 'No logs available yet.'}
