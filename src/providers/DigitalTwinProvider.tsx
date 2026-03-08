@@ -70,6 +70,32 @@ export function DigitalTwinProvider({ children }: { children: ReactNode }) {
     }, [socket]);
 
 
+    // Update browser tab title with hostname or IP from the first connected node
+    useEffect(() => {
+        if (!data) return;
+        const firstNode = Object.values(data.nodes)[0];
+        if (!firstNode?.resources) return;
+
+        const hostname = firstNode.resources.os?.hostname;
+        // Use hostname if it's meaningful (not localhost variants)
+        if (hostname && hostname !== 'localhost' && !hostname.endsWith('.localdomain')) {
+            document.title = `${hostname} - ServiceBay`;
+            return;
+        }
+
+        // Fallback: use first public IPv4 address
+        const network = firstNode.resources.network;
+        if (network) {
+            for (const addrs of Object.values(network)) {
+                const publicAddr = addrs.find(a => a.family === 'IPv4' && !a.internal);
+                if (publicAddr) {
+                    document.title = `${publicAddr.address} - ServiceBay`;
+                    return;
+                }
+            }
+        }
+    }, [data]);
+
     const isNodeSynced = (nodeName?: string) => {
         if (!data) return false;
         if (nodeName) {
