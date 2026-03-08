@@ -24,7 +24,16 @@ export class AgentManager extends EventEmitter {
   public getAgent(nodeName: string): AgentHandler {
     if (!this.agents.has(nodeName)) {
       const agent = new AgentHandler(nodeName);
-      agent.on('connected', () => this.emit('agent:connected', nodeName));
+      agent.on('connected', () => {
+        this.emit('agent:connected', nodeName);
+        // Ensure podman.socket is enabled on every agent connect (idempotent)
+        agent.sendCommand('exec', { command: 'systemctl --user enable --now podman.socket' })
+          .then(res => {
+            if (res.code === 0) logger.info('AgentManager', `podman.socket enabled on ${nodeName}`);
+            else logger.warn('AgentManager', `podman.socket enable failed on ${nodeName}: ${res.stderr}`);
+          })
+          .catch(e => logger.warn('AgentManager', `podman.socket check error on ${nodeName}:`, e));
+      });
       agent.on('disconnected', () => this.emit('agent:disconnected', nodeName));
       // Forward all agent events to the manager as 'agent:message'
       agent.on('event', (msg) => this.emit('agent:message', nodeName, msg));
