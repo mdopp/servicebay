@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.3...servicebay-v0.18.4) (2026-03-08)
+
+
+### Bug Fixes
+
+* Mustache HTML-escaping breaking YAML templates, ghost services after delete ([9c3705e](https://github.com/mdopp/servicebay/commit/9c3705e1e07def5b8652cec45436b7c9f8b50b50))
+
 ## [0.18.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.2...servicebay-v0.18.3) (2026-03-08)
 
 
