@@ -20,6 +20,7 @@
     ]
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@tailwindcss/typography": "^0.5.19",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
@@ -43,7 +44,8 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "ssh2": "^1.17.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@next/env": "16.1.1",

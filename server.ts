@@ -22,6 +22,8 @@ import { GatewayPoller } from './src/lib/gateway/poller';
 import { logger } from './src/lib/logger';
 import { migrateConfig, getConfig, updateConfig } from './src/lib/config';
 import { syncRegistries } from './src/lib/registry';
+import { createMcpServer } from './src/lib/mcp/server';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -125,9 +127,20 @@ const scheduleAgentRestart = async () => {
 };
 
 app.prepare().then(() => {
+  const mcpServer = createMcpServer();
+
   const server = createServer(async (req, res) => {
     try {
       const parsedUrl = parse(req.url!, true);
+
+      // MCP endpoint — intercept before Next.js handler
+      if (parsedUrl.pathname === '/mcp') {
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res);
+        return;
+      }
+
       await handle(req, res, parsedUrl);
     } catch (err) {
       logger.error('Server', `Error occurred handling ${req.url}`, err);
