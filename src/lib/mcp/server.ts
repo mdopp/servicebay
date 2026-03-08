@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import {
   getServiceLogs, startService, stopService, restartService,
-  getServiceFiles, saveService, deleteService, renameService,
+  getServiceFiles, deleteService, renameService,
   getPodmanLogs, getAllSystemServices,
   createVolume, removeVolume,
 } from '@/lib/manager';
+import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
 import { listNodes, getNodeConnection, verifyNodeConnection } from '@/lib/nodes';
 import { agentManager } from '@/lib/agent/manager';
@@ -165,8 +166,8 @@ export function createMcpServer() {
       node: nodeParam,
     },
     async ({ name, kubeContent, yamlContent, yamlFileName, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      await saveService(name, kubeContent, yamlContent ?? '', yamlFileName ?? `${name}.yaml`, connection);
+      const nodeName = await resolveNode(node);
+      await ServiceManager.deployKubeService(nodeName, name, kubeContent, yamlContent ?? '', yamlFileName ?? `${name}.yaml`);
       return textResult(`Service "${name}" deployed successfully`);
     },
   );
