@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe, HardDrive, RotateCcw, UploadCloud, X, Eye, ChevronDown, ChevronRight, Settings, Activity, FolderOpen, Database } from 'lucide-react';
+import { Save, Mail, Plus, Trash2, RefreshCw, Download, Clock, GitBranch, Loader2, CheckCircle2, XCircle, Server, Key, Terminal, Edit2, ShieldAlert, WifiOff, Globe, HardDrive, RotateCcw, UploadCloud, X, Eye, ChevronDown, ChevronRight, Settings, Activity, FolderOpen, Database, Shield, Upload } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -252,6 +252,13 @@ export default function SettingsPage() {
   const [deleteTarget, setDeleteTarget] = useState<SystemBackupEntrySummary | null>(null);
   const [deletingBackup, setDeletingBackup] = useState(false);
   const [restoreExpandedSections, setRestoreExpandedSections] = useState<Record<string, boolean>>({});
+
+  // Nginx Config Export/Import State
+  const [nginxExporting, setNginxExporting] = useState(false);
+  const [nginxImporting, setNginxImporting] = useState(false);
+  const [nginxNode, setNginxNode] = useState<string | null>(null);
+  const [nginxInstalled, setNginxInstalled] = useState(false);
+  const nginxFileInputRef = useRef<HTMLInputElement>(null);
 
   // Email Form State
   const [emailEnabled, setEmailEnabled] = useState(false);
@@ -944,6 +951,75 @@ export default function SettingsPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Nginx config export/import
+  const nginxNodeQuery = nginxNode && nginxNode !== 'Local' ? `?node=${encodeURIComponent(nginxNode)}` : '';
+
+  const checkNginxStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/system/nginx/status');
+      const data = await res.json();
+      setNginxInstalled(data.installed ?? false);
+      if (data.node) setNginxNode(data.node);
+    } catch {
+      setNginxInstalled(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkNginxStatus();
+  }, [checkNginxStatus]);
+
+  const handleNginxExport = async () => {
+    setNginxExporting(true);
+    try {
+      const res = await fetch(`/api/system/nginx/export${nginxNodeQuery}`);
+      if (!res.ok) throw new Error('Export failed');
+      const data = await res.json();
+      if (!data.files || Object.keys(data.files).length === 0) {
+        addToast('info', 'No nginx configuration files found to export');
+        return;
+      }
+      const blob = new Blob([JSON.stringify(data.files, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `nginx-config-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addToast('success', `Exported ${Object.keys(data.files).length} config file(s)`);
+    } catch {
+      addToast('error', 'Failed to export nginx config');
+    } finally {
+      setNginxExporting(false);
+    }
+  };
+
+  const handleNginxImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setNginxImporting(true);
+    try {
+      const text = await file.text();
+      const files = JSON.parse(text);
+      if (typeof files !== 'object' || Array.isArray(files)) {
+        throw new Error('Invalid format');
+      }
+      const res = await fetch(`/api/system/nginx/import${nginxNodeQuery}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files })
+      });
+      if (!res.ok) throw new Error('Import failed');
+      const data = await res.json();
+      addToast('success', `Imported ${data.imported?.length || 0} config file(s)`);
+    } catch {
+      addToast('error', 'Failed to import nginx config. Expected JSON with { "filename.conf": "content" } format.');
+    } finally {
+      setNginxImporting(false);
+      if (nginxFileInputRef.current) nginxFileInputRef.current.value = '';
+    }
   };
 
   const buildDefaultRestoreState = useCallback((preview: BackupPreviewResult) => {
@@ -1668,6 +1744,46 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 )}
+          </div>
+        </div>
+        )}
+
+        {/* Nginx Config Export/Import */}
+        {activeTab === 'backups' && nginxInstalled && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
+            <div className="flex items-center gap-3 flex-1">
+              <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg text-green-600 dark:text-green-300">
+                <Shield size={20} />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 dark:text-white">Nginx Configuration</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Export or import reverse proxy server block configs{nginxNode && nginxNode !== 'Local' ? ` (${nginxNode})` : ''}.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center gap-3">
+              <button
+                onClick={handleNginxExport}
+                disabled={nginxExporting}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+              >
+                {nginxExporting ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
+                Export Config
+              </button>
+              <label className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer">
+                {nginxImporting ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+                Import Config
+                <input
+                  ref={nginxFileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleNginxImport}
+                  className="hidden"
+                />
+              </label>
+            </div>
           </div>
         </div>
         )}
