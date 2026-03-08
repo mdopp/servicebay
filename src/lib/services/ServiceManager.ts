@@ -449,9 +449,45 @@ export class ServiceManager {
         if (res !== "ok") throw new Error('Failed to write ' + filename);
     }
 
+    static async ensurePodmanSocket(nodeName: string) {
+        const agent = await agentManager.ensureAgent(nodeName);
+        try {
+            const res = await agent.sendCommand('exec', { command: 'systemctl --user enable --now podman.socket' });
+            if (res.code === 0) {
+                logger.info('ServiceManager', 'podman.socket enabled');
+            } else {
+                logger.warn('ServiceManager', 'Failed to enable podman.socket:', res.stderr);
+            }
+        } catch (e) {
+            logger.warn('ServiceManager', 'Error enabling podman.socket:', e);
+        }
+    }
+
+    /** Allow rootless Podman to bind privileged ports (e.g. 445 for SMB). Idempotent. */
+    static async ensureUnprivilegedPorts(nodeName: string) {
+        const agent = await agentManager.ensureAgent(nodeName);
+        try {
+            const check = await agent.sendCommand('exec', { command: 'cat /proc/sys/net/ipv4/ip_unprivileged_port_start' });
+            if (check.code === 0 && parseInt(check.stdout.trim(), 10) === 0) return;
+            // Set at runtime
+            await agent.sendCommand('exec', { command: 'sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0' });
+            // Persist across reboots
+            await agent.sendCommand('exec', {
+                command: 'echo "net.ipv4.ip_unprivileged_port_start=0" | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf > /dev/null'
+            });
+            logger.info('ServiceManager', 'Enabled unprivileged port binding (sysctl)');
+        } catch (e) {
+            logger.warn('ServiceManager', 'Error setting unprivileged port sysctl:', e);
+        }
+    }
+
     static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string) {
         await this.writeFile(nodeName, yamlName, yamlContent);
         await this.writeFile(nodeName, `${name}.kube`, kubeContent);
+        await this.ensurePodmanSocket(nodeName);
+        if (yamlContent.includes('hostNetwork: true')) {
+            await this.ensureUnprivilegedPorts(nodeName);
+        }
         await this.reloadDaemon(nodeName);
         // Attempt start, but don't fail deployment if start fails (user can check logs)
         try {
@@ -472,6 +508,7 @@ export class ServiceManager {
              throw new Error('Failed to write service file');
         }
 
+        await this.ensurePodmanSocket(nodeName);
         await this.reloadDaemon(nodeName);
         this.backupQuadlets(nodeName);
     }
