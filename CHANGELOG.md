@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.4...servicebay-v0.19.0) (2026-03-08)
+
+
+### Features
+
+* add file-share template (FileBrowser + Syncthing + Samba) ([#57](https://github.com/mdopp/servicebay/issues/57)) ([cfedd4a](https://github.com/mdopp/servicebay/commit/cfedd4a63799de4463ee9223833b0ddec33d6f3f))
+* smart variable inputs in installer (dropdowns, secrets, device picker) ([#60](https://github.com/mdopp/servicebay/issues/60)) ([b127110](https://github.com/mdopp/servicebay/commit/b1271100de9541254b53ab336354d2b4d9da6e91))
+
+
+### Bug Fixes
+
+* defer monitoring store mkdir to avoid build-time EACCES ([d030efa](https://github.com/mdopp/servicebay/commit/d030efa006c99de3ea439b1ac76d19b25f1cdeb5))
+* enable podman.socket and unprivileged ports during deployment ([#59](https://github.com/mdopp/servicebay/issues/59)) ([1efa62e](https://github.com/mdopp/servicebay/commit/1efa62e46e5e75794f44603c06e3c99377a5b909))
+* enable podman.socket on every agent connect, not just deploys ([#61](https://github.com/mdopp/servicebay/issues/61)) ([f2586d2](https://github.com/mdopp/servicebay/commit/f2586d22adac3096dd3d51069e1a1021a8fb187d))
+* prefix unused connection params with underscore for lint ([ecfe4cc](https://github.com/mdopp/servicebay/commit/ecfe4cc5ad9761f98902404009efaf5195014945))
+* remove test:agent step from CI workflow ([091f35b](https://github.com/mdopp/servicebay/commit/091f35b2e82772eec30bd0ff47feeafbf81e4ee1))
+* remove unused connection param from getBackupDir ([ec7a9e8](https://github.com/mdopp/servicebay/commit/ec7a9e8c4e52df8c2a50cf905f073d36c94a43e4))
+* remove unused connection param from getSystemdDir ([81cc56a](https://github.com/mdopp/servicebay/commit/81cc56af4a6ca2104c51112f4078e9a3b7f7f8c7))
+
 ## [0.18.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.3...servicebay-v0.18.4) (2026-03-08)
 
 
