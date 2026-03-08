@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.2...servicebay-v0.16.3) (2026-03-08)
+
+
+### Bug Fixes
+
+* resolve nginx conf.d path from Digital Twin YAML, not DATA_DIR ([#41](https://github.com/mdopp/servicebay/issues/41)) ([17fc4a8](https://github.com/mdopp/servicebay/commit/17fc4a8f0ae2069e1ddd40c380c74891ff22ba22))
+
 ## [0.16.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.1...servicebay-v0.16.2) (2026-03-08)
 
 
