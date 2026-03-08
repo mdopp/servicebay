@@ -25,6 +25,21 @@ import { syncRegistries } from './src/lib/registry';
 import { createMcpServer } from './src/lib/mcp/server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
+// Helper: collect request body as parsed JSON
+function collectBody(req: import('http').IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString();
+        resolve(raw ? JSON.parse(raw) : undefined);
+      } catch (e) { reject(e); }
+    });
+    req.on('error', reject);
+  });
+}
+
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
 const port = parseInt(process.env.PORT || '3000', 10);
@@ -127,17 +142,33 @@ const scheduleAgentRestart = async () => {
 };
 
 app.prepare().then(() => {
-  const mcpServer = createMcpServer();
-
   const server = createServer(async (req, res) => {
     try {
       const parsedUrl = parse(req.url!, true);
 
       // MCP endpoint — intercept before Next.js handler
       if (parsedUrl.pathname === '/mcp') {
+        // Only POST is supported in stateless mode
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Method not allowed.' },
+            id: null,
+          }));
+          return;
+        }
+
+        // Stateless: create a fresh server + transport per request
+        const mcpServer = createMcpServer();
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         await mcpServer.connect(transport);
-        await transport.handleRequest(req, res);
+        const body = await collectBody(req);
+        await transport.handleRequest(req, res, body);
+        res.on('close', () => {
+          transport.close();
+          mcpServer.close();
+        });
         return;
       }
 
