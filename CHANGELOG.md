@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.1...servicebay-v0.18.2) (2026-03-08)
+
+
+### Bug Fixes
+
+* show hostname or IP in browser tab title instead of just "ServiceBay" ([fd247e7](https://github.com/mdopp/servicebay/commit/fd247e7c8927f66f29bb7f58e25d73819fdc8d6c))
+
 ## [0.18.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.0...servicebay-v0.18.1) (2026-03-08)
 
 
