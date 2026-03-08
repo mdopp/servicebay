@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Template } from '@/lib/registry';
-import { fetchTemplateYaml } from '@/app/actions';
+import { Template, VariableMeta } from '@/lib/registry';
+import { fetchTemplateYaml, fetchTemplateVariables } from '@/app/actions';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
-import { Layers, Loader2, AlertCircle, X, Folder, Server } from 'lucide-react';
+import { Layers, Loader2, AlertCircle, X, Folder, Server, RefreshCw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Mustache from 'mustache';
 
@@ -26,6 +26,14 @@ interface Variable {
   name: string;
   value: string;
   global?: boolean;
+  meta?: VariableMeta;
+}
+
+function generateSecret(length = 32): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  return Array.from(crypto.getRandomValues(new Uint8Array(length)))
+    .map(b => chars[b % chars.length])
+    .join('');
 }
 
 export default function InstallerModal({ template, readme, isOpen, onClose }: InstallerModalProps) {
@@ -37,6 +45,8 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   const [error, setError] = useState<string | null>(null);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [selectedNode, setSelectedNode] = useState('');
+  const [deviceOptions, setDeviceOptions] = useState<Record<string, string[]>>({});
+  const [loadingDevices, setLoadingDevices] = useState(false);
 
   useEffect(() => {
     getNodes().then(setNodes);
@@ -51,6 +61,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     setVariables([]);
     setLogs([]);
     setError(null);
+    setDeviceOptions({});
 
     if (template.type === 'stack') {
         const lines = readme.split('\n');
@@ -70,13 +81,6 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     } else {
         // Single template
         setItems([{ name: template.name, checked: true }]);
-        // Auto-advance to configure for single templates
-        // We need to trigger this after render, so we'll use a timeout or effect
-        // But fetchYamlsAndExtractVars depends on state 'items', which we just set.
-        // Better to handle this in the next effect or manually call it if we can ensure state is updated.
-        // Actually, let's just set step to 'select' and let the user click "Continue" or auto-advance?
-        // User requested "overlay ... das die variablen abfragt".
-        // So skipping selection is good.
     }
   }, [isOpen, template, readme]);
 
@@ -87,6 +91,34 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, isOpen, template, step]);
+
+  // Fetch devices when node is selected and there are device-type variables
+  useEffect(() => {
+    if (!selectedNode) return;
+    const deviceVars = variables.filter(v => v.meta?.type === 'device');
+    if (deviceVars.length === 0) return;
+
+    const paths = new Set(deviceVars.map(v => v.meta?.devicePath || '/dev/serial/by-id'));
+    setLoadingDevices(true);
+
+    Promise.all(
+      Array.from(paths).map(async (devicePath) => {
+        try {
+          const res = await fetch(`/api/system/devices?node=${selectedNode}&path=${encodeURIComponent(devicePath)}`);
+          if (res.ok) {
+            const data = await res.json();
+            return { path: devicePath, devices: data.devices as string[] };
+          }
+        } catch { /* ignore */ }
+        return { path: devicePath, devices: [] as string[] };
+      })
+    ).then(results => {
+      const opts: Record<string, string[]> = {};
+      for (const r of results) opts[r.path] = r.devices;
+      setDeviceOptions(opts);
+      setLoadingDevices(false);
+    });
+  }, [selectedNode, variables]);
 
 
   const handleToggle = (index: number) => {
@@ -101,6 +133,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     const selectedItems = items.filter(i => i.checked);
     const vars = new Set<string>();
     const newItems = [...items];
+    const allMeta: Record<string, VariableMeta> = {};
 
     // Fetch global template settings (DATA_DIR, etc.)
     let globalSettings: Record<string, string> = {};
@@ -127,6 +160,10 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
                 vars.add(match[1]);
             }
 
+            // Fetch variable metadata
+            const meta = await fetchTemplateVariables(item.name, template.source);
+            if (meta) Object.assign(allMeta, meta);
+
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setError(msg);
@@ -135,12 +172,20 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     }
 
     setItems(newItems);
-    // Pre-fill variables from global settings; mark global ones so they're hidden from the form
-    setVariables(Array.from(vars).map(v => ({
-        name: v,
-        value: globalSettings[v] || '',
-        global: !!globalSettings[v]
-    })));
+    setVariables(Array.from(vars).map(v => {
+        const meta = allMeta[v];
+        let value = globalSettings[v] || '';
+        // Auto-fill defaults from metadata
+        if (!value && meta?.default) value = meta.default;
+        // Auto-generate secrets
+        if (!value && meta?.type === 'secret') value = generateSecret();
+        return {
+            name: v,
+            value,
+            global: !!globalSettings[v],
+            meta,
+        };
+    }));
   };
 
   const handleInstall = async () => {
@@ -193,12 +238,116 @@ WantedBy=default.target`;
     setStep('done');
   };
 
+  const renderVariableInput = (v: Variable, idx: number) => {
+    const update = (value: string) => {
+      const newVars = [...variables];
+      newVars[idx].value = value;
+      setVariables(newVars);
+    };
+
+    const inputClass = "w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500";
+
+    // Select dropdown
+    if (v.meta?.type === 'select' && v.meta.options) {
+      return (
+        <select value={v.value} onChange={(e) => update(e.target.value)} className={inputClass + " appearance-none"}>
+          <option value="" disabled>Select...</option>
+          {v.meta.options.map(opt => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+      );
+    }
+
+    // Device selector
+    if (v.meta?.type === 'device') {
+      const devPath = v.meta.devicePath || '/dev/serial/by-id';
+      const devices = deviceOptions[devPath] || [];
+      return (
+        <div className="flex gap-2">
+          <select value={v.value} onChange={(e) => update(e.target.value)} className={inputClass + " appearance-none flex-1"}>
+            <option value="" disabled>{loadingDevices ? 'Loading devices...' : !selectedNode ? 'Select a node first' : devices.length === 0 ? 'No devices found' : 'Select device...'}</option>
+            {devices.map(dev => (
+              <option key={dev} value={dev}>{dev.replace(`${devPath}/`, '')}</option>
+            ))}
+          </select>
+          {selectedNode && (
+            <button
+              type="button"
+              onClick={() => {
+                setLoadingDevices(true);
+                fetch(`/api/system/devices?node=${selectedNode}&path=${encodeURIComponent(devPath)}`)
+                  .then(r => r.json())
+                  .then(data => {
+                    setDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] }));
+                    setLoadingDevices(false);
+                  })
+                  .catch(() => setLoadingDevices(false));
+              }}
+              className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              title="Refresh device list"
+            >
+              <RefreshCw size={16} className={loadingDevices ? 'animate-spin' : ''} />
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // Password field
+    if (v.meta?.type === 'password') {
+      return (
+        <input
+          type="password"
+          value={v.value}
+          onChange={(e) => update(e.target.value)}
+          className={inputClass}
+          placeholder={`Enter ${v.name.toLowerCase().replace(/_/g, ' ')}`}
+          autoComplete="new-password"
+        />
+      );
+    }
+
+    // Secret (auto-generated, shown read-only with regenerate button)
+    if (v.meta?.type === 'secret') {
+      return (
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={v.value}
+            readOnly
+            className={inputClass + " font-mono text-xs bg-gray-50 dark:bg-gray-800/50 flex-1"}
+          />
+          <button
+            type="button"
+            onClick={() => update(generateSecret())}
+            className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title="Regenerate secret"
+          >
+            <RefreshCw size={16} />
+          </button>
+        </div>
+      );
+    }
+
+    // Default: text input
+    return (
+      <input
+        type="text"
+        value={v.value}
+        onChange={(e) => update(e.target.value)}
+        className={inputClass}
+        placeholder={v.meta?.default ? `Default: ${v.meta.default}` : `Value for ${v.name}`}
+      />
+    );
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-            
+
             {/* Header */}
             <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
@@ -226,9 +375,9 @@ WantedBy=default.target`;
                                 <div className="space-y-2 mb-6">
                                     {items.map((item, i) => (
                                         <label key={item.name} className="flex items-center gap-3 p-3 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors">
-                                            <input 
-                                                type="checkbox" 
-                                                checked={item.checked} 
+                                            <input
+                                                type="checkbox"
+                                                checked={item.checked}
                                                 onChange={() => handleToggle(i)}
                                                 className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
                                             />
@@ -287,17 +436,10 @@ WantedBy=default.target`;
                                                 return (
                                                 <div key={v.name}>
                                                     <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
-                                                    <input
-                                                        type="text"
-                                                        value={v.value}
-                                                        onChange={(e) => {
-                                                            const newVars = [...variables];
-                                                            newVars[idx].value = e.target.value;
-                                                            setVariables(newVars);
-                                                        }}
-                                                        className="w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500"
-                                                        placeholder={`Value for ${v.name}`}
-                                                    />
+                                                    {v.meta?.description && (
+                                                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">{v.meta.description}</p>
+                                                    )}
+                                                    {renderVariableInput(v, idx)}
                                                 </div>
                                                 );
                                             })}
@@ -310,7 +452,7 @@ WantedBy=default.target`;
                                 No variables found. You can proceed.
                             </div>
                         )}
-                        
+
                         {error && (
                             <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-200 rounded flex items-center gap-2">
                                 <AlertCircle size={18} /> {error}
@@ -340,7 +482,7 @@ WantedBy=default.target`;
                 {step === 'select' && (
                     <>
                         <button onClick={onClose} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors">Cancel</button>
-                        <button 
+                        <button
                             onClick={fetchYamlsAndExtractVars}
                             disabled={items.filter(i => i.checked).length === 0}
                             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium transition-colors"
@@ -351,13 +493,13 @@ WantedBy=default.target`;
                 )}
                 {step === 'configure' && (
                     <>
-                        <button 
+                        <button
                             onClick={() => template.type === 'stack' ? setStep('select') : onClose()}
                             className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors"
                         >
                             {template.type === 'stack' ? 'Back' : 'Cancel'}
                         </button>
-                        <button 
+                        <button
                             onClick={handleInstall}
                             disabled={!selectedNode}
                             className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -370,7 +512,7 @@ WantedBy=default.target`;
                     <button disabled className="px-4 py-2 bg-gray-400 text-white rounded cursor-not-allowed">Installing...</button>
                 )}
                 {step === 'done' && (
-                    <button 
+                    <button
                         onClick={() => {
                             onClose();
                             router.push('/');

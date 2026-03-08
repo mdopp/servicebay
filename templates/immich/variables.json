@@ -1,0 +1,11 @@
+{
+  "DB_PASSWORD": {
+    "type": "secret",
+    "description": "PostgreSQL database password (auto-generated)"
+  },
+  "PORT": {
+    "type": "text",
+    "description": "Web UI port",
+    "default": "2283"
+  }
+}
