@@ -482,13 +482,29 @@ export class ServiceManager {
     }
 
     static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string) {
+        // Ensure TimeoutStartSec for multi-image pods so image pulls don't cause systemd timeout
+        const images = this.extractImages(yamlContent);
+        if (images.length > 1 && !kubeContent.includes('TimeoutStartSec')) {
+            kubeContent = this.injectServiceTimeout(kubeContent);
+        }
+
         await this.writeFile(nodeName, yamlName, yamlContent);
         await this.writeFile(nodeName, `${name}.kube`, kubeContent);
         await this.ensurePodmanSocket(nodeName);
-        if (yamlContent.includes('hostNetwork: true')) {
+
+        // Ensure unprivileged port binding if any port < 1024 is used
+        if (this.hasPrivilegedPorts(yamlContent)) {
             await this.ensureUnprivilegedPorts(nodeName);
         }
+
         await this.reloadDaemon(nodeName);
+
+        // Pre-pull all images before starting to avoid systemd timeout
+        await this.prePullImages(nodeName, images);
+
+        // Fix volume ownership for containers running as non-root UIDs
+        await this.fixVolumeOwnership(nodeName, yamlContent);
+
         // Attempt start, but don't fail deployment if start fails (user can check logs)
         try {
              await this.startService(nodeName, name);
@@ -496,6 +512,97 @@ export class ServiceManager {
              logger.warn('ServiceManager', `Service ${name} deployed but start failed:`, e);
         }
         this.backupQuadlets(nodeName);
+    }
+
+    /** Extract all container image references from a kube YAML */
+    private static extractImages(yamlContent: string): string[] {
+        const images: string[] = [];
+        const regex = /^\s*image:\s*(.+)$/gm;
+        let match;
+        while ((match = regex.exec(yamlContent)) !== null) {
+            const img = match[1].trim().replace(/["']/g, '');
+            if (img && !img.startsWith('{{')) images.push(img);
+        }
+        return [...new Set(images)];
+    }
+
+    /** Check if any hostPort < 1024 is defined in the YAML */
+    private static hasPrivilegedPorts(yamlContent: string): boolean {
+        if (yamlContent.includes('hostNetwork: true')) return true;
+        const regex = /hostPort:\s*(\d+)/g;
+        let match;
+        while ((match = regex.exec(yamlContent)) !== null) {
+            if (parseInt(match[1], 10) < 1024) return true;
+        }
+        return false;
+    }
+
+    /** Inject [Service] TimeoutStartSec into .kube content if not present */
+    private static injectServiceTimeout(kubeContent: string, timeout = 600): string {
+        if (kubeContent.includes('[Service]')) {
+            return kubeContent.replace('[Service]', `[Service]\nTimeoutStartSec=${timeout}`);
+        }
+        return kubeContent + `\n[Service]\nTimeoutStartSec=${timeout}\n`;
+    }
+
+    /** Pre-pull container images so systemd start doesn't timeout */
+    private static async prePullImages(nodeName: string, images: string[]) {
+        const agent = await agentManager.ensureAgent(nodeName);
+        for (const image of images) {
+            try {
+                logger.info('ServiceManager', `Pre-pulling image: ${image}`);
+                await agent.sendCommand('exec', { command: `podman pull ${image}`, timeout: 300 });
+            } catch (e) {
+                logger.warn('ServiceManager', `Failed to pre-pull ${image} (will retry on start):`, e);
+            }
+        }
+    }
+
+    /** Fix volume ownership for containers with explicit runAsUser/runAsGroup.
+     *  In rootless podman, host UIDs map differently inside the user namespace.
+     *  Uses `podman unshare chown` to translate container UIDs to correct host UIDs. */
+    private static async fixVolumeOwnership(nodeName: string, yamlContent: string) {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const docs = yaml.loadAll(yamlContent) as any[];
+            for (const doc of docs) {
+                if (!doc?.spec) continue;
+                const containers = doc.spec.containers || [];
+                const volumes = doc.spec.volumes || [];
+
+                // Build volume name -> hostPath map
+                const volumePaths = new Map<string, string>();
+                for (const vol of volumes) {
+                    if (vol.hostPath?.path) {
+                        volumePaths.set(vol.name, vol.hostPath.path);
+                    }
+                }
+
+                for (const container of containers) {
+                    const uid = container.securityContext?.runAsUser;
+                    const gid = container.securityContext?.runAsGroup ?? uid;
+                    if (uid == null || uid === 0) continue; // Skip root or unset
+
+                    const mounts = container.volumeMounts || [];
+                    for (const mount of mounts) {
+                        const hostPath = volumePaths.get(mount.name);
+                        if (!hostPath || mount.readOnly) continue;
+
+                        const agent = await agentManager.ensureAgent(nodeName);
+                        try {
+                            await agent.sendCommand('exec', {
+                                command: `podman unshare chown -R ${uid}:${gid} ${hostPath}`
+                            });
+                            logger.info('ServiceManager', `Fixed volume ownership: ${hostPath} -> ${uid}:${gid}`);
+                        } catch (e) {
+                            logger.warn('ServiceManager', `Failed to fix ownership for ${hostPath}:`, e);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            logger.debug('ServiceManager', 'Volume ownership fix skipped:', e);
+        }
     }
 
     static async deployService(nodeName: string, filename: string, content: string) {

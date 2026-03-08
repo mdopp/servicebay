@@ -26,6 +26,9 @@ spec:
   # 2. Syncthing — Bidirectional folder sync (Android & Windows apps)
   - name: syncthing
     image: docker.io/syncthing/syncthing:latest
+    securityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
     env:
       - name: STGUIADDRESS
         value: "0.0.0.0:8384"
