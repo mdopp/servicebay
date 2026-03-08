@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.4...servicebay-v0.17.0) (2026-03-08)
+
+
+### Features
+
+* improve nginx config export UX and support importing from full backups ([ef49fe4](https://github.com/mdopp/servicebay/commit/ef49fe411c16dfa3170fb677f3450be365c2dc37))
+
+
+### Bug Fixes
+
+* show full diagnostics inline for nginx config export/import errors ([25d4a2c](https://github.com/mdopp/servicebay/commit/25d4a2ce05ac2bea9afd75c23fbaa57674042c34))
+
 ## [0.16.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.3...servicebay-v0.16.4) (2026-03-08)
 
 
