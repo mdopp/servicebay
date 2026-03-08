@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.0...servicebay-v0.16.1) (2026-03-08)
+
+
+### Bug Fixes
+
+* nginx config export/import now targets correct node ([827f71e](https://github.com/mdopp/servicebay/commit/827f71e5fb0611531af07cd7402a63baa15509c9))
+* nginx config export/import targets correct node ([9060679](https://github.com/mdopp/servicebay/commit/9060679ca2a7915b368c87a7114413e18e75ece0))
+
 ## [0.16.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.15.0...servicebay-v0.16.0) (2026-03-08)
 
 
