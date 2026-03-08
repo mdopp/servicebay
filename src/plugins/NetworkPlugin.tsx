@@ -706,6 +706,37 @@ type LinkFormState = {
     ipTargetsText?: string;
 };
 
+function NetworkLegend() {
+    const [isOpen, setIsOpen] = useState(false);
+    return (
+        <Panel position="bottom-left">
+            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm text-xs">
+                <button
+                    onClick={() => setIsOpen(!isOpen)}
+                    className="px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white font-medium w-full"
+                >
+                    <Info size={12} />
+                    Legend
+                    <ChevronDown size={12} className={`ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isOpen && (
+                    <div className="px-3 pb-2 space-y-1.5 border-t border-gray-100 dark:border-gray-800 pt-2">
+                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500" /><span>Service / Pod</span></div>
+                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500" /><span>Container</span></div>
+                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-500" /><span>Gateway</span></div>
+                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-500" /><span>External Link</span></div>
+                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-400" /><span>Group / Node</span></div>
+                        <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5">
+                            <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
+                            <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </Panel>
+    );
+}
+
 export default function NetworkPlugin() {
     const router = useRouter();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
@@ -1487,6 +1518,7 @@ export default function NetworkPlugin() {
                 setSelectedNodeData(null);
             }}
         >
+            <NetworkLegend />
             <Background color="#999" gap={16} size={1} className="opacity-10" />
             <Controls 
                 showInteractive={false} 

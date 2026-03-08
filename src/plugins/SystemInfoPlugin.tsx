@@ -303,10 +303,10 @@ export default function SystemInfoPlugin() {
                     <div>
                         <div className="flex justify-between mb-1 text-sm">
                             <span>CPU Usage</span>
-                            <span className="font-medium">{cpuUsage}%</span>
+                            <span className={`font-medium ${cpuUsage > 90 ? 'text-red-600 dark:text-red-400' : cpuUsage > 80 ? 'text-amber-600 dark:text-amber-400' : ''}`}>{cpuUsage}%</span>
                         </div>
                         <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
-                            <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${Math.min(cpuUsage, 100)}%` }}></div>
+                            <div className={`h-2.5 rounded-full transition-all duration-500 ${cpuUsage > 90 ? 'bg-red-500' : cpuUsage > 80 ? 'bg-amber-500' : 'bg-blue-600'}`} style={{ width: `${Math.min(cpuUsage, 100)}%` }}></div>
                         </div>
                     </div>
 
@@ -316,7 +316,9 @@ export default function SystemInfoPlugin() {
                             <span className="font-medium">{formatBytes(memoryUsage)} / {formatBytes(totalMemory)}</span>
                         </div>
                         <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
-                            <div className="bg-purple-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${Math.min((memoryUsage / totalMemory) * 100, 100)}%` }}></div>
+                            {(() => { const memPercent = totalMemory > 0 ? (memoryUsage / totalMemory) * 100 : 0; return (
+                                <div className={`h-2.5 rounded-full transition-all duration-500 ${memPercent > 90 ? 'bg-red-500' : memPercent > 80 ? 'bg-amber-500' : 'bg-purple-600'}`} style={{ width: `${Math.min(memPercent, 100)}%` }} />
+                            ); })()}
                         </div>
                     </div>
                 </div>
@@ -339,7 +341,7 @@ export default function SystemInfoPlugin() {
                             </div>
                             <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 relative">
                                 <div 
-                                    className={`absolute left-0 h-2 rounded-full transition-all duration-500 ${percent > 90 ? 'bg-red-500' : 'bg-green-600'}`}
+                                    className={`absolute left-0 h-2 rounded-full transition-all duration-500 ${percent > 90 ? 'bg-red-500' : percent > 80 ? 'bg-amber-500' : 'bg-green-600'}`}
                                     style={{ width: `${Math.min(percent, 100)}%` }}
                                 ></div>
                             </div>

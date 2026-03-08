@@ -54,6 +54,15 @@ export default function Sidebar() {
                 {isCollapsed ? <ServiceBayLogo size={20} /> : <ChevronLeft size={18} />}
             </button>
         </div>
+        {node && !isCollapsed && (
+            <div className="mx-2 mb-1 px-3 py-1.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                <span className="text-xs font-medium text-amber-700 dark:text-amber-400 truncate">{node}</span>
+            </div>
+        )}
+        {node && isCollapsed && (
+            <div className="mx-auto mb-1 w-3 h-3 rounded-full bg-amber-500 animate-pulse" title={`Node: ${node}`} />
+        )}
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
             {plugins.map(p => {
                 const Icon = p.icon;
