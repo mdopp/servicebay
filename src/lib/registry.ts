@@ -13,9 +13,15 @@ const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 const STACKS_PATH = path.join(process.cwd(), 'stacks');
 const CONTAINER_CONFIG_DIR = '/app/.servicebay';
 const REGISTRIES_DIR = path.join(
-  process.env.CONTAINER_CONFIG_DIR || (process.env.NODE_ENV === 'production' ? CONTAINER_CONFIG_DIR : path.join(os.homedir(), '.servicebay')), 
+  process.env.CONTAINER_CONFIG_DIR || (process.env.NODE_ENV === 'production' ? CONTAINER_CONFIG_DIR : path.join(os.homedir(), '.servicebay')),
   'registries'
 );
+
+// Default registry: the ServiceBay repo itself (public, no auth needed)
+const DEFAULT_REGISTRY: RegistryConfig = {
+  name: 'servicebay',
+  url: 'https://github.com/mdopp/servicebay.git',
+};
 
 export interface Template {
   name: string;
@@ -80,15 +86,32 @@ async function fetchDir(dirPath: string, type: 'template' | 'stack', source: str
   }
 }
 
-export async function syncRegistries() {
-    const config = await getConfig();
+function getRegistries(config: Awaited<ReturnType<typeof getConfig>>): RegistryConfig[] {
     let registries: RegistryConfig[] = [];
-    
+
     if (Array.isArray(config.registries)) {
         registries = config.registries;
     } else if (config.registries?.enabled) {
         registries = config.registries.items || [];
     }
+
+    // Always include the default registry if not already present
+    if (!registries.some(r => r.name === DEFAULT_REGISTRY.name)) {
+        registries = [DEFAULT_REGISTRY, ...registries];
+    }
+
+    return registries;
+}
+
+async function cloneSparse(url: string, dest: string, dirs: string[]) {
+    // Shallow clone with sparse checkout — only pull the directories we need
+    await execFileAsync('git', ['clone', '--depth', '1', '--filter=blob:none', '--sparse', url, dest]);
+    await execFileAsync('git', ['sparse-checkout', 'set', ...dirs], { cwd: dest });
+}
+
+export async function syncRegistries() {
+    const config = await getConfig();
+    const registries = getRegistries(config);
 
     if (registries.length === 0) return;
 
@@ -106,29 +129,28 @@ export async function syncRegistries() {
         } catch {
             // Doesn't exist, clone
             console.log(`Cloning registry ${reg.name}...`);
-            await execFileAsync('git', ['clone', reg.url, regPath]);
+            try {
+                await cloneSparse(reg.url, regPath, ['templates', 'stacks']);
+            } catch {
+                // Fallback to full clone if sparse checkout not supported
+                await execFileAsync('git', ['clone', '--depth', '1', reg.url, regPath]);
+            }
         }
     }
 }
 
 export async function getTemplates(): Promise<Template[]> {
-    // 1. Built-in
+    // 1. Built-in (fallback)
     const [builtinTemplates, builtinStacks] = await Promise.all([
         fetchDir(TEMPLATES_PATH, 'template', 'Built-in'),
         fetchDir(STACKS_PATH, 'stack', 'Built-in')
     ]);
 
-    let allTemplates = [...builtinStacks, ...builtinTemplates];
+    const allTemplates = [...builtinStacks, ...builtinTemplates];
 
-    // 2. External Registries
+    // 2. External Registries (override built-in by name)
     const config = await getConfig();
-    let registries: RegistryConfig[] = [];
-    
-    if (Array.isArray(config.registries)) {
-        registries = config.registries;
-    } else if (config.registries?.enabled) {
-        registries = config.registries.items || [];
-    }
+    const registries = getRegistries(config);
 
     for (const reg of registries) {
         const regPath = path.join(REGISTRIES_DIR, reg.name);
@@ -136,40 +158,85 @@ export async function getTemplates(): Promise<Template[]> {
             fetchDir(path.join(regPath, 'templates'), 'template', reg.name),
             fetchDir(path.join(regPath, 'stacks'), 'stack', reg.name)
         ]);
-        allTemplates = [...allTemplates, ...regStacks, ...regTemplates];
+
+        // Registry versions override built-in templates with the same name
+        const regItems = [...regStacks, ...regTemplates];
+        for (const item of regItems) {
+            const idx = allTemplates.findIndex(t => t.name === item.name && t.type === item.type);
+            if (idx !== -1) {
+                allTemplates[idx] = item;
+            } else {
+                allTemplates.push(item);
+            }
+        }
     }
 
     return allTemplates;
 }
 
-export async function getReadme(name: string, type: 'template' | 'stack', source: string = 'Built-in'): Promise<string | null> {
-  try {
-    let basePath;
-    if (source === 'Built-in') {
-        basePath = type === 'stack' ? STACKS_PATH : TEMPLATES_PATH;
-    } else {
-        basePath = path.join(REGISTRIES_DIR, source, type === 'stack' ? 'stacks' : 'templates');
+export async function getReadme(name: string, type: 'template' | 'stack', source?: string): Promise<string | null> {
+  const subdir = type === 'stack' ? 'stacks' : 'templates';
+
+  // If a specific source is given, use it directly
+  if (source && source !== 'Built-in') {
+    try {
+      const filePath = path.join(REGISTRIES_DIR, source, subdir, name, 'README.md');
+      return await fs.readFile(filePath, 'utf-8');
+    } catch {
+      return null;
     }
-    
+  }
+
+  // Otherwise: check registries first, then fall back to built-in
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      try {
+        const filePath = path.join(REGISTRIES_DIR, reg.name, subdir, name, 'README.md');
+        return await fs.readFile(filePath, 'utf-8');
+      } catch { /* not in this registry */ }
+    }
+  }
+
+  // Built-in fallback
+  try {
+    const basePath = type === 'stack' ? STACKS_PATH : TEMPLATES_PATH;
     const filePath = path.join(basePath, name, 'README.md');
     return await fs.readFile(filePath, 'utf-8');
   } catch {
-      return null;
+    return null;
   }
 }
 
-export async function getTemplateYaml(name: string, source: string = 'Built-in'): Promise<string | null> {
-  try {
-    let basePath;
-    if (source === 'Built-in') {
-        basePath = TEMPLATES_PATH;
-    } else {
-        basePath = path.join(REGISTRIES_DIR, source, 'templates');
+export async function getTemplateYaml(name: string, source?: string): Promise<string | null> {
+  // If a specific source is given, use it directly
+  if (source && source !== 'Built-in') {
+    try {
+      const filePath = path.join(REGISTRIES_DIR, source, 'templates', name, 'template.yml');
+      return await fs.readFile(filePath, 'utf-8');
+    } catch {
+      return null;
     }
+  }
 
-    const filePath = path.join(basePath, name, 'template.yml');
+  // Otherwise: check registries first (freshest), then fall back to built-in
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      try {
+        const filePath = path.join(REGISTRIES_DIR, reg.name, 'templates', name, 'template.yml');
+        return await fs.readFile(filePath, 'utf-8');
+      } catch { /* not in this registry */ }
+    }
+  }
+
+  // Built-in fallback
+  try {
+    const filePath = path.join(TEMPLATES_PATH, name, 'template.yml');
     return await fs.readFile(filePath, 'utf-8');
   } catch {
-      return null;
+    return null;
   }
 }

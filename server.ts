@@ -19,6 +19,7 @@ import { AgentMessage } from './src/lib/agent/types';
 import { GatewayPoller } from './src/lib/gateway/poller';
 import { logger } from './src/lib/logger';
 import { migrateConfig, getConfig, updateConfig } from './src/lib/config';
+import { syncRegistries } from './src/lib/registry';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
@@ -546,6 +547,9 @@ app.prepare().then(() => {
 
   server.listen(port, async () => {
     logger.info('Server', `> Ready on http://${hostname}:${port}`);
+
+    // Sync template registries in background (non-blocking)
+    syncRegistries().catch(err => logger.warn('Server', `Registry sync failed: ${err}`));
 
     // Auto-update logic to be migrated to Executor Task
   });
