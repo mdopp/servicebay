@@ -1,7 +1,9 @@
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getExecutor } from '@/lib/executor';
+import { parseQuadletFile } from '@/lib/quadlet/parser';
 import yaml from 'js-yaml';
+import path from 'path';
 import { logger } from '@/lib/logger';
 
 export interface NginxConfDirResult {
@@ -69,7 +71,7 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
         debug.push(`Node "${nodeName}": found nginx service "${nginxService.name}"`);
 
         // Try resolving from Digital Twin YAML
-        const yamlResult = resolveFromTwinYaml(twinStore, nodeName, debug);
+        const yamlResult = resolveFromTwinFiles(twinStore, nodeName, debug);
         if (yamlResult.exactConfDir) {
             logger.info('NginxConfDir', `Resolved conf.d from YAML: ${yamlResult.exactConfDir} on ${nodeName}`);
             return { nodeName, confDir: yamlResult.exactConfDir, debug };
@@ -111,7 +113,7 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
     return { nodeName: nodeNames[0] || 'Local', confDir: '', reason, debug };
 }
 
-function resolveFromTwinYaml(
+function resolveFromTwinFiles(
     twinStore: DigitalTwinStore,
     nodeName: string,
     debug: string[],
@@ -126,69 +128,148 @@ function resolveFromTwinYaml(
     const proxyState = twinStore.proxy;
     const fileKeys = Object.keys(twin.files);
     const yamlFiles = fileKeys.filter(f => f.endsWith('.yml') || f.endsWith('.yaml'));
-    debug.push(`Node "${nodeName}": ${fileKeys.length} files in twin, ${yamlFiles.length} YAML files`);
+    const kubeFiles = fileKeys.filter(f => f.endsWith('.kube'));
+    const containerFiles = fileKeys.filter(f => f.endsWith('.container'));
+    debug.push(`Node "${nodeName}": ${fileKeys.length} files in twin (${yamlFiles.length} YAML, ${kubeFiles.length} .kube, ${containerFiles.length} .container)`);
 
+    // 1. Try direct kube YAML files (Pod manifests with volumes)
     for (const filePath of yamlFiles) {
+        const found = resolveFromKubeYaml(twin.files[filePath]?.content, filePath, proxyState, result, debug);
+        if (found) return result;
+    }
+
+    // 2. Try .kube quadlet files — they reference a Yaml= file
+    for (const filePath of kubeFiles) {
         const file = twin.files[filePath];
-        if (!file.content) {
-            debug.push(`  ${filePath}: no content`);
+        if (!file?.content) continue;
+        const directives = parseQuadletFile(file.content);
+        if (!directives.kubeYaml) {
+            debug.push(`  ${filePath}: .kube file without Yaml= directive`);
             continue;
         }
-
-        try {
-            const docs = yaml.loadAll(file.content) as Record<string, unknown>[];
-            for (const doc of docs) {
-                if (!doc?.spec) continue;
-                const spec = doc.spec as Record<string, unknown>;
-                const meta = doc.metadata as Record<string, unknown> | undefined;
-                const labels = (meta?.labels || {}) as Record<string, string>;
-                const podName = (meta?.name || '') as string;
-
-                // Match backup logic: also check proxyState.provider
-                const isProxy = labels['servicebay.role'] === 'reverse-proxy'
-                    || /nginx|proxy/i.test(podName)
-                    || (proxyState?.provider === 'nginx' && /nginx/i.test(podName));
-                if (!isProxy) {
-                    debug.push(`  ${filePath}: pod "${podName}" is not a proxy`);
-                    continue;
-                }
-                debug.push(`  ${filePath}: pod "${podName}" identified as proxy`);
-
-                const volumes = (spec.volumes || []) as Array<Record<string, unknown>>;
-                const containers = (spec.containers || []) as Array<Record<string, unknown>>;
-                const mountMap = new Map<string, string>();
-                for (const ct of containers) {
-                    for (const vm of (ct.volumeMounts || []) as Array<Record<string, string>>) {
-                        if (vm.name && vm.mountPath) mountMap.set(vm.name, vm.mountPath);
-                    }
-                }
-
-                debug.push(`  ${filePath}: ${volumes.length} volumes, mounts: ${JSON.stringify(Object.fromEntries(mountMap))}`);
-
-                for (const vol of volumes) {
-                    const hp = vol.hostPath as Record<string, string> | undefined;
-                    if (!hp?.path) continue;
-                    const volName = vol.name as string;
-                    const containerDest = mountMap.get(volName) || '';
-
-                    // Exact match — traditional nginx with conf.d bind mount
-                    if (containerDest === '/etc/nginx/conf.d') {
-                        debug.push(`  MATCH: volume "${volName}" → hostPath "${hp.path}"`);
-                        result.exactConfDir = hp.path;
-                        return result;
-                    }
-
-                    // Collect all proxy hostPaths for probing (NPM, custom setups)
-                    result.proxyHostPaths.push({ hostPath: hp.path, containerDest });
-                }
+        // Resolve the referenced YAML relative to the .kube file's directory
+        const yamlRef = directives.kubeYaml;
+        const dir = path.dirname(filePath);
+        const candidates = [
+            path.resolve(dir, yamlRef),   // relative to .kube file
+            ...fileKeys.filter(k => k.endsWith('/' + yamlRef) || k === yamlRef) // exact match in twin
+        ];
+        let resolved = false;
+        for (const candidate of candidates) {
+            const refFile = twin.files[candidate];
+            if (refFile?.content) {
+                debug.push(`  ${filePath}: Yaml=${yamlRef} → ${candidate}`);
+                const found = resolveFromKubeYaml(refFile.content, candidate, proxyState, result, debug);
+                if (found) return result;
+                resolved = true;
+                break;
             }
-        } catch (e) {
-            debug.push(`  ${filePath}: YAML parse error: ${e}`);
+        }
+        if (!resolved) {
+            debug.push(`  ${filePath}: Yaml=${yamlRef} not found in twin store`);
         }
     }
 
-    debug.push(`Node "${nodeName}": no exact conf.d mount in YAML, found ${result.proxyHostPaths.length} proxy volume(s)`);
+    // 3. Try .container quadlet files — they have Volume= directives
+    for (const filePath of containerFiles) {
+        const file = twin.files[filePath];
+        if (!file?.content) continue;
+        const directives = parseQuadletFile(file.content);
+        const name = directives.containerName || path.basename(filePath, '.container');
+        const isProxy = /nginx|proxy/i.test(name)
+            || (proxyState?.provider === 'nginx' && /nginx/i.test(name));
+        if (!isProxy) {
+            debug.push(`  ${filePath}: container "${name}" is not a proxy`);
+            continue;
+        }
+        debug.push(`  ${filePath}: container "${name}" identified as proxy`);
+
+        if (!directives.volumes?.length) {
+            debug.push(`  ${filePath}: no Volume= directives`);
+            continue;
+        }
+
+        for (const vol of directives.volumes) {
+            // Volume= format: hostPath:containerPath[:opts]
+            const parts = vol.split(':');
+            if (parts.length < 2) continue;
+            const hostPath = parts[0];
+            const containerDest = parts[1];
+
+            if (containerDest === '/etc/nginx/conf.d') {
+                debug.push(`  MATCH: Volume "${vol}" → hostPath "${hostPath}"`);
+                result.exactConfDir = hostPath;
+                return result;
+            }
+            result.proxyHostPaths.push({ hostPath, containerDest });
+        }
+    }
+
+    debug.push(`Node "${nodeName}": no exact conf.d mount found, ${result.proxyHostPaths.length} proxy volume(s) collected`);
     return result;
+}
+
+/** Parse a kube YAML (Pod manifest) looking for proxy volumes */
+function resolveFromKubeYaml(
+    content: string | undefined,
+    filePath: string,
+    proxyState: { provider: string; routes: unknown[] },
+    result: YamlResolution,
+    debug: string[],
+): boolean {
+    if (!content) {
+        debug.push(`  ${filePath}: no content`);
+        return false;
+    }
+
+    try {
+        const docs = yaml.loadAll(content) as Record<string, unknown>[];
+        for (const doc of docs) {
+            if (!doc?.spec) continue;
+            const spec = doc.spec as Record<string, unknown>;
+            const meta = doc.metadata as Record<string, unknown> | undefined;
+            const labels = (meta?.labels || {}) as Record<string, string>;
+            const podName = (meta?.name || '') as string;
+
+            const isProxy = labels['servicebay.role'] === 'reverse-proxy'
+                || /nginx|proxy/i.test(podName)
+                || (proxyState?.provider === 'nginx' && /nginx/i.test(podName));
+            if (!isProxy) {
+                debug.push(`  ${filePath}: pod "${podName}" is not a proxy`);
+                continue;
+            }
+            debug.push(`  ${filePath}: pod "${podName}" identified as proxy`);
+
+            const volumes = (spec.volumes || []) as Array<Record<string, unknown>>;
+            const containers = (spec.containers || []) as Array<Record<string, unknown>>;
+            const mountMap = new Map<string, string>();
+            for (const ct of containers) {
+                for (const vm of (ct.volumeMounts || []) as Array<Record<string, string>>) {
+                    if (vm.name && vm.mountPath) mountMap.set(vm.name, vm.mountPath);
+                }
+            }
+
+            debug.push(`  ${filePath}: ${volumes.length} volumes, mounts: ${JSON.stringify(Object.fromEntries(mountMap))}`);
+
+            for (const vol of volumes) {
+                const hp = vol.hostPath as Record<string, string> | undefined;
+                if (!hp?.path) continue;
+                const volName = vol.name as string;
+                const containerDest = mountMap.get(volName) || '';
+
+                if (containerDest === '/etc/nginx/conf.d') {
+                    debug.push(`  MATCH: volume "${volName}" → hostPath "${hp.path}"`);
+                    result.exactConfDir = hp.path;
+                    return true;
+                }
+
+                result.proxyHostPaths.push({ hostPath: hp.path, containerDest });
+            }
+        }
+    } catch (e) {
+        debug.push(`  ${filePath}: YAML parse error: ${e}`);
+    }
+    return false;
 }
 
 async function probeProxyVolumes(
