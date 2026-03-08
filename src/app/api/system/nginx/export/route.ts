@@ -18,7 +18,7 @@ export async function GET(request: Request) {
             return NextResponse.json({
                 files: {},
                 node: nodeName,
-                reason: 'Could not resolve nginx conf.d path',
+                reason: result?.reason || 'Could not resolve nginx conf.d path',
                 debug
             });
         }

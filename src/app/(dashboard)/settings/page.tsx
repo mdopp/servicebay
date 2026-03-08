@@ -980,7 +980,7 @@ export default function SettingsPage() {
       if (!data.files || Object.keys(data.files).length === 0) {
         const reason = data.reason || 'Unknown reason';
         console.warn('[NginxExport] Empty result:', { reason, debug: data.debug, confDir: data.confDir, node: data.node });
-        addToast('error', `No config files found: ${reason}`);
+        addToast('error', 'Nginx config export failed', reason, 12000);
         return;
       }
       const blob = new Blob([JSON.stringify(data.files, null, 2)], { type: 'application/json' });
@@ -1003,21 +1003,37 @@ export default function SettingsPage() {
     if (!file) return;
     setNginxImporting(true);
     try {
-      const text = await file.text();
-      const files = JSON.parse(text);
-      if (typeof files !== 'object' || Array.isArray(files)) {
-        throw new Error('Invalid format');
+      const isBackup = file.name.endsWith('.tar.gz') || file.name.endsWith('.tgz');
+      let res: Response;
+
+      if (isBackup) {
+        const formData = new FormData();
+        formData.append('file', file);
+        res = await fetch(`/api/system/nginx/import${nginxNodeQuery}`, {
+          method: 'POST',
+          body: formData
+        });
+      } else {
+        const text = await file.text();
+        const files = JSON.parse(text);
+        if (typeof files !== 'object' || Array.isArray(files)) {
+          throw new Error('Invalid format');
+        }
+        res = await fetch(`/api/system/nginx/import${nginxNodeQuery}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files })
+        });
       }
-      const res = await fetch(`/api/system/nginx/import${nginxNodeQuery}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files })
-      });
-      if (!res.ok) throw new Error('Import failed');
+
       const data = await res.json();
+      if (!res.ok) {
+        addToast('error', 'Nginx config import failed', data.error || 'Unknown error');
+        return;
+      }
       addToast('success', `Imported ${data.imported?.length || 0} config file(s)`);
     } catch {
-      addToast('error', 'Failed to import nginx config. Expected JSON with { "filename.conf": "content" } format.');
+      addToast('error', 'Failed to import nginx config', 'Expected a JSON export file or a full ServiceBay backup (.tar.gz).');
     } finally {
       setNginxImporting(false);
       if (nginxFileInputRef.current) nginxFileInputRef.current.value = '';
@@ -1780,7 +1796,7 @@ export default function SettingsPage() {
                 <input
                   ref={nginxFileInputRef}
                   type="file"
-                  accept=".json"
+                  accept=".json,.tar.gz,.tgz"
                   onChange={handleNginxImport}
                   className="hidden"
                 />
