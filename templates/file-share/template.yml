@@ -10,6 +10,9 @@ spec:
   # 1. FileBrowser — Web-based file explorer (browse, upload, download, share links)
   - name: filebrowser
     image: docker.io/filebrowser/filebrowser:latest
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
     args:
       - "--port=8090"
       - "--root=/srv"
