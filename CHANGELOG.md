@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.0...servicebay-v0.18.1) (2026-03-08)
+
+
+### Bug Fixes
+
+* pre-fill global template settings in installer modal ([cf9bd41](https://github.com/mdopp/servicebay/commit/cf9bd4129b47f973b754d71a8470d073587c766d))
+
 ## [0.18.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.6...servicebay-v0.18.0) (2026-03-08)
 
 
