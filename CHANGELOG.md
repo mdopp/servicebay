@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.20.0...servicebay-v0.20.1) (2026-03-08)
+
+
+### Bug Fixes
+
+* use stateless MCP transport pattern to fix 500 errors ([#64](https://github.com/mdopp/servicebay/issues/64)) ([af370f0](https://github.com/mdopp/servicebay/commit/af370f00c4629a99da504c8c1e84b8ff1769f471))
+
 ## [0.20.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.19.0...servicebay-v0.20.0) (2026-03-08)
 
 
