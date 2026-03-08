@@ -11,6 +11,7 @@ export default function ReverseProxyConfig() {
     const [exporting, setExporting] = useState(false);
     const [importing, setImporting] = useState(false);
     const [status, setStatus] = useState<'installed' | 'not-installed' | 'unknown'>('unknown');
+    const [nginxNode, setNginxNode] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { addToast } = useToast();
 
@@ -24,6 +25,7 @@ export default function ReverseProxyConfig() {
             const res = await fetch('/api/system/nginx/status');
             const data = await res.json();
             setStatus(data.installed ? 'installed' : 'not-installed');
+            if (data.node) setNginxNode(data.node);
         } catch (error) {
             logger.error('ReverseProxy', 'Check status failed', error);
             setStatus('unknown');
@@ -47,10 +49,12 @@ export default function ReverseProxyConfig() {
         }
     };
 
+    const nodeQuery = nginxNode && nginxNode !== 'Local' ? `?node=${encodeURIComponent(nginxNode)}` : '';
+
     const handleExport = async () => {
         setExporting(true);
         try {
-            const res = await fetch('/api/system/nginx/export');
+            const res = await fetch(`/api/system/nginx/export${nodeQuery}`);
             if (!res.ok) throw new Error('Export failed');
             const data = await res.json();
 
@@ -87,7 +91,7 @@ export default function ReverseProxyConfig() {
                 throw new Error('Invalid format');
             }
 
-            const res = await fetch('/api/system/nginx/import', {
+            const res = await fetch(`/api/system/nginx/import${nodeQuery}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ files })
@@ -131,7 +135,9 @@ export default function ReverseProxyConfig() {
                             <div>
                                 <h3 className="font-semibold text-lg">System Status</h3>
                                 <p className="text-gray-500 text-sm">
-                                    {status === 'installed' ? 'Nginx is installed and managed by ServiceBay' : 'Nginx is not installed on this system'}
+                                    {status === 'installed'
+                                        ? `Nginx is installed and managed by ServiceBay${nginxNode && nginxNode !== 'Local' ? ` on ${nginxNode}` : ''}`
+                                        : 'Nginx is not installed on this system'}
                                 </p>
                             </div>
                         </div>
