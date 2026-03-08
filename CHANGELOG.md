@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.2...servicebay-v0.18.3) (2026-03-08)
+
+
+### Bug Fixes
+
+* installer modal fields disappearing and show all variables transparently ([1f8a2dd](https://github.com/mdopp/servicebay/commit/1f8a2dd59d7547e19ba0b8c43af6f82aa875fb48))
+
 ## [0.18.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.1...servicebay-v0.18.2) (2026-03-08)
 
 
