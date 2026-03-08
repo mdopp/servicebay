@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Shield, Download, Server, Check, RefreshCw } from 'lucide-react';
+import { Shield, Download, Server, Check, RefreshCw, ExternalLink } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import { useToast } from '@/providers/ToastProvider';
 
@@ -51,7 +51,7 @@ export default function ReverseProxyConfig() {
             <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900">
                 <h2 className="font-bold text-xl text-gray-900 dark:text-white flex items-center gap-2">
                     <Shield className="text-green-500" />
-                    Reverse Proxy (Nginx)
+                    Reverse Proxy (Nginx Proxy Manager)
                 </h2>
                 <button
                     onClick={checkStatus}
@@ -84,8 +84,8 @@ export default function ReverseProxyConfig() {
                             <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800">
                                 <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Installation Required</h4>
                                 <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
-                                    To use the reverse proxy features, Nginx needs to be installed and configured on the host system.
-                                    ServiceBay can handle this automatically.
+                                    Nginx Proxy Manager provides a web UI for managing reverse proxy hosts, SSL certificates, and redirections.
+                                    ServiceBay can install it automatically.
                                 </p>
                                 <button
                                     onClick={handleInstall}
@@ -108,10 +108,20 @@ export default function ReverseProxyConfig() {
                         )}
 
                         {status === 'installed' && (
-                            <div className="mt-4 flex items-center gap-2 text-green-600 bg-green-50 dark:bg-green-900/20 p-3 rounded-lg border border-green-100 dark:border-green-800">
-                                <Check size={20} />
-                                <span className="font-medium">Ready to serve traffic</span>
-                                <span className="ml-auto text-sm text-gray-500">Export/import configs in Settings &rarr; Backups</span>
+                            <div className="mt-4 space-y-3">
+                                <div className="flex items-center gap-2 text-green-600 bg-green-50 dark:bg-green-900/20 p-3 rounded-lg border border-green-100 dark:border-green-800">
+                                    <Check size={20} />
+                                    <span className="font-medium">Ready to serve traffic</span>
+                                </div>
+                                <a
+                                    href={`${window.location.protocol}//${window.location.hostname}:8081`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
+                                >
+                                    <ExternalLink size={16} />
+                                    Open Admin UI
+                                </a>
                             </div>
                         )}
                     </div>

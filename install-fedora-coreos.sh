@@ -402,26 +402,49 @@ ${SERVICEBAY_SSH_PRIV}
           #!/bin/bash
           set -euo pipefail
           PORT="${SERVICEBAY_PORT:-3000}"
-          MAX_WAIT=120
+          API="http://localhost:$PORT"
+          MAX_WAIT=180
           WAITED=0
-          echo "install-nginx: waiting for ServiceBay on port $PORT..."
-          while ! curl -sf "http://localhost:$PORT/api/system/nginx/status" >/dev/null 2>&1; do
+          echo "install-nginx: waiting for ServiceBay API on port $PORT..."
+          while ! curl -sf "$API/api/system/nginx/status" >/dev/null 2>&1; do
             sleep 5
             WAITED=$((WAITED + 5))
             if (( WAITED >= MAX_WAIT )); then
-              echo "install-nginx: timeout waiting for ServiceBay" >&2
+              echo "install-nginx: timeout waiting for ServiceBay API" >&2
               exit 1
             fi
           done
+          # Wait for at least one agent to be connected (needs python3 installed first)
+          echo "install-nginx: waiting for agent to connect..."
+          while true; do
+            CONNECTED=$(curl -sf "$API/api/system/health" | grep -o '"isConnected":true' || true)
+            if [[ -n "$CONNECTED" ]]; then break; fi
+            sleep 5
+            WAITED=$((WAITED + 5))
+            if (( WAITED >= MAX_WAIT )); then
+              echo "install-nginx: timeout waiting for agent" >&2
+              exit 1
+            fi
+          done
+          echo "install-nginx: agent connected"
           # Check if nginx is already installed (e.g. restored from Quadlet backup)
-          INSTALLED=$(curl -sf "http://localhost:$PORT/api/system/nginx/status" | grep -o '"installed":true' || true)
+          INSTALLED=$(curl -sf "$API/api/system/nginx/status" | grep -o '"installed":true' || true)
           if [[ -n "$INSTALLED" ]]; then
             echo "install-nginx: nginx already installed, skipping"
             exit 0
           fi
           echo "install-nginx: installing nginx..."
-          curl -sf -X POST "http://localhost:$PORT/api/system/nginx/install"
-          echo "install-nginx: done"
+          # Retry install up to 3 times (agent may need a moment to stabilize)
+          for attempt in 1 2 3; do
+            if curl -sf -X POST "$API/api/system/nginx/install"; then
+              echo "install-nginx: done"
+              exit 0
+            fi
+            echo "install-nginx: attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "install-nginx: all attempts failed" >&2
+          exit 1
 
     # Systemd user unit to install Nginx on first boot
     - path: /var/home/${HOST_USER}/.config/systemd/user/install-nginx.service

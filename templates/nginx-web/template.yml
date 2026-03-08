@@ -7,30 +7,26 @@ metadata:
     servicebay.role: reverse-proxy
 spec:
   containers:
-  - name: nginx
-    image: docker.io/library/nginx:alpine
+  - name: nginx-proxy-manager
+    image: docker.io/jc21/nginx-proxy-manager:latest
     ports:
     - containerPort: 80
       hostPort: {{PORT}}
     - containerPort: 443
       hostPort: {{SSL_PORT}}
+    - containerPort: 81
+      hostPort: {{ADMIN_PORT}}
     volumeMounts:
-    - mountPath: /etc/nginx/conf.d
-      name: nginx-conf
-    - mountPath: /etc/nginx/ssl
-      name: nginx-ssl
-    - mountPath: /usr/share/nginx/html
-      name: nginx-data
+    - mountPath: /data
+      name: npm-data
+    - mountPath: /etc/letsencrypt
+      name: npm-letsencrypt
   volumes:
-  - name: nginx-conf
+  - name: npm-data
     hostPath:
-      path: {{DATA_DIR}}/nginx/conf.d
+      path: {{DATA_DIR}}/nginx-proxy-manager/data
       type: DirectoryOrCreate
-  - name: nginx-ssl
+  - name: npm-letsencrypt
     hostPath:
-      path: {{DATA_DIR}}/nginx/ssl
-      type: DirectoryOrCreate
-  - name: nginx-data
-    hostPath:
-      path: {{DATA_DIR}}/nginx/html
+      path: {{DATA_DIR}}/nginx-proxy-manager/letsencrypt
       type: DirectoryOrCreate
