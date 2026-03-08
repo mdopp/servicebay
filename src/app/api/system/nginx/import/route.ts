@@ -1,25 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getExecutor } from '@/lib/executor';
-import { getConfig } from '@/lib/config';
-import { ServiceManager } from '@/lib/services/ServiceManager';
-import { DigitalTwinStore } from '@/lib/store/twin';
-
-async function findNginxNode(): Promise<string> {
-    const twinStore = DigitalTwinStore.getInstance();
-    const nodeNames = Object.keys(twinStore.nodes);
-    if (nodeNames.length === 0) nodeNames.push('Local');
-
-    for (const nodeName of nodeNames) {
-        const services = await ServiceManager.listServices(nodeName);
-        const nginxService = services.find(s =>
-            s.name === 'nginx-web' ||
-            s.name.includes('nginx') ||
-            s.description?.toLowerCase().includes('nginx')
-        );
-        if (nginxService) return nodeName;
-    }
-    return 'Local';
-}
+import { findNginxConfDir } from '@/lib/nginx/confDir';
 
 export async function POST(request: Request) {
     try {
@@ -33,10 +14,13 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Invalid payload: expected { files: { "filename.conf": "content" } }' }, { status: 400 });
         }
 
-        const nodeName = nodeParam || await findNginxNode();
-        const config = await getConfig();
-        const dataDir = config.templateSettings?.DATA_DIR || '/mnt/data';
-        const confDir = `${dataDir}/nginx/conf.d`;
+        const result = await findNginxConfDir();
+        const nodeName = nodeParam || result?.nodeName || 'Local';
+        const confDir = result?.confDir;
+
+        if (!confDir) {
+            return NextResponse.json({ error: 'Could not locate nginx conf.d directory' }, { status: 404 });
+        }
 
         const executor = getExecutor(nodeName);
 
