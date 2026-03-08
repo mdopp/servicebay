@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.2...servicebay-v0.17.3) (2026-03-08)
+
+
+### Bug Fixes
+
+* support .kube and .container quadlet files in nginx conf.d resolution ([d1dc963](https://github.com/mdopp/servicebay/commit/d1dc963b0495c812769c9e0c0528313667c6b461))
+
 ## [0.17.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.1...servicebay-v0.17.2) (2026-03-08)
 
 
