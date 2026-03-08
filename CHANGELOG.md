@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.5](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.4...servicebay-v0.17.5) (2026-03-08)
+
+
+### Bug Fixes
+
+* auto-install missing deps and check ~/.cargo/bin in CoreOS installer ([fb39488](https://github.com/mdopp/servicebay/commit/fb394880e701e54059b3c1c63d3ff00b807fe19b))
+
 ## [0.17.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.3...servicebay-v0.17.4) (2026-03-08)
 
 
