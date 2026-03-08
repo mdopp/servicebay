@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.0...servicebay-v0.17.1) (2026-03-08)
+
+
+### Bug Fixes
+
+* support Nginx Proxy Manager volume layout for config export ([288b8fb](https://github.com/mdopp/servicebay/commit/288b8fb545261e91d1074662ecf39114fbcb3685))
+
 ## [0.17.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.4...servicebay-v0.17.0) (2026-03-08)
 
 
