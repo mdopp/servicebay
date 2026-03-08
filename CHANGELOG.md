@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.20.1...servicebay-v0.20.2) (2026-03-08)
+
+
+### Bug Fixes
+
+* pre-pull images, fix volume ownership, and handle privileged ports on deploy ([#66](https://github.com/mdopp/servicebay/issues/66)) ([bda7455](https://github.com/mdopp/servicebay/commit/bda7455e95101e27ad5464d27b9cf735830c0f91))
+
 ## [0.20.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.20.0...servicebay-v0.20.1) (2026-03-08)
 
 
