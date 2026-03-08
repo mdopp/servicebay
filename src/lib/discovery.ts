@@ -8,7 +8,7 @@ import { saveSnapshot } from './history';
 import { DigitalTwinStore, MigrationHistoryEntry } from './store/twin';
 import type { ServiceBundle } from './unmanaged/bundleShared';
 
-function getSystemdDir(connection?: PodmanConnection) {
+function getSystemdDir(_connection?: PodmanConnection) {
     // V4: All operations go through the agent which runs on the host.
     // Always use relative path - it resolves to the host user's home directory.
     return '.config/containers/systemd';

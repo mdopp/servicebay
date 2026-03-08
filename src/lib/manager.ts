@@ -8,7 +8,7 @@ import { PodmanConnection } from './nodes';
 // The agent always runs on the target host as the host user.
 // Relative paths like .config/containers/systemd resolve to the agent user's home directory,
 // which is the correct location for Quadlet files on both Local and Remote nodes.
-function getSystemdDir(connection?: PodmanConnection) {
+function getSystemdDir(_connection?: PodmanConnection) {
     return '.config/containers/systemd';
 }
 
