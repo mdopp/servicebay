@@ -25,6 +25,7 @@ interface StackItem {
 interface Variable {
   name: string;
   value: string;
+  global?: boolean;
 }
 
 export default function InstallerModal({ template, readme, isOpen, onClose }: InstallerModalProps) {
@@ -134,10 +135,11 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     }
 
     setItems(newItems);
-    // Pre-fill variables from global settings; only show vars that aren't globally configured
+    // Pre-fill variables from global settings; mark global ones so they're hidden from the form
     setVariables(Array.from(vars).map(v => ({
         name: v,
-        value: globalSettings[v] || ''
+        value: globalSettings[v] || '',
+        global: !!globalSettings[v]
     })));
   };
 
@@ -254,30 +256,50 @@ WantedBy=default.target`;
                             </div>
                         </div>
 
-                        {variables.filter(v => !v.value).length > 0 && (
-                            <p className="mb-4 text-gray-600 dark:text-gray-400">Configure variables:</p>
-                        )}
-                        {variables.filter(v => !v.value).length > 0 ? (
-                            <div className="grid gap-4 mb-6">
-                                {variables.filter(v => !v.value).map((v) => {
-                                    const idx = variables.findIndex(x => x.name === v.name);
-                                    return (
-                                    <div key={v.name}>
-                                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
-                                        <input
-                                            type="text"
-                                            value={v.value}
-                                            onChange={(e) => {
-                                                const newVars = [...variables];
-                                                newVars[idx].value = e.target.value;
-                                                setVariables(newVars);
-                                            }}
-                                            className="w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500"
-                                            placeholder={`Value for ${v.name}`}
-                                        />
+                        {variables.length > 0 ? (
+                            <div className="space-y-4 mb-6">
+                                {/* Global settings (read-only, from Settings > Template Settings) */}
+                                {variables.filter(v => v.global).length > 0 && (
+                                    <div>
+                                        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">From Settings</p>
+                                        <div className="grid gap-2">
+                                            {variables.filter(v => v.global).map(v => (
+                                                <div key={v.name} className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+                                                    <span className="text-sm font-medium text-gray-500 dark:text-gray-400 min-w-[100px]">{v.name}</span>
+                                                    <span className="text-sm text-gray-700 dark:text-gray-300 font-mono">{v.value}</span>
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
-                                    );
-                                })}
+                                )}
+
+                                {/* User-configurable variables */}
+                                {variables.filter(v => !v.global).length > 0 && (
+                                    <div>
+                                        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Configure</p>
+                                        <div className="grid gap-4">
+                                            {variables.filter(v => !v.global).map((v) => {
+                                                const idx = variables.findIndex(x => x.name === v.name);
+                                                return (
+                                                <div key={v.name}>
+                                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
+                                                    <input
+                                                        type="text"
+                                                        value={v.value}
+                                                        onChange={(e) => {
+                                                            const newVars = [...variables];
+                                                            newVars[idx].value = e.target.value;
+                                                            setVariables(newVars);
+                                                        }}
+                                                        className="w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500"
+                                                        placeholder={`Value for ${v.name}`}
+                                                    />
+                                                </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="p-4 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded mb-6">
