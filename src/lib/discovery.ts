@@ -14,7 +14,7 @@ function getSystemdDir() {
     return '.config/containers/systemd';
 }
 
-function getBackupDir(connection?: PodmanConnection) {
+function getBackupDir() {
     return path.join(getSystemdDir(), 'backups');
 }
 
@@ -944,8 +944,8 @@ async function getMigrationPlan(service: DiscoveredService, customName?: string,
         filesToBackup,
         servicesToStop: [service.serviceName],
         targetName: cleanName,
-        backupDir: getBackupDir(connection),
-        backupArchive: describeArchivePattern(getBackupDir(connection), cleanName),
+        backupDir: getBackupDir(),
+        backupArchive: describeArchivePattern(getBackupDir(), cleanName),
         stackPreview: planDetails.stackPreview,
         validations: planDetails.validations,
         fileMappings: planDetails.fileMappings
@@ -967,7 +967,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
     const cleanName = customName || service.serviceName.replace('.service', '');
     const targetKubePath = path.join(systemdDir, `${cleanName}.kube`);
     const targetYamlPath = path.join(systemdDir, `${cleanName}.yml`);
-    const backupDir = getBackupDir(connection);
+    const backupDir = getBackupDir();
 
     const backupCandidates: string[] = [];
     if (await executor.exists(targetKubePath)) backupCandidates.push(targetKubePath);
@@ -1217,8 +1217,8 @@ async function getMergePlan(services: DiscoveredService[], newName: string, conn
         filesToBackup,
         servicesToStop: services.map(s => s.serviceName),
         targetName: newName,
-        backupDir: getBackupDir(connection),
-        backupArchive: describeArchivePattern(getBackupDir(connection), newName),
+        backupDir: getBackupDir(),
+        backupArchive: describeArchivePattern(getBackupDir(), newName),
         stackPreview: planDetails.stackPreview,
         validations: planDetails.validations,
         fileMappings: planDetails.fileMappings
@@ -1239,7 +1239,7 @@ export async function mergeServices(services: DiscoveredService[], newName: stri
 
     const targetKubePath = path.join(systemdDir, `${newName}.kube`);
     const targetYamlPath = path.join(systemdDir, `${newName}.yml`);
-    const backupDir = getBackupDir(connection);
+    const backupDir = getBackupDir();
     const nodeName = connection?.Name || 'Local';
 
     const backupCandidates = collectBackupCandidates(services, [targetKubePath, targetYamlPath]);
