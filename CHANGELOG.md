@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.1...servicebay-v0.17.2) (2026-03-08)
+
+
+### Bug Fixes
+
+* handle native nginx installs in conf.d resolution ([30c0d56](https://github.com/mdopp/servicebay/commit/30c0d568246c8bc7d6ec91e6c86aeb2689420644))
+* return 401 JSON for expired sessions on API routes instead of HTML redirect ([8b79962](https://github.com/mdopp/servicebay/commit/8b79962a0218440b66714f4cc37150607ce8ce82))
+
 ## [0.17.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.17.0...servicebay-v0.17.1) (2026-03-08)
 
 
