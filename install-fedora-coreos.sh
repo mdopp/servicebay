@@ -525,10 +525,16 @@ declare -A DEPS=(
 
 MISSING=()
 for cmd in "${!DEPS[@]}"; do
-  if ! command -v "$cmd" >/dev/null 2>&1; then
+  # Also check ~/.cargo/bin for cargo-installed tools (e.g. coreos-installer)
+  if ! command -v "$cmd" >/dev/null 2>&1 && ! [[ -x "$HOME/.cargo/bin/$cmd" ]]; then
     MISSING+=("$cmd")
   fi
 done
+
+# Ensure ~/.cargo/bin is in PATH for this session if it exists
+if [[ -d "$HOME/.cargo/bin" ]] && [[ ":$PATH:" != *":$HOME/.cargo/bin:"* ]]; then
+  export PATH="$HOME/.cargo/bin:$PATH"
+fi
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo ""
@@ -638,8 +644,8 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
     fi
   }
 
-  read -r -p "Install missing dependencies now? [Y/n]: " DO_INSTALL
-  DO_INSTALL=${DO_INSTALL:-Y}
+  echo "Installing missing dependencies automatically..."
+  DO_INSTALL=Y
   if [[ "${DO_INSTALL^^}" =~ ^Y ]]; then
     install_packages
     # Verify all dependencies are now available
