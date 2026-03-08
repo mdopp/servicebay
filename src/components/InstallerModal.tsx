@@ -101,14 +101,23 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     const vars = new Set<string>();
     const newItems = [...items];
 
+    // Fetch global template settings (DATA_DIR, etc.)
+    let globalSettings: Record<string, string> = {};
+    try {
+        const settingsRes = await fetch('/api/settings');
+        if (settingsRes.ok) {
+            const settings = await settingsRes.json();
+            globalSettings = settings.templateSettings || {};
+        }
+    } catch { /* use empty defaults */ }
+
     for (const item of selectedItems) {
         try {
-            // If we already have yaml (e.g. re-running), skip fetch? No, safer to fetch.
             const yaml = await fetchTemplateYaml(item.name, template.source);
             if (!yaml) {
                 throw new Error(`Could not fetch template for ${item.name}`);
             }
-            
+
             const idx = newItems.findIndex(i => i.name === item.name);
             if (idx !== -1) newItems[idx].yaml = yaml;
 
@@ -116,7 +125,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             for (const match of matches) {
                 vars.add(match[1]);
             }
-         
+
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setError(msg);
@@ -125,7 +134,11 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     }
 
     setItems(newItems);
-    setVariables(Array.from(vars).map(v => ({ name: v, value: '' })));
+    // Pre-fill variables from global settings; only show vars that aren't globally configured
+    setVariables(Array.from(vars).map(v => ({
+        name: v,
+        value: globalSettings[v] || ''
+    })));
   };
 
   const handleInstall = async () => {
@@ -241,25 +254,30 @@ WantedBy=default.target`;
                             </div>
                         </div>
 
-                        <p className="mb-4 text-gray-600 dark:text-gray-400">Configure variables:</p>
-                        {variables.length > 0 ? (
+                        {variables.filter(v => !v.value).length > 0 && (
+                            <p className="mb-4 text-gray-600 dark:text-gray-400">Configure variables:</p>
+                        )}
+                        {variables.filter(v => !v.value).length > 0 ? (
                             <div className="grid gap-4 mb-6">
-                                {variables.map((v, i) => (
+                                {variables.filter(v => !v.value).map((v) => {
+                                    const idx = variables.findIndex(x => x.name === v.name);
+                                    return (
                                     <div key={v.name}>
                                         <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             value={v.value}
                                             onChange={(e) => {
                                                 const newVars = [...variables];
-                                                newVars[i].value = e.target.value;
+                                                newVars[idx].value = e.target.value;
                                                 setVariables(newVars);
                                             }}
                                             className="w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500"
                                             placeholder={`Value for ${v.name}`}
                                         />
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         ) : (
                             <div className="p-4 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded mb-6">
