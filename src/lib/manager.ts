@@ -3,6 +3,7 @@ import path from 'path';
 import yaml from 'js-yaml';
 import { getExecutor } from './executor';
 import { PodmanConnection } from './nodes';
+import { agentManager } from './agent/manager';
 
 // V4: All commands execute through the Agent (Local or Remote).
 // The agent always runs on the target host as the host user.
@@ -492,6 +493,13 @@ export async function saveService(name: string, kubeContent: string, yamlContent
 
   // Reload systemd
   await executor.exec('systemctl --user daemon-reload');
+
+  // Force agent to refresh so the Digital Twin picks up the change immediately
+  const nodeName = connection?.Name || 'local';
+  try {
+    const agent = await agentManager.ensureAgent(nodeName);
+    await agent.sendCommand('refresh');
+  } catch { /* agent may not be connected */ }
 }
 
 export async function deleteService(name: string, connection?: PodmanConnection) {
@@ -516,6 +524,13 @@ export async function deleteService(name: string, connection?: PodmanConnection)
   try {
     await executor.exec(`systemctl --user reset-failed ${name}.service`);
   } catch { /* unit may not be in failed state */ }
+
+  // Force agent to refresh so the Digital Twin drops the deleted service immediately
+  const nodeName = connection?.Name || 'local';
+  try {
+    const agent = await agentManager.ensureAgent(nodeName);
+    await agent.sendCommand('refresh');
+  } catch { /* agent may not be connected */ }
 }
 
 export async function getServiceLogs(name: string, connection?: PodmanConnection) {
