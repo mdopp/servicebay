@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.19.0...servicebay-v0.20.0) (2026-03-08)
+
+
+### Features
+
+* add MCP server for AI-powered ServiceBay control ([441f1ec](https://github.com/mdopp/servicebay/commit/441f1ecd426347541c5d1d26975b46d7e8dbc137))
+* add MCP server with 29 tools for AI-powered ServiceBay control ([163192d](https://github.com/mdopp/servicebay/commit/163192da84e6ef4f36681f2cbac04f0b8ec1f193))
+
+
+### Bug Fixes
+
+* force agent refresh after service delete/save for instant Twin update ([624c640](https://github.com/mdopp/servicebay/commit/624c640d8e6494d388f687d65fabf00f5e3b9092))
+* run filebrowser as root to fix /db permission denied ([a3e3bc2](https://github.com/mdopp/servicebay/commit/a3e3bc202c567641d17310d297e4388644f969dd))
+
 ## [0.19.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.18.4...servicebay-v0.19.0) (2026-03-08)
 
 
