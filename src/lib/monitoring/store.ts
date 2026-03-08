@@ -7,12 +7,13 @@ const CONFIG_DIR = DATA_DIR;
 const CHECKS_FILE = path.join(CONFIG_DIR, 'checks.json');
 const RESULTS_DIR = path.join(CONFIG_DIR, 'results');
 
-// Ensure directories exist
-if (!fs.existsSync(CONFIG_DIR)) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-}
-if (!fs.existsSync(RESULTS_DIR)) {
-  fs.mkdirSync(RESULTS_DIR, { recursive: true });
+function ensureDirs() {
+  if (!fs.existsSync(CONFIG_DIR)) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(RESULTS_DIR)) {
+    fs.mkdirSync(RESULTS_DIR, { recursive: true });
+  }
 }
 
 export class MonitoringStore {
@@ -27,6 +28,7 @@ export class MonitoringStore {
   }
 
   static saveCheck(check: CheckConfig) {
+    ensureDirs();
     const checks = this.getChecks();
     const index = checks.findIndex(c => c.id === check.id);
     if (index >= 0) {
@@ -38,13 +40,13 @@ export class MonitoringStore {
   }
 
   static deleteCheck(id: string) {
+    ensureDirs();
     const checks = this.getChecks().filter(c => c.id !== id);
     fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
   }
 
   static saveResult(result: CheckResult) {
-    // Append to a daily log file or similar?
-    // For now, let's just keep the last 100 results per check in a separate file
+    ensureDirs();
     const resultFile = path.join(RESULTS_DIR, `${result.check_id}.json`);
     let results: CheckResult[] = [];
     if (fs.existsSync(resultFile)) {
