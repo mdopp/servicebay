@@ -1,8 +1,8 @@
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
+import { DATA_DIR } from '../dirs';
 
-const STORE_PATH = path.join(os.homedir(), '.servicebay', 'network-edges.json');
+const STORE_PATH = path.join(DATA_DIR, 'network-edges.json');
 
 export interface ManualEdge {
   id: string;

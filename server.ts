@@ -1,4 +1,6 @@
-import './scripts/load-env';
+import { loadEnvConfig } from '@next/env';
+loadEnvConfig(process.cwd(), process.env.NODE_ENV !== 'production');
+
 import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';

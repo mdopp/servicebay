@@ -40,3 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 data/
+
+# python
+__pycache__/
+*.pyc
+
+# windows/WSL
+*:Zone.Identifier

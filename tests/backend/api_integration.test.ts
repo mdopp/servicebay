@@ -2,36 +2,36 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NetworkService } from './network/service';
-import { getExecutor } from './executor';
-import { getConfig } from './config';
-import { listNodes } from './nodes';
-import { listServices } from './manager'; // We might need to mock this
+import { NetworkService } from '../../src/lib/network/service';
+import { getExecutor } from '../../src/lib/executor';
+import { getConfig } from '../../src/lib/config';
+import { listNodes } from '../../src/lib/nodes';
+import { listServices } from '../../src/lib/manager'; // We might need to mock this
 
 // Mock dependencies
-vi.mock('./executor', () => ({
+vi.mock('../../src/lib/executor', () => ({
     getExecutor: vi.fn(),
 }));
 
-vi.mock('./config', () => ({
+vi.mock('../../src/lib/config', () => ({
     getConfig: vi.fn(),
     saveConfig: vi.fn(),
     SSH_DIR: '/tmp',
     DATA_DIR: '/tmp'
 }));
 
-vi.mock('./nodes', () => ({
+vi.mock('../../src/lib/nodes', () => ({
     listNodes: vi.fn(),
     PodmanConnection: {}
 }));
 
-vi.mock('./manager', () => ({
+vi.mock('../../src/lib/manager', () => ({
     listServices: vi.fn(),
     saveService: vi.fn()
 }));
 
 // Mock Monitoring Store
-vi.mock('./monitoring/store', () => ({
+vi.mock('../../src/lib/monitoring/store', () => ({
     MonitoringStore: {
         getChecks: vi.fn().mockReturnValue([]),
         getLastResult: vi.fn()

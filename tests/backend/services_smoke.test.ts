@@ -1,11 +1,11 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { listServices, ServiceInfo } from './manager';
-import { getExecutor } from './executor';
+import { listServices, ServiceInfo } from '../../src/lib/manager';
+import { getExecutor } from '../../src/lib/executor';
 
 // Mock dependencies
-vi.mock('./executor', () => ({
+vi.mock('../../src/lib/executor', () => ({
     getExecutor: vi.fn()
 }));
 

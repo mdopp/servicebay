@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { listServices } from './manager';
-import { getExecutor } from './executor';
-import { PodmanConnection } from './nodes';
-import { Executor } from './interfaces';
+import { listServices } from '../../src/lib/manager';
+import { getExecutor } from '../../src/lib/executor';
+import { PodmanConnection } from '../../src/lib/nodes';
+import { Executor } from '../../src/lib/interfaces';
 
 // Mock executor
-vi.mock('./executor', () => ({
+vi.mock('../../src/lib/executor', () => ({
   getExecutor: vi.fn()
 }));
 

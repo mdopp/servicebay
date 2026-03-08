@@ -36,16 +36,9 @@ const NPM_CONF_SUBDIRS = [
     'conf.d',
 ];
 
-/** Common conf.d locations to try as fallback */
-const COMMON_CONF_DIRS = [
-    '/etc/nginx/conf.d',
-    '/usr/local/nginx/conf/conf.d',
-];
-
 /**
  * Find the nginx node and the conf.d host path by parsing the Digital Twin's
  * stored YAML — same source of truth as the backup system (systemBackup.ts).
- * Falls back to probing common filesystem paths if YAML resolution fails.
  */
 export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
     const debug: string[] = [];
@@ -106,22 +99,9 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
             }
         }
 
-        // Fallback: probe common filesystem paths
-        debug.push(`Node "${nodeName}": probing common system paths`);
-        const probed = await probeCommonPaths(nodeName, debug);
-        if (probed) {
-            logger.info('NginxConfDir', `Resolved conf.d via system probe: ${probed} on ${nodeName}`);
-            return { nodeName, confDir: probed, debug };
-        }
-
-        const hasVolumes = yamlResult.proxyHostPaths.length > 0 || yamlResult.isNpm;
         const reason = `Found nginx service "${nginxService.name}" on "${nodeName}" but could not locate the nginx config directory. `
-            + (hasVolumes
-                ? 'Probed proxy data volumes and common system paths but found no .conf files. '
-                  + 'Make sure the service has started at least once so the config directories are created.'
-                : 'This appears to be a native (non-containerized) nginx install. '
-                  + `The standard paths (${COMMON_CONF_DIRS.join(', ')}) could not be read — `
-                  + 'make sure nginx is fully installed and the conf.d directory exists.');
+            + 'Probed proxy data volumes but found no .conf files. '
+            + 'Make sure the service has started at least once so the config directories are created.';
         debug.push(reason);
         return { nodeName, confDir: '', reason, debug };
     }
@@ -351,26 +331,3 @@ async function probeProxyVolumes(
     return null;
 }
 
-async function probeCommonPaths(nodeName: string, debug: string[]): Promise<string | null> {
-    const executor = getExecutor(nodeName);
-    for (const dir of COMMON_CONF_DIRS) {
-        try {
-            const files = await executor.readdir(dir);
-            debug.push(`  Probe ${dir}: found ${files.length} file(s)`);
-            if (files.length > 0) return dir;
-        } catch {
-            // Directory might exist but agent lacks read permission (native nginx).
-            // Check existence separately — the export route reads via the executor
-            // which may succeed with different permissions or sudo.
-            try {
-                const exists = await executor.exists(dir);
-                if (exists) {
-                    debug.push(`  Probe ${dir}: exists but cannot list contents (permission issue), using it`);
-                    return dir;
-                }
-            } catch { /* ignore */ }
-            debug.push(`  Probe ${dir}: not accessible`);
-        }
-    }
-    return null;
-}

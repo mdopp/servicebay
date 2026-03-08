@@ -449,3 +449,25 @@ The project employs a robust testing strategy ensuring reliability across the Ag
 - **Backend**: Node.js custom server.
 - **Tunneling**: SSH (Client: `ssh2` or `openssh` binary).
 - **Target**: Generic Linux with Podman & Systemd.
+
+## Frontend Design Principles
+
+### Visual Style
+
+- **Colors**: Blue-600 for actions, slate/gray scale for structure. Semantic: green (success), yellow (warning), red (error).
+- **Dark Mode**: All components must support `dark:` variants. `bg-gray-900` for backgrounds, `border-gray-800` for separators.
+- **Typography**: System sans-serif. Monospace (`font-mono`) for code, logs, terminal. Bold hierarchy for headings.
+- **Icons**: [Lucide React](https://lucide.dev/), 18–20px. Always pair with text for actions.
+
+### Layout
+
+- **Sidebar**: Collapsible navigation on the left.
+- **Content**: Card containers (`bg-white`, `rounded-lg`, `shadow-sm`). Consistent padding (`p-4`/`p-6`) and gaps (`gap-4`).
+- **Lists**: Divided (`divide-y`). Cards for grouping related information.
+
+### Interaction Patterns
+
+- **Navigation**: Next.js `Link`. Drill-down to dedicated pages for complex views (logs, terminal). Modals for confirmations and compact forms.
+- **Feedback**: `Loader2` (animate-spin) for async. `useToast` hook for success/error. `ConfirmModal` for destructive actions.
+- **Buttons**: Primary (`bg-blue-600`), Secondary (`hover:bg-gray-100`), Destructive (`text-red-600`). Icon buttons require `title` attribute.
+- **Responsiveness**: Mobile-first. Stack columns below `md` breakpoint.

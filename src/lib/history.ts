@@ -1,11 +1,11 @@
 import path from 'path';
-import os from 'os';
+import { DATA_DIR } from './dirs';
 import { getExecutor } from './executor';
 import { PodmanConnection } from './nodes';
 
 function getHistoryDir(connection?: PodmanConnection) {
     if (!connection || connection.Name === 'local') {
-        return path.join(os.homedir(), '.servicebay', 'history');
+        return path.join(DATA_DIR, 'history');
     }
     return '.servicebay/history';
 }

@@ -8,7 +8,7 @@ import { listNodes, PodmanConnection } from './nodes';
 
 const SYSTEMD_DIR = path.join(os.homedir(), '.config/containers/systemd');
 
-// Singleton to manage event emitters across hot reloads in dev
+// Singleton to prevent duplicate watchers across module reloads
 declare global {
    
   var __serviceBayWatcher: ServiceWatcher | undefined;

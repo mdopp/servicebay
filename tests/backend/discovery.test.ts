@@ -1,12 +1,12 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { discoverSystemdServices } from './discovery';
-import { getExecutor } from './executor';
-import { getPodmanPs } from './manager';
+import { discoverSystemdServices } from '../../src/lib/discovery';
+import { getExecutor } from '../../src/lib/executor';
+import { getPodmanPs } from '../../src/lib/manager';
 
 // Mocks
-vi.mock('./executor');
-vi.mock('./manager');
+vi.mock('../../src/lib/executor');
+vi.mock('../../src/lib/manager');
 
 const MOCK_NODE = { Name: 'Local', URI: 'ssh://user@127.0.0.1', Identity: '/app/data/ssh/id_rsa', Default: true };
 

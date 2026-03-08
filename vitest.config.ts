@@ -8,6 +8,9 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: [],
+    env: {
+      DATA_DIR: '/tmp/servicebay-test',
+    },
     alias: {
       '@': path.resolve(__dirname, './src'),
     },

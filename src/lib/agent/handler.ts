@@ -39,8 +39,7 @@ const loggerMethods: AgentLogger = {
 let AGENT_SCRIPT_B64: string = '';
 
 function getAgentScript() {
-  // In development, always reload the script to pick up changes
-  if (!AGENT_SCRIPT_B64 || process.env.NODE_ENV === 'development') {
+  if (!AGENT_SCRIPT_B64) {
     // Determine path. In Next.js prod, this might need adjustment or bundling.
     // For now, assume process.cwd() is project root.
     // V4 Update: Point to new agent script

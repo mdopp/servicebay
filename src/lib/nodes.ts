@@ -36,31 +36,6 @@ async function loadNodes(): Promise<PodmanConnection[]> {
     const content = await fs.readFile(NODES_FILE, 'utf-8');
     let nodes: PodmanConnection[] = JSON.parse(content);
 
-    // V4 Auto-Migration: Convert legacy "Host" SSH config to "Local" spawn config
-    const migrated = false;
-    nodes = nodes.map(node => {
-        // Disabled migration: We prefer SSH for Local node in containerized environments (Quadlet)
-        // unless explicitly set to 'local'.
-        // The previous logic forced 'local' URI which broke container->host management via SSH.
-        /*
-        const isLegacyHost = (node.Name === 'Host' || node.Name === 'Local') && 
-                             node.URI.startsWith('ssh://') && 
-                             (node.Identity.includes('id_rsa') || node.URI.includes('@localhost') || node.URI.includes('@127.0.0.1'));
-        
-        if (isLegacyHost) {
-             console.log(`[Migration] Updating legacy node '${node.Name}' to use Local Spawn...`);
-             migrated = true;
-             return {
-                 ...node,
-                 Name: 'Local',
-                 URI: 'local',
-                 Identity: ''
-             };
-        }
-        */
-        return node;
-    });
-
       // Deduplicate nodes by name (case-insensitive) to avoid duplicate "Local" entries
       const deduped = new Map<string, PodmanConnection>();
       for (const node of nodes) {
@@ -89,7 +64,7 @@ async function loadNodes(): Promise<PodmanConnection[]> {
         normalizedDefault = true;
       }
 
-      if (migrated || dedupedChanged || normalizedDefault) {
+      if (dedupedChanged || normalizedDefault) {
         // We can't call saveNodes here comfortably if it causes recursive issues or hoisting, 
         // but since we are inside an async function executing at runtime, saveNodes (hoisted) is fine.
         await fs.writeFile(NODES_FILE, JSON.stringify(nodes, null, 2), 'utf-8');

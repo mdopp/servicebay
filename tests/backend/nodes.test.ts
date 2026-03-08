@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { addNode, listNodes, verifyNodeConnection } from './nodes';
+import { addNode, listNodes, verifyNodeConnection } from '../../src/lib/nodes';
 import fs from 'fs/promises';
-import { getExecutor } from './executor';
+import { getExecutor } from '../../src/lib/executor';
 
 vi.mock('fs/promises', () => ({
     default: {
@@ -11,7 +11,7 @@ vi.mock('fs/promises', () => ({
         access: vi.fn(),
     }
 }));
-vi.mock('./executor', () => ({
+vi.mock('../../src/lib/executor', () => ({
   SSHExecutor: vi.fn(),
   getExecutor: vi.fn()
 }));

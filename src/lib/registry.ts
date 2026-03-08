@@ -1,7 +1,6 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
 import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import { getConfig, RegistryConfig } from './config';
@@ -13,7 +12,7 @@ const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 const STACKS_PATH = path.join(process.cwd(), 'stacks');
 const CONTAINER_CONFIG_DIR = '/app/.servicebay';
 const REGISTRIES_DIR = path.join(
-  process.env.CONTAINER_CONFIG_DIR || (process.env.NODE_ENV === 'production' ? CONTAINER_CONFIG_DIR : path.join(os.homedir(), '.servicebay')),
+  process.env.CONTAINER_CONFIG_DIR || CONTAINER_CONFIG_DIR,
   'registries'
 );
 
