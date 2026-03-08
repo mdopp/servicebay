@@ -10,24 +10,45 @@ export async function GET(request: Request) {
         const nodeParam = searchParams.get('node');
 
         const result = await findNginxConfDir();
+        const debug = result?.debug || ['findNginxConfDir returned null'];
         const nodeName = nodeParam || result?.nodeName || 'Local';
         const confDir = result?.confDir;
 
         if (!confDir) {
-            return NextResponse.json({ files: {}, node: nodeName });
+            return NextResponse.json({
+                files: {},
+                node: nodeName,
+                reason: 'Could not resolve nginx conf.d path',
+                debug
+            });
         }
 
         const executor = getExecutor(nodeName);
-        let files: string[];
+        let allFiles: string[];
         try {
-            files = await executor.readdir(confDir);
-        } catch {
-            return NextResponse.json({ files: {}, node: nodeName });
+            allFiles = await executor.readdir(confDir);
+        } catch (e) {
+            return NextResponse.json({
+                files: {},
+                node: nodeName,
+                confDir,
+                reason: `Cannot read directory ${confDir}: ${e}`,
+                debug
+            });
         }
 
-        const confFiles = files.filter(f => f.endsWith('.conf'));
-        const fileContents: Record<string, string> = {};
+        const confFiles = allFiles.filter(f => f.endsWith('.conf'));
+        if (confFiles.length === 0) {
+            return NextResponse.json({
+                files: {},
+                node: nodeName,
+                confDir,
+                reason: `Directory ${confDir} has ${allFiles.length} file(s) but none ending in .conf: [${allFiles.join(', ')}]`,
+                debug
+            });
+        }
 
+        const fileContents: Record<string, string> = {};
         for (const file of confFiles) {
             try {
                 fileContents[file] = await executor.readFile(`${confDir}/${file}`);
