@@ -1,0 +1,11 @@
+{
+  "SMB_USER": {
+    "type": "text",
+    "description": "Username for SMB/Windows network share access",
+    "default": "user"
+  },
+  "SMB_PASSWORD": {
+    "type": "password",
+    "description": "Password for SMB/Windows network share access"
+  }
+}

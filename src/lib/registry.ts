@@ -240,3 +240,35 @@ export async function getTemplateYaml(name: string, source?: string): Promise<st
     return null;
   }
 }
+
+export interface VariableMeta {
+  type?: 'text' | 'password' | 'secret' | 'select' | 'device';
+  description?: string;
+  default?: string;
+  options?: string[];
+  devicePath?: string;
+}
+
+export async function getTemplateVariables(name: string, source?: string): Promise<Record<string, VariableMeta> | null> {
+  const tryRead = async (filePath: string) => {
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      return JSON.parse(content);
+    } catch { return null; }
+  };
+
+  if (source && source !== 'Built-in') {
+    return tryRead(path.join(REGISTRIES_DIR, source, 'templates', name, 'variables.json'));
+  }
+
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      const result = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'templates', name, 'variables.json'));
+      if (result) return result;
+    }
+  }
+
+  return tryRead(path.join(TEMPLATES_PATH, name, 'variables.json'));
+}

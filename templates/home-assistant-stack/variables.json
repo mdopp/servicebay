@@ -1,0 +1,44 @@
+{
+  "ZWAVE_SECRET": {
+    "type": "secret",
+    "description": "Random string for Z-Wave JS session security (auto-generated)"
+  },
+  "ZWAVE_DEVICE": {
+    "type": "device",
+    "description": "USB device path for your Z-Wave stick",
+    "devicePath": "/dev/serial/by-id"
+  },
+  "WHISPER_MODEL": {
+    "type": "select",
+    "description": "Whisper speech-to-text model size (larger = more accurate, slower)",
+    "options": ["tiny", "base", "small", "medium"],
+    "default": "base"
+  },
+  "WHISPER_LANGUAGE": {
+    "type": "select",
+    "description": "Language for speech recognition",
+    "options": ["de", "en", "fr", "es", "it", "nl", "pl", "pt", "ru", "zh", "ja", "ko"],
+    "default": "de"
+  },
+  "PIPER_VOICE": {
+    "type": "select",
+    "description": "Text-to-speech voice",
+    "options": [
+      "de_DE-thorsten-high",
+      "de_DE-thorsten-medium",
+      "de_DE-thorsten-low",
+      "en_US-lessac-high",
+      "en_US-lessac-medium",
+      "en_US-amy-medium",
+      "en_GB-alan-medium",
+      "fr_FR-siwis-medium",
+      "es_ES-sharvard-medium",
+      "it_IT-riccardo-x_low",
+      "nl_NL-mls-medium",
+      "pl_PL-darkman-medium",
+      "pt_BR-edresson-low",
+      "ru_RU-denis-medium"
+    ],
+    "default": "de_DE-thorsten-high"
+  }
+}
