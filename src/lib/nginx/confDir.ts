@@ -93,9 +93,14 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
             return { nodeName, confDir: probed, debug };
         }
 
+        const isNative = yamlResult.proxyHostPaths.length === 0;
         const reason = `Found nginx service "${nginxService.name}" on "${nodeName}" but could not locate the conf.d directory. `
-            + 'No /etc/nginx/conf.d volume mount was found in the service YAML, '
-            + 'and probing proxy data volumes and common system paths found no .conf files.';
+            + (isNative
+                ? 'This appears to be a native (non-containerized) nginx install. '
+                  + `The standard paths (${COMMON_CONF_DIRS.join(', ')}) could not be read — `
+                  + 'make sure nginx is fully installed and the conf.d directory exists.'
+                : 'No /etc/nginx/conf.d volume mount was found in the service YAML, '
+                  + 'and probing proxy data volumes and common system paths found no .conf files.');
         debug.push(reason);
         return { nodeName, confDir: '', reason, debug };
     }
@@ -217,6 +222,16 @@ async function probeCommonPaths(nodeName: string, debug: string[]): Promise<stri
             debug.push(`  Probe ${dir}: found ${files.length} file(s)`);
             if (files.length > 0) return dir;
         } catch {
+            // Directory might exist but agent lacks read permission (native nginx).
+            // Check existence separately — the export route reads via the executor
+            // which may succeed with different permissions or sudo.
+            try {
+                const exists = await executor.exists(dir);
+                if (exists) {
+                    debug.push(`  Probe ${dir}: exists but cannot list contents (permission issue), using it`);
+                    return dir;
+                }
+            } catch { /* ignore */ }
             debug.push(`  Probe ${dir}: not accessible`);
         }
     }
