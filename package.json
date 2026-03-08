@@ -1,6 +1,6 @@
 {
   "name": "servicebay",
-  "version": "0.17.5",
+  "version": "0.17.6",
   "private": true,
   "scripts": {
     "predev": "tsx scripts/pre-dev-cleanup.ts",
