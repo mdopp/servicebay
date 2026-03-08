@@ -1353,8 +1353,19 @@ def get_sys_resources():
     res_cpu_info = get_cpu_info()
 
     # 4. OS Static Info
+    # When containerized, socket.gethostname() returns the container hostname.
+    # Use SSH to get the real host hostname instead.
+    if IS_CONTAINERIZED:
+        try:
+            stdout, _, _ = _executor.execute(['hostname'], check=False)
+            hostname = stdout.strip() or socket.gethostname()
+        except Exception:
+            hostname = socket.gethostname()
+    else:
+        hostname = socket.gethostname()
+
     os_info = {
-        'hostname': socket.gethostname(),
+        'hostname': hostname,
         'platform': platform.platform(),
         'release': platform.release(),
         'arch': platform.machine(),
