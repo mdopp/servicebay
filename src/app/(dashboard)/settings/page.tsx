@@ -978,7 +978,9 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error('Export failed');
       const data = await res.json();
       if (!data.files || Object.keys(data.files).length === 0) {
-        addToast('info', 'No nginx configuration files found to export');
+        const reason = data.reason || 'Unknown reason';
+        console.warn('[NginxExport] Empty result:', { reason, debug: data.debug, confDir: data.confDir, node: data.node });
+        addToast('error', `No config files found: ${reason}`);
         return;
       }
       const blob = new Blob([JSON.stringify(data.files, null, 2)], { type: 'application/json' });
