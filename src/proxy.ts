@@ -38,7 +38,12 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  // Redirect to login
+  // API routes: return 401 JSON instead of redirecting to HTML login page
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.json({ error: 'Session expired' }, { status: 401 });
+  }
+
+  // Page routes: redirect to login
   return NextResponse.redirect(new URL('/login', request.url));
 }
 

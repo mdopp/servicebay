@@ -20,6 +20,23 @@ interface DigitalTwinContextType {
 
 const DigitalTwinContext = createContext<DigitalTwinContextType | undefined>(undefined);
 
+// Intercept 401 responses from API calls and redirect to login.
+// This handles session expiry gracefully instead of showing JSON parse errors.
+if (typeof window !== 'undefined') {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args: Parameters<typeof fetch>) => {
+        const response = await originalFetch(...args);
+        if (response.status === 401) {
+            const url = typeof args[0] === 'string' ? args[0] : args[0] instanceof Request ? args[0].url : '';
+            // Only redirect for our own API calls, not external fetches
+            if (url.startsWith('/api/') || url.startsWith(window.location.origin + '/api/')) {
+                window.location.href = '/login';
+            }
+        }
+        return response;
+    };
+}
+
 export function DigitalTwinProvider({ children }: { children: ReactNode }) {
     const { socket, isConnected } = useSocket();
     const [data, setData] = useState<DigitalTwinSnapshot | null>(null);
