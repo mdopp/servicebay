@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.1...servicebay-v0.16.2) (2026-03-08)
+
+
+### Bug Fixes
+
+* move nginx config export/import from registry to Settings &gt; Backups ([#40](https://github.com/mdopp/servicebay/issues/40)) ([0bb6a95](https://github.com/mdopp/servicebay/commit/0bb6a95291c6be8fca50326c0bc9ab6f13f3302d))
+* resolve real host hostname when agent runs in container ([#38](https://github.com/mdopp/servicebay/issues/38)) ([890ccd6](https://github.com/mdopp/servicebay/commit/890ccd633f72eec72cf668bf953a04d6d76fb9f8))
+
 ## [0.16.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.0...servicebay-v0.16.1) (2026-03-08)
 
 
