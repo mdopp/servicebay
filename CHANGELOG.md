@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.15.0...servicebay-v0.16.0) (2026-03-08)
+
+
+### Features
+
+* comprehensive UX improvements ([18eb763](https://github.com/mdopp/servicebay/commit/18eb763ee115a16315488bf6f6f93fe89f166124))
+* comprehensive UX improvements across all plugins ([ce54c3c](https://github.com/mdopp/servicebay/commit/ce54c3c86d345bc8e1e975750aa92ce5cf59c550))
+
+
+### Bug Fixes
+
+* add fallback port in install-nginx script for empty SERVICEBAY_PORT ([7bd6b4f](https://github.com/mdopp/servicebay/commit/7bd6b4fb621ba95287c3491d6bdf152c86d2c620))
+
 ## [0.15.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.14.0...servicebay-v0.15.0) (2026-03-07)
 
 
