@@ -12,6 +12,25 @@ export interface NginxConfDirResult {
     reason?: string;
 }
 
+interface YamlResolution {
+    /** Exact match for /etc/nginx/conf.d mount */
+    exactConfDir: string | null;
+    /** All hostPath mounts from the proxy pod, for probing */
+    proxyHostPaths: { hostPath: string; containerDest: string }[];
+}
+
+/**
+ * Known subdirectories where nginx configs live inside data volumes.
+ * Nginx Proxy Manager stores per-host configs under /data/nginx/proxy_host/,
+ * and custom configs under /data/nginx/custom/.
+ */
+const NPM_CONF_SUBDIRS = [
+    'nginx/proxy_host',
+    'nginx/custom',
+    'nginx',
+    'conf.d',
+];
+
 /** Common conf.d locations to try as fallback */
 const COMMON_CONF_DIRS = [
     '/etc/nginx/conf.d',
@@ -49,24 +68,34 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
         }
         debug.push(`Node "${nodeName}": found nginx service "${nginxService.name}"`);
 
-        // Try resolving from Digital Twin YAML first
+        // Try resolving from Digital Twin YAML
         const yamlResult = resolveFromTwinYaml(twinStore, nodeName, debug);
-        if (yamlResult) {
-            logger.info('NginxConfDir', `Resolved conf.d from YAML: ${yamlResult} on ${nodeName}`);
-            return { nodeName, confDir: yamlResult, debug };
+        if (yamlResult.exactConfDir) {
+            logger.info('NginxConfDir', `Resolved conf.d from YAML: ${yamlResult.exactConfDir} on ${nodeName}`);
+            return { nodeName, confDir: yamlResult.exactConfDir, debug };
+        }
+
+        // Probe proxy volume host paths for known nginx config subdirectories
+        if (yamlResult.proxyHostPaths.length > 0) {
+            debug.push(`Node "${nodeName}": no exact conf.d mount, probing ${yamlResult.proxyHostPaths.length} proxy volume(s)`);
+            const probed = await probeProxyVolumes(nodeName, yamlResult.proxyHostPaths, debug);
+            if (probed) {
+                logger.info('NginxConfDir', `Resolved conf.d via volume probe: ${probed} on ${nodeName}`);
+                return { nodeName, confDir: probed, debug };
+            }
         }
 
         // Fallback: probe common filesystem paths
-        debug.push(`Node "${nodeName}": YAML resolution failed, probing common paths`);
+        debug.push(`Node "${nodeName}": probing common system paths`);
         const probed = await probeCommonPaths(nodeName, debug);
         if (probed) {
-            logger.info('NginxConfDir', `Resolved conf.d via probe: ${probed} on ${nodeName}`);
+            logger.info('NginxConfDir', `Resolved conf.d via system probe: ${probed} on ${nodeName}`);
             return { nodeName, confDir: probed, debug };
         }
 
         const reason = `Found nginx service "${nginxService.name}" on "${nodeName}" but could not locate the conf.d directory. `
-            + 'The nginx container volume mapping for /etc/nginx/conf.d was not found in the service YAML, '
-            + `and none of the common paths (${COMMON_CONF_DIRS.join(', ')}) are accessible on the host.`;
+            + 'No /etc/nginx/conf.d volume mount was found in the service YAML, '
+            + 'and probing proxy data volumes and common system paths found no .conf files.';
         debug.push(reason);
         return { nodeName, confDir: '', reason, debug };
     }
@@ -81,11 +110,12 @@ function resolveFromTwinYaml(
     twinStore: DigitalTwinStore,
     nodeName: string,
     debug: string[],
-): string | null {
+): YamlResolution {
+    const result: YamlResolution = { exactConfDir: null, proxyHostPaths: [] };
     const twin = twinStore.nodes[nodeName];
     if (!twin?.files) {
         debug.push(`Node "${nodeName}": no files in twin store`);
-        return null;
+        return result;
     }
 
     const proxyState = twinStore.proxy;
@@ -135,10 +165,16 @@ function resolveFromTwinYaml(
                     if (!hp?.path) continue;
                     const volName = vol.name as string;
                     const containerDest = mountMap.get(volName) || '';
+
+                    // Exact match — traditional nginx with conf.d bind mount
                     if (containerDest === '/etc/nginx/conf.d') {
                         debug.push(`  MATCH: volume "${volName}" → hostPath "${hp.path}"`);
-                        return hp.path;
+                        result.exactConfDir = hp.path;
+                        return result;
                     }
+
+                    // Collect all proxy hostPaths for probing (NPM, custom setups)
+                    result.proxyHostPaths.push({ hostPath: hp.path, containerDest });
                 }
             }
         } catch (e) {
@@ -146,7 +182,30 @@ function resolveFromTwinYaml(
         }
     }
 
-    debug.push(`Node "${nodeName}": conf.d path not found in any YAML file`);
+    debug.push(`Node "${nodeName}": no exact conf.d mount in YAML, found ${result.proxyHostPaths.length} proxy volume(s)`);
+    return result;
+}
+
+async function probeProxyVolumes(
+    nodeName: string,
+    hostPaths: { hostPath: string; containerDest: string }[],
+    debug: string[],
+): Promise<string | null> {
+    const executor = getExecutor(nodeName);
+    for (const { hostPath, containerDest } of hostPaths) {
+        debug.push(`  Probing proxy volume: hostPath="${hostPath}" (mounted at ${containerDest})`);
+        for (const sub of NPM_CONF_SUBDIRS) {
+            const candidate = `${hostPath}/${sub}`;
+            try {
+                const files = await executor.readdir(candidate);
+                const confFiles = files.filter(f => f.endsWith('.conf'));
+                debug.push(`    ${candidate}: ${files.length} file(s), ${confFiles.length} .conf`);
+                if (confFiles.length > 0) return candidate;
+            } catch {
+                debug.push(`    ${candidate}: not accessible`);
+            }
+        }
+    }
     return null;
 }
 
