@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.4](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.3...servicebay-v0.16.4) (2026-03-08)
+
+
+### Bug Fixes
+
+* add diagnostics to nginx config export to debug empty results ([#43](https://github.com/mdopp/servicebay/issues/43)) ([22d869e](https://github.com/mdopp/servicebay/commit/22d869eb907553c659a60b08cca0d22fdba594c3))
+
 ## [0.16.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.16.2...servicebay-v0.16.3) (2026-03-08)
 
 
