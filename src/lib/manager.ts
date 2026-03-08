@@ -8,7 +8,7 @@ import { PodmanConnection } from './nodes';
 // The agent always runs on the target host as the host user.
 // Relative paths like .config/containers/systemd resolve to the agent user's home directory,
 // which is the correct location for Quadlet files on both Local and Remote nodes.
-function getSystemdDir(_connection?: PodmanConnection) {
+function getSystemdDir() {
     return '.config/containers/systemd';
 }
 
@@ -46,7 +46,7 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
   const executor = getExecutor(connection);
   
   try {
-    const systemdDir = getSystemdDir(connection);
+    const systemdDir = getSystemdDir();
     if (!(await executor.exists(systemdDir))) {
         await executor.mkdir(systemdDir);
     }
@@ -60,7 +60,7 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
       throw e;
   }
 
-  const systemdDir = getSystemdDir(connection);
+  const systemdDir = getSystemdDir();
   // Optimized batch fetch script to reduce SSH round-trips
   const script = `
     cd "${systemdDir}" || exit 0
@@ -225,7 +225,7 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
         }
       }
 
-      const systemdDir = getSystemdDir(connection);
+      const systemdDir = getSystemdDir();
       // Map 'kubePath' to the actual source file (legacy naming)
       const kubePath = path.join(systemdDir, fileName);
       
@@ -373,7 +373,7 @@ export async function listServices(connection?: PodmanConnection): Promise<Servi
 
 export async function getServiceFiles(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  const systemdDir = getSystemdDir(connection);
+  const systemdDir = getSystemdDir();
   const kubePath = path.join(systemdDir, `${name}.kube`);
   let kubeContent = '';
   let yamlContent = '';
@@ -426,7 +426,7 @@ import { saveSnapshot } from './history';
 
 export async function updateServiceDescription(name: string, description: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  const systemdDir = getSystemdDir(connection);
+  const systemdDir = getSystemdDir();
   const kubePath = path.join(systemdDir, `${name}.kube`);
   
   try {
@@ -469,7 +469,7 @@ export async function updateServiceDescription(name: string, description: string
 
 export async function saveService(name: string, kubeContent: string, yamlContent: string, yamlFileName: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  const systemdDir = getSystemdDir(connection);
+  const systemdDir = getSystemdDir();
   const kubePath = path.join(systemdDir, `${name}.kube`);
   const yamlPath = path.join(systemdDir, yamlFileName);
 
@@ -497,7 +497,7 @@ export async function saveService(name: string, kubeContent: string, yamlContent
 export async function deleteService(name: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   const { yamlPath } = await getServiceFiles(name, connection);
-  const systemdDir = getSystemdDir(connection);
+  const systemdDir = getSystemdDir();
   const kubePath = path.join(systemdDir, `${name}.kube`);
 
   try {
@@ -832,7 +832,7 @@ export async function restartService(name: string, connection?: PodmanConnection
 
 export async function renameService(oldName: string, newName: string, connection?: PodmanConnection) {
   const executor = getExecutor(connection);
-  const systemdDir = getSystemdDir(connection);
+  const systemdDir = getSystemdDir();
   const oldKubePath = path.join(systemdDir, `${oldName}.kube`);
   const newKubePath = path.join(systemdDir, `${newName}.kube`);
   

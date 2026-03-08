@@ -8,14 +8,14 @@ import { saveSnapshot } from './history';
 import { DigitalTwinStore, MigrationHistoryEntry } from './store/twin';
 import type { ServiceBundle } from './unmanaged/bundleShared';
 
-function getSystemdDir(_connection?: PodmanConnection) {
+function getSystemdDir() {
     // V4: All operations go through the agent which runs on the host.
     // Always use relative path - it resolves to the host user's home directory.
     return '.config/containers/systemd';
 }
 
 function getBackupDir(connection?: PodmanConnection) {
-    return path.join(getSystemdDir(connection), 'backups');
+    return path.join(getSystemdDir(), 'backups');
 }
 
 async function inspectItem(executor: Executor, id: string, type: 'container' | 'pod' = 'container') {
@@ -921,7 +921,7 @@ async function buildStackPreviewForMerge(
 async function getMigrationPlan(service: DiscoveredService, customName?: string, connection?: PodmanConnection): Promise<MigrationPlan> {
     const executor = getExecutor(connection);
     const cleanName = customName || service.serviceName.replace('.service', '');
-    const systemdDir = getSystemdDir(connection);
+    const systemdDir = getSystemdDir();
     const targetKubePath = path.join(systemdDir, `${cleanName}.kube`);
     const targetYamlPath = path.join(systemdDir, `${cleanName}.yml`);
 
@@ -958,7 +958,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
         return getMigrationPlan(service, customName, connection);
     }
 
-    const systemdDir = getSystemdDir(connection);
+    const systemdDir = getSystemdDir();
     // Ensure directory exists
     if (!await executor.exists(systemdDir)) {
         await executor.mkdir(systemdDir);
@@ -1194,7 +1194,7 @@ WantedBy=default.target
 
 async function getMergePlan(services: DiscoveredService[], newName: string, connection?: PodmanConnection): Promise<MigrationPlan> {
     const executor = getExecutor(connection);
-    const systemdDir = getSystemdDir(connection);
+    const systemdDir = getSystemdDir();
     const targetKubePath = path.join(systemdDir, `${newName}.kube`);
     const targetYamlPath = path.join(systemdDir, `${newName}.yml`);
 
@@ -1232,7 +1232,7 @@ export async function mergeServices(services: DiscoveredService[], newName: stri
         return getMergePlan(services, newName, connection);
     }
 
-    const systemdDir = getSystemdDir(connection);
+    const systemdDir = getSystemdDir();
     if (!await executor.exists(systemdDir)) {
         await executor.mkdir(systemdDir);
     }
