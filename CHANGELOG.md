@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.21.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.20.3...servicebay-v0.21.0) (2026-03-09)
+
+
+### Features
+
+* add server name setting for custom display name ([#70](https://github.com/mdopp/servicebay/issues/70)) ([5520f3e](https://github.com/mdopp/servicebay/commit/5520f3ee435b48599926ad6353339f048a698e1f))
+
 ## [0.20.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.20.2...servicebay-v0.20.3) (2026-03-09)
 
 
