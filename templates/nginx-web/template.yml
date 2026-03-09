@@ -11,11 +11,11 @@ spec:
     image: docker.io/jc21/nginx-proxy-manager:latest
     ports:
     - containerPort: 80
-      hostPort: {{PORT}}
+      hostPort: {{NGINX_PORT}}
     - containerPort: 443
-      hostPort: {{SSL_PORT}}
+      hostPort: {{NGINX_SSL_PORT}}
     - containerPort: 81
-      hostPort: {{ADMIN_PORT}}
+      hostPort: {{NGINX_ADMIN_PORT}}
     volumeMounts:
     - mountPath: /data
       name: npm-data
