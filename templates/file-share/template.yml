@@ -19,7 +19,6 @@ spec:
       - "--database=/db/filebrowser.db"
     ports:
       - containerPort: 8090
-        hostPort: 8090
     volumeMounts:
       - mountPath: /srv
         name: shared-data
@@ -37,9 +36,7 @@ spec:
         value: "0.0.0.0:8384"
     ports:
       - containerPort: 8384
-        hostPort: 8384
       - containerPort: 22000
-        hostPort: 22000
     volumeMounts:
       - mountPath: /var/syncthing/Sync
         name: shared-data
@@ -66,15 +63,15 @@ spec:
   # Shared data — mounted by all three containers
   - name: shared-data
     hostPath:
-      path: {{DATA_DIR}}/file-share/data
+      path: {{DATA_DIR}}/stacks/file-share/data
       type: DirectoryOrCreate
   # Syncthing config, keys, and database
   - name: syncthing-config
     hostPath:
-      path: {{DATA_DIR}}/file-share/syncthing
+      path: {{DATA_DIR}}/stacks/file-share/syncthing
       type: DirectoryOrCreate
   # FileBrowser SQLite database
   - name: filebrowser-db
     hostPath:
-      path: {{DATA_DIR}}/file-share/filebrowser
+      path: {{DATA_DIR}}/stacks/file-share/filebrowser
       type: DirectoryOrCreate

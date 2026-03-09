@@ -67,7 +67,6 @@ spec:
       value: "{{WHISPER_LANGUAGE}}"
     ports:
     - containerPort: 10300
-      hostPort: 10300
     volumeMounts:
     - mountPath: /data
       name: whisper-data
@@ -82,7 +81,6 @@ spec:
       value: "{{PIPER_VOICE}}"
     ports:
     - containerPort: 10200
-      hostPort: 10200
     volumeMounts:
     - mountPath: /data
       name: piper-data
@@ -95,7 +93,6 @@ spec:
       value: "Europe/Berlin"
     ports:
     - containerPort: 10400
-      hostPort: 10400
 
   volumes:
   # Persistence

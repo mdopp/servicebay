@@ -517,6 +517,9 @@ export class ServiceManager {
         // Fix volume ownership for containers running as non-root UIDs
         await this.fixVolumeOwnership(nodeName, yamlContent);
 
+        // Run pre-start hooks (e.g. initialize databases with known credentials)
+        await this.runPreStartHooks(nodeName, name, yamlContent);
+
         // Attempt start, but don't fail deployment if start fails (user can check logs)
         try {
              await this.startService(nodeName, name);
@@ -614,6 +617,79 @@ export class ServiceManager {
             }
         } catch (e) {
             logger.debug('ServiceManager', 'Volume ownership fix skipped:', e);
+        }
+    }
+
+    /**
+     * Run pre-start hooks for known images that need initialization (e.g. filebrowser DB).
+     * This runs AFTER files are written and images are pulled, but BEFORE the service starts.
+     */
+    private static async runPreStartHooks(nodeName: string, name: string, yamlContent: string) {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const docs = yaml.loadAll(yamlContent) as any[];
+            for (const doc of docs) {
+                if (!doc?.spec) continue;
+                const containers = doc.spec.containers || [];
+                const volumes = doc.spec.volumes || [];
+
+                const volumePaths = new Map<string, string>();
+                for (const vol of volumes) {
+                    if (vol.hostPath?.path) volumePaths.set(vol.name, vol.hostPath.path);
+                }
+
+                for (const container of containers) {
+                    const image = container.image || '';
+                    if (!image.includes('filebrowser')) continue;
+
+                    // Find the database volume mount
+                    const dbMount = (container.volumeMounts || []).find(
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        (m: any) => m.mountPath === '/db'
+                    );
+                    const dbHostPath = dbMount ? volumePaths.get(dbMount.name) : null;
+                    if (!dbHostPath) continue;
+
+                    // Extract password from --database arg or use default path
+                    const dbFile = 'filebrowser.db';
+                    const fullDbPath = `${dbHostPath}/${dbFile}`;
+
+                    const agent = await agentManager.ensureAgent(nodeName);
+
+                    // Check if DB already exists (don't overwrite on redeploy)
+                    const check = await agent.sendCommand('exec', { command: `test -f ${fullDbPath} && echo exists` });
+                    if (check.stdout?.trim() === 'exists') {
+                        logger.debug('ServiceManager', `FileBrowser DB already exists at ${fullDbPath}, skipping init`);
+                        continue;
+                    }
+
+                    // Initialize filebrowser DB with known admin password using a temporary container
+                    logger.info('ServiceManager', `Initializing FileBrowser DB at ${fullDbPath}`);
+                    await agent.sendCommand('exec', { command: `mkdir -p ${dbHostPath}` });
+                    const initCmd = [
+                        `podman run --rm --user 0:0`,
+                        `-v ${dbHostPath}:/db`,
+                        `${image}`,
+                        `config init --database /db/${dbFile}`,
+                    ].join(' ');
+                    await agent.sendCommand('exec', { command: initCmd, timeout: 60 });
+
+                    const userCmd = [
+                        `podman run --rm --user 0:0`,
+                        `-v ${dbHostPath}:/db`,
+                        `${image}`,
+                        `users add admin admin1234admin --perm.admin --database /db/${dbFile}`,
+                    ].join(' ');
+                    const result = await agent.sendCommand('exec', { command: userCmd, timeout: 60 });
+                    if (result.code === 0) {
+                        logger.info('ServiceManager', 'FileBrowser initialized with admin/admin1234admin');
+                    } else {
+                        logger.warn('ServiceManager', `FileBrowser user init failed: ${result.stderr}`);
+                    }
+                }
+            }
+        } catch (e) {
+            logger.debug('ServiceManager', 'Pre-start hooks skipped:', e);
         }
     }
 
