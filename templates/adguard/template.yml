@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: adguard
+  labels:
+    app: adguard
+    servicebay.role: dns
+spec:
+  hostNetwork: true
+  containers:
+  - name: adguard-home
+    image: docker.io/adguard/adguardhome:latest
+    volumeMounts:
+    - mountPath: /opt/adguardhome/work
+      name: adguard-work
+    - mountPath: /opt/adguardhome/conf
+      name: adguard-conf
+  volumes:
+  - name: adguard-work
+    hostPath:
+      path: {{DATA_DIR}}/adguard/work
+      type: DirectoryOrCreate
+  - name: adguard-conf
+    hostPath:
+      path: {{DATA_DIR}}/adguard/conf
+      type: DirectoryOrCreate

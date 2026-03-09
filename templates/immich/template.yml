@@ -23,7 +23,7 @@ spec:
           value: "http://localhost:3003"
       ports:
         - containerPort: 2283
-          hostPort: {{PORT}}
+          hostPort: {{IMMICH_PORT}}
       volumeMounts:
         - mountPath: /usr/src/app/upload
           name: immich-upload

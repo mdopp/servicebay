@@ -1,0 +1,18 @@
+{
+  "VAULTWARDEN_PORT": {
+    "type": "text",
+    "description": "Web UI port",
+    "default": "8222"
+  },
+  "VAULTWARDEN_DOMAIN": {
+    "type": "text",
+    "description": "Public URL (z.B. https://vault.example.com)",
+    "default": ""
+  },
+  "VAULTWARDEN_SIGNUPS": {
+    "type": "select",
+    "description": "Registrierungen erlauben",
+    "options": ["true", "false"],
+    "default": "true"
+  }
+}
