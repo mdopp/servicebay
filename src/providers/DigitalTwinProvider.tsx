@@ -6,6 +6,7 @@ import type { NodeTwin, GatewayState, ProxyState } from '@/lib/store/twin';
 
 export interface DigitalTwinSnapshot {
   instanceId?: string;
+  serverName?: string | null;
   nodes: Record<string, NodeTwin>;
   gateway: GatewayState;
   proxy: ProxyState;
@@ -70,20 +71,27 @@ export function DigitalTwinProvider({ children }: { children: ReactNode }) {
     }, [socket]);
 
 
-    // Update browser tab title with hostname or IP from the first connected node
+    // Update browser tab title: serverName > hostname > IP
     useEffect(() => {
         if (!data) return;
+
+        // Priority 1: Custom server name from settings
+        if (data.serverName) {
+            document.title = `${data.serverName} - ServiceBay`;
+            return;
+        }
+
         const firstNode = Object.values(data.nodes)[0];
         if (!firstNode?.resources) return;
 
+        // Priority 2: Meaningful hostname
         const hostname = firstNode.resources.os?.hostname;
-        // Use hostname if it's meaningful (not localhost variants)
         if (hostname && hostname !== 'localhost' && !hostname.endsWith('.localdomain')) {
             document.title = `${hostname} - ServiceBay`;
             return;
         }
 
-        // Fallback: use first public IPv4 address
+        // Priority 3: First public IPv4 address
         const network = firstNode.resources.network;
         if (network) {
             for (const addrs of Object.values(network)) {

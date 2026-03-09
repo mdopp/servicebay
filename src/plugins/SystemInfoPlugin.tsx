@@ -228,8 +228,8 @@ export default function SystemInfoPlugin() {
                     <Server size={18} />
                     <span className="text-sm font-medium">Hostname</span>
                 </div>
-                <div className="text-lg font-semibold truncate" title={os.hostname}>{os.hostname}</div>
-                <div className="text-xs text-gray-400">Node ID: {selectedNode}</div>
+                <div className="text-lg font-semibold truncate" title={twin?.serverName || os.hostname}>{twin?.serverName || os.hostname}</div>
+                <div className="text-xs text-gray-400">{twin?.serverName ? os.hostname + ' · ' : ''}Node ID: {selectedNode}</div>
             </div>
             
             <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
