@@ -105,6 +105,7 @@ export class DigitalTwinStore {
   };
 
   private listeners: Array<() => void> = [];
+  private staticPortsCache = new Map<string, { contentKey: string; ports: PortMapping[] }>();
 
   private constructor() {}
 
@@ -782,6 +783,15 @@ export class DigitalTwinStore {
       const baseName = service.name?.replace(/\.service$/, '') || service.name;
       if (!baseName) return [];
 
+      // Check cache: skip re-parsing if the underlying file content hasn't changed
+      const kubeEntry = this.findFileBySuffix(node.files, `/${baseName}.kube`);
+      const containerEntry = this.findFileBySuffix(node.files, `/${baseName}.container`);
+      const contentKey = (kubeEntry?.[1]?.content || '') + '|' + (containerEntry?.[1]?.content || '');
+      const cached = this.staticPortsCache.get(baseName);
+      if (cached && cached.contentKey === contentKey) {
+          return cached.ports;
+      }
+
       const ports: PortMapping[] = [];
       const pushPort = (hostPort?: number, containerPort?: number, protocol?: string, hostIp?: string) => {
           const normalizedContainer = containerPort ?? hostPort;
@@ -796,7 +806,6 @@ export class DigitalTwinStore {
       };
 
       const files = node.files;
-      const kubeEntry = this.findFileBySuffix(files, `/${baseName}.kube`);
       if (kubeEntry) {
           const [kubePath, kubeFile] = kubeEntry;
           if (kubeFile.content) {
@@ -837,11 +846,11 @@ export class DigitalTwinStore {
               }
           }
           if (ports.length > 0) {
+              this.staticPortsCache.set(baseName, { contentKey, ports });
               return ports;
           }
       }
 
-      const containerEntry = this.findFileBySuffix(files, `/${baseName}.container`);
       if (containerEntry) {
           const [, containerFile] = containerEntry;
           if (containerFile.content) {
@@ -885,6 +894,7 @@ export class DigitalTwinStore {
           }
       }
 
+      this.staticPortsCache.set(baseName, { contentKey, ports });
       return ports;
   }
 

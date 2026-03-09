@@ -28,26 +28,26 @@ export async function checkDomains(nginxConfig: NginxConfig, fbStatus: FritzBoxS
 
     logger.info('DNS', `Checking domains: ${Array.from(domains).join(', ')}`);
 
-    const results: DomainStatus[] = [];
-
-    for (const domain of domains) {
-        try {
-            const addresses = await dns.resolve4(domain);
-            const resolved = addresses[0] || null;
-            results.push({
-                domain,
-                resolvesTo: resolved,
-                matches: resolved ? allowedIPs.has(resolved) : false,
-            });
-        } catch (e) {
-            results.push({
-                domain,
-                resolvesTo: null,
-                matches: false,
-                error: e instanceof Error ? e.message : String(e),
-            });
-        }
-    }
+    const results = await Promise.all(
+        Array.from(domains).map(async (domain): Promise<DomainStatus> => {
+            try {
+                const addresses = await dns.resolve4(domain);
+                const resolved = addresses[0] || null;
+                return {
+                    domain,
+                    resolvesTo: resolved,
+                    matches: resolved ? allowedIPs.has(resolved) : false,
+                };
+            } catch (e) {
+                return {
+                    domain,
+                    resolvesTo: null,
+                    matches: false,
+                    error: e instanceof Error ? e.message : String(e),
+                };
+            }
+        })
+    );
 
     return results;
 }
