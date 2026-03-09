@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getServiceLogs, getPodmanLogs, getPodmanPs } from '@/lib/manager';
+import { ServiceManager } from '@/lib/services/ServiceManager';
+import { getPodmanPs } from '@/lib/manager';
 import { listNodes } from '@/lib/nodes';
 
 export async function GET(
@@ -9,20 +10,14 @@ export async function GET(
   const { name: rawName } = await params;
   const name = decodeURIComponent(rawName);
   const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node');
-  
-  let connection;
-  if (nodeName) {
-      const nodes = await listNodes();
-      connection = nodes.find(n => n.Name === nodeName);
-  }
-  
+  const nodeName = searchParams.get('node') || 'Local';
+
   // Special handling for Internet Gateway (FritzBox)
   if (name === 'gateway' || name === 'Internet Gateway') {
       try {
           const { getConfig } = await import('@/lib/config');
           const { FritzBoxClient } = await import('@/lib/fritzbox/client');
-          
+
           const config = await getConfig();
           if (config.gateway?.type === 'fritzbox') {
               const client = new FritzBoxClient(config.gateway);
@@ -48,9 +43,13 @@ export async function GET(
       }
   }
 
+  // getPodmanPs still needs a connection object for now (stays in manager.ts)
+  const nodes = await listNodes();
+  const connection = nodes.find(n => n.Name === nodeName);
+
   const [serviceLogsResult, podmanLogsResult, podmanPsResult] = await Promise.allSettled([
-    getServiceLogs(name, connection),
-    getPodmanLogs(connection),
+    ServiceManager.getServiceLogs(nodeName, name),
+    ServiceManager.getPodmanLogs(nodeName),
     getPodmanPs(connection)
   ]);
 

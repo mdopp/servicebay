@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getTemplateYaml } from '@/lib/registry';
-import { saveService, startService } from '@/lib/manager';
+import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getConfig } from '@/lib/config';
 import { listNodes } from '@/lib/nodes';
 import { getExecutor } from '@/lib/executor';
@@ -21,7 +21,7 @@ export async function POST() {
         // 3. Find the target node (default node, or first available)
         const nodes = await listNodes();
         const targetNode = nodes.find(n => n.Default) || nodes[0];
-        const connection = targetNode?.URI ? targetNode : undefined;
+        const nodeName = targetNode?.Name || 'Local';
 
         // 4. Prepare the service configuration
         const name = 'nginx-web';
@@ -44,11 +44,10 @@ WantedBy=default.target
 `;
 
         // 5. Save the service to the target node and start it
-        await saveService(name, kubeContent, yamlContent, `${name}.yml`, connection);
-        await startService(name, connection);
+        await ServiceManager.saveService(nodeName, name, kubeContent, yamlContent, `${name}.yml`);
+        await ServiceManager.startService(nodeName, name);
 
         // 6. Clean up the install-nginx oneshot service (created by CoreOS install script)
-        const nodeName = targetNode?.Name || 'Local';
         await cleanupInstallerService(nodeName);
 
         return NextResponse.json({ success: true, node: targetNode?.Name });
