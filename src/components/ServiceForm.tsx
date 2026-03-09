@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import yaml from 'js-yaml';
-import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Database, Plus, Copy, Clipboard } from 'lucide-react';
+import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
@@ -11,10 +11,8 @@ import 'prismjs/components/prism-ini'; // For systemd/kube files (ini-like)
 import 'prismjs/themes/prism-tomorrow.css'; // Dark theme for code
 import HistoryViewer from './HistoryViewer';
 import { getNodes } from '@/app/actions/system';
-import { logger } from '@/lib/logger';
 import { PodmanConnection } from '@/lib/nodes';
 import { useToast } from '@/providers/ToastProvider';
-import { Volume } from '@/lib/agent/types';
 
 interface KubeContainerPort {
     containerPort: number;
@@ -83,9 +81,6 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
   const [extractedPorts, setExtractedPorts] = useState<{ host?: string; container: string }[]>([]);
   const [extractedVolumes, setExtractedVolumes] = useState<{ host: string; container: string }[]>([]);
 
-  // Volume Helpers
-  const [availableVolumes, setAvailableVolumes] = useState<Volume[]>([]); 
-  
   // Rename Modal State
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [newServiceName, setNewServiceName] = useState('');
@@ -104,18 +99,6 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
   useEffect(() => {
     getNodes().then(setNodes);
   }, []);
-
-  // Fetch volumes when node changes
-  useEffect(() => {
-    if (selectedNode) {
-        fetch(`/api/volumes?node=${selectedNode}`)
-            .then(res => res.json())
-            .then(data => setAvailableVolumes(Array.isArray(data) ? data : []))
-            .catch(e => logger.error('ServiceForm', 'Failed to fetch volumes:', e));
-    } else {
-        setAvailableVolumes([]);
-    }
-  }, [selectedNode]);
 
   // Initialize Description from KubeContent
   useEffect(() => {
@@ -194,18 +177,6 @@ WantedBy=default.target`;
     }
     setExtractedPorts(ports);
     setExtractedVolumes(volumes);
-  };
-
-  const insertAtCursor = (text: string) => {
-    // Simple append if cursor tracking is hard, or we can try to use the last cursor position
-    // Since 'cursorLine' updates on click/keyup, we can try to insert there.
-    // However, react-simple-code-editor doesn't expose a clean way to insert at cursor programmatically easily without ref refs.
-    // We will append to the end for safety, or copy to clipboard.
-    // Let's copy to clipboard as primary action.
-    navigator.clipboard.writeText(text);
-    // Also try to update content if possible
-    // For now, let's just use clipboard to avoid messing up the file
-    addToast('success', 'Snippet copied!', 'Paste it in the editor using Ctrl+V');
   };
 
   const handleCopyYaml = () => {
@@ -660,47 +631,6 @@ WantedBy=default.target`;
                         </div>
                     </div>
 
-                    {/* Available Volumes Sidebar */}
-                    {availableVolumes.length > 0 && (
-                        <div className="w-full lg:w-72 hidden lg:flex bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex-col">
-                            <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-100/50 dark:bg-gray-800/50">
-                                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                                    <Database size={14} className="text-blue-500" /> 
-                                    Available Volumes
-                                </h3>
-                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    Click (+) to insert definition, (Cp) to insert mount.
-                                </p>
-                            </div>
-                            <div className="flex-1 overflow-y-auto p-4 space-y-2 max-h-[700px]">
-                                {availableVolumes.filter((v: Volume) => !v.Anonymous).map(vol => (
-                                    <div key={vol.Name} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 shadow-sm hover:border-blue-300 dark:hover:border-blue-700 transition-colors group">
-                                        <div className="font-mono text-xs font-medium text-blue-700 dark:text-blue-300 mb-1 truncate" title={vol.Name}>
-                                            {vol.Name}
-                                        </div>
-                                        <div className="flex gap-2 mt-2">
-                                            <button 
-                                                type="button"
-                                                onClick={() => insertAtCursor(`  - name: ${vol.Name}\n    persistentVolumeClaim:\n      claimName: ${vol.Name}`)}
-                                                className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded text-xs transition-colors border border-blue-100 dark:border-blue-800"
-                                                title="Copy Volume Definition (spec.volumes)"
-                                            >
-                                                <Plus size={12} /> Def
-                                            </button>
-                                            <button 
-                                                type="button"
-                                                onClick={() => insertAtCursor(`        - name: ${vol.Name}\n          mountPath: /data`)}
-                                                className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded text-xs transition-colors border border-gray-200 dark:border-gray-700"
-                                                title="Copy Mount (volumeMounts)"
-                                            >
-                                                <Copy size={12} /> Mount
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
                 </div>
             )}
             
@@ -797,45 +727,6 @@ WantedBy=default.target`;
             Save Service
             </button>
         </div>
-
-        {/* Mobile Volume Helper */}
-        {activeTab === 'yaml' && availableVolumes.length > 0 && (
-             <div className="lg:hidden bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md overflow-hidden">
-                  <div className="p-3 bg-gray-100/50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800">
-                      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                           <Database size={14} className="text-blue-500" /> 
-                           Available Volumes
-                      </h3>
-                  </div>
-                  <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                       {availableVolumes.filter((v: Volume) => !v.Anonymous).map(vol => (
-                                    <div key={vol.Name} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 shadow-sm flex items-center justify-between gap-3">
-                                        <div className="font-mono text-xs font-medium text-blue-700 dark:text-blue-300 truncate min-w-0" title={vol.Name}>
-                                            {vol.Name}
-                                        </div>
-                                        <div className="flex gap-2 shrink-0">
-                                            <button 
-                                                type="button"
-                                                onClick={() => insertAtCursor(`  - name: ${vol.Name}\n    persistentVolumeClaim:\n      claimName: ${vol.Name}`)}
-                                                className="px-2 py-1 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded text-xs border border-blue-100 dark:border-blue-800"
-                                                title="Copy Def"
-                                            >
-                                                Def
-                                            </button>
-                                            <button 
-                                                type="button"
-                                                onClick={() => insertAtCursor(`        - name: ${vol.Name}\n          mountPath: /data`)}
-                                                className="px-2 py-1 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded text-xs border border-gray-200 dark:border-gray-700"
-                                                title="Copy Mount"
-                                            >
-                                                Mnt
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                  </div>
-             </div>
-        )}
 
         {yamlError && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-200 rounded-md shadow-sm flex items-start gap-3 animate-in fade-in slide-in-from-top-2">

@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { getExecutor } from '@/lib/executor';
 import { listNodes } from '@/lib/nodes';
-import { getServiceFiles } from '@/lib/manager';
+import { ServiceManager } from '@/lib/services/ServiceManager';
 import yaml from 'js-yaml';
 
 export const dynamic = 'force-dynamic';
@@ -47,8 +47,10 @@ export async function POST(
       
       const executor = getExecutor(connection);
 
+      const streamNodeName = nodeName || connection?.Name || 'Local';
+
       if (action === 'start') {
-          const { yamlPath } = await getServiceFiles(name, connection);
+          const { yamlPath } = await ServiceManager.getServiceFiles(streamNodeName, name);
 
           if (yamlPath) {
             await write(`Found YAML configuration: ${yamlPath}`);

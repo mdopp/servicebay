@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServiceFiles, deleteService, saveService, updateServiceDescription } from '@/lib/manager';
+import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
-import { listNodes } from '@/lib/nodes';
 import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
 import crypto from 'crypto';
 
@@ -14,27 +13,18 @@ const parseIpTargets = (input: unknown, fallback: string[] = []) => {
   return fallback;
 };
 
-async function getConnection(request: Request) {
+function getNodeName(request: Request): string {
     const { searchParams } = new URL(request.url);
-    const nodeName = searchParams.get('node');
-    if (nodeName) {
-        const nodes = await listNodes();
-        return nodes.find(n => n.Name === nodeName);
-    }
-    return undefined;
+    return searchParams.get('node') || 'Local';
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
   try {
     const { name: rawName } = await params;
     const name = decodeURIComponent(rawName);
-    const connection = await getConnection(request);
-    
-    // Check if it's a link (optional, but GET usually fetches files for editing)
-    // If it's a link, we might return link details? 
-    // For now, let's assume GET is only for editing container services.
-    
-    const files = await getServiceFiles(name, connection);
+    const nodeName = getNodeName(request);
+
+    const files = await ServiceManager.getServiceFiles(nodeName, name);
     return NextResponse.json(files);
   } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -44,7 +34,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
 export async function DELETE(request: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name: rawName } = await params;
   const name = decodeURIComponent(rawName);
-  const connection = await getConnection(request);
+  const nodeName = getNodeName(request);
 
   // Check if it's a link
   const config = await getConfig();
@@ -54,19 +44,19 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
         const link = config.externalLinks[linkIndex];
         config.externalLinks.splice(linkIndex, 1);
         await saveConfig(config);
-        
+
         // Remove monitor check if exists
         const checks = MonitoringStore.getChecks();
         const check = checks.find(c => c.name === `Link: ${link.name}`);
         if (check) {
             MonitoringStore.deleteCheck(check.id);
         }
-        
+
         return NextResponse.json({ success: true });
     }
   }
 
-  await deleteService(name, connection);
+  await ServiceManager.deleteService(nodeName, name);
   return NextResponse.json({ success: true });
 }
 
@@ -74,7 +64,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
   const { name: rawName } = await params;
   const name = decodeURIComponent(rawName);
   const body = await request.json();
-  const connection = await getConnection(request);
+  const nodeName = getNodeName(request);
 
   // Check if it's a link update
   if (body.type === 'link') {
@@ -85,7 +75,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
         // Update existing link
         const oldLink = config.externalLinks[linkIndex];
         const newName = body.name || oldLink.name;
-        
+
         let updatedIpTargets = oldLink.ipTargets || [];
         if (body.ipTargets !== undefined) {
           updatedIpTargets = parseIpTargets(body.ipTargets, updatedIpTargets);
@@ -101,7 +91,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
           ipTargets: updatedIpTargets,
           ports: updatedPorts
         };
-        
+
         await saveConfig(config);
 
         // Update monitor if needed
@@ -109,7 +99,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
              const checks = MonitoringStore.getChecks();
              const checkName = `Link: ${oldLink.name}`; // Use old name to find
              const check = checks.find(c => c.name === checkName);
-             
+
              if (body.monitor) {
                  if (check) {
                      // Update check
@@ -143,7 +133,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
       } else {
         // Link does not exist, create it (Promote Virtual Node to External Link)
         if (!config.externalLinks) config.externalLinks = [];
-        
+
         const parsedTargets = parseIpTargets(body.ipTargets);
         const portMappings = buildExternalLinkPorts(parsedTargets);
 
@@ -157,7 +147,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
           ports: portMappings
         };
         config.externalLinks.push(newLink);
-        
+
         await saveConfig(config);
 
         // Add monitor if requested
@@ -173,18 +163,16 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
                  httpConfig: { expectedStatus: 200 }
              });
         }
-        
+
         return NextResponse.json({ success: true });
       }
     }
-    // If config.externalLinks was undefined but we created it above, we returned.
-    // If type was link but somehow failed logic? No, the else block handles it.
   }
 
   // Handle Description Update for Managed Service
   if (body.description !== undefined && !body.kubeContent) {
       try {
-          await updateServiceDescription(name, body.description, connection);
+          await ServiceManager.updateServiceDescription(nodeName, name, body.description);
           return NextResponse.json({ success: true });
       } catch (e) {
           const message = e instanceof Error ? e.message : 'Unknown error';
@@ -193,7 +181,11 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
   }
 
   const { kubeContent, yamlContent, yamlFileName } = body;
-   
-  await saveService(name, kubeContent, yamlContent, yamlFileName, connection);
+
+  if (!kubeContent || !yamlContent) {
+      return NextResponse.json({ error: 'kubeContent and yamlContent are required' }, { status: 400 });
+  }
+
+  await ServiceManager.saveService(nodeName, name, kubeContent, yamlContent, yamlFileName);
   return NextResponse.json({ success: true });
 }

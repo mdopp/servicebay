@@ -6,7 +6,7 @@ import { NetworkService } from '../../src/lib/network/service';
 import { getExecutor } from '../../src/lib/executor';
 import { getConfig } from '../../src/lib/config';
 import { listNodes } from '../../src/lib/nodes';
-import { listServices } from '../../src/lib/manager'; // We might need to mock this
+import { ServiceManager } from '../../src/lib/services/ServiceManager';
 
 // Mock dependencies
 vi.mock('../../src/lib/executor', () => ({
@@ -25,9 +25,10 @@ vi.mock('../../src/lib/nodes', () => ({
     PodmanConnection: {}
 }));
 
-vi.mock('../../src/lib/manager', () => ({
-    listServices: vi.fn(),
-    saveService: vi.fn()
+vi.mock('../../src/lib/services/ServiceManager', () => ({
+    ServiceManager: {
+        listServices: vi.fn(),
+    }
 }));
 
 // Mock Monitoring Store
@@ -64,7 +65,7 @@ describe('API and Graph Integration Tests', () => {
         ]);
         
         // Mock listServices
-        (listServices as any).mockResolvedValue([
+        (ServiceManager.listServices as any).mockResolvedValue([
             { name: 'servicebay', active: true },
             { name: 'nginx-web', active: true }
         ]);
@@ -115,7 +116,7 @@ describe('API and Graph Integration Tests', () => {
      */
     it('should simulate API logic for injecting Internet Gateway', async () => {
         const config = await getConfig();
-        const services = await listServices();
+        const services = await ServiceManager.listServices('Local');
         const isLocal = true;
         
         const apiResponseServices = [...services];

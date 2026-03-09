@@ -1,13 +1,9 @@
-import { useState, useEffect, useMemo, useCallback, FormEvent, useRef } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import PluginLoading from '@/components/PluginLoading';
-import { Box, Terminal as TerminalIcon, MoreVertical, X, Trash2, Activity, Search, HardDrive, Plus, RefreshCw, Eraser } from 'lucide-react';
-import ConfirmModal from '@/components/ConfirmModal';
-import { useToast } from '@/providers/ToastProvider';
+import { Box, Terminal as TerminalIcon, MoreVertical, X, Activity, Search, RefreshCw, Eraser } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
-import { Volume } from '@/lib/agent/types';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
@@ -44,42 +40,15 @@ interface Container {
     };
 }
 
-type ContainerEngineTab = 'containers' | 'volumes';
-
-interface ContainersPluginProps {
-    defaultTab?: ContainerEngineTab;
-}
-
-export default function ContainersPlugin({ defaultTab = 'containers' }: ContainersPluginProps) {
-    const router = useRouter();
-    const pathname = usePathname() || '';
-    const searchParams = useSearchParams();
+export default function ContainersPlugin() {
   const { data: twin, isConnected, isNodeSynced } = useDigitalTwin();
 
-    const [filteredContainers, setFilteredContainers] = useState<Container[]>([]);
+    // filteredContainers derived via useMemo below
   const [searchQuery, setSearchQuery] = useState('');
     const [showInfra, setShowInfra] = useState(false);
-    const [activeTab, setActiveTab] = useState<ContainerEngineTab>(defaultTab);
-    const [showSystemVolumes, setShowSystemVolumes] = useState(false);
-    const [isCreateOpen, setIsCreateOpen] = useState(false);
-    const [newVolName, setNewVolName] = useState('');
-    const [newVolPath, setNewVolPath] = useState('');
-    const [creatingVolume, setCreatingVolume] = useState(false);
-    const [volumeToDelete, setVolumeToDelete] = useState<Volume | null>(null);
     const [drawerMode, setDrawerMode] = useState<'logs' | 'terminal' | null>(null);
     const [drawerContainer, setDrawerContainer] = useState<Container | null>(null);
-  const { addToast, updateToast } = useToast();
         const terminalRef = useRef<TerminalRef>(null);
-    const searchString = searchParams?.toString() ?? '';
-    const tabParam = searchParams?.get('tab');
-    const normalizedTab: ContainerEngineTab | null =
-        tabParam === 'volumes' || tabParam === 'containers'
-            ? (tabParam as ContainerEngineTab)
-            : null;
-
-    const closeCreateModal = useCallback(() => {
-        setIsCreateOpen(false);
-    }, []);
 
     const closeDrawer = useCallback(() => {
         setDrawerMode(null);
@@ -94,37 +63,8 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
     } = useContainerActions();
 
     useEscapeKey(closeContainerActions, containerActionsOpen, true);
-    useEscapeKey(closeCreateModal, isCreateOpen, true);
     const shouldCloseDrawerOnEscape = Boolean(drawerMode) && drawerMode !== 'terminal' && drawerMode !== 'logs';
     useEscapeKey(closeDrawer, shouldCloseDrawerOnEscape, true);
-
-    useEffect(() => {
-        if (!normalizedTab) return;
-        setActiveTab((current) => (current === normalizedTab ? current : normalizedTab));
-    }, [normalizedTab]);
-
-    useEffect(() => {
-        if (!tabParam && defaultTab === 'volumes') {
-            setActiveTab('volumes');
-            const params = new URLSearchParams(searchString);
-            params.set('tab', 'volumes');
-            const nextQuery = params.toString();
-            router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-        }
-    }, [defaultTab, tabParam, pathname, router, searchString]);
-
-    const handleTabChange = useCallback((nextTab: ContainerEngineTab) => {
-        if (nextTab === activeTab) return;
-        setActiveTab(nextTab);
-        const params = new URLSearchParams(searchString);
-        if (nextTab === 'containers') {
-            params.delete('tab');
-        } else {
-            params.set('tab', nextTab);
-        }
-        const nextQuery = params.toString();
-        router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-    }, [activeTab, pathname, router, searchString]);
 
   const containerParentMap = useMemo(() => {
     const map = new Map<string, { type: 'service' | 'bundle'; name: string }>();
@@ -190,41 +130,10 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
     return list;
   }, [containerParentMap, twin]);
 
-    const volumes = useMemo(() => {
-        if (!twin || !twin.nodes) return [];
-
-        const list: Volume[] = [];
-        Object.entries(twin.nodes).forEach(([nodeName, nodeState]) => {
-            (nodeState.volumes || []).forEach(volume => {
-                list.push({
-                    ...volume,
-                    Node: volume.Node || nodeName
-                });
-            });
-        });
-        return list;
-    }, [twin]);
-
-    const visibleVolumes = useMemo(() => {
-        const scoped = showSystemVolumes ? volumes : volumes.filter(vol => !vol.Anonymous);
-        if (!searchQuery) return scoped;
-        const q = searchQuery.toLowerCase();
-        return scoped.filter(vol => {
-            const usedByNames = (vol.UsedBy || []).map(consumer => consumer.name.toLowerCase());
-            return (
-                vol.Name.toLowerCase().includes(q) ||
-                (!!vol.Node && vol.Node.toLowerCase().includes(q)) ||
-                (!!vol.Driver && vol.Driver.toLowerCase().includes(q)) ||
-                (!!vol.Mountpoint && vol.Mountpoint.toLowerCase().includes(q)) ||
-                usedByNames.some(name => name.includes(q))
-            );
-        });
-    }, [volumes, showSystemVolumes, searchQuery]);
 
   const loading = !isConnected && containers.length === 0;
   // If we are connected but no data yet, check sync status
   const waitingForSync = isConnected && !isNodeSynced() && containers.length === 0;
-    const volumesLoading = !twin || !twin.nodes;
   
   // const validating = false;
   // const refreshing = false;
@@ -237,25 +146,25 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
   }, []);
   */
 
-  useEffect(() => {
+  const filteredContainers = useMemo(() => {
       let filtered = containers;
 
       if (!showInfra) {
           filtered = filtered.filter(c => !c.isInfra);
       }
-      
+
       // Filter by Search
       if (searchQuery) {
           const q = searchQuery.toLowerCase();
-          filtered = filtered.filter(c => 
+          filtered = filtered.filter(c =>
               c.Names.some(n => n.toLowerCase().includes(q)) ||
               c.Id.toLowerCase().includes(q) ||
               c.Image.toLowerCase().includes(q) ||
               (c.nodeName && c.nodeName.toLowerCase().includes(q))
           );
       }
-      
-      setFilteredContainers(filtered);
+
+      return filtered;
   }, [containers, searchQuery, showInfra]);
 
     const openLogs = (container: Container) => {
@@ -275,70 +184,6 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
             nodeName: container.nodeName,
         });
     }, [openContainerActions]);
-
-  const handleDeleteVolume = async () => {
-    if (!volumeToDelete) return;
-
-    const toastId = addToast('loading', 'Deleting volume', volumeToDelete.Name, 0);
-    try {
-        const query = volumeToDelete.Node ? `?node=${volumeToDelete.Node}` : '';
-        const res = await fetch(`/api/volumes/${volumeToDelete.Name}${query}`, { method: 'DELETE' });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Failed to delete volume');
-        }
-
-        updateToast(toastId, 'success', 'Volume deleted', volumeToDelete.Name);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to delete volume';
-        updateToast(toastId, 'error', 'Delete failed', message);
-    } finally {
-        setVolumeToDelete(null);
-    }
-  };
-
-  const handleCreateVolume = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!newVolName.trim()) return;
-
-    setCreatingVolume(true);
-    const toastId = addToast('loading', 'Creating volume', newVolName.trim(), 0);
-    try {
-        const options: Record<string, string> = {};
-        if (newVolPath.trim()) {
-            options.type = 'none';
-            options.o = 'bind';
-            options.device = newVolPath.trim();
-        }
-
-        const res = await fetch('/api/volumes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                name: newVolName.trim(),
-                options: Object.keys(options).length > 0 ? options : undefined
-            })
-        });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Failed to create volume');
-        }
-
-        updateToast(toastId, 'success', 'Volume created', newVolName.trim());
-        setIsCreateOpen(false);
-        setNewVolName('');
-        setNewVolPath('');
-    } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to create volume';
-        updateToast(toastId, 'error', 'Create failed', message);
-    } finally {
-        setCreatingVolume(false);
-    }
-  };
-
-
 
   const getGroupName = (c: Container) => {
     if (c.PodName) return `Pod: ${c.PodName}`;
@@ -391,82 +236,32 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
 
     return (
         <div className="h-full flex flex-col relative">
-            <ConfirmModal
-                isOpen={!!volumeToDelete}
-                title="Delete Volume"
-                message={`Delete volume "${volumeToDelete?.Name ?? ''}"? This cannot be undone.`}
-                confirmText="Delete"
-                isDestructive
-                onConfirm={handleDeleteVolume}
-                onCancel={() => setVolumeToDelete(null)}
-            />
               <PageHeader title="Container Engine" showBack={false} helpId="container-engine">
                         <div className="flex flex-col gap-3 w-full md:flex-row md:items-center">
                             <div className="relative flex-1 min-w-[200px]">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                                 <input
                                     type="text"
-                                    placeholder={activeTab === 'containers' ? 'Search containers...' : 'Search volumes...'}
+                                    placeholder="Search containers..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
                                     className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                                 />
                             </div>
-                            {activeTab === 'containers' ? (
-                                <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 select-none">
-                                    <input
-                                        type="checkbox"
-                                        checked={showInfra}
-                                        onChange={(e) => setShowInfra(e.target.checked)}
-                                        className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
-                                    />
-                                    Show infrastructure containers
-                                </label>
-                            ) : (
-                                <div className="flex flex-wrap items-center justify-end gap-3 w-full md:w-auto">
-                                    <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 select-none">
-                                        <input
-                                            type="checkbox"
-                                            checked={showSystemVolumes}
-                                            onChange={(e) => setShowSystemVolumes(e.target.checked)}
-                                            className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
-                                        />
-                                        Show system volumes
-                                    </label>
-                                    <button
-                                        onClick={() => setIsCreateOpen(true)}
-                                        className="flex items-center justify-center w-10 h-10 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors shadow-sm"
-                                        title="Create volume"
-                                        aria-label="Create volume"
-                                    >
-                                        <Plus size={18} />
-                                    </button>
-                                </div>
-                            )}
+                            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={showInfra}
+                                    onChange={(e) => setShowInfra(e.target.checked)}
+                                    className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                                />
+                                Show infrastructure containers
+                            </label>
                         </div>
                     </PageHeader>
 
-            <div className="px-4 md:px-6 border-b border-gray-200 dark:border-gray-800">
-                <div className="flex gap-1">
-                    {(['containers', 'volumes'] as ContainerEngineTab[]).map((tab) => (
-                        <button
-                            key={tab}
-                            onClick={() => handleTabChange(tab)}
-                            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                                activeTab === tab
-                                    ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                                    : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                            }`}
-                        >
-                            {tab === 'containers' ? 'Containers' : 'Volumes'}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
             <div className="flex-1 overflow-y-auto p-4">
-                {activeTab === 'containers' ? (
-                    loading ? (
+                {loading ? (
                         <PluginLoading message="Connecting to Agent..." />
                     ) : waitingForSync ? (
                         <PluginLoading message="Synchronizing state..." />
@@ -587,125 +382,10 @@ export default function ContainersPlugin({ defaultTab = 'containers' }: Containe
                                 </div>
                             ))}
                         </div>
-                    )
-                ) : volumesLoading ? (
-                    <PluginLoading message="Loading volumes..." />
-                ) : visibleVolumes.length === 0 ? (
-                    <div className="text-center text-gray-500 dark:text-gray-400 mt-10">
-                        {showSystemVolumes ? 'No volumes detected on this node.' : 'No user-managed volumes. Enable system volumes to view all storage.'}
-                    </div>
-                ) : (
-                    <div className="space-y-4">
-                        {visibleVolumes.map((vol) => (
-                            <div key={`${vol.Node}-${vol.Name}`} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4">
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <div>
-                                        <div className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-gray-100">
-                                            <HardDrive size={16} className="text-blue-500" />
-                                            {vol.Name}
-                                            {vol.Anonymous && (
-                                                <span className="px-2 py-0.5 text-[11px] rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
-                                                    System
-                                                </span>
-                                            )}
-                                        </div>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400">Driver: {vol.Driver}</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {vol.Node && (
-                                            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 border border-blue-200 dark:border-blue-800">
-                                                {vol.Node}
-                                            </span>
-                                        )}
-                                        <button
-                                            onClick={() => setVolumeToDelete(vol)}
-                                            className="p-1.5 text-red-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                                            title="Delete volume"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs sm:text-sm text-gray-600 dark:text-gray-400">
-                                    <div>
-                                        <p className="text-[11px] uppercase tracking-wide text-gray-500">Mountpoint</p>
-                                        <p className="font-mono text-[13px] break-all">{vol.Mountpoint}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-[11px] uppercase tracking-wide text-gray-500">Used By</p>
-                                        {vol.UsedBy && vol.UsedBy.length > 0 ? (
-                                            <div className="flex flex-wrap gap-1">
-                                                {vol.UsedBy.map((consumer) => (
-                                                    <span key={consumer.id} className="px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700">
-                                                        {consumer.name}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <span className="text-gray-400 italic">Unused</span>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
+                    )}
             </div>
 
             {containerActionsOverlay}
-
-            {isCreateOpen && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="w-full max-w-md bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6 shadow-xl">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Create Volume</h3>
-                            <button onClick={closeCreateModal} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <form className="space-y-4" onSubmit={handleCreateVolume}>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Volume Name</label>
-                                <input
-                                    type="text"
-                                    value={newVolName}
-                                    onChange={(e) => setNewVolName(e.target.value)}
-                                    className="w-full p-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                                    placeholder="my-volume"
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Host Path (optional)</label>
-                                <input
-                                    type="text"
-                                    value={newVolPath}
-                                    onChange={(e) => setNewVolPath(e.target.value)}
-                                    className="w-full p-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                                    placeholder="/path/on/host"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">Bind to a host directory to convert it into a managed volume.</p>
-                            </div>
-                            <div className="flex justify-end gap-2 pt-2">
-                                <button
-                                    type="button"
-                                    onClick={closeCreateModal}
-                                    className="px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={creatingVolume}
-                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md disabled:opacity-50"
-                                >
-                                    {creatingVolume ? 'Creating...' : 'Create Volume'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
 
             {drawerMode && drawerContainer && (
                 <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/70 backdrop-blur-sm">

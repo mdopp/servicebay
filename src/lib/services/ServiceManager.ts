@@ -3,6 +3,9 @@ import path from 'path';
 import yaml from 'js-yaml';
 import { logger } from '../logger';
 import { getConfig } from '../config';
+import { saveSnapshot } from '../history';
+
+const SYSTEMD_DIR = '.config/containers/systemd';
 
 export interface ServiceInfo {
   name: string;
@@ -651,5 +654,304 @@ export class ServiceManager {
         } catch (e) {
             logger.debug('ServiceManager', 'Quadlet backup skipped:', e);
         }
+    }
+
+    /** Trigger an agent refresh so the Digital Twin picks up changes immediately */
+    private static async refreshAgent(nodeName: string) {
+        try {
+            const agent = await agentManager.ensureAgent(nodeName);
+            await agent.sendCommand('refresh');
+        } catch { /* agent may not be connected */ }
+    }
+
+    static async getServiceFiles(nodeName: string, serviceName: string) {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const kubePath = path.join(SYSTEMD_DIR, `${serviceName}.kube`);
+        let kubeContent = '';
+        let yamlContent = '';
+        let yamlPath = '';
+        let serviceContent = '';
+        let servicePath = '';
+
+        try {
+            // First try reading from the Digital Twin cache
+            const { DigitalTwinStore } = await import('../store/twin');
+            const twin = DigitalTwinStore.getInstance().nodes[nodeName];
+
+            const fullKubePath = twin ? Object.keys(twin.files).find(p => p.endsWith(`${serviceName}.kube`)) : null;
+
+            if (twin && fullKubePath && twin.files[fullKubePath]?.content) {
+                kubeContent = twin.files[fullKubePath].content;
+            } else {
+                const res = await agent.sendCommand('read_file', { path: `~/${kubePath}` });
+                kubeContent = typeof res === 'string' ? res : '';
+            }
+
+            const yamlMatch = kubeContent.match(/Yaml=(.+)/);
+            if (yamlMatch) {
+                const yamlFileName = yamlMatch[1].trim();
+                yamlPath = yamlFileName.startsWith('/') ? yamlFileName : path.join(SYSTEMD_DIR, yamlFileName);
+
+                // Try twin first
+                const fullYamlPath = twin ? Object.keys(twin.files).find(p => p.endsWith(yamlFileName)) : null;
+                if (twin && fullYamlPath && twin.files[fullYamlPath]?.content) {
+                    yamlContent = twin.files[fullYamlPath].content;
+                } else {
+                    try {
+                        const res = await agent.sendCommand('read_file', { path: `~/${yamlPath}` });
+                        yamlContent = typeof res === 'string' ? res : '';
+                    } catch (e) {
+                        logger.warn('ServiceManager', `Could not read yaml file ${yamlPath}`, e);
+                    }
+                }
+            }
+
+            // Get generated service unit content
+            try {
+                const catRes = await agent.sendCommand('exec', { command: `systemctl --user cat ${serviceName}.service` });
+                serviceContent = catRes.code === 0 ? catRes.stdout : '# Service unit not found or not generated yet.';
+
+                const pathRes = await agent.sendCommand('exec', { command: `systemctl --user show -p FragmentPath ${serviceName}.service` });
+                if (pathRes.code === 0) {
+                    const match = pathRes.stdout.match(/FragmentPath=(.+)/);
+                    if (match) servicePath = match[1].trim();
+                }
+            } catch {
+                serviceContent = '# Service unit not found or not generated yet.';
+            }
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            throw new Error(`Service ${serviceName} not found: ${msg}`);
+        }
+
+        return { kubeContent, yamlContent, yamlPath, serviceContent, kubePath, servicePath };
+    }
+
+    static async saveService(nodeName: string, serviceName: string, kubeContent: string, yamlContent: string, yamlFileName: string) {
+        // Save snapshots of existing files before overwriting
+        try {
+            const existing = await this.getServiceFiles(nodeName, serviceName);
+            if (existing.kubeContent) await saveSnapshot(`${serviceName}.kube`, existing.kubeContent);
+            if (existing.yamlContent) await saveSnapshot(yamlFileName, existing.yamlContent);
+        } catch { /* ignore if new file */ }
+
+        await this.writeFile(nodeName, `${serviceName}.kube`, kubeContent);
+        await this.writeFile(nodeName, yamlFileName, yamlContent);
+        await this.reloadDaemon(nodeName);
+        await this.refreshAgent(nodeName);
+        this.backupQuadlets(nodeName);
+    }
+
+    static async deleteService(nodeName: string, serviceName: string) {
+        const { yamlPath } = await this.getServiceFiles(nodeName, serviceName);
+        const agent = await agentManager.ensureAgent(nodeName);
+
+        // Stop
+        try {
+            await agent.sendCommand('exec', { command: `systemctl --user stop ${serviceName}.service` });
+        } catch { /* ignore if already stopped */ }
+
+        // Remove kube file
+        await agent.sendCommand('exec', {
+            command: `rm -f ~/${SYSTEMD_DIR}/${serviceName}.kube`
+        });
+
+        // Remove yaml file
+        if (yamlPath) {
+            const resolvedYaml = yamlPath.startsWith('/') ? yamlPath : `~/${yamlPath}`;
+            await agent.sendCommand('exec', { command: `rm -f ${resolvedYaml}` });
+        }
+
+        await this.reloadDaemon(nodeName);
+
+        // Clear failed state
+        try {
+            await agent.sendCommand('exec', { command: `systemctl --user reset-failed ${serviceName}.service` });
+        } catch { /* unit may not be in failed state */ }
+
+        await this.refreshAgent(nodeName);
+        this.backupQuadlets(nodeName);
+    }
+
+    static async getServiceLogs(nodeName: string, serviceName: string) {
+        const agent = await agentManager.ensureAgent(nodeName);
+        let unit = serviceName;
+        if (!unit.match(/\.(service|scope|socket|timer)$/)) {
+            unit += '.service';
+        }
+        try {
+            const res = await agent.sendCommand('exec', { command: `journalctl --user -u ${unit} -n 100 --no-pager` });
+            return res.code === 0 ? res.stdout : '';
+        } catch (e) {
+            logger.warn('ServiceManager', 'Error fetching service logs:', e);
+            return '';
+        }
+    }
+
+    static async getPodmanLogs(nodeName: string) {
+        const agent = await agentManager.ensureAgent(nodeName);
+        try {
+            const res = await agent.sendCommand('exec', { command: 'journalctl --user -t podman -n 100 --no-pager' });
+            return res.code === 0 ? res.stdout : '';
+        } catch (e) {
+            logger.warn('ServiceManager', 'Error fetching podman logs:', e);
+            return '';
+        }
+    }
+
+    static async renameService(nodeName: string, oldName: string, newName: string) {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const oldKubePath = `~/${SYSTEMD_DIR}/${oldName}.kube`;
+        const newKubePath = `~/${SYSTEMD_DIR}/${newName}.kube`;
+
+        // Check if new service already exists
+        const checkRes = await agent.sendCommand('exec', { command: `test -f ${newKubePath} && echo exists` });
+        if (checkRes.stdout?.trim() === 'exists') {
+            throw new Error(`Service ${newName} already exists`);
+        }
+
+        // Read old kube file
+        const content = await agent.sendCommand('read_file', { path: oldKubePath });
+        if (typeof content !== 'string') throw new Error(`Could not read ${oldName}.kube`);
+
+        const yamlMatch = content.match(/Yaml=(.+)/);
+        const oldYamlFile = yamlMatch ? yamlMatch[1].trim() : null;
+        if (!oldYamlFile) throw new Error('Could not determine YAML file from .kube file');
+
+        const oldYamlPath = oldYamlFile.startsWith('/') ? oldYamlFile : `~/${SYSTEMD_DIR}/${oldYamlFile}`;
+        const newYamlFile = `${newName}.yml`;
+        const newYamlPath = `~/${SYSTEMD_DIR}/${newYamlFile}`;
+
+        // 1. Stop old service
+        try {
+            await agent.sendCommand('exec', { command: `systemctl --user disable --now ${oldName}.service` });
+        } catch (e) {
+            logger.warn('ServiceManager', 'Failed to stop old service', e);
+        }
+
+        // 2. Rename YAML file
+        const mvRes = await agent.sendCommand('exec', { command: `mv ${oldYamlPath} ${newYamlPath}` });
+        if (mvRes.code !== 0) throw new Error(`Failed to rename YAML file: ${mvRes.stderr}`);
+
+        // 3. Write new kube file with updated Yaml= reference, then remove old
+        const newKubeContent = content.replace(/Yaml=.+/, `Yaml=${newYamlFile}`);
+        await this.writeFile(nodeName, `${newName}.kube`, newKubeContent);
+        await agent.sendCommand('exec', { command: `rm -f ${oldKubePath}` });
+
+        // 4. Reload and start
+        await this.reloadDaemon(nodeName);
+        try {
+            await agent.sendCommand('exec', { command: `systemctl --user enable --now ${newName}.service` });
+        } catch (e) {
+            throw new Error(`Failed to start new service: ${e}`);
+        }
+
+        await this.refreshAgent(nodeName);
+        this.backupQuadlets(nodeName);
+    }
+
+     
+    static async updateAndRestartService(nodeName: string, serviceName: string): Promise<{ logs: string[]; status: string }> {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const { yamlPath } = await this.getServiceFiles(nodeName, serviceName);
+        const logs: string[] = [];
+
+        if (yamlPath) {
+            try {
+                const res = await agent.sendCommand('read_file', { path: yamlPath.startsWith('/') ? yamlPath : `~/${yamlPath}` });
+                const content = typeof res === 'string' ? res : '';
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const parsed = yaml.load(content) as any;
+
+                const images = new Set<string>();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const findImages = (obj: any) => {
+                    if (!obj) return;
+                    if (obj.image && typeof obj.image === 'string') images.add(obj.image);
+                    if (Array.isArray(obj.containers)) obj.containers.forEach((c: typeof obj) => findImages(c));
+                    if (Array.isArray(obj.initContainers)) obj.initContainers.forEach((c: typeof obj) => findImages(c));
+                    if (obj.spec) findImages(obj.spec);
+                    if (obj.template) findImages(obj.template);
+                };
+                findImages(parsed);
+
+                for (const image of images) {
+                    logs.push(`Pulling image: ${image}`);
+                    try {
+                        await agent.sendCommand('exec', { command: `podman pull ${image}`, timeout: 300 });
+                        logs.push(`Successfully pulled ${image}`);
+                    } catch (e) {
+                        const msg = e instanceof Error ? e.message : String(e);
+                        logs.push(`Failed to pull ${image}: ${msg}`);
+                    }
+                }
+            } catch (e) {
+                logger.warn('ServiceManager', 'Error parsing YAML for images', e);
+                logs.push('Error parsing YAML to find images.');
+            }
+        } else {
+            logs.push('No YAML file found for this service.');
+        }
+
+        logs.push('Reloading systemd daemon...');
+        await this.reloadDaemon(nodeName);
+
+        const unit = serviceName.endsWith('.service') ? serviceName : `${serviceName}.service`;
+        logs.push(`Stopping service ${unit}...`);
+        try { await agent.sendCommand('exec', { command: `systemctl --user stop ${unit}` }); } catch { /* ok */ }
+
+        logs.push(`Starting service ${unit}...`);
+        try {
+            await agent.sendCommand('exec', { command: `systemctl --user start ${unit}` });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            logs.push(`Error starting service: ${msg}`);
+        }
+
+        const status = await this.getServiceStatus(nodeName, serviceName);
+        return { logs, status };
+    }
+
+    static async updateServiceDescription(nodeName: string, serviceName: string, description: string) {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const kubePath = `~/${SYSTEMD_DIR}/${serviceName}.kube`;
+
+        const raw = await agent.sendCommand('read_file', { path: kubePath });
+        let content = typeof raw === 'string' ? raw : '';
+        const lines = content.split('\n');
+        let unitIndex = -1;
+        let descIndex = -1;
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line === '[Unit]') {
+                unitIndex = i;
+            } else if (unitIndex !== -1 && line.startsWith('[') && line.endsWith(']')) {
+                break;
+            } else if (unitIndex !== -1 && line.startsWith('Description=')) {
+                descIndex = i;
+            }
+        }
+
+        if (unitIndex === -1) {
+            content = `[Unit]\nDescription=${description}\n\n${content}`;
+        } else if (descIndex !== -1) {
+            lines[descIndex] = `Description=${description}`;
+            content = lines.join('\n');
+        } else {
+            lines.splice(unitIndex + 1, 0, `Description=${description}`);
+            content = lines.join('\n');
+        }
+
+        await this.writeFile(nodeName, `${serviceName}.kube`, content);
+        await this.reloadDaemon(nodeName);
+    }
+
+    static async getServiceStatus(nodeName: string, serviceName: string): Promise<string> {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const unit = serviceName.endsWith('.service') ? serviceName : `${serviceName}.service`;
+        const res = await agent.sendCommand('exec', { command: `systemctl --user status ${unit} --no-pager -l` });
+        // systemctl status returns non-zero for stopped/failed services, but output is still useful
+        return res.stdout || res.stderr || '';
     }
 }

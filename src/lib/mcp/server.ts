@@ -2,10 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import {
-  getServiceLogs, startService, stopService, restartService,
-  getServiceFiles, deleteService, renameService,
-  getPodmanLogs, getAllSystemServices,
-  createVolume, removeVolume,
+  getAllSystemServices,
 } from '@/lib/manager';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
@@ -79,8 +76,8 @@ export function createMcpServer() {
     'Fetch systemd and podman logs for a service',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      const logs = await getServiceLogs(name, connection);
+      const nodeName = await resolveNode(node);
+      const logs = await ServiceManager.getServiceLogs(nodeName, name);
       return textResult(logs);
     },
   );
@@ -112,9 +109,10 @@ export function createMcpServer() {
     'Start a stopped service',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      const result = await startService(name, connection);
-      return textResult(result);
+      const nodeName = await resolveNode(node);
+      await ServiceManager.startService(nodeName, name);
+      const status = await ServiceManager.getServiceStatus(nodeName, name);
+      return textResult(status);
     },
   );
 
@@ -124,9 +122,10 @@ export function createMcpServer() {
     'Stop a running service',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      const result = await stopService(name, connection);
-      return textResult(result);
+      const nodeName = await resolveNode(node);
+      await ServiceManager.stopService(nodeName, name);
+      const status = await ServiceManager.getServiceStatus(nodeName, name);
+      return textResult(status);
     },
   );
 
@@ -136,9 +135,10 @@ export function createMcpServer() {
     'Restart a service',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      const result = await restartService(name, connection);
-      return textResult(result);
+      const nodeName = await resolveNode(node);
+      await ServiceManager.restartService(nodeName, name);
+      const status = await ServiceManager.getServiceStatus(nodeName, name);
+      return textResult(status);
     },
   );
 
@@ -148,8 +148,8 @@ export function createMcpServer() {
     'Get kube YAML, compose YAML, and systemd unit files for a service',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      const files = await getServiceFiles(name, connection);
+      const nodeName = await resolveNode(node);
+      const files = await ServiceManager.getServiceFiles(nodeName, name);
       return textResult(files);
     },
   );
@@ -178,8 +178,8 @@ export function createMcpServer() {
     'Delete a service and its associated files',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      await deleteService(name, connection);
+      const nodeName = await resolveNode(node);
+      await ServiceManager.deleteService(nodeName, name);
       return textResult(`Service "${name}" deleted successfully`);
     },
   );
@@ -194,8 +194,8 @@ export function createMcpServer() {
       node: nodeParam,
     },
     async ({ oldName, newName, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      await renameService(oldName, newName, connection);
+      const nodeName = await resolveNode(node);
+      await ServiceManager.renameService(nodeName, oldName, newName);
       return textResult(`Service renamed from "${oldName}" to "${newName}"`);
     },
   );
@@ -329,44 +329,6 @@ export function createMcpServer() {
     return textResult({ nodes: graphNodes, edges });
   });
 
-  // --- List Volumes ---
-  server.tool('list_volumes', 'List volumes with usage info', { node: nodeParam }, async ({ node }) => {
-    const twin = DigitalTwinStore.getInstance();
-    const nodeName = await resolveNode(node);
-    const volumes = twin.nodes[nodeName]?.volumes || [];
-    return textResult(volumes);
-  });
-
-  // --- Create Volume ---
-  server.tool(
-    'create_volume',
-    'Create a new podman volume',
-    {
-      name: z.string().describe('Volume name'),
-      node: nodeParam,
-    },
-    async ({ name, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      await createVolume(name, undefined, connection);
-      return textResult(`Volume "${name}" created successfully`);
-    },
-  );
-
-  // --- Remove Volume ---
-  server.tool(
-    'remove_volume',
-    'Remove a podman volume',
-    {
-      name: z.string().describe('Volume name'),
-      node: nodeParam,
-    },
-    async ({ name, node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      await removeVolume(name, connection);
-      return textResult(`Volume "${name}" removed successfully`);
-    },
-  );
-
   // --- Get Monitoring Checks ---
   server.tool('get_monitoring_checks', 'List all monitoring health checks with their latest results', {}, async () => {
     const checks = MonitoringStore.getChecks();
@@ -428,8 +390,8 @@ export function createMcpServer() {
     'Get raw podman daemon/system logs',
     { node: nodeParam },
     async ({ node }) => {
-      const connection = node ? await getNodeConnection(node) : undefined;
-      const logs = await getPodmanLogs(connection);
+      const nodeName = await resolveNode(node);
+      const logs = await ServiceManager.getPodmanLogs(nodeName);
       return textResult(logs);
     },
   );
