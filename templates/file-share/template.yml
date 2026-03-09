@@ -17,6 +17,9 @@ spec:
       - "--port=8090"
       - "--root=/srv"
       - "--database=/db/filebrowser.db"
+    ports:
+      - containerPort: 8090
+        hostPort: 8090
     volumeMounts:
       - mountPath: /srv
         name: shared-data
@@ -32,6 +35,11 @@ spec:
     env:
       - name: STGUIADDRESS
         value: "0.0.0.0:8384"
+    ports:
+      - containerPort: 8384
+        hostPort: 8384
+      - containerPort: 22000
+        hostPort: 22000
     volumeMounts:
       - mountPath: /var/syncthing/Sync
         name: shared-data
