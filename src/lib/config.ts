@@ -67,6 +67,7 @@ export interface AgentConfig {
 
 export interface AppConfig {
   logLevel?: LogLevel;
+  serverName?: string; // Custom display name for this server
   domain?: string; // Optional domain for display
   gateway?: GatewayConfig;
   reverseProxy?: ReverseProxyConfig;

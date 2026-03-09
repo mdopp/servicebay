@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getConfig, saveConfig, AppConfig } from '@/lib/config';
 import { getTemplateSettingsSchema } from '@/lib/registry';
+import { DigitalTwinStore } from '@/lib/store/twin';
 
 export async function GET() {
   const [config, templateSettingsSchema] = await Promise.all([
@@ -34,6 +35,12 @@ export async function POST(request: Request) {
     };
 
     await saveConfig(newConfig);
+
+    // Sync serverName to Digital Twin so all UI components see it immediately
+    if ('serverName' in body) {
+      DigitalTwinStore.getInstance().setServerName(newConfig.serverName ?? null);
+    }
+
     return NextResponse.json(newConfig);
   } catch (error) {
     console.error('Failed to save config:', error);

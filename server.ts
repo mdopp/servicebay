@@ -183,6 +183,13 @@ app.prepare().then(() => {
   const io = new Server(server);
   const twinStore = DigitalTwinStore.getInstance();
 
+  // Load serverName from config into twin store
+  getConfig().then(config => {
+    if (config.serverName) {
+      twinStore.setServerName(config.serverName);
+    }
+  }).catch(() => { /* ignore */ });
+
   // Logging: Broadcast new logs to 'logs:live' room
   logger.onLog((entry) => {
       io.to('logs:live').emit('log:entry', entry);

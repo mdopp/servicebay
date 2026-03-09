@@ -280,6 +280,9 @@ export default function SettingsPage() {
   const [newRegUrl, setNewRegUrl] = useState('');
   const [newRegBranch, setNewRegBranch] = useState('');
 
+  // Server Name
+  const [serverName, setServerName] = useState('');
+
   // Template Settings
   const [templateSchema, setTemplateSchema] = useState<Record<string, TemplateSettingsSchemaEntry>>(DEFAULT_TEMPLATE_SCHEMA);
   const [templateValues, setTemplateValues] = useState<Record<string, string>>({ DATA_DIR: DEFAULT_TEMPLATE_SCHEMA.DATA_DIR.default });
@@ -376,6 +379,8 @@ export default function SettingsPage() {
         }
       }
 
+      setServerName(data.serverName || '');
+
       const response = data as AppConfig & { templateSettingsSchema?: Record<string, TemplateSettingsSchemaEntry> };
       const schema = response.templateSettingsSchema || DEFAULT_TEMPLATE_SCHEMA;
       const defaults = Object.fromEntries(Object.entries(schema).map(([k, v]) => [k, v.default ?? ''])) as Record<string, string>;
@@ -469,6 +474,7 @@ export default function SettingsPage() {
       };
 
       const newConfig: Partial<AppConfig> = {
+        serverName: serverName || undefined,
         templateSettings: enforcedTemplateValues,
         registries: {
           enabled: effectiveRegistriesEnabled,
@@ -497,7 +503,7 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
-  }, [addToast, configReady, emailEnabled, emailFrom, emailHost, emailPass, emailPort, emailRecipients, emailSecure, emailUser, registries, registriesEnabled, saving, templateSchema, templateValues]);
+  }, [addToast, configReady, emailEnabled, emailFrom, emailHost, emailPass, emailPort, emailRecipients, emailSecure, emailUser, registries, registriesEnabled, saving, serverName, templateSchema, templateValues]);
 
   const handleAddRecipient = () => {
     if (newRecipient && !emailRecipients.includes(newRecipient)) {
@@ -1855,6 +1861,40 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+        </div>
+        )}
+
+        {/* Server Identity */}
+        {activeTab === 'advanced' && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
+            <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg text-indigo-600 dark:text-indigo-400">
+              <Server size={20} />
+            </div>
+            <div>
+              <h3 className="font-bold text-gray-900 dark:text-white">Server Identity</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Custom display name shown in the browser tab and system info instead of the detected hostname.</p>
+            </div>
+          </div>
+          <div className="p-6">
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                value={serverName}
+                onChange={e => setServerName(e.target.value)}
+                disabled={saving}
+                className="flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="e.g. HomeServer, NAS, Production"
+              />
+              <button
+                onClick={() => persistSettings()}
+                disabled={saving}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors text-sm font-medium"
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
         </div>
         )}
 

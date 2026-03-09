@@ -944,9 +944,17 @@ export class DigitalTwinStore {
     this.listeners.forEach(l => l());
   }
   
+  public serverName: string | null = null;
+
+  public setServerName(name: string | null) {
+      this.serverName = name || null;
+      this.notifyListeners();
+  }
+
   public getSnapshot() {
       return {
           instanceId: this.instanceId,
+          serverName: this.serverName,
           nodes: this.nodes,
           gateway: this.gateway,
           proxy: this.proxy
