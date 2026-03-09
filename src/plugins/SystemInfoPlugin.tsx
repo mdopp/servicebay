@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getSystemUpdates } from '@/app/actions/system';
 import { logger } from '@/lib/logger';
 import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info, Monitor } from 'lucide-react';
@@ -8,11 +8,9 @@ import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useSocket } from '@/hooks/useSocket';
 import PluginLoading from '@/components/PluginLoading';
-import PageHeader from '@/components/PageHeader';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 import { Select, SelectOption } from '@/components/Select';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 interface UpdateInfo {
     count: number;
@@ -33,11 +31,11 @@ interface NetworkAddr {
 }
 
 /**
- * SystemInfoPlugin
- * Displays system resources (CPU, RAM, Disk), Network interfaces, and pending OS updates.
- * Supports switching between Local and Remote nodes.
+ * SystemInfoContent
+ * Core system info display (CPU, RAM, Disk, Network, Updates).
+ * Used as a tab inside MonitoringPlugin.
  */
-export default function SystemInfoPlugin() {
+export function SystemInfoContent() {
   const [copied, setCopied] = useState(false);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   // Initialize with consistent default for SSR
@@ -48,68 +46,13 @@ export default function SystemInfoPlugin() {
 
   const { data: twin } = useDigitalTwin();
   const { socket } = useSocket();
-    const router = useRouter();
-    const pathname = usePathname() || '';
-    const searchParams = useSearchParams();
-    const nodeParam = searchParams?.get('node') ?? null;
-    const queryString = searchParams?.toString() ?? '';
-    const storageHydrated = useRef(false);
 
-    const updateNodeQuery = useCallback((nextNode: string) => {
-        const normalized = nextNode === 'Local' ? null : nextNode;
-        if ((normalized && normalized === nodeParam) || (!normalized && !nodeParam)) return;
-        const params = new URLSearchParams(queryString);
-        if (normalized) {
-            params.set('node', normalized);
-        } else {
-            params.delete('node');
-        }
-        const qs = params.toString();
-        const url = qs ? `${pathname}?${qs}` : pathname;
-        router.replace(url, { scroll: false });
-    }, [nodeParam, pathname, queryString, router]);
-
-  // Load available nodes and restore selection
+  // Load available nodes
   useEffect(() => {
         getNodes()
             .then(setNodes)
             .catch(e => logger.error('SystemInfoPlugin', 'Failed to fetch nodes', e));
     }, []);
-
-    useEffect(() => {
-        if (nodeParam) {
-            if (nodeParam !== selectedNode) {
-                setSelectedNode(nodeParam);
-                if (typeof window !== 'undefined') {
-                    window.localStorage.setItem('podcli-selected-node', nodeParam);
-                }
-            }
-            storageHydrated.current = true;
-            return;
-        }
-
-        if (!storageHydrated.current) {
-            storageHydrated.current = true;
-            if (typeof window !== 'undefined') {
-                const stored = window.localStorage.getItem('podcli-selected-node');
-                if (stored) {
-                    setSelectedNode(stored);
-                    window.localStorage.setItem('podcli-selected-node', stored);
-                    updateNodeQuery(stored);
-                    return;
-                }
-            }
-            setSelectedNode('Local');
-            return;
-        }
-
-        if (selectedNode !== 'Local') {
-            setSelectedNode('Local');
-            if (typeof window !== 'undefined') {
-                window.localStorage.setItem('podcli-selected-node', 'Local');
-            }
-        }
-    }, [nodeParam, selectedNode, updateNodeQuery]);
 
   // High Frequency Monitoring Subscription
   useEffect(() => {
@@ -150,10 +93,6 @@ export default function SystemInfoPlugin() {
 
     const handleSelectNode = (value: string) => {
         setSelectedNode(value);
-        if (typeof window !== 'undefined') {
-            window.localStorage.setItem('podcli-selected-node', value);
-        }
-        updateNodeQuery(value);
     };
 
     const nodeOptions = useMemo<SelectOption[]>(() => {
@@ -183,10 +122,9 @@ export default function SystemInfoPlugin() {
   
   if (!resources || !resources.os) {
       return (
-        <div className="h-full flex flex-col">
-            <PageHeader title="System Info" showBack={false} />
-            <PluginLoading 
-                message="Waiting for agent report..." 
+        <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+            <PluginLoading
+                message="Waiting for agent report..."
                 subMessage={selectedNode !== 'Local' ? `Waiting for data from ${selectedNode}` : undefined}
             />
         </div>
@@ -194,7 +132,7 @@ export default function SystemInfoPlugin() {
   }
 
   const { cpuUsage, memoryUsage, totalMemory, os, disks, network, cpu } = resources;
-  
+
   const formatBytes = (bytes: number) => {
       if (bytes === 0) return '0 B';
       const k = 1024;
@@ -204,23 +142,18 @@ export default function SystemInfoPlugin() {
   };
 
   return (
-    <div className="h-full flex flex-col overflow-y-auto">
-      <PageHeader 
-        title="System Info" 
-        showBack={false} 
-        helpId="system-info"
-        actions={
+      <div className="p-4 md:p-6 space-y-6">
+        {/* Node Selector */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Node</h3>
           <Select
             options={nodeOptions}
             value={selectedNode}
             onChange={handleSelectNode}
             placeholder="Select node"
-            className="min-w-[240px]"
+            compact
           />
-        }
-      />
-      
-      <div className="p-6 space-y-6">
+        </div>
         {/* OS Overview */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
@@ -392,6 +325,5 @@ export default function SystemInfoPlugin() {
             </div>
         </div>
       </div>
-    </div>
   );
 }

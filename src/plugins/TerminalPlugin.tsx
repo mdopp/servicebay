@@ -131,7 +131,7 @@ export default function TerminalPlugin() {
                             value={selectedNode}
                             onChange={handleNodeChange}
                             placeholder="Select node"
-                            className="min-w-[240px]"
+                            compact
                         />
                         <button 
                             onClick={() => terminalRef.current?.clear()}

@@ -21,6 +21,7 @@ interface SelectProps {
   disabled?: boolean;
   searchable?: boolean;
   emptyState?: string;
+  compact?: boolean;
 }
 
 export function Select({
@@ -31,7 +32,8 @@ export function Select({
   className = '',
   disabled = false,
   searchable = true,
-  emptyState = 'No results'
+  emptyState = 'No results',
+  compact = false
 }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -109,25 +111,18 @@ export function Select({
       <button
         type="button"
         onClick={() => !disabled && setIsOpen(open => !open)}
-        className={`w-full min-w-[220px] px-3 py-2 border rounded-lg bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 flex items-center justify-between gap-3 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed ${disabled ? 'cursor-not-allowed' : ''}`}
+        className={`w-full ${compact ? 'min-w-0' : 'min-w-[220px]'} px-3 py-2 border rounded-lg bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 flex items-center justify-between gap-2 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed ${disabled ? 'cursor-not-allowed' : ''}`}
         disabled={disabled}
       >
         {selectedOption ? (
-          <div className="flex items-center gap-3 text-left">
-            {renderIcon(selectedOption)}
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{selectedOption.label}</span>
-              {selectedOption.description && (
-                <span className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[180px]">
-                  {selectedOption.description}
-                </span>
-              )}
-            </div>
+          <div className="flex items-center gap-2 text-left min-w-0">
+            {!compact && renderIcon(selectedOption)}
+            <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{selectedOption.label}</span>
           </div>
         ) : (
           <span className="text-sm text-gray-500">{placeholder}</span>
         )}
-        <ChevronDown size={16} className="text-gray-500" />
+        <ChevronDown size={16} className="text-gray-500 shrink-0" />
       </button>
 
       {isOpen && (
