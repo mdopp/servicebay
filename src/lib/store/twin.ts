@@ -730,18 +730,23 @@ export class DigitalTwinStore {
                }
           });
 
-          if (dynamicPorts.length > 0) {
-              const resolvedPorts = dynamicPorts.map(port => ({
-                  ...port,
-                  hostIp: this.resolveHostIpForPort(port.hostIp, nodeIPs)
-              }));
-              svc.ports = resolvedPorts;
-              // logger.debug('TwinStore', `Enriched ${svc.name} with dynamic ports: ${dynamicPorts.length}`);
-          } else if (!svc.ports || svc.ports.length === 0) {
-              const staticPorts = this.extractStaticPortsForService(svc, node, nodeIPs);
-              if (staticPorts.length > 0) {
-                  svc.ports = staticPorts;
+          // Always extract YAML-defined ports as the baseline source of truth
+          const yamlPorts = this.extractStaticPortsForService(svc, node, nodeIPs);
+
+          // Merge: start with YAML-defined ports, then add any runtime-discovered ports not already present
+          const mergedPorts = [...yamlPorts];
+          dynamicPorts.forEach(dp => {
+              const resolved = { ...dp, hostIp: this.resolveHostIpForPort(dp.hostIp, nodeIPs) };
+              const alreadyPresent = mergedPorts.some(mp =>
+                  getHP(mp) === getHP(resolved) && getCP(mp) === getCP(resolved) && mp.protocol === resolved.protocol
+              );
+              if (!alreadyPresent) {
+                  mergedPorts.push(resolved);
               }
+          });
+
+          if (mergedPorts.length > 0) {
+              svc.ports = mergedPorts;
           }
       });
   }
