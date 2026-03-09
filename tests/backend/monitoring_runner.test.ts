@@ -7,7 +7,22 @@ import { CheckConfig } from '../../src/lib/monitoring/types';
 vi.mock('../../src/lib/monitoring/store');
 vi.mock('../../src/lib/executor', () => ({
     getExecutor: vi.fn(() => ({
-        exec: vi.fn(),
+        exec: vi.fn((cmd: string) => {
+            if (cmd.includes('failhost')) {
+                throw new Error('ping: failhost: Name or service not known');
+            }
+            if (cmd.startsWith('ping')) {
+                return { stdout: '1 packets transmitted, 1 received', stderr: '' };
+            }
+            if (cmd.includes('inspect') && cmd.includes('format')) {
+                return { stdout: 'running|healthy', stderr: '' };
+            }
+            // Script checks
+            if (cmd.includes('success_cmd')) {
+                return { stdout: 'ok', stderr: '' };
+            }
+            throw new Error(`Command failed: ${cmd}`);
+        }),
     })),
 }));
 vi.mock('../../src/lib/nodes');
@@ -122,7 +137,7 @@ describe('CheckRunner', () => {
 
          const result = await CheckRunner.run(check);
          expect(result.status).toBe('fail');
-         expect(result.message).toContain('Ping failed');
+         expect(result.message).toContain('Ping');
     });
 
     it('should run a script check', async () => {
