@@ -7,23 +7,21 @@ metadata:
 spec:
   hostNetwork: true
   containers:
-  # 1. FileBrowser — Web-based file explorer (browse, upload, download, share links)
-  - name: filebrowser
-    image: docker.io/filebrowser/filebrowser:latest
-    securityContext:
-      runAsUser: 0
-      runAsGroup: 0
-    args:
-      - "--port=8090"
-      - "--root=/srv"
-      - "--database=/db/filebrowser.db"
+  # 1. WebDAV — Access files from any OS file manager or WebDAV client
+  - name: webdav
+    image: docker.io/bytemark/webdav:latest
+    env:
+      - name: AUTH_TYPE
+        value: "Basic"
+      - name: USERNAME
+        value: "{{SHARE_USER}}"
+      - name: PASSWORD
+        value: "{{SHARE_PASSWORD}}"
     ports:
       - containerPort: 8090
     volumeMounts:
-      - mountPath: /srv
+      - mountPath: /var/lib/dav/data
         name: shared-data
-      - mountPath: /db
-        name: filebrowser-db
 
   # 2. Syncthing — Bidirectional folder sync (Android & Windows apps)
   - name: syncthing
@@ -43,35 +41,28 @@ spec:
       - mountPath: /var/syncthing/config
         name: syncthing-config
 
-  # 3. Samba — SMB/CIFS network shares for Windows drive mapping (port 445)
+  # 3. Samba — SMB/CIFS network shares for Windows drive mapping
   - name: samba
     image: docker.io/servercontainers/samba:latest
     env:
       - name: SAMBA_GLOBAL_STANZA
         value: "server min protocol = SMB2; log level = 1;"
-      - name: ACCOUNT_{{SMB_USER}}
-        value: "{{SMB_PASSWORD}}"
-      - name: UID_{{SMB_USER}}
+      - name: ACCOUNT_{{SHARE_USER}}
+        value: "{{SHARE_PASSWORD}}"
+      - name: UID_{{SHARE_USER}}
         value: "1000"
       - name: SAMBA_VOLUME_CONFIG_share
-        value: "[share]; path=/share; valid users = {{SMB_USER}}; guest ok = no; read only = no; browseable = yes;"
+        value: "[share]; path=/share; valid users = {{SHARE_USER}}; guest ok = no; read only = no; browseable = yes;"
     volumeMounts:
       - mountPath: /share
         name: shared-data
 
   volumes:
-  # Shared data — mounted by all three containers
   - name: shared-data
     hostPath:
       path: {{DATA_DIR}}/stacks/file-share/data
       type: DirectoryOrCreate
-  # Syncthing config, keys, and database
   - name: syncthing-config
     hostPath:
       path: {{DATA_DIR}}/stacks/file-share/syncthing
-      type: DirectoryOrCreate
-  # FileBrowser SQLite database
-  - name: filebrowser-db
-    hostPath:
-      path: {{DATA_DIR}}/stacks/file-share/filebrowser
       type: DirectoryOrCreate

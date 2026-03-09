@@ -1,11 +1,11 @@
 {
-  "SMB_USER": {
+  "SHARE_USER": {
     "type": "text",
-    "description": "Username for SMB/Windows network share access",
+    "description": "Username for file share access (WebDAV + SMB)",
     "default": "user"
   },
-  "SMB_PASSWORD": {
+  "SHARE_PASSWORD": {
     "type": "password",
-    "description": "Password for SMB/Windows network share access"
+    "description": "Password for file share access (WebDAV + SMB)"
   }
 }
