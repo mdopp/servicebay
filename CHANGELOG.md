@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.21.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.21.0...servicebay-v0.21.1) (2026-03-09)
+
+
+### Bug Fixes
+
+* merge YAML ports with runtime ports as source of truth ([8c27882](https://github.com/mdopp/servicebay/commit/8c27882d4d0ba7289040170a513e3ac6088d7f80))
+* merge YAML-defined ports with runtime-detected ports ([3f2782c](https://github.com/mdopp/servicebay/commit/3f2782cabf3d5b0fcd8aeff48c1e0921a3bf5433))
+
 ## [0.21.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.20.3...servicebay-v0.21.0) (2026-03-09)
 
 
