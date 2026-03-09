@@ -14,6 +14,7 @@ import { CheckConfig, CheckType, Check } from '@/lib/monitoring/types';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { SystemInfoContent } from '@/plugins/SystemInfoPlugin';
 
 interface Container {
   Id: string;
@@ -28,7 +29,7 @@ interface HistoryItem {
   message?: string;
 }
 
-type MonitoringTab = 'checks' | 'logs';
+type MonitoringTab = 'checks' | 'logs' | 'system';
 
 export default function MonitoringPlugin() {
   const [checks, setChecks] = useState<Check[]>([]);
@@ -57,7 +58,7 @@ export default function MonitoringPlugin() {
   const searchParams = useSearchParams();
   const searchString = searchParams?.toString() ?? '';
   const tabParam = searchParams?.get('tab');
-  const normalizedTab: MonitoringTab | null = tabParam === 'logs' || tabParam === 'checks' ? (tabParam as MonitoringTab) : null;
+  const normalizedTab: MonitoringTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' ? (tabParam as MonitoringTab) : null;
 
   const closeOverlaysOnEscape = useCallback(() => {
     if (isDeleteModalOpen) return;
@@ -338,9 +339,9 @@ export default function MonitoringPlugin() {
         title="Monitoring" 
         showBack={false} 
         helpId="monitoring"
-        actions={
+        actions={activeTab === 'checks' ? (
             <div className="flex gap-2 shrink-0">
-                <button 
+                <button
                     onClick={() => handleOpenModal()}
                     className="flex items-center gap-2 p-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm transition-colors font-medium"
                     title="Add Check"
@@ -348,48 +349,47 @@ export default function MonitoringPlugin() {
                     <Plus className="w-4 h-4" />
                 </button>
             </div>
-        }
+        ) : undefined}
       >
+        {activeTab !== 'system' && (
         <div className="relative flex-1 max-w-md min-w-[100px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input 
-                type="text" 
-                placeholder="Search..." 
+            <input
+                type="text"
+                placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
             />
         </div>
+        )}
       </PageHeader>
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700 px-2 shrink-0">
-        <button 
-          onClick={() => handleTabChange('checks')} 
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            activeTab === 'checks' 
-              ? 'border-blue-600 text-blue-600 dark:text-blue-400' 
-              : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-          }`}
-        >
-          Monitoring
-        </button>
-        <button 
-          onClick={() => handleTabChange('logs')} 
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            activeTab === 'logs' 
-              ? 'border-blue-600 text-blue-600 dark:text-blue-400' 
-              : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-          }`}
-        >
-          Logs
-        </button>
+      <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 px-2 shrink-0 overflow-x-auto">
+        {([
+          { id: 'checks' as const, label: 'Monitoring' },
+          { id: 'logs' as const, label: 'Logs' },
+          { id: 'system' as const, label: 'System' },
+        ]).map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => handleTabChange(tab.id)}
+            className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === tab.id
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-6 pb-6">
       {activeTab === 'checks' && (
-        <MonitoringChecks 
+        <MonitoringChecks
           checks={checks}
           containers={containers}
           searchQuery={searchQuery}
@@ -406,6 +406,10 @@ export default function MonitoringPlugin() {
         <div className="px-2">
           <LogViewer searchQuery={searchQuery} />
         </div>
+      )}
+
+      {activeTab === 'system' && (
+        <SystemInfoContent />
       )}
       </div>
 

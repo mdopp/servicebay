@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Server, Network } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import pkg from '../../package.json';
 
@@ -11,7 +11,6 @@ export const plugins = [
     { id: 'containers', name: 'Container Engine', icon: LayoutDashboard, path: '/containers' },
     { id: 'network', name: 'Network Map', icon: Network, path: '/network' },
     { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
-    { id: 'system', name: 'System Info', icon: Server, path: '/system' },
     { id: 'terminal', name: 'SSH Terminal', icon: Terminal, path: '/terminal' },
     { id: 'settings', name: 'Settings', icon: Settings, path: '/settings' },
 ];
