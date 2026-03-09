@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.21.1...servicebay-v0.22.0) (2026-03-09)
+
+
+### Features
+
+* move system info into monitoring tabs, compact node selectors ([#77](https://github.com/mdopp/servicebay/issues/77)) ([3882629](https://github.com/mdopp/servicebay/commit/3882629de9704e95f763444d40e5f60a9e487684))
+
+
+### Performance Improvements
+
+* parallelize network map building and cache YAML port parsing ([#75](https://github.com/mdopp/servicebay/issues/75)) ([d296d8d](https://github.com/mdopp/servicebay/commit/d296d8df89095e7de8109185389d18df9b795918))
+
 ## [0.21.1](https://github.com/mdopp/servicebay/compare/servicebay-v0.21.0...servicebay-v0.21.1) (2026-03-09)
 
 
