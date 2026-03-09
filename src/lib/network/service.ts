@@ -94,44 +94,48 @@ export class NetworkService {
     
     const allVerifiedDomains = new Set<string>();
 
-    for (const target of targets) {
-        // Report progress via SSE
-        watcher.emit('change', { 
-            type: 'network-scan-progress', 
-            message: `Scanning node: ${target.name}`,
-            node: target.name 
-        });
+    // Fetch all node graphs in parallel
+    const nodeGraphResults = await Promise.all(
+        targets.map(async (target) => {
+            watcher.emit('change', {
+                type: 'network-scan-progress',
+                message: `Scanning node: ${target.name}`,
+                node: target.name
+            });
 
-        try {
-            console.log(`[NetworkService] Fetching graph for node: ${target.name}`);
-            const nodeGraph = await this.getNodeGraph(target.name, target.connection, config, fbStatus);
-            
-            // Collect verified domains from Nginx nodes
-            nodeGraph.nodes.forEach(n => {
+            try {
+                console.log(`[NetworkService] Fetching graph for node: ${target.name}`);
+                const nodeGraph = await this.getNodeGraph(target.name, target.connection, config, fbStatus);
+                return { success: true as const, name: target.name, nodeGraph };
+            } catch (error) {
+                console.error(`[NetworkService] Failed to fetch graph for node ${target.name}:`, error);
+                return { success: false as const, name: target.name, error };
+            }
+        })
+    );
+
+    for (const result of nodeGraphResults) {
+        if (result.success) {
+            result.nodeGraph.nodes.forEach(n => {
                 if (n.type === 'proxy') {
-                     // Prefer full list (allVerifiedDomains) if available, otherwise filtered list
                      const domains = (n.metadata?.allVerifiedDomains || n.metadata?.verifiedDomains) as string[] | undefined;
                      if (domains) {
                         domains.forEach(d => allVerifiedDomains.add(d));
                      }
                 }
             });
-
-            // Merge nodes and edges
-            allNodes.push(...nodeGraph.nodes);
-            allEdges.push(...nodeGraph.edges);
-        } catch (error) {
-            console.error(`[NetworkService] Failed to fetch graph for node ${target.name}:`, error);
-            // Add a visual error node?
+            allNodes.push(...result.nodeGraph.nodes);
+            allEdges.push(...result.nodeGraph.edges);
+        } else {
             allNodes.push({
-                id: `error-${target.name}`,
-                type: 'service', // Use service shape for node representation
-                label: target.name,
+                id: `error-${result.name}`,
+                type: 'service',
+                label: result.name,
                 subLabel: 'Connection Failed',
                 status: 'down',
                 metadata: {
                     source: 'System',
-                    description: error instanceof Error ? error.message : String(error)
+                    description: result.error instanceof Error ? result.error.message : String(result.error)
                 }
             });
         }
