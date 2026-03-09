@@ -506,6 +506,30 @@ ${SERVICEBAY_SSH_PRIV}
           [Install]
           WantedBy=multi-user.target
 
+    # GRUB: Custom menu entry to boot from USB for reinstall
+    # Also overrides timeout to 3s so the menu is visible
+    - path: /boot/grub2/custom.cfg
+      mode: 0644
+      contents:
+        inline: |
+          set timeout=3
+          menuentry 'Reinstall from USB' --class usb {
+            insmod chain
+            insmod part_gpt
+            # Try non-primary disks (NVMe OS disk is typically hd0)
+            for i in 1 2 3 4; do
+              for p in 1 2; do
+                if [ -f (hd$i,gpt$p)/EFI/BOOT/BOOTX64.EFI ]; then
+                  chainloader (hd$i,gpt$p)/EFI/BOOT/BOOTX64.EFI
+                  boot
+                fi
+              done
+            done
+            echo "No USB boot device found. Entering UEFI firmware setup..."
+            sleep 3
+            fwsetup
+          }
+
   links:
     # Enable first-boot RAID setup
     - path: /etc/systemd/system/local-fs.target.wants/setup-raid.service
