@@ -20,6 +20,18 @@
     "options": ["de", "en", "fr", "es", "it", "nl", "pl", "pt", "ru", "zh", "ja", "ko"],
     "default": "de"
   },
+  "HA_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for Home Assistant",
+    "default": "home",
+    "proxyPort": "8123",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "proxy_read_timeout 86400;\nproxy_send_timeout 86400;\nproxy_buffering off;"
+    }
+  },
   "PIPER_VOICE": {
     "type": "select",
     "description": "Text-to-speech voice",

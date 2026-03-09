@@ -7,5 +7,16 @@
   "SHARE_PASSWORD": {
     "type": "password",
     "description": "Password for file share access (WebDAV + SMB)"
+  },
+  "FILESHARE_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for file share (WebDAV)",
+    "default": "drive",
+    "proxyPort": "8090",
+    "proxyConfig": {
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "client_max_body_size 0;\nproxy_request_buffering off;"
+    }
   }
 }

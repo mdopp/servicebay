@@ -13,5 +13,20 @@
     "type": "text",
     "description": "Admin UI port",
     "default": "8081"
+  },
+  "PUBLIC_DOMAIN": {
+    "type": "text",
+    "description": "Public domain for all services (e.g. dopp.cloud)",
+    "default": "dopp.cloud"
+  },
+  "NPM_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for Nginx Proxy Manager admin",
+    "default": "nginx",
+    "proxyPort": "NGINX_ADMIN_PORT",
+    "proxyConfig": {
+      "block_exploits": true,
+      "ssl_forced": true
+    }
   }
 }

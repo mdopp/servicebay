@@ -7,5 +7,17 @@
     "type": "text",
     "description": "Web UI port",
     "default": "2283"
+  },
+  "IMMICH_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for Immich",
+    "default": "photos",
+    "proxyPort": "IMMICH_PORT",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "client_max_body_size 0;\nproxy_request_buffering off;\nproxy_read_timeout 600s;\nproxy_send_timeout 600s;\nsend_timeout 600s;"
+    }
   }
 }

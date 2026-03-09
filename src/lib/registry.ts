@@ -240,12 +240,27 @@ export async function getTemplateYaml(name: string, source?: string): Promise<st
   }
 }
 
+/** NPM proxy host settings passed to POST /api/nginx/proxy-hosts */
+export interface ProxyConfig {
+  allow_websocket_upgrade?: boolean;
+  block_exploits?: boolean;
+  caching_enabled?: boolean;
+  http2_support?: boolean;
+  ssl_forced?: boolean;
+  /** Custom nginx directives injected into the server block */
+  advanced_config?: string;
+}
+
 export interface VariableMeta {
-  type?: 'text' | 'password' | 'secret' | 'select' | 'device';
+  type?: 'text' | 'password' | 'secret' | 'select' | 'device' | 'subdomain';
   description?: string;
   default?: string;
   options?: string[];
   devicePath?: string;
+  /** For subdomain type: variable name referencing the target port, or a literal port number */
+  proxyPort?: string;
+  /** For subdomain type: service-specific NPM proxy host configuration */
+  proxyConfig?: ProxyConfig;
 }
 
 export async function getTemplateVariables(name: string, source?: string): Promise<Record<string, VariableMeta> | null> {

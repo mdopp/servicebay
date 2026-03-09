@@ -171,6 +171,12 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
         }
     }
 
+    // Include variables from metadata that aren't referenced in YAML
+    // (e.g. subdomain variables used only for proxy configuration)
+    for (const key of Object.keys(allMeta)) {
+        vars.add(key);
+    }
+
     setItems(newItems);
     setVariables(Array.from(vars).map(v => {
         const meta = allMeta[v];
@@ -186,6 +192,60 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             meta,
         };
     }));
+  };
+
+  const configureProxies = async () => {
+    const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+    if (!domain) return;
+
+    const subdomainVars = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
+    if (subdomainVars.length === 0) return;
+
+    setLogs(prev => [...prev, 'Configuring reverse proxy routes...']);
+
+    const hosts: { domain: string; forwardPort: number; service?: string; proxyConfig?: VariableMeta['proxyConfig'] }[] = [];
+    for (const sv of subdomainVars) {
+      const fqdn = `${sv.value}.${domain}`;
+      let port = sv.meta?.proxyPort || '';
+      // If proxyPort references another variable, resolve its value
+      const portVar = variables.find(v => v.name === port);
+      if (portVar) port = portVar.value;
+      if (!port) continue;
+
+      // Derive service name from variable name (e.g. VAULTWARDEN_SUBDOMAIN → vaultwarden)
+      const service = sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase().replace(/^ha$/, 'home-assistant');
+
+      hosts.push({
+        domain: fqdn,
+        forwardPort: parseInt(port, 10),
+        service,
+        proxyConfig: sv.meta?.proxyConfig,
+      });
+    }
+
+    if (hosts.length === 0) return;
+
+    try {
+      const res = await fetch('/api/system/nginx/proxy-hosts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hosts, publicDomain: domain, node: selectedNode || undefined }),
+      });
+      const data = await res.json();
+
+      if (res.ok && data.created?.length) {
+        setLogs(prev => [...prev, `\u2705 Proxy routes created: ${data.created.join(', ')}`]);
+        if (data.failed?.length) {
+          setLogs(prev => [...prev, `\u26a0\ufe0f Some routes failed: ${data.failed.map((f: { domain: string }) => f.domain).join(', ')}`]);
+        }
+      } else if (res.status === 401) {
+        setLogs(prev => [...prev, `\u26a0\ufe0f NPM password was changed. Configure proxy routes manually at ${data.adminUrl || 'http://<host>:8081'}`]);
+      } else {
+        setLogs(prev => [...prev, `\u26a0\ufe0f Could not configure proxy routes: ${data.error || 'unknown error'}`]);
+      }
+    } catch {
+      setLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Nginx Proxy Manager. Configure proxy routes manually.']);
+    }
   };
 
   const handleInstall = async () => {
@@ -235,6 +295,10 @@ WantedBy=default.target`;
             setLogs(prev => [...prev, `❌ Failed to install ${item.name}: ${msg}`]);
         }
     }
+
+    // Configure reverse proxy routes if domain variables are present
+    await configureProxies();
+
     setStep('done');
   };
 
@@ -290,6 +354,23 @@ WantedBy=default.target`;
               <RefreshCw size={16} className={loadingDevices ? 'animate-spin' : ''} />
             </button>
           )}
+        </div>
+      );
+    }
+
+    // Subdomain field (shows .domain suffix)
+    if (v.meta?.type === 'subdomain') {
+      const domain = variables.find(x => x.name === 'PUBLIC_DOMAIN')?.value || 'example.com';
+      return (
+        <div className="flex items-center gap-0">
+          <input
+            type="text"
+            value={v.value}
+            onChange={(e) => update(e.target.value)}
+            className={inputClass + " rounded-r-none border-r-0"}
+            placeholder={v.meta.default || 'subdomain'}
+          />
+          <span className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 rounded-r text-sm whitespace-nowrap">.{domain}</span>
         </div>
       );
     }
@@ -463,7 +544,7 @@ WantedBy=default.target`;
 
                 {(step === 'installing' || step === 'done') && (
                     <div>
-                        <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm h-64 overflow-y-auto mb-4 border border-gray-800">
+                        <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm h-48 overflow-y-auto mb-4 border border-gray-800">
                             {logs.map((log, i) => (
                                 <div key={i} className="mb-1">{log}</div>
                             ))}
@@ -473,6 +554,43 @@ WantedBy=default.target`;
                                 </div>
                             )}
                         </div>
+
+                        {step === 'done' && variables.some(v => v.meta?.type === 'subdomain' && v.value) && (() => {
+                            const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+                            const subdomains = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
+                            if (!domain || subdomains.length === 0) return null;
+                            return (
+                                <div className="space-y-3">
+                                    <p className="text-sm font-bold text-gray-700 dark:text-gray-300">Next steps</p>
+
+                                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-2">
+                                        <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
+                                        <p className="text-blue-700 dark:text-blue-300">
+                                            Point these domains to your server IP:
+                                        </p>
+                                        <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
+                                            {subdomains.map(sv => (
+                                                <div key={sv.name}>{sv.value}.{domain}</div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-2">
+                                        <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
+                                        <p className="text-amber-700 dark:text-amber-300">
+                                            Open Nginx Proxy Manager and add Let&apos;s Encrypt SSL certificates for each proxy host.
+                                        </p>
+                                    </div>
+
+                                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-2">
+                                        <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (optional)</p>
+                                        <p className="text-gray-600 dark:text-gray-400">
+                                            Add IP-based access lists in NPM for admin-only services (Nginx Admin, AdGuard).
+                                        </p>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
             </div>
