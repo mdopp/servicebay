@@ -7,6 +7,7 @@ import path from 'path';
 
 export interface OnboardingStatus {
   needsSetup: boolean;
+  stackSetupPending: boolean;
   hasGateway: boolean;
   hasSshKey: boolean;
   hasExternalLinks: boolean;
@@ -56,6 +57,7 @@ export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
 
   return {
     needsSetup,
+    stackSetupPending: config.stackSetupPending === true,
     hasGateway,
     hasSshKey,
     hasExternalLinks,
@@ -140,5 +142,11 @@ export async function skipOnboarding() {
     // If user wants to skip, we should mark it as "seen"
     const config = await getConfig();
     config.setupCompleted = true;
+    await saveConfig(config);
+}
+
+export async function completeStackSetup() {
+    const config = await getConfig();
+    delete config.stackSetupPending;
     await saveConfig(config);
 }

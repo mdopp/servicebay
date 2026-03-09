@@ -1,23 +1,48 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-    checkOnboardingStatus, 
-    skipOnboarding, 
-    saveGatewayConfig, 
+import {
+    checkOnboardingStatus,
+    skipOnboarding,
+    saveGatewayConfig,
     saveAutoUpdateConfig,
     saveRegistriesConfig,
     saveEmailConfig,
-    OnboardingStatus 
+    completeStackSetup,
+    OnboardingStatus
 } from '@/app/actions/onboarding';
 import { generateLocalKey } from '@/app/actions/ssh';
+import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables } from '@/app/actions';
+import { getNodes } from '@/app/actions/system';
+import { Template, VariableMeta } from '@/lib/registry';
+import Mustache from 'mustache';
 
-import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail } from 'lucide-react';
+import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 // Steps definition
-type WizardStep = 'welcome' | 'gateway' | 'ssh' | 'updates' | 'registries' | 'email' | 'finish';
+type WizardStep = 'welcome' | 'gateway' | 'ssh' | 'updates' | 'registries' | 'email' | 'stacks' | 'finish';
+
+interface StackItem {
+  name: string;
+  checked: boolean;
+  yaml?: string;
+}
+
+interface Variable {
+  name: string;
+  value: string;
+  global?: boolean;
+  meta?: VariableMeta;
+}
+
+function generateSecret(length = 32): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  return Array.from(crypto.getRandomValues(new Uint8Array(length)))
+    .map(b => chars[b % chars.length])
+    .join('');
+}
 
 export default function OnboardingWizard() {
   const [isOpen, setIsOpen] = useState(false);
@@ -36,7 +61,8 @@ export default function OnboardingWizard() {
     ssh: true,
     updates: false,
     registries: true,
-    email: false
+    email: false,
+    stacks: true
   });
 
   // Gateway Form
@@ -55,6 +81,20 @@ export default function OnboardingWizard() {
       recipients: ''
   });
 
+  // Stack Selection
+  const [availableStacks, setAvailableStacks] = useState<Template[]>([]);
+  const [selectedStack, setSelectedStack] = useState<Template | null>(null);
+  const [stackItems, setStackItems] = useState<StackItem[]>([]);
+  const [stackVariables, setStackVariables] = useState<Variable[]>([]);
+  const [stackInstallStep, setStackInstallStep] = useState<'select' | 'services' | 'configure' | 'installing' | 'done'>('select');
+  const [stackLogs, setStackLogs] = useState<string[]>([]);
+  const [stackNodes, setStackNodes] = useState<{ Name: string; URI: string }[]>([]);
+  const [stackSelectedNode, setStackSelectedNode] = useState('');
+  const [stacksLoading, setStacksLoading] = useState(false);
+
+  // Track whether we're in stacks-only mode (post-install first boot)
+  const [stacksOnlyMode, setStacksOnlyMode] = useState(false);
+
   useEffect(() => {
     checkOnboardingStatus().then(s => {
       setStatus(s);
@@ -63,15 +103,44 @@ export default function OnboardingWizard() {
         // Pre-fill selection based on detection/defaults
         setSelection(prev => ({
             ...prev,
-            gateway: !s.features.gateway, // If not enabled, select it
+            gateway: !s.features.gateway,
             ssh: !s.features.ssh,
             updates: !s.features.updates,
             registries: !s.features.registries,
-            email: !s.features.email
+            email: !s.features.email,
+            stacks: true
         }));
+      } else if (s.stackSetupPending) {
+        // Setup was completed by installer, but stacks haven't been chosen yet
+        setStacksOnlyMode(true);
+        setCurrentStep('stacks');
+        setIsOpen(true);
       }
     });
   }, []);
+
+  // Load stacks when entering the stacks step
+  const loadStacks = useCallback(async () => {
+    setStacksLoading(true);
+    try {
+      const [templates, nodes] = await Promise.all([fetchTemplates(), getNodes()]);
+      const stacks = templates.filter(t => t.type === 'stack');
+      setAvailableStacks(stacks);
+      setStackNodes(nodes);
+      if (nodes.length === 1) setStackSelectedNode(nodes[0].Name);
+    } catch {
+      // Stacks not available yet, that's OK
+      setAvailableStacks([]);
+    } finally {
+      setStacksLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentStep === 'stacks' && availableStacks.length === 0 && !stacksLoading) {
+      loadStacks();
+    }
+  }, [currentStep, availableStacks.length, stacksLoading, loadStacks]);
 
   const navigateTo = (step: WizardStep) => {
       setStepHistory(prev => [...prev, currentStep]);
@@ -88,12 +157,12 @@ export default function OnboardingWizard() {
 
   const getNextStep = (current: WizardStep): WizardStep => {
       // Calculate next step based on selection
-      const order: WizardStep[] = ['welcome', 'gateway', 'ssh', 'updates', 'registries', 'email', 'finish'];
-      
+      const order: WizardStep[] = ['welcome', 'gateway', 'ssh', 'updates', 'registries', 'email', 'stacks', 'finish'];
+
       // Determine which steps are active based on selection
       const activeSteps = order.filter(step => {
          if (step === 'welcome' || step === 'finish') return true;
-         return selection[step as keyof typeof selection]; 
+         return selection[step as keyof typeof selection];
       });
 
       const currentIndex = activeSteps.indexOf(current);
@@ -127,7 +196,11 @@ export default function OnboardingWizard() {
 
 
   const handleFinish = async () => {
-    await skipOnboarding(); // Mark as complete
+    if (stacksOnlyMode) {
+      await completeStackSetup();
+    } else {
+      await skipOnboarding(); // Mark as complete
+    }
     setIsOpen(false);
     router.refresh();
     addToast('success', 'Setup Complete', 'Welcome to ServiceBay!');
@@ -177,6 +250,160 @@ export default function OnboardingWizard() {
     }
   };
 
+  // -- Stack Handlers --
+
+  const handleSelectStack = async (stack: Template) => {
+    setSelectedStack(stack);
+    setStackInstallStep('services');
+    setStacksLoading(true);
+
+    try {
+      const readme = await fetchReadme(stack.name, 'stack', stack.source);
+      const lines = (readme || '').split('\n');
+      const parsedItems: StackItem[] = [];
+      const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)/;
+      lines.forEach(line => {
+        const match = line.match(regex);
+        if (match) {
+          parsedItems.push({ name: match[2].trim(), checked: match[1].toLowerCase() === 'x' });
+        }
+      });
+      setStackItems(parsedItems);
+    } catch {
+      setStackItems([]);
+    } finally {
+      setStacksLoading(false);
+    }
+  };
+
+  const handleStackFetchVars = async () => {
+    setStackInstallStep('configure');
+    setStacksLoading(true);
+
+    const selected = stackItems.filter(i => i.checked);
+    const vars = new Set<string>();
+    const newItems = [...stackItems];
+    const allMeta: Record<string, VariableMeta> = {};
+
+    let globalSettings: Record<string, string> = {};
+    try {
+      const settingsRes = await fetch('/api/settings');
+      if (settingsRes.ok) {
+        const settings = await settingsRes.json();
+        globalSettings = settings.templateSettings || {};
+      }
+    } catch { /* use empty defaults */ }
+
+    for (const item of selected) {
+      try {
+        const yaml = await fetchTemplateYaml(item.name, selectedStack?.source || 'Built-in');
+        if (!yaml) continue;
+        const idx = newItems.findIndex(i => i.name === item.name);
+        if (idx !== -1) newItems[idx].yaml = yaml;
+        const matches = yaml.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
+        for (const match of matches) vars.add(match[1]);
+        const meta = await fetchTemplateVariables(item.name, selectedStack?.source || 'Built-in');
+        if (meta) Object.assign(allMeta, meta);
+      } catch { /* skip */ }
+    }
+
+    for (const key of Object.keys(allMeta)) vars.add(key);
+
+    setStackItems(newItems);
+    setStackVariables(Array.from(vars).map(v => {
+      const meta = allMeta[v];
+      let value = globalSettings[v] || '';
+      if (!value && meta?.default) value = meta.default;
+      if (!value && meta?.type === 'secret') value = generateSecret();
+      return { name: v, value, global: !!globalSettings[v], meta };
+    }));
+    setStacksLoading(false);
+  };
+
+  const handleStackInstall = async () => {
+    setStackInstallStep('installing');
+    setStackLogs([]);
+    const selected = stackItems.filter(i => i.checked);
+
+    for (const item of selected) {
+      if (!item.yaml) continue;
+      setStackLogs(prev => [...prev, `Installing ${item.name}...`]);
+
+      const view = stackVariables.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {});
+      const savedEscape = Mustache.escape;
+      Mustache.escape = (text: string) => text;
+      const content = Mustache.render(item.yaml, view);
+      Mustache.escape = savedEscape;
+
+      const kubeContent = `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
+
+      try {
+        const query = stackSelectedNode ? `?node=${stackSelectedNode}` : '';
+        const res = await fetch(`/api/services${query}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: item.name, kubeContent, yamlContent: content, yamlFileName: `${item.name}.yml` }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Unknown error');
+        }
+        setStackLogs(prev => [...prev, `\u2705 ${item.name} installed successfully.`]);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setStackLogs(prev => [...prev, `\u274c Failed to install ${item.name}: ${msg}`]);
+      }
+    }
+
+    // Configure proxy routes
+    const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+    if (domain) {
+      const subdomainVars = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
+      if (subdomainVars.length > 0) {
+        setStackLogs(prev => [...prev, 'Configuring reverse proxy routes...']);
+        const hosts = subdomainVars.map(sv => {
+          let port = sv.meta?.proxyPort || '';
+          const portVar = stackVariables.find(v => v.name === port);
+          if (portVar) port = portVar.value;
+          const service = sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase().replace(/^ha$/, 'home-assistant');
+          return { domain: `${sv.value}.${domain}`, forwardPort: parseInt(port, 10), service, proxyConfig: sv.meta?.proxyConfig };
+        }).filter(h => h.forwardPort);
+
+        if (hosts.length > 0) {
+          try {
+            const res = await fetch('/api/system/nginx/proxy-hosts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ hosts, publicDomain: domain, node: stackSelectedNode || undefined }),
+            });
+            const data = await res.json();
+            if (res.ok && data.created?.length) {
+              setStackLogs(prev => [...prev, `\u2705 Proxy routes created: ${data.created.join(', ')}`]);
+            } else if (res.status === 401) {
+              setStackLogs(prev => [...prev, `\u26a0\ufe0f NPM password changed. Configure proxy routes manually.`]);
+            }
+          } catch {
+            setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Nginx Proxy Manager.']);
+          }
+        }
+      }
+    }
+
+    setStackInstallStep('done');
+  };
+
+  const handleStackSkip = async () => {
+    if (stacksOnlyMode) {
+      // In stacks-only mode, skipping goes straight to finish
+      await completeStackSetup();
+      setIsOpen(false);
+      router.refresh();
+      addToast('info', 'Stack Setup Skipped', 'You can install services later from the Registry.');
+    } else {
+      handleNext();
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -186,13 +413,15 @@ export default function OnboardingWizard() {
         {/* Header */}
         <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
            <h2 className="text-xl font-bold flex items-center gap-2">
-             <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-                <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+             <div className={`p-2 rounded-lg ${stacksOnlyMode ? 'bg-indigo-100 dark:bg-indigo-900/30' : 'bg-blue-100 dark:bg-blue-900/30'}`}>
+                {stacksOnlyMode
+                  ? <Layers className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  : <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
              </div>
-             ServiceBay Setup
+             {stacksOnlyMode ? 'Install Services' : 'ServiceBay Setup'}
            </h2>
-           {(() => {
-             const order: WizardStep[] = ['welcome', 'gateway', 'ssh', 'updates', 'registries', 'email', 'finish'];
+           {!stacksOnlyMode && (() => {
+             const order: WizardStep[] = ['welcome', 'gateway', 'ssh', 'updates', 'registries', 'email', 'stacks', 'finish'];
              const activeSteps = order.filter(step => {
                if (step === 'welcome' || step === 'finish') return true;
                return selection[step as keyof typeof selection];
@@ -208,6 +437,9 @@ export default function OnboardingWizard() {
                </div>
              );
            })()}
+           {stacksOnlyMode && (
+             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Choose a service stack to deploy on your new server.</p>
+           )}
         </div>
 
         {/* Content */}
@@ -246,20 +478,28 @@ export default function OnboardingWizard() {
                             title="Auto Updates" 
                             desc="Keep ServiceBay and containers updated"
                         />
-                         <Toggle 
-                            checked={selection.registries} 
+                         <Toggle
+                            checked={selection.registries}
                             onChange={(v: boolean) => setSelection(s => ({...s, registries: v}))}
-                            icon={Box} 
+                            icon={Box}
                             color="text-blue-500"
-                            title="Templates" 
+                            title="Templates"
                             desc="Enable GitHub template registries"
                         />
-                        <Toggle 
-                            checked={selection.email} 
+                        <Toggle
+                            checked={selection.stacks}
+                            onChange={(v: boolean) => setSelection(s => ({...s, stacks: v}))}
+                            icon={Layers}
+                            color="text-indigo-500"
+                            title="Install Stack"
+                            desc="Deploy a pre-configured service bundle"
+                        />
+                        <Toggle
+                            checked={selection.email}
                             onChange={(v: boolean) => setSelection(s => ({...s, email: v}))}
-                            icon={Mail} 
+                            icon={Mail}
                             color="text-red-500"
-                            title="Notifications" 
+                            title="Notifications"
                             desc="Email alerts for service health"
                         />
                     </div>
@@ -360,6 +600,174 @@ export default function OnboardingWizard() {
                 </div>
             )}
 
+            {currentStep === 'stacks' && (
+                <div className="space-y-4">
+                    <h3 className="font-semibold text-lg flex items-center gap-2"><Layers className="w-5 h-5 text-indigo-500"/> Install a Stack</h3>
+
+                    {stackInstallStep === 'select' && (
+                        <>
+                            <p className="text-sm text-gray-500">
+                                Choose a pre-configured stack to install, or skip this step and install services later from the Registry.
+                            </p>
+                            {stacksLoading ? (
+                                <div className="flex items-center justify-center py-8 text-gray-400">
+                                    <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading stacks...
+                                </div>
+                            ) : availableStacks.length === 0 ? (
+                                <div className="text-sm text-gray-500 py-4">
+                                    No stacks available. Enable template registries first, or install services manually later.
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {availableStacks.map(stack => (
+                                        <div
+                                            key={stack.name}
+                                            onClick={() => handleSelectStack(stack)}
+                                            className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-200 dark:hover:border-blue-800"
+                                        >
+                                            <div className="mt-0.5 text-indigo-500">
+                                                {stack.type === 'stack' ? <Layers className="w-5 h-5" /> : <Package className="w-5 h-5" />}
+                                            </div>
+                                            <div className="flex-1">
+                                                <div className="font-medium text-sm text-gray-900 dark:text-gray-100">{stack.name}</div>
+                                                <div className="text-xs text-gray-500">{stack.source}</div>
+                                            </div>
+                                            <ArrowRight className="w-4 h-4 text-gray-400 mt-1" />
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {stackInstallStep === 'services' && (
+                        <>
+                            <p className="text-sm text-gray-500 mb-2">Select which services to install from <span className="font-medium">{selectedStack?.name}</span>:</p>
+                            {stacksLoading ? (
+                                <div className="flex items-center justify-center py-4 text-gray-400">
+                                    <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {stackItems.map((item, i) => (
+                                        <label key={item.name} className="flex items-center gap-3 p-3 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors">
+                                            <input
+                                                type="checkbox"
+                                                checked={item.checked}
+                                                onChange={() => {
+                                                    const newItems = [...stackItems];
+                                                    newItems[i].checked = !newItems[i].checked;
+                                                    setStackItems(newItems);
+                                                }}
+                                                className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
+                                            />
+                                            <span className="font-medium text-sm text-gray-900 dark:text-gray-200">{item.name}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {stackInstallStep === 'configure' && (
+                        <>
+                            {stackNodes.length > 1 && (
+                                <div className="mb-4">
+                                    <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Target Node</label>
+                                    <select
+                                        value={stackSelectedNode}
+                                        onChange={(e) => setStackSelectedNode(e.target.value)}
+                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                    >
+                                        <option value="" disabled>Select a node</option>
+                                        {stackNodes.map(n => <option key={n.Name} value={n.Name}>{n.Name}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                            {stacksLoading ? (
+                                <div className="flex items-center justify-center py-4 text-gray-400">
+                                    <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading variables...
+                                </div>
+                            ) : stackVariables.filter(v => !v.global).length === 0 ? (
+                                <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded text-sm">
+                                    No configuration needed. Ready to install.
+                                </div>
+                            ) : (
+                                <div className="space-y-3 max-h-60 overflow-y-auto">
+                                    {stackVariables.filter(v => !v.global).map((v) => {
+                                        const idx = stackVariables.findIndex(x => x.name === v.name);
+                                        return (
+                                            <div key={v.name}>
+                                                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
+                                                {v.meta?.description && <p className="text-xs text-gray-500 mb-1">{v.meta.description}</p>}
+                                                {v.meta?.type === 'password' ? (
+                                                    <input
+                                                        type="password"
+                                                        value={v.value}
+                                                        onChange={(e) => {
+                                                            const newVars = [...stackVariables];
+                                                            newVars[idx].value = e.target.value;
+                                                            setStackVariables(newVars);
+                                                        }}
+                                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
+                                                        autoComplete="new-password"
+                                                    />
+                                                ) : v.meta?.type === 'secret' ? (
+                                                    <div className="flex gap-2">
+                                                        <input type="text" value={v.value} readOnly className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border border-gray-300 dark:border-gray-700 rounded-md text-xs font-mono flex-1" />
+                                                        <button type="button" onClick={() => { const nv = [...stackVariables]; nv[idx].value = generateSecret(); setStackVariables(nv); }} className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700"><RefreshCw size={14} /></button>
+                                                    </div>
+                                                ) : v.meta?.type === 'select' && v.meta.options ? (
+                                                    <select value={v.value} onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }} className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm">
+                                                        <option value="" disabled>Select...</option>
+                                                        {v.meta.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                                    </select>
+                                                ) : v.meta?.type === 'subdomain' ? (
+                                                    <div className="flex items-center gap-0">
+                                                        <input type="text" value={v.value} onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }} className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-l-md text-sm border-r-0" placeholder={v.meta.default || 'subdomain'} />
+                                                        <span className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 text-gray-500 text-xs rounded-r-md whitespace-nowrap">.{stackVariables.find(x => x.name === 'PUBLIC_DOMAIN')?.value || 'example.com'}</span>
+                                                    </div>
+                                                ) : (
+                                                    <input
+                                                        type="text"
+                                                        value={v.value}
+                                                        onChange={(e) => {
+                                                            const newVars = [...stackVariables];
+                                                            newVars[idx].value = e.target.value;
+                                                            setStackVariables(newVars);
+                                                        }}
+                                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
+                                                        placeholder={v.meta?.default ? `Default: ${v.meta.default}` : `Value for ${v.name}`}
+                                                    />
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (
+                        <div>
+                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs h-40 overflow-y-auto border border-gray-800">
+                                {stackLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
+                                {stackInstallStep === 'installing' && (
+                                    <div className="flex items-center gap-2 text-gray-400 mt-2">
+                                        <Loader2 size={14} className="animate-spin" /> Processing...
+                                    </div>
+                                )}
+                            </div>
+                            {stackInstallStep === 'done' && (
+                                <p className="text-sm text-green-600 dark:text-green-400 mt-3 font-medium">
+                                    Stack installation complete. You can configure additional settings from the dashboard.
+                                </p>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {currentStep === 'finish' && (
                  <div className="text-center py-8 space-y-4">
                     <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 mb-4">
@@ -376,7 +784,10 @@ export default function OnboardingWizard() {
 
         {/* Footer */}
         <div className="p-4 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
-            {currentStep === 'welcome' ? (
+            {stacksOnlyMode ? (
+                // Stacks-only mode: left side is empty (sub-step back buttons are in the right side)
+                <div />
+            ) : currentStep === 'welcome' ? (
                 showSkipConfirm ? (
                     <div className="flex items-center gap-2">
                         <button
@@ -402,7 +813,7 @@ export default function OnboardingWizard() {
                     </button>
                 )
             ) : (
-                <button 
+                <button
                   onClick={handleBack}
                   className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
                 >
@@ -422,7 +833,35 @@ export default function OnboardingWizard() {
             {currentStep === 'updates' && <Button onClick={handleSaveUpdates} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Enable Updates</Button>}
             {currentStep === 'registries' && <Button onClick={handleSaveRegistries} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Enable Registry</Button>}
             {currentStep === 'email' && <Button onClick={handleSaveEmail} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save Email</Button>}
-            
+
+            {currentStep === 'stacks' && stackInstallStep === 'select' && (
+                <Button onClick={handleStackSkip}>Skip <ArrowRight className="w-4 h-4 ml-2" /></Button>
+            )}
+            {currentStep === 'stacks' && stackInstallStep === 'services' && (
+                <div className="flex gap-2">
+                    <button onClick={() => { setStackInstallStep('select'); setSelectedStack(null); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+                    <Button onClick={handleStackFetchVars} disabled={stackItems.filter(i => i.checked).length === 0 || stacksLoading}>
+                        {stacksLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Continue
+                    </Button>
+                </div>
+            )}
+            {currentStep === 'stacks' && stackInstallStep === 'configure' && (
+                <div className="flex gap-2">
+                    <button onClick={() => setStackInstallStep('services')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+                    <Button onClick={handleStackInstall} disabled={!stackSelectedNode && stackNodes.length > 1}>
+                        Install Stack
+                    </Button>
+                </div>
+            )}
+            {currentStep === 'stacks' && stackInstallStep === 'installing' && (
+                <Button disabled><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Installing...</Button>
+            )}
+            {currentStep === 'stacks' && stackInstallStep === 'done' && (
+                <Button onClick={stacksOnlyMode ? handleFinish : handleNext}>
+                    {stacksOnlyMode ? <><CheckCircle className="w-4 h-4 mr-2" /> Finish</> : <>Continue <ArrowRight className="w-4 h-4 ml-2" /></>}
+                </Button>
+            )}
+
             {currentStep === 'finish' && (
                 <Button onClick={handleFinish}>
                     <CheckCircle className="w-4 h-4 mr-2" />
