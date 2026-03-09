@@ -1,1 +1,12 @@
-{}
+{
+  "ADGUARD_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for AdGuard Home admin",
+    "default": "dns",
+    "proxyPort": "8083",
+    "proxyConfig": {
+      "block_exploits": true,
+      "ssl_forced": true
+    }
+  }
+}

@@ -39,10 +39,26 @@ export interface GatewayConfig {
   ssl?: boolean;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface ProxyHostEntry {
+  /** Full domain, e.g. "vault.dopp.cloud" */
+  domain: string;
+  /** Service template name, e.g. "vaultwarden" */
+  service: string;
+  /** Target port on the node */
+  forwardPort: number;
+  /** Whether the NPM proxy host was created successfully */
+  created: boolean;
+  /** Whether SSL (Let's Encrypt) has been configured */
+  sslConfigured?: boolean;
+  /** Timestamp of creation */
+  createdAt?: string;
+}
+
 export interface ReverseProxyConfig {
-  // Configuration for the reverse proxy (e.g. global settings)
-  // Currently managed via system/nginx endpoints
+  /** Public domain used for subdomains (e.g. "dopp.cloud") */
+  publicDomain?: string;
+  /** Proxy hosts created during stack deployment */
+  hosts?: ProxyHostEntry[];
 }
 
 interface AgentRestartSchedule {

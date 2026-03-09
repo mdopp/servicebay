@@ -27,9 +27,9 @@ export async function POST() {
         const name = 'nginx-web';
         // Replace variables (8080/8443/8081 standard for rootless)
         const yamlContent = templateContent
-            .replace(/\{\{PORT\}\}/g, '8080')
-            .replace(/\{\{SSL_PORT\}\}/g, '8443')
-            .replace(/\{\{ADMIN_PORT\}\}/g, '8081')
+            .replace(/\{\{NGINX_PORT\}\}/g, '8080')
+            .replace(/\{\{NGINX_SSL_PORT\}\}/g, '8443')
+            .replace(/\{\{NGINX_ADMIN_PORT\}\}/g, '8081')
             .replace(/\{\{DATA_DIR\}\}/g, dataDir);
 
         const kubeContent = `[Unit]

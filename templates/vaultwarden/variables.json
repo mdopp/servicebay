@@ -14,5 +14,17 @@
     "description": "Registrierungen erlauben",
     "options": ["true", "false"],
     "default": "true"
+  },
+  "VAULTWARDEN_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for Vaultwarden",
+    "default": "vault",
+    "proxyPort": "VAULTWARDEN_PORT",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "http2_support": false,
+      "ssl_forced": true
+    }
   }
 }
