@@ -1,6 +1,5 @@
 import { CheckConfig, CheckResult } from './types';
 import { MonitoringStore } from './store';
-import { spawn } from 'child_process';
 import vm from 'vm';
 import { getExecutor, Executor } from '../executor';
 import { listNodes, verifyNodeConnection } from '../nodes';
@@ -26,7 +25,7 @@ export class CheckRunner {
           status = 'ok';
           break;
         case 'ping':
-          await this.runPingCheck(check.target);
+          await this.runPingCheck(check.target, executor);
           status = 'ok';
           break;
         case 'script':
@@ -119,17 +118,15 @@ export class CheckRunner {
     }
   }
 
-  private static async runPingCheck(host: string) {
-    return new Promise<void>((resolve, reject) => {
-      const ping = spawn('ping', ['-c', '1', '-W', '2', host]);
-      
-      ping.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`Ping failed with code ${code}`));
-      });
-      
-      ping.on('error', (err) => reject(err));
-    });
+  private static async runPingCheck(host: string, executor: Executor) {
+    try {
+      const { stdout } = await executor.exec(`ping -c 1 -W 2 ${host}`);
+      if (!stdout.includes('1 received')) {
+        throw new Error('Ping failed: no reply');
+      }
+    } catch (e) {
+      throw new Error(`Ping ${host} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private static async runPodmanCheck(containerName: string, executor: Executor) {
@@ -152,8 +149,8 @@ export class CheckRunner {
 
   private static async runServiceCheck(serviceName: string, executor: Executor) {
     // Managed service (user service)
-    // If the user didn't provide .service extension, add it
-    const unit = serviceName.endsWith('.service') ? serviceName : `${serviceName}.service`;
+    // If the user didn't provide a unit type suffix, default to .service
+    const unit = serviceName.includes('.') ? serviceName : `${serviceName}.service`;
     
     try {
         const { stdout } = await executor.exec(`systemctl --user is-active ${unit}`);

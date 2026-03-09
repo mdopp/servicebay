@@ -88,6 +88,10 @@ storage:
       group:
         name: ${HOST_USER}
 
+    # USB automount root (USB drives mounted as /mnt/usb/<label>)
+    - path: /mnt/usb
+      mode: 0777
+
     # Quadlet directory for the user
     - path: /var/home/${HOST_USER}/.config/containers/systemd
       mode: 0755
@@ -97,6 +101,74 @@ storage:
         name: ${HOST_USER}
 
   files:
+    # Hostname
+    - path: /etc/hostname
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: ${SERVER_NAME}
+
+    # USB automount: udev rule to trigger systemd service on USB block device add
+    - path: /etc/udev/rules.d/99-usb-automount.rules
+      mode: 0644
+      contents:
+        inline: |
+          ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{DEVTYPE}=="partition", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-mount@%k.service"
+          ACTION=="remove", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{DEVTYPE}=="partition", RUN+="/usr/local/bin/usb-mount.sh remove %k"
+
+    # USB automount: mount/unmount script
+    - path: /usr/local/bin/usb-mount.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ACTION="${1:-}"
+          DEVNAME="${2:-}"
+          DEV="/dev/$DEVNAME"
+          USB_ROOT="/mnt/usb"
+
+          case "$ACTION" in
+            add)
+              # Use filesystem label if available, else device name
+              LABEL=$(lsblk -ndo LABEL "$DEV" 2>/dev/null || echo "")
+              [[ -z "$LABEL" ]] && LABEL="$DEVNAME"
+              # Sanitize label for use as directory name
+              LABEL=$(echo "$LABEL" | tr -c 'A-Za-z0-9._-' '_')
+              MOUNT_POINT="$USB_ROOT/$LABEL"
+              mkdir -p "$MOUNT_POINT"
+              mount -o rw,noatime "$DEV" "$MOUNT_POINT"
+              echo "usb-mount: mounted $DEV at $MOUNT_POINT"
+              ;;
+            remove)
+              MOUNT_POINT=$(findmnt -nro TARGET "$DEV" 2>/dev/null || true)
+              if [[ -n "$MOUNT_POINT" && "$MOUNT_POINT" == "$USB_ROOT"/* ]]; then
+                umount -l "$MOUNT_POINT"
+                rmdir "$MOUNT_POINT" 2>/dev/null || true
+                echo "usb-mount: unmounted $DEV from $MOUNT_POINT"
+              fi
+              ;;
+            *)
+              echo "Usage: usb-mount.sh {add|remove} <device>" >&2
+              exit 1
+              ;;
+          esac
+
+    # USB automount: systemd template unit triggered by udev
+    - path: /etc/systemd/system/usb-mount@.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Mount USB device %i
+          After=local-fs.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/local/bin/usb-mount.sh add %i
+          ExecStop=/usr/local/bin/usb-mount.sh remove %i
+
     # Network: Static IP
     - path: /etc/NetworkManager/system-connections/${NET_INTERFACE}.nmconnection
       mode: 0600
@@ -106,12 +178,14 @@ storage:
           id=${NET_INTERFACE}
           type=ethernet
           interface-name=${NET_INTERFACE}
-          
+          autoconnect=true
+          autoconnect-priority=10
+
           [ipv4]
           method=manual
           address1=${STATIC_IP}/${STATIC_PREFIX},${GATEWAY}
           dns=${DNS_SERVERS}
-          
+
           [ipv6]
           method=auto
 
@@ -127,7 +201,12 @@ storage:
           HOST_USER="${HOST_USER}"
 
           # Find the OS disk (the one holding /)
-          OS_DISK=$(lsblk -ndo PKNAME "$(findmnt -n -o SOURCE /)" | head -1)
+          # Newer FCOS uses composefs overlay for / — fall back to /sysroot
+          ROOT_SOURCE=$(findmnt -n -o SOURCE /)
+          if ! lsblk "$ROOT_SOURCE" &>/dev/null; then
+            ROOT_SOURCE=$(findmnt -n -o SOURCE /sysroot)
+          fi
+          OS_DISK=$(lsblk -ndo PKNAME "$ROOT_SOURCE" | head -1)
 
           # Find the largest non-OS, non-removable disk
           RAID_DISK=""
@@ -152,42 +231,68 @@ storage:
 
           echo "setup-raid: OS disk=$OS_DISK, RAID disk=$RAID_DISK ($(( RAID_SIZE / 1073741824 )) GiB)"
 
-          # Check if RAID is already assembled
-          if [[ -e /dev/md/data ]]; then
-            echo "setup-raid: /dev/md/data already exists. Skipping creation."
-          else
-            # Check if the disk (or its partitions) already has a RAID superblock
-            EXISTING_RAID=false
-            for part in "$RAID_DISK" "${RAID_DISK}1" "${RAID_DISK}p1"; do
+          # Find the RAID device — the kernel may auto-assemble it under any /dev/mdN name.
+          # Check for existing auto-assembled arrays first, then try manual assembly, then create new.
+          MD_DEV=""
+
+          # 1) Check if any md device already uses a partition from RAID_DISK
+          for part in "${RAID_DISK}p1" "${RAID_DISK}1" "$RAID_DISK"; do
+            [[ -e "$part" ]] || continue
+            # Find which md device contains this partition
+            for md in /dev/md[0-9]*; do
+              [[ -e "$md" ]] || continue
+              if mdadm --detail "$md" 2>/dev/null | grep -q "$part"; then
+                MD_DEV="$md"
+                echo "setup-raid: found auto-assembled array $MD_DEV containing $part"
+                break 2
+              fi
+            done
+          done
+
+          # 2) Also check /dev/md/data symlink (may exist if we created the array)
+          if [[ -z "$MD_DEV" && -e /dev/md/data ]]; then
+            MD_DEV=$(readlink -f /dev/md/data)
+            echo "setup-raid: found /dev/md/data -> $MD_DEV"
+          fi
+
+          # 3) Try manual assembly if not already active
+          if [[ -z "$MD_DEV" ]]; then
+            for part in "${RAID_DISK}p1" "${RAID_DISK}1" "$RAID_DISK"; do
               if [[ -e "$part" ]] && mdadm --examine "$part" &>/dev/null; then
-                echo "setup-raid: found existing RAID superblock on $part, reassembling"
-                mdadm --assemble /dev/md/data "$part" --run
-                EXISTING_RAID=true
+                echo "setup-raid: found RAID superblock on $part, assembling"
+                if mdadm --assemble /dev/md/data "$part" --run 2>/dev/null; then
+                  MD_DEV=$(readlink -f /dev/md/data)
+                  echo "setup-raid: assembled as $MD_DEV"
+                fi
                 break
               fi
             done
-
-            if ! $EXISTING_RAID; then
-              echo "setup-raid: no existing RAID found, creating new array"
-
-              # Partition the disk
-              wipefs -a "$RAID_DISK"
-              parted -s "$RAID_DISK" mklabel gpt mkpart raid1-ssd1 xfs 0% 100%
-
-              # Wait for partition to appear
-              udevadm settle
-              PART="${RAID_DISK}1"
-              # For nvme disks the partition is e.g. /dev/nvme0n1p1
-              [[ -e "$PART" ]] || PART="${RAID_DISK}p1"
-
-              # Create degraded RAID1 (second disk missing)
-              mdadm --create /dev/md/data --level=1 --raid-devices=2 --metadata=1.2 \
-                --run "$PART" missing
-
-              # Format
-              mkfs.xfs -L data /dev/md/data
-            fi
           fi
+
+          # 4) Create new array if nothing found
+          if [[ -z "$MD_DEV" ]]; then
+            echo "setup-raid: no existing RAID found, creating new array"
+
+            # Partition the disk
+            wipefs -a "$RAID_DISK"
+            sgdisk -Z -n 1:0:0 -t 1:fd00 -c 1:raid1-ssd1 "$RAID_DISK"
+
+            # Wait for partition to appear
+            udevadm settle
+            PART="${RAID_DISK}1"
+            # For nvme disks the partition is e.g. /dev/nvme0n1p1
+            [[ -e "$PART" ]] || PART="${RAID_DISK}p1"
+
+            # Create degraded RAID1 (second disk missing)
+            mdadm --create /dev/md/data --level=1 --raid-devices=2 --metadata=1.2 \
+              --run "$PART" missing
+
+            # Format
+            mkfs.xfs -L data /dev/md/data
+            MD_DEV=$(readlink -f /dev/md/data)
+          fi
+
+          echo "setup-raid: using RAID device $MD_DEV"
 
           # Persist mdadm config
           mdadm --detail --scan >> /etc/mdadm.conf
@@ -202,9 +307,14 @@ storage:
             echo "setup-raid: saved Ignition config from OS disk"
           fi
 
-          # Mount RAID over $MOUNT_POINT
+          # Mount RAID — trigger the systemd mount unit (or mount directly as fallback)
           mkdir -p "$MOUNT_POINT"
-          mount /dev/md/data "$MOUNT_POINT"
+          if systemctl start var-mnt-data.mount 2>/dev/null; then
+            echo "setup-raid: mounted via systemd mount unit"
+          else
+            mount "$MD_DEV" "$MOUNT_POINT"
+            echo "setup-raid: mounted directly"
+          fi
 
           # Create data directories (no-op if they already exist)
           mkdir -p "$MOUNT_POINT/servicebay/ssh" "$MOUNT_POINT/stacks"
@@ -244,11 +354,27 @@ storage:
           # Note: nginx config lives directly on RAID at DATA_DIR/nginx/ — no restore needed,
           # it survives reinstalls by being on the RAID mount itself.
 
-          # Persist mount via fstab
-          grep -q '/dev/md/data' /etc/fstab || \
-            echo "/dev/md/data $MOUNT_POINT xfs defaults,nofail 0 2" >> /etc/fstab
-
           echo "setup-raid: done. RAID1 mounted at $MOUNT_POINT"
+
+    # Systemd mount unit for RAID at /var/mnt/data (FCOS: /mnt -> /var/mnt)
+    # Uses filesystem label so it works regardless of md device number.
+    # nofail: don't block boot if RAID doesn't exist yet (first boot before setup-raid)
+    - path: /etc/systemd/system/var-mnt-data.mount
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Mount RAID data volume
+          After=local-fs.target setup-raid.service
+
+          [Mount]
+          What=LABEL=data
+          Where=/var/mnt/data
+          Type=xfs
+          Options=defaults,nofail
+
+          [Install]
+          WantedBy=multi-user.target
 
     # Systemd unit to run RAID setup on first boot only
     - path: /etc/systemd/system/setup-raid.service
@@ -258,8 +384,8 @@ storage:
           [Unit]
           Description=First-boot RAID1 setup (auto-detect largest disk)
           ConditionPathExists=!/var/lib/setup-raid-done
-          After=sysinit.target systemd-udevd.service
-          Before=local-fs.target
+          After=local-fs.target systemd-udevd.service
+          Before=var-mnt-data.mount multi-user.target
 
           [Service]
           Type=oneshot
@@ -268,7 +394,7 @@ storage:
           ExecStartPost=/bin/touch /var/lib/setup-raid-done
 
           [Install]
-          WantedBy=local-fs.target
+          WantedBy=multi-user.target
 
     # User Linger (enables rootless services at boot)
     - path: /var/lib/systemd/linger/${HOST_USER}
@@ -487,6 +613,29 @@ ${SERVICEBAY_SSH_PRIV}
             echo "restore-usb-boot: no USB boot entry found, skipping"
           fi
 
+          # Write GRUB custom menu entry for USB reinstall
+          mount -o remount,rw /boot 2>/dev/null || true
+          cat > /boot/grub2/custom.cfg <<'GRUBCFG'
+          set timeout=3
+          menuentry 'Reinstall from USB' --class usb {
+            insmod chain
+            insmod part_gpt
+            # Try non-primary disks (NVMe OS disk is typically hd0)
+            for i in 1 2 3 4; do
+              for p in 1 2; do
+                if [ -f (hd$i,gpt$p)/EFI/BOOT/BOOTX64.EFI ]; then
+                  chainloader (hd$i,gpt$p)/EFI/BOOT/BOOTX64.EFI
+                  boot
+                fi
+              done
+            done
+            echo "No USB boot device found. Entering UEFI firmware setup..."
+            sleep 3
+            fwsetup
+          }
+          GRUBCFG
+          echo "restore-usb-boot: wrote GRUB custom menu entry"
+
     # Systemd unit to restore USB-first boot order on first boot
     - path: /etc/systemd/system/restore-usb-boot.service
       mode: 0644
@@ -506,33 +655,13 @@ ${SERVICEBAY_SSH_PRIV}
           [Install]
           WantedBy=multi-user.target
 
-    # GRUB: Custom menu entry to boot from USB for reinstall
-    # Also overrides timeout to 3s so the menu is visible
-    - path: /boot/grub2/custom.cfg
-      mode: 0644
-      contents:
-        inline: |
-          set timeout=3
-          menuentry 'Reinstall from USB' --class usb {
-            insmod chain
-            insmod part_gpt
-            # Try non-primary disks (NVMe OS disk is typically hd0)
-            for i in 1 2 3 4; do
-              for p in 1 2; do
-                if [ -f (hd$i,gpt$p)/EFI/BOOT/BOOTX64.EFI ]; then
-                  chainloader (hd$i,gpt$p)/EFI/BOOT/BOOTX64.EFI
-                  boot
-                fi
-              done
-            done
-            echo "No USB boot device found. Entering UEFI firmware setup..."
-            sleep 3
-            fwsetup
-          }
-
   links:
+    # Enable RAID data mount
+    - path: /etc/systemd/system/multi-user.target.wants/var-mnt-data.mount
+      target: /etc/systemd/system/var-mnt-data.mount
+
     # Enable first-boot RAID setup
-    - path: /etc/systemd/system/local-fs.target.wants/setup-raid.service
+    - path: /etc/systemd/system/multi-user.target.wants/setup-raid.service
       target: /etc/systemd/system/setup-raid.service
 
     # Enable Podman Socket for the user (required for ServiceBay to control the host)
@@ -759,6 +888,7 @@ load_setting() {
 
 save_settings() {
   cat > "$SETTINGS_FILE" <<SETTINGS
+SERVER_NAME=${SERVER_NAME}
 HOST_USER=${HOST_USER}
 SSH_AUTHORIZED_KEY=${SSH_AUTHORIZED_KEY}
 NET_INTERFACE=${NET_INTERFACE}
@@ -788,6 +918,7 @@ USE_SAVED=false
 if [[ -f "$SETTINGS_FILE" ]]; then
   echo ""
   echo "========== Saved Settings =========="
+  echo "  Server name:      $(load_setting SERVER_NAME)"
   echo "  Host user:        $(load_setting HOST_USER)"
   echo "  SSH key:          $(load_setting SSH_AUTHORIZED_KEY | cut -c1-60)..."
   echo "  Network:          $(load_setting STATIC_IP)/$(load_setting STATIC_PREFIX) via $(load_setting NET_INTERFACE)"
@@ -822,6 +953,7 @@ fi
 
 if $USE_SAVED; then
   # Load all non-secret values from saved settings
+  SERVER_NAME="$(load_setting SERVER_NAME)"
   HOST_USER="$(load_setting HOST_USER)"
   SSH_AUTHORIZED_KEY="$(load_setting SSH_AUTHORIZED_KEY)"
   NET_INTERFACE="$(load_setting NET_INTERFACE)"
@@ -902,6 +1034,19 @@ else
     val=$(load_setting "$key")
     if [[ -n "$val" ]]; then echo "$val"; else echo "$fallback"; fi
   }
+
+  # --- Server Identity ---
+
+  while true; do
+    prompt SERVER_NAME "Server name (hostname)" "$(prev SERVER_NAME "servicebay")"
+    # Validate: RFC 952/1123 hostname — lowercase alphanumeric and hyphens, 1-63 chars,
+    # must start with a letter, must not end with a hyphen.
+    if [[ "$SERVER_NAME" =~ ^[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]] || [[ "$SERVER_NAME" =~ ^[a-z]$ ]]; then
+      break
+    fi
+    echo "  Invalid hostname. Rules: 1-63 chars, lowercase letters/digits/hyphens,"
+    echo "  must start with a letter, must not end with a hyphen."
+  done
 
   # --- User & Auth ---
 
@@ -1043,6 +1188,7 @@ PASSWORD_HASH="$(printf '%s' "$HOST_PASSWORD" | openssl passwd -6 -stdin)"
 
 # Build ServiceBay config.json (with optional sections)
 SERVICEBAY_CONFIG='{
+  "serverName": "'"$SERVER_NAME"'",
   "auth": {
     "username": "'"$SERVICEBAY_ADMIN_USER"'",
     "password": "'"$SERVICEBAY_ADMIN_PASSWORD"'"
@@ -1123,11 +1269,11 @@ SERVICEBAY_SSH_PUB="$(cat "$SERVICEBAY_SSH_DIR/id_rsa.pub")"
 # Indent private key for YAML inline block (10 spaces to match Butane template nesting)
 SERVICEBAY_SSH_PRIV="$(sed 's/^/          /' "$SERVICEBAY_SSH_DIR/id_rsa")"
 
-export HOST_USER SSH_AUTHORIZED_KEY PASSWORD_HASH NET_INTERFACE STATIC_IP STATIC_PREFIX GATEWAY DNS_SERVERS \
+export SERVER_NAME HOST_USER SSH_AUTHORIZED_KEY PASSWORD_HASH NET_INTERFACE STATIC_IP STATIC_PREFIX GATEWAY DNS_SERVERS \
        DATA_ROOT SERVICEBAY_PORT SERVICEBAY_VERSION SERVICEBAY_CONFIG_JSON SERVICEBAY_SSH_PUB SERVICEBAY_SSH_PRIV
 
 # Render Butane template (only substitute explicit template variables, not shell vars in embedded scripts)
-envsubst '${HOST_USER} ${SSH_AUTHORIZED_KEY} ${PASSWORD_HASH} ${NET_INTERFACE} ${STATIC_IP} ${STATIC_PREFIX} ${GATEWAY} ${DNS_SERVERS} ${DATA_ROOT} ${SERVICEBAY_PORT} ${SERVICEBAY_VERSION} ${SERVICEBAY_CONFIG_JSON} ${SERVICEBAY_SSH_PUB} ${SERVICEBAY_SSH_PRIV}' < "$TEMPLATE" > "$RENDERED_BU"
+envsubst '${SERVER_NAME} ${HOST_USER} ${SSH_AUTHORIZED_KEY} ${PASSWORD_HASH} ${NET_INTERFACE} ${STATIC_IP} ${STATIC_PREFIX} ${GATEWAY} ${DNS_SERVERS} ${DATA_ROOT} ${SERVICEBAY_PORT} ${SERVICEBAY_VERSION} ${SERVICEBAY_CONFIG_JSON} ${SERVICEBAY_SSH_PUB} ${SERVICEBAY_SSH_PRIV}' < "$TEMPLATE" > "$RENDERED_BU"
 
 # --- Stage backup file for post-install restore ---
 BACKUP_STAGED=""
@@ -1166,10 +1312,16 @@ fi
 # Create pre-install script that auto-selects the smallest non-USB disk as OS target.
 # This runs in the live environment before coreos-installer writes to disk.
 PRE_INSTALL="$BUILD_DIR/pre-install.sh"
-cat > "$PRE_INSTALL" <<'PREINST'
+cat > "$PRE_INSTALL" <<PREINST_HEADER
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Set hostname in live environment so the DHCP lease registers the correct name
+# (routers like FritzBox learn the hostname from DHCP and cache it)
+hostnamectl set-hostname "$SERVER_NAME" 2>/dev/null || hostname "$SERVER_NAME"
+
+PREINST_HEADER
+cat >> "$PRE_INSTALL" <<'PREINST'
 # Find the smallest non-removable disk (that's not the live USB) for OS install.
 # The live USB is the device backing /run/media or the ISO boot.
 LIVE_DISK=$(lsblk -ndo PKNAME "$(findmnt -n -o SOURCE /run)" 2>/dev/null || echo "")

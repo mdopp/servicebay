@@ -22,6 +22,9 @@ spec:
     volumeMounts:
       - mountPath: /var/lib/dav/data
         name: shared-data
+      - mountPath: /var/lib/dav/data/usb
+        name: usb-data
+        readOnly: false
 
   # 2. Syncthing — Bidirectional folder sync (Android & Windows apps)
   - name: syncthing
@@ -40,6 +43,9 @@ spec:
         name: shared-data
       - mountPath: /var/syncthing/config
         name: syncthing-config
+      - mountPath: /var/syncthing/Sync/usb
+        name: usb-data
+        readOnly: false
 
   # 3. Samba — SMB/CIFS network shares for Windows drive mapping
   - name: samba
@@ -53,9 +59,14 @@ spec:
         value: "1000"
       - name: SAMBA_VOLUME_CONFIG_share
         value: "[share]; path=/share; valid users = {{SHARE_USER}}; guest ok = no; read only = no; browseable = yes;"
+      - name: SAMBA_VOLUME_CONFIG_usb
+        value: "[usb]; path=/usb; valid users = {{SHARE_USER}}; guest ok = no; read only = no; browseable = yes;"
     volumeMounts:
       - mountPath: /share
         name: shared-data
+      - mountPath: /usb
+        name: usb-data
+        readOnly: false
 
   volumes:
   - name: shared-data
@@ -65,4 +76,8 @@ spec:
   - name: syncthing-config
     hostPath:
       path: {{DATA_DIR}}/stacks/file-share/syncthing
+      type: DirectoryOrCreate
+  - name: usb-data
+    hostPath:
+      path: /mnt/usb
       type: DirectoryOrCreate

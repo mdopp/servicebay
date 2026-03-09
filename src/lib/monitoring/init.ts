@@ -9,9 +9,20 @@ export async function initializeDefaultChecks() {
   logger.info('Monitoring', 'Initializing default checks...');
   const existingChecks = MonitoringStore.getChecks();
 
+  // Migrate: podman.socket was incorrectly registered as systemd (system-level),
+  // but it's a user unit and should be type "service" (systemctl --user)
+  const staleSystemdSocket = existingChecks.find(c => c.type === 'systemd' && c.target === 'podman.socket');
+  if (staleSystemdSocket) {
+    MonitoringStore.deleteCheck(staleSystemdSocket.id);
+    logger.info('Monitoring', 'Removed stale systemd check for podman.socket (migrating to service type)');
+  }
+
+  // Re-read after migration
+  const checks = MonitoringStore.getChecks();
+
   // Helper to check if exists
-  const exists = (type: string, target: string) => 
-    existingChecks.some(c => c.type === type && c.target === target);
+  const exists = (type: string, target: string) =>
+    checks.some(c => c.type === type && c.target === target);
 
   // 0. Configured Gateway Check
   try {
@@ -36,13 +47,13 @@ export async function initializeDefaultChecks() {
 
   // 1. Auto-detected Gateway Check - REMOVED (Redundant with Configured Gateway & Agent Checks)
 
-  // 2. Podman Socket (more reliable than service for API availability)
-  if (!exists('systemd', 'podman.socket')) {
+  // 2. Podman Socket (user-level unit, checked via systemctl --user)
+  if (!exists('service', 'podman.socket')) {
     logger.info('Monitoring', 'Adding Podman Socket check');
     MonitoringStore.saveCheck({
         id: crypto.randomUUID(),
         name: 'Podman Socket',
-        type: 'systemd',
+        type: 'service',
         target: 'podman.socket',
         interval: 60,
         enabled: true,
