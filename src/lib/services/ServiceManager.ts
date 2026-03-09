@@ -7,6 +7,15 @@ import { saveSnapshot } from '../history';
 
 const SYSTEMD_DIR = '.config/containers/systemd';
 
+/** Extract string content from agent read_file response ({content: string} or string) */
+function extractFileContent(res: unknown): string {
+    if (typeof res === 'string') return res;
+    if (res && typeof res === 'object' && 'content' in res && typeof (res as { content: unknown }).content === 'string') {
+        return (res as { content: string }).content;
+    }
+    return '';
+}
+
 export interface ServiceInfo {
   name: string;
   kubeFile: string;
@@ -684,7 +693,7 @@ export class ServiceManager {
                 kubeContent = twin.files[fullKubePath].content;
             } else {
                 const res = await agent.sendCommand('read_file', { path: `~/${kubePath}` });
-                kubeContent = typeof res === 'string' ? res : '';
+                kubeContent = extractFileContent(res);
             }
 
             const yamlMatch = kubeContent.match(/Yaml=(.+)/);
@@ -699,7 +708,7 @@ export class ServiceManager {
                 } else {
                     try {
                         const res = await agent.sendCommand('read_file', { path: `~/${yamlPath}` });
-                        yamlContent = typeof res === 'string' ? res : '';
+                        yamlContent = extractFileContent(res);
                     } catch (e) {
                         logger.warn('ServiceManager', `Could not read yaml file ${yamlPath}`, e);
                     }
@@ -811,8 +820,9 @@ export class ServiceManager {
         }
 
         // Read old kube file
-        const content = await agent.sendCommand('read_file', { path: oldKubePath });
-        if (typeof content !== 'string') throw new Error(`Could not read ${oldName}.kube`);
+        const rawContent = await agent.sendCommand('read_file', { path: oldKubePath });
+        const content = extractFileContent(rawContent);
+        if (!content) throw new Error(`Could not read ${oldName}.kube`);
 
         const yamlMatch = content.match(/Yaml=(.+)/);
         const oldYamlFile = yamlMatch ? yamlMatch[1].trim() : null;
@@ -859,7 +869,7 @@ export class ServiceManager {
         if (yamlPath) {
             try {
                 const res = await agent.sendCommand('read_file', { path: yamlPath.startsWith('/') ? yamlPath : `~/${yamlPath}` });
-                const content = typeof res === 'string' ? res : '';
+                const content = extractFileContent(res);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const parsed = yaml.load(content) as any;
 
@@ -917,7 +927,7 @@ export class ServiceManager {
         const kubePath = `~/${SYSTEMD_DIR}/${serviceName}.kube`;
 
         const raw = await agent.sendCommand('read_file', { path: kubePath });
-        let content = typeof raw === 'string' ? raw : '';
+        let content = extractFileContent(raw);
         const lines = content.split('\n');
         let unitIndex = -1;
         let descIndex = -1;
