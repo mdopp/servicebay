@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.3](https://github.com/mdopp/servicebay/compare/servicebay-v0.20.2...servicebay-v0.20.3) (2026-03-09)
+
+
+### Bug Fixes
+
+* add explicit port declarations to file-share template ([#68](https://github.com/mdopp/servicebay/issues/68)) ([b04d14e](https://github.com/mdopp/servicebay/commit/b04d14ed48c23d6b79ea5dba1a8136e94f09ba08))
+
 ## [0.20.2](https://github.com/mdopp/servicebay/compare/servicebay-v0.20.1...servicebay-v0.20.2) (2026-03-08)
 
 
