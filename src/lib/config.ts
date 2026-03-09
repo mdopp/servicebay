@@ -113,6 +113,7 @@ export interface AppConfig {
     password?: string;
   };
   setupCompleted?: boolean;
+  stackSetupPending?: boolean;
 }
 
 const normalizeExternalLinkEntry = (link: ExternalLink): ExternalLink => {

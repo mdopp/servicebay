@@ -1249,7 +1249,8 @@ if [[ "${ENABLE_EMAIL^^}" =~ ^Y ]]; then
 fi
 
 SERVICEBAY_CONFIG+=',
-  "setupCompleted": true
+  "setupCompleted": true,
+  "stackSetupPending": true
 }'
 
 # Indent config for YAML inline block (10 spaces)
