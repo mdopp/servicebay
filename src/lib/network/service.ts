@@ -1126,9 +1126,9 @@ export class NetworkService {
         });
         
         // 3b. Check Verified Domains (Implicit 80/443)
-        // If this node handles verified domains, IT IS the target for HTTP traffic
-        // This is primarily for Nginx/Proxy, but could apply to any service handling domains
-        const handlesDomains = targetNode.metadata?.verifiedDomains && (targetNode.metadata.verifiedDomains as string[]).length > 0;
+        // Only show implicit domain edges if the gateway actually forwards to this node's IPs
+        const gatewayTargetsThisNode = relevantMappings.length > 0;
+        const handlesDomains = gatewayTargetsThisNode && targetNode.metadata?.verifiedDomains && (targetNode.metadata.verifiedDomains as string[]).length > 0;
         
         // Combine
         if (matchingMappings.length > 0 || handlesDomains) {
