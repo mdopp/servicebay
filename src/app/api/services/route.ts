@@ -291,12 +291,12 @@ export async function POST(request: Request) {
   }
 
   // Handle Container Creation
-  const { name, kubeContent, yamlContent, yamlFileName } = body;
-  
+  const { name, kubeContent, yamlContent, yamlFileName, extraFiles } = body;
+
   if (!name || !kubeContent || !yamlContent || !yamlFileName) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
-  await ServiceManager.deployKubeService(targetNode, name, kubeContent, yamlContent, yamlFileName);
+  await ServiceManager.deployKubeService(targetNode, name, kubeContent, yamlContent, yamlFileName, extraFiles);
   return NextResponse.json({ success: true });
 }

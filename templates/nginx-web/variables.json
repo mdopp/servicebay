@@ -2,17 +2,17 @@
   "NGINX_PORT": {
     "type": "text",
     "description": "HTTP port",
-    "default": "8080"
+    "default": "80"
   },
   "NGINX_SSL_PORT": {
     "type": "text",
     "description": "HTTPS port",
-    "default": "8443"
+    "default": "443"
   },
   "NGINX_ADMIN_PORT": {
     "type": "text",
     "description": "Admin UI port",
-    "default": "8081"
+    "default": "81"
   },
   "PUBLIC_DOMAIN": {
     "type": "text",

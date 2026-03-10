@@ -26,9 +26,6 @@ spec:
         name: shared-data
       - mountPath: /var/syncthing/config
         name: syncthing-config
-      - mountPath: /var/syncthing/Sync/usb
-        name: usb-data
-        readOnly: false
 
   # 2. Samba — SMB/CIFS network shares with simple user/password auth
   - name: samba
@@ -40,25 +37,16 @@ spec:
         value: "{{SHARE_PASSWORD}}"
       - name: SAMBA_VOLUME_CONFIG_data
         value: "[data]; path=/data; valid users = {{SHARE_USER}}; guest ok = no; read only = no; browseable = yes;"
-      - name: SAMBA_VOLUME_CONFIG_usb
-        value: "[usb]; path=/usb; valid users = {{SHARE_USER}}; guest ok = no; read only = no; browseable = yes;"
     volumeMounts:
       - mountPath: /data
         name: shared-data
-      - mountPath: /usb
-        name: usb-data
-        readOnly: false
 
   volumes:
   - name: shared-data
     hostPath:
-      path: /mnt/data
+      path: {{DATA_DIR}}/file-share/data
       type: DirectoryOrCreate
   - name: syncthing-config
     hostPath:
       path: {{DATA_DIR}}/file-share/syncthing
-      type: DirectoryOrCreate
-  - name: usb-data
-    hostPath:
-      path: /mnt/usb
       type: DirectoryOrCreate

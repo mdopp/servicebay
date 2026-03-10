@@ -298,3 +298,41 @@ export async function getTemplateVariables(name: string, source?: string): Promi
 
   return tryRead(path.join(TEMPLATES_PATH, name, 'variables.json'));
 }
+
+export interface TemplateConfigFile {
+  /** Filename without .mustache extension (e.g. "configuration.yml") */
+  filename: string;
+  /** Raw Mustache template content */
+  content: string;
+  /** Target path hint from template.yml volume mounts (set by caller) */
+  targetPath?: string;
+}
+
+/** Find .mustache config files for a template (e.g. authelia/configuration.yml.mustache). */
+export async function getTemplateConfigFiles(name: string, source?: string): Promise<TemplateConfigFile[]> {
+  const scanDir = async (dirPath: string): Promise<TemplateConfigFile[]> => {
+    try {
+      const entries = await fs.readdir(dirPath);
+      const mustacheFiles = entries.filter(f => f.endsWith('.mustache') && f !== 'template.yml.mustache');
+      return Promise.all(mustacheFiles.map(async f => ({
+        filename: f.replace(/\.mustache$/, ''),
+        content: await fs.readFile(path.join(dirPath, f), 'utf-8'),
+      })));
+    } catch { return []; }
+  };
+
+  if (source && source !== 'Built-in') {
+    return scanDir(path.join(REGISTRIES_DIR, source, 'templates', name));
+  }
+
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      const files = await scanDir(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      if (files.length > 0) return files;
+    }
+  }
+
+  return scanDir(path.join(TEMPLATES_PATH, name));
+}
