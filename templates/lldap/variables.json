@@ -1,0 +1,35 @@
+{
+  "LLDAP_PORT": {
+    "type": "text",
+    "description": "LLDAP Web UI port",
+    "default": "17170"
+  },
+  "LLDAP_LDAP_PORT": {
+    "type": "text",
+    "description": "LDAP protocol port",
+    "default": "3890"
+  },
+  "LLDAP_BASE_DN": {
+    "type": "text",
+    "description": "LDAP base DN (e.g. dc=dopp,dc=cloud)",
+    "default": "dc=dopp,dc=cloud"
+  },
+  "LLDAP_ADMIN_PASSWORD": {
+    "type": "password",
+    "description": "LLDAP admin password"
+  },
+  "LLDAP_JWT_SECRET": {
+    "type": "secret",
+    "description": "JWT secret for LLDAP session tokens"
+  },
+  "LLDAP_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for LLDAP Web UI",
+    "default": "ldap",
+    "proxyPort": "LLDAP_PORT",
+    "proxyConfig": {
+      "block_exploits": true,
+      "ssl_forced": true
+    }
+  }
+}

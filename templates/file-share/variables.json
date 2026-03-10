@@ -1,22 +1,22 @@
 {
   "SHARE_USER": {
     "type": "text",
-    "description": "Username for file share access (WebDAV + SMB)",
-    "default": "user"
+    "description": "Samba username for file share access",
+    "default": "samba"
   },
   "SHARE_PASSWORD": {
     "type": "password",
-    "description": "Password for file share access (WebDAV + SMB)"
+    "description": "Samba password for file share access"
   },
-  "FILESHARE_SUBDOMAIN": {
+  "SYNCTHING_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for file share (WebDAV)",
-    "default": "drive",
-    "proxyPort": "8090",
+    "description": "Subdomain for Syncthing Web UI",
+    "default": "sync",
+    "proxyPort": "8384",
     "proxyConfig": {
+      "allow_websocket_upgrade": true,
       "block_exploits": true,
-      "ssl_forced": true,
-      "advanced_config": "client_max_body_size 0;\nproxy_request_buffering off;"
+      "ssl_forced": true
     }
   }
 }

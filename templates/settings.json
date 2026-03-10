@@ -4,6 +4,18 @@
       "default": "/mnt/data",
       "description": "Base directory used by all templates for persistent data. Change applies to new deployments.",
       "required": true
+    },
+    "LLDAP_HOST": {
+      "default": "localhost",
+      "description": "LLDAP hostname (localhost if running on same node)"
+    },
+    "LLDAP_LDAP_PORT": {
+      "default": "3890",
+      "description": "LLDAP LDAP protocol port"
+    },
+    "LLDAP_BASE_DN": {
+      "default": "dc=dopp,dc=cloud",
+      "description": "LDAP base distinguished name"
     }
   },
   "notes": [

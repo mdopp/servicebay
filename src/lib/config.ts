@@ -113,9 +113,30 @@ export interface AppConfig {
     username?: string;
     password?: string;
   };
+  oidc?: {
+    enabled: boolean;
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+    allowedGroups?: string[];
+  };
+  ldap?: {
+    host: string;
+    httpPort: number;
+    baseDn: string;
+    adminPassword: string;
+  };
   backup?: BackupConfig;
   setupCompleted?: boolean;
   stackSetupPending?: boolean;
+}
+
+export function getOidcCallbackUrl(config: { reverseProxy?: { publicDomain?: string } }): string {
+  const domain = config.reverseProxy?.publicDomain;
+  if (domain) {
+    return `https://admin.${domain}/api/auth/oidc/callback`;
+  }
+  return 'http://localhost:3000/api/auth/oidc/callback';
 }
 
 const normalizeExternalLinkEntry = (link: ExternalLink): ExternalLink => {

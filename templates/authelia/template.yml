@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: authelia
+  labels:
+    app: authelia
+  annotations:
+    servicebay.ports: "{{AUTHELIA_PORT}}/tcp"
+spec:
+  hostNetwork: true
+  containers:
+  - name: authelia
+    image: docker.io/authelia/authelia:latest
+    ports:
+      - containerPort: {{AUTHELIA_PORT}}
+    volumeMounts:
+      - mountPath: /config
+        name: authelia-config
+      - mountPath: /data
+        name: authelia-data
+  volumes:
+  - name: authelia-config
+    hostPath:
+      path: {{DATA_DIR}}/authelia/config
+      type: DirectoryOrCreate
+  - name: authelia-data
+    hostPath:
+      path: {{DATA_DIR}}/authelia/data
+      type: DirectoryOrCreate

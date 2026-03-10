@@ -35,3 +35,23 @@ After installation, go to Home Assistant > Settings > Voice Assistants and add:
 1. Speech-to-text: Wyoming > `localhost:10300`
 2. Text-to-speech: Wyoming > `localhost:10200`
 3. Wake word: Wyoming > `localhost:10400`
+
+## SSO (Authelia)
+
+To enable OIDC login via Authelia, add this client to your Authelia `configuration.yml`:
+
+```yaml
+      - client_id: 'homeassistant'
+        client_name: 'Home Assistant'
+        client_secret: '$plaintext$<your-secret>'
+        public: false
+        authorization_policy: 'one_factor'
+        redirect_uris:
+          - 'https://ha.<your-domain>/auth/oidc/callback'
+        scopes: ['openid', 'profile', 'email', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        token_endpoint_auth_method: 'client_secret_post'
+```
+
+Then add the OIDC integration in Home Assistant's `configuration.yaml`.

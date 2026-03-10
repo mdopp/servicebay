@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lldap
+  labels:
+    app: lldap
+  annotations:
+    servicebay.ports: "{{LLDAP_PORT}}/tcp,{{LLDAP_LDAP_PORT}}/tcp"
+spec:
+  hostNetwork: true
+  containers:
+  - name: lldap
+    image: docker.io/lldap/lldap:latest
+    env:
+      - name: LLDAP_JWT_SECRET
+        value: "{{LLDAP_JWT_SECRET}}"
+      - name: LLDAP_LDAP_BASE_DN
+        value: "{{LLDAP_BASE_DN}}"
+      - name: LLDAP_LDAP_USER_PASS
+        value: "{{LLDAP_ADMIN_PASSWORD}}"
+      - name: LLDAP_HTTP_PORT
+        value: "{{LLDAP_PORT}}"
+      - name: LLDAP_LDAP_PORT
+        value: "{{LLDAP_LDAP_PORT}}"
+    ports:
+      - containerPort: {{LLDAP_PORT}}
+      - containerPort: {{LLDAP_LDAP_PORT}}
+    volumeMounts:
+      - mountPath: /data
+        name: lldap-data
+  volumes:
+  - name: lldap-data
+    hostPath:
+      path: {{DATA_DIR}}/lldap/data
+      type: DirectoryOrCreate

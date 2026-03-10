@@ -1,0 +1,58 @@
+{
+  "AUTHELIA_PORT": {
+    "type": "text",
+    "description": "Authelia web portal port",
+    "default": "9091"
+  },
+  "AUTHELIA_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for Authelia portal",
+    "default": "auth",
+    "proxyPort": "AUTHELIA_PORT",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true
+    }
+  },
+  "AUTHELIA_JWT_SECRET": {
+    "type": "secret",
+    "description": "JWT secret for Authelia identity verification"
+  },
+  "AUTHELIA_SESSION_SECRET": {
+    "type": "secret",
+    "description": "Secret for Authelia session encryption"
+  },
+  "AUTHELIA_OIDC_HMAC_SECRET": {
+    "type": "secret",
+    "description": "HMAC secret for OIDC token signing"
+  },
+  "AUTHELIA_STORAGE_ENCRYPTION_KEY": {
+    "type": "secret",
+    "description": "Encryption key for Authelia SQLite storage (min 20 chars)"
+  },
+  "LLDAP_HOST": {
+    "type": "text",
+    "description": "LLDAP host (localhost if on same node)",
+    "default": "localhost"
+  },
+  "LLDAP_LDAP_PORT": {
+    "type": "text",
+    "description": "LLDAP LDAP port",
+    "default": "3890"
+  },
+  "LLDAP_BASE_DN": {
+    "type": "text",
+    "description": "LDAP base DN (must match LLDAP config)",
+    "default": "dc=dopp,dc=cloud"
+  },
+  "LLDAP_ADMIN_PASSWORD": {
+    "type": "password",
+    "description": "LLDAP admin password (must match LLDAP config)"
+  },
+  "PUBLIC_DOMAIN": {
+    "type": "text",
+    "description": "Public domain for access rules (e.g. dopp.cloud)",
+    "default": "dopp.cloud"
+  }
+}

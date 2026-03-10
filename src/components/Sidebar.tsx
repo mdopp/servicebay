@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import pkg from '../../package.json';
 
@@ -12,6 +12,7 @@ export const plugins = [
     { id: 'network', name: 'Network Map', icon: Network, path: '/network' },
     { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
     { id: 'terminal', name: 'SSH Terminal', icon: Terminal, path: '/terminal' },
+    { id: 'users', name: 'Users & Groups', icon: Users, path: '/users' },
     { id: 'settings', name: 'Settings', icon: Settings, path: '/settings' },
 ];
 
