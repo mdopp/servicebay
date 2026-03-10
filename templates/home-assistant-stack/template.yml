@@ -4,6 +4,8 @@ metadata:
   name: home-assistant
   labels:
     app: home-assistant
+  annotations:
+    servicebay.ports: "8123/tcp,8091/tcp,3000/tcp,10300/tcp,10200/tcp,10400/tcp"
 spec:
   hostNetwork: true
   containers:
@@ -13,9 +15,6 @@ spec:
     env:
     - name: TZ
       value: "Europe/Berlin"
-    ports:
-    - containerPort: 8123
-      hostPort: 8123
     volumeMounts:
     - mountPath: /config
       name: ha-config
@@ -35,11 +34,6 @@ spec:
       value: "{{ZWAVE_SECRET}}"
     - name: ZWAVEJS_EXTERNAL_CONFIG
       value: "/usr/src/app/store/.config-db"
-    ports:
-    - containerPort: 8091
-      hostPort: 8091
-    - containerPort: 3000
-      hostPort: 3000
     volumeMounts:
     - mountPath: /usr/src/app/store
       name: zwave-config
@@ -75,8 +69,6 @@ spec:
     - /data
     - --uri
     - tcp://0.0.0.0:10300
-    ports:
-    - containerPort: 10300
     volumeMounts:
     - mountPath: /data
       name: whisper-data
@@ -91,8 +83,6 @@ spec:
     - /data
     - --uri
     - tcp://0.0.0.0:10200
-    ports:
-    - containerPort: 10200
     volumeMounts:
     - mountPath: /data
       name: piper-data
@@ -103,8 +93,6 @@ spec:
     args:
     - --uri
     - tcp://0.0.0.0:10400
-    ports:
-    - containerPort: 10400
 
   volumes:
   # Persistence

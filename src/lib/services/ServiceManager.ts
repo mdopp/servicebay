@@ -228,9 +228,21 @@ export class ServiceManager {
                                  // Labels (Merge with container labels)
                                  if (doc.metadata?.labels) {
                                      info.labels = { ...info.labels, ...doc.metadata.labels };
-                                     // Check role labels
                                  }
-                                 
+
+                                 // Annotations — servicebay.ports hint for hostNetwork pods
+                                 const portsAnnotation = doc.metadata?.annotations?.['servicebay.ports'];
+                                 if (portsAnnotation && info.ports.length === 0) {
+                                     // Format: "8083/tcp,53/udp,53/tcp"
+                                     for (const entry of String(portsAnnotation).split(',')) {
+                                         const [portStr] = entry.trim().split('/');
+                                         const port = portStr.trim();
+                                         if (port) {
+                                             info.ports.push({ host: port, container: port });
+                                         }
+                                     }
+                                 }
+
                                  // Spec
                                  if (doc.spec) {
                                      // Host Network
