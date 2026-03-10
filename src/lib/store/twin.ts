@@ -189,7 +189,9 @@ export class DigitalTwinStore {
               }
 
               const imageName = typeof c.image === 'string' ? c.image.toLowerCase() : '';
-              if (imageName.includes('podman-pause')) {
+              const firstName = Array.isArray(c.names) && c.names.length > 0 ? c.names[0] : '';
+              if (imageName.includes('podman-pause') ||
+                  (!imageName && /^[0-9a-f]+-service$/.test(firstName))) {
                   c.isInfra = true;
               }
           });

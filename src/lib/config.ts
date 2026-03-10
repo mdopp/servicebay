@@ -6,6 +6,7 @@ import { LogLevel } from './logger';
 import { PortMapping as GraphPortMapping } from './network/types';
 import { normalizeExternalTargets } from './network/externalLinks';
 import { ConfigTransformer } from './config/transformer';
+import type { BackupConfig } from './backup/types';
 
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -112,6 +113,7 @@ export interface AppConfig {
     username?: string;
     password?: string;
   };
+  backup?: BackupConfig;
   setupCompleted?: boolean;
   stackSetupPending?: boolean;
 }

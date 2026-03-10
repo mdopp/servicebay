@@ -127,10 +127,12 @@ export async function getPodmanPs(connection?: PodmanConnection) {
     return containers.map((c: any) => {
         const names: string[] = Array.isArray(c.Names) ? c.Names : [];
         const normalizedNames = names.map(name => (typeof name === 'string' && name.startsWith('/')) ? name.slice(1) : String(name || ''));
-        const hasInfraName = normalizedNames.some(name => name.includes('-infra'));
+        const hasInfraName = normalizedNames.some(name => name.endsWith('-infra'));
+        const hasServiceName = normalizedNames.some(name => /^[0-9a-f]+-service$/.test(name));
         const imageName = typeof c.Image === 'string' ? c.Image.toLowerCase() : '';
         const isPause = imageName.includes('podman-pause');
-        if (hasInfraName || isPause) {
+        const isEmptyImageService = hasServiceName && !imageName;
+        if (hasInfraName || isPause || isEmptyImageService) {
             c.isInfra = true;
         }
         return c;

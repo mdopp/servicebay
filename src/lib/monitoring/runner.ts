@@ -4,6 +4,7 @@ import vm from 'vm';
 import { getExecutor, Executor } from '../executor';
 import { listNodes, verifyNodeConnection } from '../nodes';
 import { agentManager } from '../agent/manager';
+import { getConfig } from '../config';
 
 export class CheckRunner {
   static async run(check: CheckConfig): Promise<CheckResult> {
@@ -56,6 +57,11 @@ export class CheckRunner {
         case 'fritzbox':
           const fbMsg = await this.runFritzboxCheck(check);
           if (fbMsg) message = fbMsg;
+          status = 'ok';
+          break;
+        case 'backup':
+          const bkMsg = await this.runBackupCheck();
+          if (bkMsg) message = bkMsg;
           status = 'ok';
           break;
       }
@@ -282,6 +288,42 @@ export class CheckRunner {
     } finally {
         clearTimeout(timeout);
     }
+  }
+
+  private static async runBackupCheck(): Promise<string> {
+    const config = await getConfig();
+    const backup = config.backup;
+
+    if (!backup?.enabled) {
+      throw new Error('Backup sync is not enabled');
+    }
+
+    if (!backup.lastRun) {
+      throw new Error('No backup has been run yet');
+    }
+
+    if (backup.lastStatus === 'error') {
+      throw new Error(`Last backup failed: ${backup.lastMessage || 'Unknown error'}`);
+    }
+
+    // Check if backup is overdue (2x the expected interval)
+    const lastRun = new Date(backup.lastRun).getTime();
+    const now = Date.now();
+    const intervalMs = {
+      hourly: 60 * 60 * 1000,
+      daily: 24 * 60 * 60 * 1000,
+      weekly: 7 * 24 * 60 * 60 * 1000,
+      monthly: 31 * 24 * 60 * 60 * 1000,
+    }[backup.schedule] || 24 * 60 * 60 * 1000;
+
+    const overdueThreshold = intervalMs * 2;
+    if (now - lastRun > overdueThreshold) {
+      const hoursAgo = Math.round((now - lastRun) / 3600000);
+      throw new Error(`Backup is overdue: last run ${hoursAgo}h ago`);
+    }
+
+    const durationStr = backup.lastDuration ? ` in ${backup.lastDuration}s` : '';
+    return `Last backup OK${durationStr} (${new Date(backup.lastRun).toLocaleString()})`;
   }
 
   private static async runAgentCheck(nodeName: string): Promise<string> {

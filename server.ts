@@ -23,6 +23,7 @@ import { logger } from './src/lib/logger';
 import { migrateConfig, getConfig, updateConfig } from './src/lib/config';
 import { syncRegistries } from './src/lib/registry';
 import { createMcpServer } from './src/lib/mcp/server';
+import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 // Helper: collect request body as parsed JSON
@@ -321,6 +322,9 @@ app.prepare().then(() => {
 
     // Schedule agent restarts based on config
     scheduleAgentRestart();
+
+    // Schedule backup sync based on config
+    scheduleBackup();
 
   // Periodic Agent Health Sync (every 30 seconds)
   setInterval(() => {

@@ -10,9 +10,9 @@
   },
   "WHISPER_MODEL": {
     "type": "select",
-    "description": "Whisper speech-to-text model size (larger = more accurate, slower)",
-    "options": ["tiny", "base", "small", "medium"],
-    "default": "base"
+    "description": "Faster Whisper speech-to-text model size (int8 variants are faster with minimal quality loss)",
+    "options": ["tiny-int8", "base-int8", "small-int8", "medium-int8", "tiny", "base", "small", "medium"],
+    "default": "base-int8"
   },
   "WHISPER_LANGUAGE": {
     "type": "select",

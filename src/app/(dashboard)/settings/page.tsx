@@ -253,6 +253,52 @@ export default function SettingsPage() {
   const [deletingBackup, setDeletingBackup] = useState(false);
   const [restoreExpandedSections, setRestoreExpandedSections] = useState<Record<string, boolean>>({});
 
+  // Backup Sync State
+  const [backupSync, setBackupSync] = useState<{
+    enabled: boolean;
+    schedule: 'hourly' | 'daily' | 'weekly' | 'monthly';
+    time: string;
+    dayOfWeek?: number;
+    dayOfMonth?: number;
+    targetType: 'local' | 'ssh' | 'smb' | 'nfs';
+    localPath: string;
+    sshHost: string;
+    sshPort: string;
+    sshUser: string;
+    sshPath: string;
+    sshIdentityFile: string;
+    smbHost: string;
+    smbShare: string;
+    smbPath: string;
+    smbUsername: string;
+    smbPassword: string;
+    nfsHost: string;
+    nfsExport: string;
+    nfsPath: string;
+    sourcePath: string;
+    excludePatterns: string;
+    lastRun?: string;
+    lastStatus?: 'success' | 'error';
+    lastMessage?: string;
+    lastDuration?: number;
+  }>({
+    enabled: false,
+    schedule: 'daily',
+    time: '02:00',
+    targetType: 'local',
+    localPath: '/mnt/backup',
+    sshHost: '', sshPort: '22', sshUser: 'root', sshPath: '/backup', sshIdentityFile: '/app/data/ssh/id_rsa',
+    smbHost: '', smbShare: '', smbPath: '', smbUsername: '', smbPassword: '',
+    nfsHost: '', nfsExport: '', nfsPath: '',
+    sourcePath: '/mnt/data',
+    excludePatterns: '',
+  });
+  const [backupSyncHistory, setBackupSyncHistory] = useState<Array<{ success: boolean; startedAt: string; completedAt: string; duration: number; message: string; filesTransferred?: number }>>([]);
+  const [backupSyncRunning, setBackupSyncRunning] = useState(false);
+  const [backupSyncTesting, setBackupSyncTesting] = useState(false);
+  const [backupSyncSaving, setBackupSyncSaving] = useState(false);
+  const [backupSyncTestResult, setBackupSyncTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
   // Nginx Config Export/Import State
   const [nginxExporting, setNginxExporting] = useState(false);
   const [nginxImporting, setNginxImporting] = useState(false);
@@ -444,6 +490,54 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchBackups();
   }, [fetchBackups]);
+
+  // Fetch Backup Sync config
+  const fetchBackupSync = useCallback(async () => {
+    try {
+      const res = await fetch('/api/settings/backup-sync');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.config) {
+        const c = data.config;
+        const t = c.target || { type: 'local', path: '/mnt/backup' };
+        setBackupSync(prev => ({
+          ...prev,
+          enabled: c.enabled ?? false,
+          schedule: c.schedule ?? 'daily',
+          time: c.time ?? '02:00',
+          dayOfWeek: c.dayOfWeek,
+          dayOfMonth: c.dayOfMonth,
+          sourcePath: c.sourcePath ?? '/mnt/data',
+          excludePatterns: (c.excludePatterns || []).join('\n'),
+          targetType: t.type ?? 'local',
+          localPath: t.type === 'local' ? t.path : prev.localPath,
+          sshHost: t.type === 'ssh' ? t.host : prev.sshHost,
+          sshPort: t.type === 'ssh' ? String(t.port ?? 22) : prev.sshPort,
+          sshUser: t.type === 'ssh' ? t.user : prev.sshUser,
+          sshPath: t.type === 'ssh' ? t.path : prev.sshPath,
+          sshIdentityFile: t.type === 'ssh' ? (t.identityFile ?? '/app/data/ssh/id_rsa') : prev.sshIdentityFile,
+          smbHost: t.type === 'smb' ? t.host : prev.smbHost,
+          smbShare: t.type === 'smb' ? t.share : prev.smbShare,
+          smbPath: t.type === 'smb' ? (t.path ?? '') : prev.smbPath,
+          smbUsername: t.type === 'smb' ? (t.username ?? '') : prev.smbUsername,
+          smbPassword: t.type === 'smb' ? (t.password ?? '') : prev.smbPassword,
+          nfsHost: t.type === 'nfs' ? t.host : prev.nfsHost,
+          nfsExport: t.type === 'nfs' ? t.export : prev.nfsExport,
+          nfsPath: t.type === 'nfs' ? (t.path ?? '') : prev.nfsPath,
+          lastRun: c.lastRun,
+          lastStatus: c.lastStatus,
+          lastMessage: c.lastMessage,
+          lastDuration: c.lastDuration,
+        }));
+      }
+      if (data.history) setBackupSyncHistory(data.history);
+      setBackupSyncRunning(data.running ?? false);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    fetchBackupSync();
+  }, [fetchBackupSync]);
 
   const persistSettings = useCallback(async (overrides?: SettingsOverrides) => {
     if (!configReady || saving) return;
@@ -881,6 +975,103 @@ export default function SettingsPage() {
       }
     } catch {
       addToast('error', 'Error', 'Failed to save settings.');
+    }
+  };
+
+  // ─── Backup Sync Handlers ─────────────────────────────────────────
+  const buildBackupTarget = () => {
+    const s = backupSync;
+    switch (s.targetType) {
+      case 'local': return { type: 'local' as const, path: s.localPath };
+      case 'ssh': return { type: 'ssh' as const, host: s.sshHost, port: parseInt(s.sshPort) || 22, user: s.sshUser, path: s.sshPath, identityFile: s.sshIdentityFile || undefined };
+      case 'smb': return { type: 'smb' as const, host: s.smbHost, share: s.smbShare, path: s.smbPath || undefined, username: s.smbUsername || undefined, password: s.smbPassword || undefined };
+      case 'nfs': return { type: 'nfs' as const, host: s.nfsHost, export: s.nfsExport, path: s.nfsPath || undefined };
+    }
+  };
+
+  const handleSaveBackupSync = async () => {
+    setBackupSyncSaving(true);
+    try {
+      const config = {
+        enabled: backupSync.enabled,
+        schedule: backupSync.schedule,
+        time: backupSync.time,
+        dayOfWeek: backupSync.schedule === 'weekly' ? backupSync.dayOfWeek : undefined,
+        dayOfMonth: backupSync.schedule === 'monthly' ? backupSync.dayOfMonth : undefined,
+        target: buildBackupTarget(),
+        sourcePath: backupSync.sourcePath,
+        excludePatterns: backupSync.excludePatterns.split('\n').map(s => s.trim()).filter(Boolean),
+      };
+      const res = await fetch('/api/settings/backup-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save', config }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+      addToast('success', 'Backup Sync', 'Configuration saved.');
+      await fetchBackupSync();
+    } catch (e) {
+      addToast('error', 'Save Failed', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setBackupSyncSaving(false);
+    }
+  };
+
+  const handleTestBackupSync = async () => {
+    setBackupSyncTesting(true);
+    setBackupSyncTestResult(null);
+    try {
+      const res = await fetch('/api/settings/backup-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'test', target: buildBackupTarget() }),
+      });
+      const result = await res.json();
+      setBackupSyncTestResult(result);
+    } catch (e) {
+      setBackupSyncTestResult({ success: false, message: e instanceof Error ? e.message : 'Connection test failed' });
+    } finally {
+      setBackupSyncTesting(false);
+    }
+  };
+
+  const handleRunBackupSync = async () => {
+    setBackupSyncRunning(true);
+    try {
+      const res = await fetch('/api/settings/backup-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'run' }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Run failed');
+      addToast('info', 'Backup', 'Backup sync started. This may take a while.');
+      // Poll for completion
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch('/api/settings/backup-sync');
+          const data = await r.json();
+          if (!data.running) {
+            clearInterval(poll);
+            setBackupSyncRunning(false);
+            setBackupSyncHistory(data.history || []);
+            if (data.config?.lastStatus === 'success') {
+              addToast('success', 'Backup', data.config.lastMessage || 'Backup completed');
+            } else if (data.config?.lastStatus === 'error') {
+              addToast('error', 'Backup', data.config.lastMessage || 'Backup failed');
+            }
+            setBackupSync(prev => ({
+              ...prev,
+              lastRun: data.config?.lastRun,
+              lastStatus: data.config?.lastStatus,
+              lastMessage: data.config?.lastMessage,
+              lastDuration: data.config?.lastDuration,
+            }));
+          }
+        } catch { /* ignore */ }
+      }, 5000);
+    } catch (e) {
+      setBackupSyncRunning(false);
+      addToast('error', 'Backup Failed', e instanceof Error ? e.message : 'Unknown error');
     }
   };
 
@@ -1785,6 +1976,222 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 )}
+          </div>
+        </div>
+        )}
+
+        {/* Backup Sync (RAID → External Target) */}
+        {activeTab === 'backups' && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-300">
+                <UploadCloud size={20} />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-gray-900 dark:text-white">Backup Sync</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Incrementally sync your data to an external target using rsync.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-xs text-gray-500 dark:text-gray-400">{backupSync.enabled ? 'Enabled' : 'Disabled'}</span>
+                <div className="relative">
+                  <input type="checkbox" className="sr-only peer" checked={backupSync.enabled} onChange={e => setBackupSync(prev => ({ ...prev, enabled: e.target.checked }))} />
+                  <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                </div>
+              </label>
+            </div>
+            {backupSync.lastRun && (
+              <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                <Clock size={12} />
+                Last run: {new Date(backupSync.lastRun).toLocaleString()}
+                {backupSync.lastStatus === 'success' && <span className="text-emerald-600"><CheckCircle2 size={12} className="inline" /></span>}
+                {backupSync.lastStatus === 'error' && <span className="text-red-500"><XCircle size={12} className="inline" /></span>}
+                {backupSync.lastDuration != null && <span>({backupSync.lastDuration}s)</span>}
+              </div>
+            )}
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* Source */}
+            <div>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Source Path</label>
+              <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sourcePath} onChange={e => setBackupSync(prev => ({ ...prev, sourcePath: e.target.value }))} placeholder="/mnt/data" />
+            </div>
+
+            {/* Target Type */}
+            <div>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Target Type</label>
+              <div className="grid grid-cols-4 gap-2">
+                {([['local', 'Local / USB'], ['ssh', 'SSH'], ['smb', 'SMB / CIFS'], ['nfs', 'NFS']] as const).map(([val, label]) => (
+                  <button key={val} onClick={() => setBackupSync(prev => ({ ...prev, targetType: val }))}
+                    className={`px-3 py-2 text-xs rounded-lg border transition-colors ${backupSync.targetType === val ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600 text-blue-700 dark:text-blue-300 font-medium' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Target fields */}
+            {backupSync.targetType === 'local' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Target Path</label>
+                <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.localPath} onChange={e => setBackupSync(prev => ({ ...prev, localPath: e.target.value }))} placeholder="/mnt/backup" />
+                <p className="text-[11px] text-gray-400 mt-1">Mount your USB/external drive here first.</p>
+              </div>
+            )}
+
+            {backupSync.targetType === 'ssh' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Host</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshHost} onChange={e => setBackupSync(prev => ({ ...prev, sshHost: e.target.value }))} placeholder="192.168.1.100" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Port</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshPort} onChange={e => setBackupSync(prev => ({ ...prev, sshPort: e.target.value }))} placeholder="22" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">User</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshUser} onChange={e => setBackupSync(prev => ({ ...prev, sshUser: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Remote Path</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshPath} onChange={e => setBackupSync(prev => ({ ...prev, sshPath: e.target.value }))} placeholder="/backup" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Identity File</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshIdentityFile} onChange={e => setBackupSync(prev => ({ ...prev, sshIdentityFile: e.target.value }))} />
+                </div>
+              </div>
+            )}
+
+            {backupSync.targetType === 'smb' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Host</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbHost} onChange={e => setBackupSync(prev => ({ ...prev, smbHost: e.target.value }))} placeholder="nas.local" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Share Name</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbShare} onChange={e => setBackupSync(prev => ({ ...prev, smbShare: e.target.value }))} placeholder="backup" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Subfolder (optional)</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbPath} onChange={e => setBackupSync(prev => ({ ...prev, smbPath: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbUsername} onChange={e => setBackupSync(prev => ({ ...prev, smbUsername: e.target.value }))} />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
+                  <input type="password" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbPassword} onChange={e => setBackupSync(prev => ({ ...prev, smbPassword: e.target.value }))} />
+                </div>
+              </div>
+            )}
+
+            {backupSync.targetType === 'nfs' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Host</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.nfsHost} onChange={e => setBackupSync(prev => ({ ...prev, nfsHost: e.target.value }))} placeholder="nas.local" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Export Path</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.nfsExport} onChange={e => setBackupSync(prev => ({ ...prev, nfsExport: e.target.value }))} placeholder="/volume1/backup" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Subfolder (optional)</label>
+                  <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.nfsPath} onChange={e => setBackupSync(prev => ({ ...prev, nfsPath: e.target.value }))} />
+                </div>
+              </div>
+            )}
+
+            {/* Schedule */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Schedule</label>
+                <select className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.schedule} onChange={e => setBackupSync(prev => ({ ...prev, schedule: e.target.value as 'hourly' | 'daily' | 'weekly' | 'monthly' }))}>
+                  <option value="hourly">Hourly</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Time (UTC)</label>
+                <input type="time" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.time} onChange={e => setBackupSync(prev => ({ ...prev, time: e.target.value }))} />
+              </div>
+              {backupSync.schedule === 'weekly' && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Day of Week</label>
+                  <select className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.dayOfWeek ?? 0} onChange={e => setBackupSync(prev => ({ ...prev, dayOfWeek: parseInt(e.target.value) }))}>
+                    {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => (
+                      <option key={i} value={i}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {backupSync.schedule === 'monthly' && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Day of Month</label>
+                  <input type="number" min={1} max={28} className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.dayOfMonth ?? 1} onChange={e => setBackupSync(prev => ({ ...prev, dayOfMonth: parseInt(e.target.value) || 1 }))} />
+                </div>
+              )}
+            </div>
+
+            {/* Exclude Patterns */}
+            <div>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Exclude Patterns (one per line)</label>
+              <textarea className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono" rows={2} value={backupSync.excludePatterns} onChange={e => setBackupSync(prev => ({ ...prev, excludePatterns: e.target.value }))} placeholder="*.tmp&#10;*.log" />
+            </div>
+
+            {/* Test Result */}
+            {backupSyncTestResult && (
+              <div className={`p-3 text-sm rounded-lg ${backupSyncTestResult.success ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'}`}>
+                {backupSyncTestResult.success ? <CheckCircle2 size={14} className="inline mr-1" /> : <XCircle size={14} className="inline mr-1" />}
+                {backupSyncTestResult.message}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+              <button onClick={handleSaveBackupSync} disabled={backupSyncSaving}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                {backupSyncSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save
+              </button>
+              <button onClick={handleTestBackupSync} disabled={backupSyncTesting}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50">
+                {backupSyncTesting ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />}
+                Test Connection
+              </button>
+              <button onClick={handleRunBackupSync} disabled={backupSyncRunning}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+                {backupSyncRunning ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                {backupSyncRunning ? 'Running...' : 'Run Now'}
+              </button>
+            </div>
+
+            {/* History */}
+            {backupSyncHistory.length > 0 && (
+              <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+                <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Recent Runs</h4>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {backupSyncHistory.slice(0, 10).map((h, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                      {h.success ? <CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" /> : <XCircle size={12} className="text-red-500 flex-shrink-0" />}
+                      <span className="font-mono">{new Date(h.startedAt).toLocaleString()}</span>
+                      <span>({h.duration}s)</span>
+                      {h.filesTransferred != null && <span>{h.filesTransferred} files</span>}
+                      <span className="truncate flex-1">{h.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
         )}

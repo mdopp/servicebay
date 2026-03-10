@@ -10,6 +10,15 @@ spec:
   containers:
   - name: adguard-home
     image: docker.io/adguard/adguardhome:latest
+    ports:
+    - containerPort: 8083
+      hostPort: 8083
+    - containerPort: 53
+      hostPort: 53
+      protocol: udp
+    - containerPort: 53
+      hostPort: 53
+      protocol: tcp
     volumeMounts:
     - mountPath: /opt/adguardhome/work
       name: adguard-work

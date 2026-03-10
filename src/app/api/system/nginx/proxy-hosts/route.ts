@@ -59,8 +59,16 @@ async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
         );
         if (!nginxService?.active) continue;
 
-        const config = await getConfig();
-        const adminPort = config.templateSettings?.NGINX_ADMIN_PORT || '8081';
+        // Discover admin port from the running service's port mappings.
+        // NPM's admin UI listens on container port 81; find the host port mapped to it.
+        // Falls back to config or default if port info is unavailable.
+        const svc = nginxService as { ports?: { containerPort?: number; hostPort?: number }[] };
+        const adminMapping = svc.ports?.find(p => p.containerPort === 81);
+        let adminPort = adminMapping?.hostPort?.toString();
+        if (!adminPort) {
+            const config = await getConfig();
+            adminPort = config.templateSettings?.NGINX_ADMIN_PORT || '81';
+        }
 
         // For the API call from our backend → NPM: use 127.0.0.1 if local
         const apiHost = nodeName === 'Local' ? '127.0.0.1' : getNodeIp(nodeName, twinStore);

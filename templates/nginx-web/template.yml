@@ -9,6 +9,11 @@ spec:
   containers:
   - name: nginx-proxy-manager
     image: docker.io/jc21/nginx-proxy-manager:latest
+    env:
+    - name: INITIAL_ADMIN_EMAIL
+      value: "admin@example.com"
+    - name: INITIAL_ADMIN_PASSWORD
+      value: "changeme"
     ports:
     - containerPort: 80
       hostPort: {{NGINX_PORT}}

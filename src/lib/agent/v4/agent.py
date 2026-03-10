@@ -774,6 +774,10 @@ def fetch_containers():
             # Treat Podman pause containers as infrastructure as well
             if not is_infra and 'podman-pause' in normalized_image:
                 is_infra = True
+
+            # Treat Podman service containers (quadlet --service-container) as infra
+            if not is_infra and not image and re.match(r'^[0-9a-f]+-service$', name):
+                is_infra = True
             
             if is_infra:
                 continue
