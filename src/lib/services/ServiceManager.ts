@@ -230,19 +230,23 @@ export class ServiceManager {
                                      info.labels = { ...info.labels, ...doc.metadata.labels };
                                  }
 
-                                 // Annotations — servicebay.ports is the authoritative port list
-                                 // (overrides runtime-detected ports which are unreliable for hostNetwork pods)
+                                 // Annotations — servicebay.ports declares which ports belong to this service.
+                                 // Merge with runtime ports (annotation ports take priority, runtime ports are added if not already present).
                                  const portsAnnotation = doc.metadata?.annotations?.['servicebay.ports'];
                                  if (portsAnnotation) {
-                                     info.ports = [];
+                                     const annotatedPorts: typeof info.ports = [];
                                      // Format: "8083/tcp,53/udp,53/tcp"
                                      for (const entry of String(portsAnnotation).split(',')) {
                                          const [portStr] = entry.trim().split('/');
                                          const port = portStr.trim();
                                          if (port) {
-                                             info.ports.push({ host: port, container: port });
+                                             annotatedPorts.push({ host: port, container: port });
                                          }
                                      }
+                                     // Merge: annotated ports first, then any runtime ports not already listed
+                                     const annotatedSet = new Set(annotatedPorts.map(p => String(p.host)));
+                                     const extraRuntimePorts = info.ports.filter(p => !annotatedSet.has(String(p.host)));
+                                     info.ports = [...annotatedPorts, ...extraRuntimePorts];
                                  }
 
                                  // Spec
