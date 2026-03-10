@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.22.0...servicebay-v0.23.0) (2026-03-10)
+
+
+### Features
+
+* add AdGuard template, full-stack definition, and fix PORT variable collisions ([98a17eb](https://github.com/mdopp/servicebay/commit/98a17eb48a6d9cf195088ef55f414d076e45f1c3))
+* add GRUB menu entry for USB boot reinstall option ([a721d2c](https://github.com/mdopp/servicebay/commit/a721d2c12b9ab2dfa17dae6ee188283abe1ed410))
+* add GRUB USB boot menu for reinstall ([e62e688](https://github.com/mdopp/servicebay/commit/e62e688fe1eaadfde42a35dca12728703495aa63))
+* add stack selection wizard on first boot ([5699957](https://github.com/mdopp/servicebay/commit/5699957a4b6a3d0572d17480b607f8a27019fe5e))
+* auto-configure nginx proxy hosts with per-service settings and post-install checklist ([f0d689d](https://github.com/mdopp/servicebay/commit/f0d689de89068790a554192059728a443eb7c1b4))
+* replace filebrowser with webdav in file-share ([12b268f](https://github.com/mdopp/servicebay/commit/12b268fb1d754c3bd5a6a3610c5b3306adb68cb7))
+* replace filebrowser with webdav in file-share template ([ce148ce](https://github.com/mdopp/servicebay/commit/ce148ce75a323de32f2d7248d7eec374d64c2e09))
+* stack selection wizard on first boot ([37a70d4](https://github.com/mdopp/servicebay/commit/37a70d4579d6beb157331c5aed5e45c6b9c82cf5))
+* webdav file-share, RAID fixes, and hostname setup ([#83](https://github.com/mdopp/servicebay/issues/83)) ([fa238f1](https://github.com/mdopp/servicebay/commit/fa238f1414afc2d7ab255db96f2163680c2e07ce))
+
+
+### Bug Fixes
+
+* filebrowser deploy with known credentials ([29dc8f5](https://github.com/mdopp/servicebay/commit/29dc8f59836e933bf177bb98232d763e3c92f979))
+* handle agent read_file response format ([7296ca6](https://github.com/mdopp/servicebay/commit/7296ca6b0577db9b35c13a23f9e73623cb1deaee))
+* handle agent read_file response format correctly ([14ee149](https://github.com/mdopp/servicebay/commit/14ee149ddb6cef161912fda98f6c5616f589a372))
+* initialize filebrowser with known credentials and fix hostNetwork templates ([9c89fba](https://github.com/mdopp/servicebay/commit/9c89fbab09ba02bb715939533a9fe60df97c458b))
+* monitoring runner test mocks for ping checks ([9194f38](https://github.com/mdopp/servicebay/commit/9194f3840a46653470bd8d077f1e3308fde13e10))
+* prompt for NPM credentials when default auth fails ([77f1279](https://github.com/mdopp/servicebay/commit/77f12795a587745d74f87b92e2d7ef1f15ac2617))
+* prompt for NPM credentials when default auth fails during proxy setup ([17ba563](https://github.com/mdopp/servicebay/commit/17ba5638c9dafb99184fa9af1585e561a0ff86ad))
+* stack wizard robustness ([807d296](https://github.com/mdopp/servicebay/commit/807d296bf839421e776da45da1a1cd5699a0ca96))
+* stack wizard robustness — skip installed, domain prompt, NPM retry, post-install steps ([b3463c6](https://github.com/mdopp/servicebay/commit/b3463c6b334e9c12bf05a1a2c944afffad1ed762))
+
 ## [0.22.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.21.1...servicebay-v0.22.0) (2026-03-09)
 
 
