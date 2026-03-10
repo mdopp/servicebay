@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import pkg from '../../package.json';
 
@@ -12,7 +12,6 @@ export const plugins = [
     { id: 'network', name: 'Network Map', icon: Network, path: '/network' },
     { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
     { id: 'terminal', name: 'SSH Terminal', icon: Terminal, path: '/terminal' },
-    { id: 'users', name: 'Users & Groups', icon: Users, path: '/users' },
     { id: 'settings', name: 'Settings', icon: Settings, path: '/settings' },
 ];
 
@@ -22,12 +21,20 @@ export default function Sidebar() {
   const node = searchParams?.get('node');
   const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [lldapUrl, setLldapUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (window.innerWidth < 768) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsCollapsed(true);
     }
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/auth/lldap-url')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.url) setLldapUrl(data.url); })
+      .catch(() => {});
   }, []);
 
   return (
@@ -46,7 +53,7 @@ export default function Sidebar() {
                     </div>
                 </div>
             )}
-            <button 
+            <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
                 className={`p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 ${isCollapsed ? 'mx-auto' : ''}`}
                 title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
@@ -72,8 +79,8 @@ export default function Sidebar() {
                         key={p.id}
                         onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
                         className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${
-                            isActive 
-                            ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm' 
+                            isActive
+                            ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
                             : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
                         } ${isCollapsed ? 'justify-center' : 'gap-3'}`}
                         title={isCollapsed ? p.name : ''}
@@ -83,12 +90,29 @@ export default function Sidebar() {
                     </button>
                 );
             })}
+            {lldapUrl && (
+                <a
+                    href={lldapUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+                    title={isCollapsed ? 'Users & Groups (LLDAP)' : ''}
+                >
+                    <Users size={20} className="shrink-0 text-gray-500 dark:text-gray-500" />
+                    {!isCollapsed && (
+                        <span className="font-medium whitespace-nowrap overflow-hidden flex items-center gap-1.5">
+                            Users & Groups
+                            <ExternalLink size={12} className="text-gray-400" />
+                        </span>
+                    )}
+                </a>
+            )}
         </div>
-        
+
         <div className="p-2">
-            <a 
-                href="https://github.com/mdopp/servicebay" 
-                target="_blank" 
+            <a
+                href="https://github.com/mdopp/servicebay"
+                target="_blank"
                 rel="noopener noreferrer"
                 className={`w-full flex items-center px-3 py-3 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors ${isCollapsed ? 'justify-center' : 'gap-3'}`}
                 title="View on GitHub"

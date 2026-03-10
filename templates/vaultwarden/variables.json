@@ -25,6 +25,13 @@
       "block_exploits": true,
       "http2_support": false,
       "ssl_forced": true
+    },
+    "oidcClient": {
+      "client_id": "vaultwarden",
+      "client_name": "Vaultwarden",
+      "authorization_policy": "one_factor",
+      "redirect_uris": ["/identity/connect/authorize"],
+      "scopes": ["openid", "profile", "email", "groups"]
     }
   }
 }

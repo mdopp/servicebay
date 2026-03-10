@@ -248,6 +248,49 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     }
   };
 
+  const registerOidcClients = async () => {
+    if (!variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value) return;
+
+    // Check if any templates have OIDC clients (subdomain vars with oidcClient metadata)
+    const hasOidcClients = variables.some(v => v.meta?.oidcClient && v.meta?.type === 'subdomain' && v.value);
+    if (!hasOidcClients) return;
+
+    setLogs(prev => [...prev, 'Registering OIDC clients with Authelia...']);
+
+    const selectedItems = items.filter(i => i.checked);
+    const variableValues = variables.reduce<Record<string, string>>((acc, v) => {
+      acc[v.name] = v.value;
+      return acc;
+    }, {});
+
+    try {
+      const res = await fetch('/api/system/authelia/oidc-clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templates: selectedItems.map(i => ({ name: i.name, source: template.source })),
+          variables: variableValues,
+        }),
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        if (data.added?.length) {
+          setLogs(prev => [...prev, `\u2705 OIDC clients registered: ${data.added.join(', ')}`]);
+        }
+        if (data.skipped?.length) {
+          setLogs(prev => [...prev, `\u2139\ufe0f Already registered: ${data.skipped.join(', ')}`]);
+        }
+      } else if (res.status === 404) {
+        setLogs(prev => [...prev, '\u26a0\ufe0f Authelia not deployed — OIDC clients not registered. Deploy Authelia first, then redeploy this service.']);
+      } else {
+        setLogs(prev => [...prev, `\u26a0\ufe0f Could not register OIDC clients: ${data.error || 'unknown error'}`]);
+      }
+    } catch {
+      setLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Authelia. Register OIDC clients manually.']);
+    }
+  };
+
   const handleInstall = async () => {
     setStep('installing');
     setLogs([]);
@@ -298,6 +341,9 @@ WantedBy=default.target`;
 
     // Configure reverse proxy routes if domain variables are present
     await configureProxies();
+
+    // Auto-register OIDC clients with Authelia
+    await registerOidcClients();
 
     setStep('done');
   };

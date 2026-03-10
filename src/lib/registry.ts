@@ -251,6 +251,14 @@ export interface ProxyConfig {
   advanced_config?: string;
 }
 
+export interface OidcClientConfig {
+  client_id: string;
+  client_name: string;
+  authorization_policy?: string;
+  redirect_uris: string[];
+  scopes?: string[];
+}
+
 export interface VariableMeta {
   type?: 'text' | 'password' | 'secret' | 'select' | 'device' | 'subdomain';
   description?: string;
@@ -261,6 +269,8 @@ export interface VariableMeta {
   proxyPort?: string;
   /** For subdomain type: service-specific NPM proxy host configuration */
   proxyConfig?: ProxyConfig;
+  /** OIDC client to register with Authelia when this service is deployed */
+  oidcClient?: OidcClientConfig;
 }
 
 export async function getTemplateVariables(name: string, source?: string): Promise<Record<string, VariableMeta> | null> {

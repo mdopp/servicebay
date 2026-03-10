@@ -50,53 +50,17 @@ access_control:
     - domain: 'auth.{{PUBLIC_DOMAIN}}'
       policy: bypass
 
-    # Admin services — admins group only
-    - domain: 'admin.{{PUBLIC_DOMAIN}}'
+    # Admin services — admins group, two-factor
+    - domain:
+        - 'admin.{{PUBLIC_DOMAIN}}'
+        - 'nginx.{{PUBLIC_DOMAIN}}'
+        - 'dns.{{PUBLIC_DOMAIN}}'
+        - 'ldap.{{PUBLIC_DOMAIN}}'
       policy: two_factor
       subject:
         - 'group:admins'
 
-    - domain: 'nginx.{{PUBLIC_DOMAIN}}'
-      policy: two_factor
-      subject:
-        - 'group:admins'
-
-    - domain: 'dns.{{PUBLIC_DOMAIN}}'
-      policy: two_factor
-      subject:
-        - 'group:admins'
-
-    - domain: 'ldap.{{PUBLIC_DOMAIN}}'
-      policy: two_factor
-      subject:
-        - 'group:admins'
-
-    # User-facing services — family + admins
-    - domain: 'vault.{{PUBLIC_DOMAIN}}'
-      policy: one_factor
-      subject:
-        - 'group:family'
-        - 'group:admins'
-
-    - domain: 'photos.{{PUBLIC_DOMAIN}}'
-      policy: one_factor
-      subject:
-        - 'group:family'
-        - 'group:admins'
-
-    - domain: 'sync.{{PUBLIC_DOMAIN}}'
-      policy: one_factor
-      subject:
-        - 'group:family'
-        - 'group:admins'
-
-    - domain: 'ha.{{PUBLIC_DOMAIN}}'
-      policy: one_factor
-      subject:
-        - 'group:family'
-        - 'group:admins'
-
-    # Catch-all — require family or admins group
+    # Everything else — family + admins, one-factor
     - domain: '*.{{PUBLIC_DOMAIN}}'
       policy: one_factor
       subject:

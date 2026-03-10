@@ -120,12 +120,6 @@ export interface AppConfig {
     clientSecret: string;
     allowedGroups?: string[];
   };
-  ldap?: {
-    host: string;
-    httpPort: number;
-    baseDn: string;
-    adminPassword: string;
-  };
   backup?: BackupConfig;
   setupCompleted?: boolean;
   stackSetupPending?: boolean;
