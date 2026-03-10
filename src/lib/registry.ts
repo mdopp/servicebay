@@ -121,10 +121,12 @@ export async function syncRegistries() {
     for (const reg of registries) {
         const regPath = path.join(REGISTRIES_DIR, reg.name);
         try {
-            await fs.access(regPath);
-            // Exists, pull
+            await fs.access(path.join(regPath, '.git'));
+            // Exists — fetch latest and reset (shallow clones can't reliably git pull)
             console.log(`Updating registry ${reg.name}...`);
-            await execAsync('git pull', { cwd: regPath });
+            const branch = reg.branch || 'main';
+            await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath });
+            await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath });
         } catch {
             // Doesn't exist, clone
             console.log(`Cloning registry ${reg.name}...`);
