@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.23.0...servicebay-v0.24.0) (2026-03-10)
+
+
+### Features
+
+* add configurable backup sync with monitoring and multiple fixes ([144eb94](https://github.com/mdopp/servicebay/commit/144eb941942f48f4159f55d756545b4f1844391d))
+* add lldap and authelia to full-stack ([743cdbf](https://github.com/mdopp/servicebay/commit/743cdbf226ce574b0d8719bdfe0705e6fa04a157))
+* add SSO (Authelia + LLDAP + OIDC) with user/group management ([c40552b](https://github.com/mdopp/servicebay/commit/c40552b177deab39e695b5ee03fbf14574a1194c))
+* backup sync, monitoring, and post-install fixes ([41797d1](https://github.com/mdopp/servicebay/commit/41797d1f6a7e1223c7868eb1ab8a48233b063089))
+
+
+### Bug Fixes
+
+* hostNetwork port declarations break podman ([5464ba7](https://github.com/mdopp/servicebay/commit/5464ba7ffa88b0bf031b522f1ea35f62d25a2ef4))
+* increase waitFor timeouts in OnboardingWizard tests for slow CI runners ([1b0ca86](https://github.com/mdopp/servicebay/commit/1b0ca86b5d81c6e6ec86437fb9d36379324d66df))
+* network graph shows wrong gateway target IP ([17fb363](https://github.com/mdopp/servicebay/commit/17fb36356b54bfac4ba6c1b29bccf539f2f91ab7))
+* only show gateway edges when port forwarding targets this node ([1e88b8e](https://github.com/mdopp/servicebay/commit/1e88b8e94cc56deecb66ac2750448536e0c6d56f))
+* overhaul onboarding install flow ([f431a7a](https://github.com/mdopp/servicebay/commit/f431a7a8daabfe58efc9667f4e86f20c8101a673))
+* overhaul onboarding install flow for reliable first-time setup ([e6e6d64](https://github.com/mdopp/servicebay/commit/e6e6d64553a3878f8a11ecb0d35dede7d7196878))
+* registry sync fails on shallow sparse clones ([68af950](https://github.com/mdopp/servicebay/commit/68af950543a9bdbb7c391f7b545278ccd5f797a1))
+* servicebay.ports annotation overrides runtime ports for hostNetwork pods ([81cb73f](https://github.com/mdopp/servicebay/commit/81cb73fb90e75508910d0cafb01cd531bf13910d))
+* servicebay.ports merges with runtime ports instead of replacing them ([b3990f3](https://github.com/mdopp/servicebay/commit/b3990f354b90138db646c43a216576ae375db143))
+* use actual admin port for NPM 'Open Admin UI' button ([5aad22f](https://github.com/mdopp/servicebay/commit/5aad22f9e272761223a996f3ce0f30e2454fc472))
+* use servicebay.ports annotation for hostNetwork pods ([bb53151](https://github.com/mdopp/servicebay/commit/bb53151d79e4b14f8a668c2d9b0d26613c9027ee))
+
 ## [0.23.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.22.0...servicebay-v0.23.0) (2026-03-10)
 
 
