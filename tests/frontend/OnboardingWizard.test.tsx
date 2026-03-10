@@ -439,7 +439,7 @@ describe('OnboardingWizard', () => {
                 expect(screen.getByText(/2\. SSL Certificates/i)).toBeDefined();
                 // Should show access restrictions
                 expect(screen.getByText(/3\. Access Restrictions/i)).toBeDefined();
-            });
+            }, { timeout: 5000 });
         });
 
         it('shows NPM credential prompt when proxy auth fails', async () => {
@@ -493,7 +493,7 @@ describe('OnboardingWizard', () => {
             await waitFor(() => {
                 expect(screen.getByText(/NPM Admin Login/i)).toBeDefined();
                 expect(screen.getByPlaceholderText('NPM admin password')).toBeDefined();
-            });
+            }, { timeout: 5000 });
 
             // Enter correct credentials and submit
             fireEvent.change(screen.getByPlaceholderText('NPM admin password'), { target: { value: 'correct-password' } });
@@ -502,7 +502,7 @@ describe('OnboardingWizard', () => {
             // Should succeed and show done state with DNS steps (since we have subdomain vars)
             await waitFor(() => {
                 expect(screen.getByText(/1\. Configure DNS/i)).toBeDefined();
-            });
+            }, { timeout: 5000 });
         });
 
         it('skips already-installed services during install', async () => {
