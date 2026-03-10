@@ -89,16 +89,25 @@ function getNodeIp(nodeName: string, twinStore: DigitalTwinStore): string {
 }
 
 /**
- * Get an NPM API token using default credentials.
- * NPM default: admin@example.com / changeme
- * After first login the user changes the password, so this only works on fresh installs.
+ * Get an NPM API token. Tries credentials in order:
+ * 1. Explicitly provided credentials (from wizard form)
+ * 2. Stored credentials from config
+ * 3. NPM default credentials (admin@example.com / changeme)
  */
-async function getNpmToken(baseUrl: string): Promise<string | null> {
-    const credentials = [
-        { identity: 'admin@example.com', secret: 'changeme' },
-    ];
+async function getNpmToken(
+    baseUrl: string,
+    providedCredentials?: { email: string; password: string },
+): Promise<string | null> {
+    const candidates: { identity: string; secret: string }[] = [];
 
-    for (const cred of credentials) {
+    if (providedCredentials) {
+        candidates.push({ identity: providedCredentials.email, secret: providedCredentials.password });
+    }
+
+    // Always try default credentials last
+    candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
+
+    for (const cred of candidates) {
         try {
             const res = await fetch(`${baseUrl}/api/tokens`, {
                 method: 'POST',
@@ -171,10 +180,11 @@ async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRe
  */
 export async function POST(request: Request) {
     try {
-        const { hosts, node, publicDomain } = await request.json() as {
+        const { hosts, node, publicDomain, npmCredentials } = await request.json() as {
             hosts: ProxyHostRequest[];
             node?: string;
             publicDomain?: string;
+            npmCredentials?: { email: string; password: string };
         };
 
         if (!hosts?.length) {
@@ -188,11 +198,12 @@ export async function POST(request: Request) {
             }, { status: 404 });
         }
 
-        const token = await getNpmToken(npm.apiUrl);
+        const token = await getNpmToken(npm.apiUrl, npmCredentials);
         if (!token) {
             return NextResponse.json({
-                error: 'Could not authenticate with NPM. If you changed the default password, configure proxy hosts manually via the admin UI.',
+                error: 'Could not authenticate with NPM. Please provide your NPM admin credentials.',
                 adminUrl: npm.apiUrl,
+                needsCredentials: true,
             }, { status: 401 });
         }
 

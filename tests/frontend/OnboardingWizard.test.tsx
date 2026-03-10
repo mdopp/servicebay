@@ -442,6 +442,69 @@ describe('OnboardingWizard', () => {
             });
         });
 
+        it('shows NPM credential prompt when proxy auth fails', async () => {
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+            (fetchTemplateVariables as any).mockResolvedValue({
+                SERVICE_NAME: { type: 'text', default: 'my-service' },
+                PUBLIC_DOMAIN: { type: 'text', default: 'example.com' },
+                TEST_SUBDOMAIN: { type: 'subdomain', default: 'test', proxyPort: '8080' },
+            });
+
+            // Make proxy-hosts return 401 with needsCredentials
+            global.fetch = vi.fn().mockImplementation((url: string, opts?: { method?: string; body?: string }) => {
+                if (url.includes('/api/settings')) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ templateSettings: {} }) });
+                }
+                if (url.includes('/api/services') && (!opts || opts.method !== 'POST')) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve([
+                        { name: 'nginx-web', active: true, status: 'running' },
+                    ]) });
+                }
+                if (url.includes('/api/services') && opts?.method === 'POST') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+                }
+                if (url.includes('/api/system/nginx/status')) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ installed: true, active: true }) });
+                }
+                if (url.includes('/api/system/nginx/proxy-hosts') && opts?.method === 'POST') {
+                    // Check if credentials were provided in body
+                    const body = opts?.body ? JSON.parse(opts.body) : {};
+                    if (body.npmCredentials?.password === 'correct-password') {
+                        return Promise.resolve({ ok: true, json: () => Promise.resolve({ created: ['test.example.com'] }) });
+                    }
+                    return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: 'Auth failed', needsCredentials: true }) });
+                }
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+            });
+
+            render(<OnboardingWizard />);
+
+            // Select stack → services → configure → install
+            await waitFor(() => screen.getByText('full-stack'));
+            fireEvent.click(screen.getByText('full-stack'));
+
+            await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
+
+            await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
+
+            // Should show credential prompt instead of going to done
+            await waitFor(() => {
+                expect(screen.getByText(/NPM Admin Login/i)).toBeDefined();
+                expect(screen.getByPlaceholderText('NPM admin password')).toBeDefined();
+            });
+
+            // Enter correct credentials and submit
+            fireEvent.change(screen.getByPlaceholderText('NPM admin password'), { target: { value: 'correct-password' } });
+            fireEvent.click(screen.getByRole('button', { name: /Authenticate & Retry/i }));
+
+            // Should succeed and show done state with DNS steps (since we have subdomain vars)
+            await waitFor(() => {
+                expect(screen.getByText(/1\. Configure DNS/i)).toBeDefined();
+            });
+        });
+
         it('skips already-installed services during install', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
             // nginx-web has no yaml (not fetched since it's already installed)

@@ -127,6 +127,11 @@ export default function OnboardingWizard() {
   // Track whether we're in stacks-only mode (post-install first boot)
   const [stacksOnlyMode, setStacksOnlyMode] = useState(false);
 
+  // NPM credentials (shown when default auth fails during proxy setup)
+  const [npmCredPrompt, setNpmCredPrompt] = useState(false);
+  const [npmEmail, setNpmEmail] = useState('admin@example.com');
+  const [npmPassword, setNpmPassword] = useState('');
+
   useEffect(() => {
     checkOnboardingStatus().then(s => {
       setStatus(s);
@@ -404,52 +409,98 @@ export default function OnboardingWizard() {
     }
 
     // Configure proxy routes (with retry for NPM startup)
+    const proxyResult = await configureProxyRoutes();
+
+    // If credentials are needed, stay on 'installing' step — the credential prompt is shown inline
+    if (proxyResult !== 'needs_credentials') {
+      setStackInstallStep('done');
+    }
+  };
+
+  /** Build the proxy host list from subdomain variables */
+  const buildProxyHosts = () => {
     const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-    if (domain) {
-      const subdomainVars = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
-      if (subdomainVars.length > 0) {
-        setStackLogs(prev => [...prev, 'Waiting for Nginx Proxy Manager to start...']);
+    if (!domain) return { domain, hosts: [] };
+    const subdomainVars = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
+    const hosts = subdomainVars.map(sv => {
+      let port = sv.meta?.proxyPort || '';
+      const portVar = stackVariables.find(v => v.name === port);
+      if (portVar) port = portVar.value;
+      const service = sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase().replace(/^ha$/, 'home-assistant');
+      return { domain: `${sv.value}.${domain}`, forwardPort: parseInt(port, 10), service, proxyConfig: sv.meta?.proxyConfig };
+    }).filter(h => h.forwardPort);
+    return { domain, hosts };
+  };
 
-        const npmReady = await waitForNpm(stackSelectedNode || undefined);
-        if (!npmReady) {
-          setStackLogs(prev => [...prev, '\u26a0\ufe0f Nginx Proxy Manager not ready. Configure proxy routes manually in the NPM admin panel.']);
-        } else {
-          setStackLogs(prev => [...prev, 'Configuring reverse proxy routes...']);
-          const hosts = subdomainVars.map(sv => {
-            let port = sv.meta?.proxyPort || '';
-            const portVar = stackVariables.find(v => v.name === port);
-            if (portVar) port = portVar.value;
-            const service = sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase().replace(/^ha$/, 'home-assistant');
-            return { domain: `${sv.value}.${domain}`, forwardPort: parseInt(port, 10), service, proxyConfig: sv.meta?.proxyConfig };
-          }).filter(h => h.forwardPort);
+  /** Send proxy host creation request, optionally with NPM credentials */
+  const sendProxyRequest = async (
+    hosts: { domain: string; forwardPort: number; service: string; proxyConfig?: unknown }[],
+    domain: string,
+    credentials?: { email: string; password: string },
+  ) => {
+    const res = await fetch('/api/system/nginx/proxy-hosts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hosts,
+        publicDomain: domain,
+        node: stackSelectedNode || undefined,
+        ...(credentials ? { npmCredentials: credentials } : {}),
+      }),
+    });
+    return { res, data: await res.json() };
+  };
 
-          if (hosts.length > 0) {
-            try {
-              const res = await fetch('/api/system/nginx/proxy-hosts', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ hosts, publicDomain: domain, node: stackSelectedNode || undefined }),
-              });
-              const data = await res.json();
-              if (res.ok && data.created?.length) {
-                setStackLogs(prev => [...prev, `\u2705 Proxy routes created: ${data.created.join(', ')}`]);
-                if (data.failed?.length) {
-                  setStackLogs(prev => [...prev, `\u26a0\ufe0f Some routes failed: ${data.failed.map((f: { domain: string }) => f.domain).join(', ')}`]);
-                }
-              } else if (res.status === 401) {
-                setStackLogs(prev => [...prev, '\u26a0\ufe0f NPM default password was already changed. Configure proxy routes manually in the NPM admin panel.']);
-              } else {
-                setStackLogs(prev => [...prev, `\u26a0\ufe0f Proxy route error: ${data.error || 'unknown'}`]);
-              }
-            } catch {
-              setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Nginx Proxy Manager.']);
-            }
-          }
-        }
+  /** Configure proxy routes, prompting for NPM credentials if default auth fails */
+  const configureProxyRoutes = async (credentials?: { email: string; password: string }) => {
+    const { domain, hosts } = buildProxyHosts();
+    if (!domain || hosts.length === 0) return;
+
+    if (!credentials) {
+      setStackLogs(prev => [...prev, 'Waiting for Nginx Proxy Manager to start...']);
+      const npmReady = await waitForNpm(stackSelectedNode || undefined);
+      if (!npmReady) {
+        setStackLogs(prev => [...prev, '\u26a0\ufe0f Nginx Proxy Manager not ready. Configure proxy routes manually in the NPM admin panel.']);
+        return;
       }
+      setStackLogs(prev => [...prev, 'Configuring reverse proxy routes...']);
     }
 
-    setStackInstallStep('done');
+    try {
+      const { res, data } = await sendProxyRequest(hosts, domain, credentials);
+      if (res.ok && data.created?.length) {
+        setStackLogs(prev => [...prev, `\u2705 Proxy routes created: ${data.created.join(', ')}`]);
+        if (data.failed?.length) {
+          setStackLogs(prev => [...prev, `\u26a0\ufe0f Some routes failed: ${data.failed.map((f: { domain: string }) => f.domain).join(', ')}`]);
+        }
+        setNpmCredPrompt(false);
+      } else if (res.status === 401 && data.needsCredentials) {
+        // Default & stored credentials failed — prompt user
+        setStackLogs(prev => [...prev, '\u26a0\ufe0f NPM default credentials did not work. Please enter your NPM admin credentials below.']);
+        setNpmCredPrompt(true);
+        // Don't proceed to 'done' yet — wait for user to submit credentials
+        return 'needs_credentials';
+      } else {
+        setStackLogs(prev => [...prev, `\u26a0\ufe0f Proxy route error: ${data.error || 'unknown'}`]);
+      }
+    } catch {
+      setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Nginx Proxy Manager.']);
+    }
+  };
+
+  /** Retry proxy route creation with user-provided NPM credentials */
+  const handleNpmCredentialSubmit = async () => {
+    if (!npmEmail || !npmPassword) return;
+    setNpmCredPrompt(false);
+    setStackLogs(prev => [...prev, 'Retrying with provided credentials...']);
+    const result = await configureProxyRoutes({ email: npmEmail, password: npmPassword });
+    if (result === 'needs_credentials') {
+      // Still failed — prompt again
+      setStackLogs(prev => [...prev, '\u274c Authentication failed. Please check your credentials.']);
+      setNpmCredPrompt(true);
+    } else {
+      setStackInstallStep('done');
+    }
   };
 
   const handleStackSkip = async () => {
@@ -846,6 +897,46 @@ export default function OnboardingWizard() {
                                     </div>
                                 )}
                             </div>
+                            {npmCredPrompt && (
+                                <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                                    <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">NPM Admin Login</p>
+                                    <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">
+                                        The default NPM password was changed. Enter your NPM admin credentials to configure proxy routes.
+                                    </p>
+                                    <div className="space-y-2">
+                                        <input
+                                            type="email"
+                                            value={npmEmail}
+                                            onChange={(e) => setNpmEmail(e.target.value)}
+                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-md text-sm"
+                                            placeholder="NPM admin email"
+                                        />
+                                        <input
+                                            type="password"
+                                            value={npmPassword}
+                                            onChange={(e) => setNpmPassword(e.target.value)}
+                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-md text-sm"
+                                            placeholder="NPM admin password"
+                                            autoComplete="current-password"
+                                        />
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={handleNpmCredentialSubmit}
+                                                disabled={!npmPassword}
+                                                className="flex-1 px-3 py-2 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
+                                            >
+                                                Authenticate &amp; Retry
+                                            </button>
+                                            <button
+                                                onClick={() => { setNpmCredPrompt(false); setStackInstallStep('done'); }}
+                                                className="px-3 py-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm"
+                                            >
+                                                Skip
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                             {stackInstallStep === 'done' && (() => {
                                 const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
                                 const subdomains = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
