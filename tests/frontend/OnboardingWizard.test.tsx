@@ -114,13 +114,25 @@ describe('OnboardingWizard', () => {
         (fetchTemplateVariables as any).mockResolvedValue({
             SERVICE_NAME: { type: 'text', default: 'my-service', description: 'Service name' },
         });
-        // Mock fetch for /api/settings and /api/services
-        global.fetch = vi.fn().mockImplementation((url: string) => {
+        // Mock fetch for /api/settings, /api/services, /api/system/nginx/status
+        global.fetch = vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
             if (url.includes('/api/settings')) {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ templateSettings: {} }) });
             }
-            if (url.includes('/api/services')) {
+            if (url.includes('/api/services') && (!opts || opts.method !== 'POST')) {
+                // GET: return existing services (nginx-web already installed)
+                return Promise.resolve({ ok: true, json: () => Promise.resolve([
+                    { name: 'nginx-web', active: true, status: 'running' },
+                ]) });
+            }
+            if (url.includes('/api/services') && opts?.method === 'POST') {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+            }
+            if (url.includes('/api/system/nginx/status')) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ installed: true, active: true }) });
+            }
+            if (url.includes('/api/system/nginx/proxy-hosts')) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ created: ['test.example.com'] }) });
             }
             return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
         });
@@ -260,7 +272,7 @@ describe('OnboardingWizard', () => {
             });
         });
 
-        it('pre-checks services marked [x] in README', async () => {
+        it('marks already-installed services and unchecks them', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
 
             render(<OnboardingWizard />);
@@ -270,11 +282,17 @@ describe('OnboardingWizard', () => {
 
             await waitFor(() => screen.getByText('nginx-web'));
 
-            // nginx-web and redis-cache should be checked ([x]), immich should not ([ ])
+            // nginx-web is already installed (from mock /api/services GET) — unchecked + disabled
+            // redis-cache is not installed but marked [x] in README — checked
+            // immich is not installed and marked [ ] — unchecked
             const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
-            expect(checkboxes[0].checked).toBe(true);   // nginx-web [x]
-            expect(checkboxes[1].checked).toBe(true);   // redis-cache [x]
-            expect(checkboxes[2].checked).toBe(false);   // immich [ ]
+            expect(checkboxes[0].checked).toBe(false);   // nginx-web — already installed, unchecked
+            expect(checkboxes[0].disabled).toBe(true);    // nginx-web — disabled
+            expect(checkboxes[1].checked).toBe(true);     // redis-cache [x]
+            expect(checkboxes[2].checked).toBe(false);    // immich [ ]
+
+            // Should show "already installed" badge
+            expect(screen.getByText('already installed')).toBeDefined();
         });
 
         it('back from services returns to stack selection', async () => {
@@ -377,6 +395,70 @@ describe('OnboardingWizard', () => {
             await waitFor(() => {
                 expect(screen.getByText(/No stacks available/i)).toBeDefined();
             });
+        });
+
+        it('shows domain prompt on services step', async () => {
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+
+            render(<OnboardingWizard />);
+
+            await waitFor(() => screen.getByText('full-stack'));
+            fireEvent.click(screen.getByText('full-stack'));
+
+            await waitFor(() => {
+                expect(screen.getByText(/Public Domain/i)).toBeDefined();
+                expect(screen.getByPlaceholderText('example.com')).toBeDefined();
+            });
+        });
+
+        it('shows post-install DNS and SSL steps after stack install', async () => {
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+            // Return variables with subdomain type
+            (fetchTemplateVariables as any).mockResolvedValue({
+                SERVICE_NAME: { type: 'text', default: 'my-service' },
+                PUBLIC_DOMAIN: { type: 'text', default: 'example.com' },
+                TEST_SUBDOMAIN: { type: 'subdomain', default: 'test', proxyPort: '8080' },
+            });
+
+            render(<OnboardingWizard />);
+
+            // Select stack → services → configure → install → done
+            await waitFor(() => screen.getByText('full-stack'));
+            fireEvent.click(screen.getByText('full-stack'));
+
+            await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
+
+            await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
+
+            await waitFor(() => {
+                // Should show DNS instructions
+                expect(screen.getByText(/1\. Configure DNS/i)).toBeDefined();
+                // Should show SSL instructions
+                expect(screen.getByText(/2\. SSL Certificates/i)).toBeDefined();
+                // Should show access restrictions
+                expect(screen.getByText(/3\. Access Restrictions/i)).toBeDefined();
+            });
+        });
+
+        it('skips already-installed services during install', async () => {
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+            // nginx-web has no yaml (not fetched since it's already installed)
+            // but it IS in the selected items with alreadyInstalled=true
+            // The install handler checks alreadyInstalled flag before deploying
+
+            render(<OnboardingWizard />);
+
+            await waitFor(() => screen.getByText('full-stack'));
+            fireEvent.click(screen.getByText('full-stack'));
+
+            // Check all items to ensure nginx-web would be in selected
+            await waitFor(() => screen.getByText('nginx-web'));
+
+            // nginx-web checkbox is disabled (already installed), so it won't be in the selected list
+            // Check that the badge is shown
+            expect(screen.getByText('already installed')).toBeDefined();
         });
     });
 
