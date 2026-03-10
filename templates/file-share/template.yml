@@ -4,6 +4,8 @@ metadata:
   name: file-share
   labels:
     app: file-share
+  annotations:
+    servicebay.ports: "8384/tcp,22000/tcp,139/tcp,445/tcp"
 spec:
   hostNetwork: true
   containers:

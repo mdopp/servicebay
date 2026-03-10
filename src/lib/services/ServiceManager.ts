@@ -230,9 +230,11 @@ export class ServiceManager {
                                      info.labels = { ...info.labels, ...doc.metadata.labels };
                                  }
 
-                                 // Annotations — servicebay.ports hint for hostNetwork pods
+                                 // Annotations — servicebay.ports is the authoritative port list
+                                 // (overrides runtime-detected ports which are unreliable for hostNetwork pods)
                                  const portsAnnotation = doc.metadata?.annotations?.['servicebay.ports'];
-                                 if (portsAnnotation && info.ports.length === 0) {
+                                 if (portsAnnotation) {
+                                     info.ports = [];
                                      // Format: "8083/tcp,53/udp,53/tcp"
                                      for (const entry of String(portsAnnotation).split(',')) {
                                          const [portStr] = entry.trim().split('/');
