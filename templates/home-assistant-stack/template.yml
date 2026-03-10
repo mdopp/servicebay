@@ -24,7 +24,8 @@ spec:
     securityContext:
       privileged: true
 
-  # 2. Z-Wave JS UI
+  {{#ZWAVE_DEVICE}}
+  # 2. Z-Wave JS UI (only when Z-Wave stick is present)
   - name: zwave-js
     image: ghcr.io/zwave-js/zwave-js-ui:latest
     env:
@@ -41,6 +42,7 @@ spec:
       name: zwave-stick
     securityContext:
       privileged: true
+  {{/ZWAVE_DEVICE}}
 
   # 3. Matter Server
   - name: matter-server
@@ -100,10 +102,12 @@ spec:
     hostPath:
       path: {{DATA_DIR}}/home-assistant/homeassistant
       type: DirectoryOrCreate
+  {{#ZWAVE_DEVICE}}
   - name: zwave-config
     hostPath:
       path: {{DATA_DIR}}/home-assistant/zwave-js
       type: DirectoryOrCreate
+  {{/ZWAVE_DEVICE}}
   - name: matter-config
     hostPath:
       path: {{DATA_DIR}}/home-assistant/matter-server
@@ -122,7 +126,9 @@ spec:
     hostPath:
       path: /run/dbus
       type: Directory
+  {{#ZWAVE_DEVICE}}
   - name: zwave-stick
     hostPath:
       path: {{ZWAVE_DEVICE}}
       type: CharDevice
+  {{/ZWAVE_DEVICE}}

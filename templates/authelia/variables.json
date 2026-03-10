@@ -38,17 +38,17 @@
   },
   "LLDAP_LDAP_PORT": {
     "type": "text",
-    "description": "LLDAP LDAP port",
+    "description": "LDAP protocol port",
     "default": "3890"
   },
   "LLDAP_BASE_DN": {
     "type": "text",
-    "description": "LDAP base DN (must match LLDAP config)",
+    "description": "LDAP base DN (e.g. dc=dopp,dc=cloud)",
     "default": "dc=dopp,dc=cloud"
   },
   "LLDAP_ADMIN_PASSWORD": {
     "type": "password",
-    "description": "LLDAP admin password (must match LLDAP config)"
+    "description": "LLDAP admin password"
   },
   "PUBLIC_DOMAIN": {
     "type": "text",

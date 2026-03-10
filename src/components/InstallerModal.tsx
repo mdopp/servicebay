@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Template, VariableMeta } from '@/lib/registry';
-import { fetchTemplateYaml, fetchTemplateVariables } from '@/app/actions';
+import { fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
 import { Layers, Loader2, AlertCircle, X, Folder, Server, RefreshCw } from 'lucide-react';
@@ -16,10 +16,17 @@ interface InstallerModalProps {
   onClose: () => void;
 }
 
+interface ConfigFile {
+  filename: string;
+  content: string;
+  targetPath?: string;
+}
+
 interface StackItem {
   name: string;
   checked: boolean;
   yaml?: string;
+  configFiles?: ConfigFile[];
 }
 
 interface Variable {
@@ -164,6 +171,22 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             const meta = await fetchTemplateVariables(item.name, template.source);
             if (meta) Object.assign(allMeta, meta);
 
+            // Fetch extra config files (.mustache) and resolve target paths
+            const cfgFiles = await fetchTemplateConfigFiles(item.name, template.source);
+            if (cfgFiles.length > 0) {
+              const volMounts = [...yaml.matchAll(/mountPath:\s*(\S+)/g)].map(m => m[1]);
+              const hostPaths = [...yaml.matchAll(/path:\s*(\S+)/g)].map(m => m[1]);
+              for (const cf of cfgFiles) {
+                const configMountIdx = volMounts.findIndex(m => m === '/config' || m.endsWith('/config'));
+                if (configMountIdx !== -1 && hostPaths[configMountIdx]) {
+                  cf.targetPath = `${hostPaths[configMountIdx]}/${cf.filename}`;
+                }
+                const cfgMatches = cf.content.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
+                for (const m of cfgMatches) vars.add(m[1]);
+              }
+              if (idx !== -1) newItems[idx].configFiles = cfgFiles;
+            }
+
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             setError(msg);
@@ -178,20 +201,26 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     }
 
     setItems(newItems);
-    setVariables(Array.from(vars).map(v => {
+    const resolvedVars = Array.from(vars).map(v => {
         const meta = allMeta[v];
         let value = globalSettings[v] || '';
+        let isGlobal = !!globalSettings[v];
+        // Auto-fill LLDAP_HOST — always localhost when on same node
+        if (v === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
         // Auto-fill defaults from metadata
         if (!value && meta?.default) value = meta.default;
         // Auto-generate secrets
         if (!value && meta?.type === 'secret') value = generateSecret();
-        return {
-            name: v,
-            value,
-            global: !!globalSettings[v],
-            meta,
-        };
-    }));
+        return { name: v, value, global: isGlobal, meta };
+    });
+    // Auto-derive VAULTWARDEN_DOMAIN from subdomain + PUBLIC_DOMAIN
+    const pubDomain = resolvedVars.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+    const vwSub = resolvedVars.find(v => v.name === 'VAULTWARDEN_SUBDOMAIN')?.value;
+    if (pubDomain && vwSub) {
+      const vwDomain = resolvedVars.find(v => v.name === 'VAULTWARDEN_DOMAIN');
+      if (vwDomain) { vwDomain.value = `https://${vwSub}.${pubDomain}`; vwDomain.global = true; }
+    }
+    setVariables(resolvedVars);
   };
 
   const configureProxies = async () => {
@@ -306,7 +335,6 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
         const savedEscape = Mustache.escape;
         Mustache.escape = (text: string) => text;
         const content = Mustache.render(item.yaml, view);
-        Mustache.escape = savedEscape;
 
         const kubeContent = `[Kube]
 Yaml=${item.name}.yml
@@ -314,6 +342,16 @@ AutoUpdate=registry
 
 [Install]
 WantedBy=default.target`;
+
+        // Render extra config files (.mustache) with the same variables
+        const extraFiles = (item.configFiles || [])
+          .filter(cf => cf.targetPath)
+          .map(cf => {
+            const rendered = Mustache.render(cf.content, view);
+            const resolvedPath = Mustache.render(cf.targetPath!, view);
+            return { path: resolvedPath, content: rendered };
+          });
+        Mustache.escape = savedEscape;
 
         try {
             const query = selectedNode ? `?node=${selectedNode}` : '';
@@ -324,7 +362,8 @@ WantedBy=default.target`;
                     name: item.name,
                     kubeContent,
                     yamlContent: content,
-                    yamlFileName: `${item.name}.yml`
+                    yamlFileName: `${item.name}.yml`,
+                    extraFiles,
                 }),
             });
 
@@ -337,6 +376,35 @@ WantedBy=default.target`;
             const msg = e instanceof Error ? e.message : String(e);
             setLogs(prev => [...prev, `❌ Failed to install ${item.name}: ${msg}`]);
         }
+    }
+
+    // Seed LLDAP groups if lldap was installed
+    if (selectedItems.some(i => i.name === 'lldap')) {
+      setLogs(prev => [...prev, 'Seeding LLDAP groups...']);
+      const lldapPassword = variables.find(v => v.name === 'LLDAP_ADMIN_PASSWORD')?.value;
+      const lldapPort = variables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
+      if (lldapPassword) {
+        try {
+          const res = await fetch('/api/system/lldap/seed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              host: selectedNode || 'localhost',
+              port: parseInt(lldapPort, 10),
+              password: lldapPassword,
+            }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            if (data.created?.length) setLogs(prev => [...prev, `\u2705 Groups created: ${data.created.join(', ')}`]);
+            if (data.existing?.length) setLogs(prev => [...prev, `\u2139\ufe0f Groups already exist: ${data.existing.join(', ')}`]);
+          } else {
+            setLogs(prev => [...prev, `\u26a0\ufe0f Could not seed LLDAP: ${data.error || 'unknown'}`]);
+          }
+        } catch {
+          setLogs(prev => [...prev, '\u26a0\ufe0f Could not reach LLDAP. Create admins/family groups manually.']);
+        }
+      }
     }
 
     // Configure reverse proxy routes if domain variables are present
@@ -473,7 +541,7 @@ WantedBy=default.target`;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
 
             {/* Header */}
             <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
@@ -554,11 +622,11 @@ WantedBy=default.target`;
                                 )}
 
                                 {/* User-configurable variables */}
-                                {variables.filter(v => !v.global).length > 0 && (
+                                {variables.filter(v => !v.global && v.meta?.type !== 'secret').length > 0 && (
                                     <div>
                                         <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Configure</p>
                                         <div className="grid gap-4">
-                                            {variables.filter(v => !v.global).map((v) => {
+                                            {variables.filter(v => !v.global && v.meta?.type !== 'secret').map((v) => {
                                                 const idx = variables.findIndex(x => x.name === v.name);
                                                 return (
                                                 <div key={v.name}>

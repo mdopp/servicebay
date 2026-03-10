@@ -13,22 +13,29 @@ import {
     OnboardingStatus
 } from '@/app/actions/onboarding';
 import { generateLocalKey } from '@/app/actions/ssh';
-import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables } from '@/app/actions';
+import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
 import { getNodes } from '@/app/actions/system';
 import { Template, VariableMeta } from '@/lib/registry';
 import Mustache from 'mustache';
 
-import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe } from 'lucide-react';
+import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 // Steps definition
 type WizardStep = 'welcome' | 'gateway' | 'ssh' | 'updates' | 'registries' | 'email' | 'stacks' | 'finish';
+
+interface ConfigFile {
+  filename: string;
+  content: string;
+  targetPath?: string;
+}
 
 interface StackItem {
   name: string;
   checked: boolean;
   yaml?: string;
   alreadyInstalled?: boolean;
+  configFiles?: ConfigFile[];
 }
 
 /** Fetch names of services already deployed on the target node */
@@ -123,6 +130,13 @@ export default function OnboardingWizard() {
   const [stackSelectedNode, setStackSelectedNode] = useState('');
   const [stacksLoading, setStacksLoading] = useState(false);
   const [stackDomain, setStackDomain] = useState('');
+  const [stackDeviceOptions, setStackDeviceOptions] = useState<Record<string, string[]>>({});
+  const [stackLoadingDevices, setStackLoadingDevices] = useState(false);
+
+  // RAID detection
+  const [raidArrays, setRaidArrays] = useState<{ device: string; label: string; fstype: string; size: string; mountpoint: string | null; degraded: boolean }[]>([]);
+  const [raidMounting, setRaidMounting] = useState(false);
+  const [raidMounted, setRaidMounted] = useState(false);
 
   // Track whether we're in stacks-only mode (post-install first boot)
   const [stacksOnlyMode, setStacksOnlyMode] = useState(false);
@@ -287,6 +301,41 @@ export default function OnboardingWizard() {
     }
   };
 
+  // Fetch USB devices when node is selected and device-type variables exist
+  useEffect(() => {
+    if (!stackSelectedNode) return;
+    const deviceVars = stackVariables.filter(v => v.meta?.type === 'device');
+    if (deviceVars.length === 0) return;
+    const paths = new Set(deviceVars.map(v => v.meta?.devicePath || '/dev/serial/by-id'));
+    setStackLoadingDevices(true);
+    Promise.all(
+      Array.from(paths).map(async (devicePath) => {
+        try {
+          const res = await fetch(`/api/system/devices?node=${stackSelectedNode}&path=${encodeURIComponent(devicePath)}`);
+          if (res.ok) {
+            const data = await res.json();
+            return { path: devicePath, devices: data.devices as string[] };
+          }
+        } catch { /* ignore */ }
+        return { path: devicePath, devices: [] as string[] };
+      })
+    ).then(results => {
+      const opts: Record<string, string[]> = {};
+      for (const r of results) opts[r.path] = r.devices;
+      setStackDeviceOptions(opts);
+      setStackLoadingDevices(false);
+    });
+  }, [stackSelectedNode, stackVariables]);
+
+  // Detect unmounted RAID arrays when node is selected
+  useEffect(() => {
+    if (!stackSelectedNode || raidMounted) return;
+    fetch(`/api/system/storage?node=${stackSelectedNode}`)
+      .then(r => r.ok ? r.json() : { raids: [] })
+      .then(data => setRaidArrays((data.raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint)))
+      .catch(() => setRaidArrays([]));
+  }, [stackSelectedNode, raidMounted]);
+
   // -- Stack Handlers --
 
   const handleSelectStack = async (stack: Template) => {
@@ -350,21 +399,51 @@ export default function OnboardingWizard() {
         for (const match of matches) vars.add(match[1]);
         const meta = await fetchTemplateVariables(item.name, selectedStack?.source || 'Built-in');
         if (meta) Object.assign(allMeta, meta);
+
+        // Fetch extra config files (.mustache) and resolve target paths from YAML volumes
+        const cfgFiles = await fetchTemplateConfigFiles(item.name, selectedStack?.source || 'Built-in');
+        if (cfgFiles.length > 0) {
+          // Extract hostPath→mountPath mapping from YAML to resolve target path
+          const volMounts = [...yaml.matchAll(/mountPath:\s*(\S+)/g)].map(m => m[1]);
+          const hostPaths = [...yaml.matchAll(/path:\s*(\S+)/g)].map(m => m[1]);
+          for (const cf of cfgFiles) {
+            // Match config file to volume: e.g. /config mount → hostPath + filename
+            const configMountIdx = volMounts.findIndex(m => m === '/config' || m.endsWith('/config'));
+            if (configMountIdx !== -1 && hostPaths[configMountIdx]) {
+              cf.targetPath = `${hostPaths[configMountIdx]}/${cf.filename}`;
+            }
+            // Also extract variables from config file templates
+            const cfgMatches = cf.content.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
+            for (const m of cfgMatches) vars.add(m[1]);
+          }
+          if (idx !== -1) newItems[idx].configFiles = cfgFiles;
+        }
       } catch { /* skip */ }
     }
 
     for (const key of Object.keys(allMeta)) vars.add(key);
 
     setStackItems(newItems);
-    setStackVariables(Array.from(vars).map(v => {
+    const resolvedVars = Array.from(vars).map(v => {
       const meta = allMeta[v];
       let value = globalSettings[v] || '';
-      // Pre-fill PUBLIC_DOMAIN from the domain prompt
-      if (v === 'PUBLIC_DOMAIN' && stackDomain) value = stackDomain;
+      let isGlobal = !!globalSettings[v];
+      // Pre-fill PUBLIC_DOMAIN from the domain prompt and hide it
+      if (v === 'PUBLIC_DOMAIN' && stackDomain) { value = stackDomain; isGlobal = true; }
+      // Auto-fill LLDAP_HOST — always localhost when installing in the same stack
+      if (v === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
       if (!value && meta?.default) value = meta.default;
       if (!value && meta?.type === 'secret') value = generateSecret();
-      return { name: v, value, global: !!globalSettings[v], meta };
-    }));
+      return { name: v, value, global: isGlobal, meta };
+    });
+    // Auto-derive VAULTWARDEN_DOMAIN from subdomain + PUBLIC_DOMAIN
+    const pubDomain = resolvedVars.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+    const vwSub = resolvedVars.find(v => v.name === 'VAULTWARDEN_SUBDOMAIN')?.value;
+    if (pubDomain && vwSub) {
+      const vwDomain = resolvedVars.find(v => v.name === 'VAULTWARDEN_DOMAIN');
+      if (vwDomain) { vwDomain.value = `https://${vwSub}.${pubDomain}`; vwDomain.global = true; }
+    }
+    setStackVariables(resolvedVars);
     setStacksLoading(false);
   };
 
@@ -383,19 +462,29 @@ export default function OnboardingWizard() {
       setStackLogs(prev => [...prev, `Installing ${item.name}...`]);
 
       const view = stackVariables.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {});
+      // Disable HTML escaping for all Mustache renders (YAML + config files)
       const savedEscape = Mustache.escape;
       Mustache.escape = (text: string) => text;
       const content = Mustache.render(item.yaml, view);
-      Mustache.escape = savedEscape;
 
       const kubeContent = `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
+
+      // Render extra config files (.mustache) with the same variables
+      const extraFiles = (item.configFiles || [])
+        .filter(cf => cf.targetPath)
+        .map(cf => {
+          const rendered = Mustache.render(cf.content, view);
+          const resolvedPath = Mustache.render(cf.targetPath!, view);
+          return { path: resolvedPath, content: rendered };
+        });
+      Mustache.escape = savedEscape;
 
       try {
         const query = stackSelectedNode ? `?node=${stackSelectedNode}` : '';
         const res = await fetch(`/api/services${query}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: item.name, kubeContent, yamlContent: content, yamlFileName: `${item.name}.yml` }),
+          body: JSON.stringify({ name: item.name, kubeContent, yamlContent: content, yamlFileName: `${item.name}.yml`, extraFiles }),
         });
         if (!res.ok) {
           const err = await res.json();
@@ -405,6 +494,36 @@ export default function OnboardingWizard() {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setStackLogs(prev => [...prev, `\u274c Failed to install ${item.name}: ${msg}`]);
+      }
+    }
+
+    // Seed LLDAP groups if lldap was installed
+    if (selected.some(i => i.name === 'lldap')) {
+      setStackLogs(prev => [...prev, 'Seeding LLDAP groups...']);
+      const lldapPassword = stackVariables.find(v => v.name === 'LLDAP_ADMIN_PASSWORD')?.value;
+      const lldapPort = stackVariables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
+      if (lldapPassword) {
+        try {
+          const res = await fetch('/api/system/lldap/seed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              host: stackSelectedNode || 'localhost',
+              port: parseInt(lldapPort, 10),
+              password: lldapPassword,
+            }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            if (data.created?.length) setStackLogs(prev => [...prev, `\u2705 Groups created: ${data.created.join(', ')}`]);
+            if (data.existing?.length) setStackLogs(prev => [...prev, `\u2139\ufe0f Groups already exist: ${data.existing.join(', ')}`]);
+            if (data.failed?.length) setStackLogs(prev => [...prev, `\u26a0\ufe0f Failed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
+          } else {
+            setStackLogs(prev => [...prev, `\u26a0\ufe0f Could not seed LLDAP groups: ${data.error || 'unknown error'}`]);
+          }
+        } catch {
+          setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach LLDAP to seed groups. Create admins/family groups manually.']);
+        }
       }
     }
 
@@ -519,7 +638,7 @@ export default function OnboardingWizard() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
         {/* Header */}
         <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
@@ -805,6 +924,61 @@ export default function OnboardingWizard() {
                                     />
                                 </div>
                             )}
+
+                            {/* RAID detection prompt */}
+                            {raidArrays.length > 0 && !raidMounted && (
+                                <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                                    <label className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">
+                                        <HardDrive className="w-4 h-4" /> Unmounted RAID Detected
+                                    </label>
+                                    {raidArrays.map(raid => (
+                                        <div key={raid.device} className="text-xs text-amber-700 dark:text-amber-300 mb-2">
+                                            <span className="font-mono">{raid.device}</span>
+                                            {raid.label && <> &middot; label: <strong>{raid.label}</strong></>}
+                                            {raid.size && <> &middot; {raid.size}</>}
+                                            {raid.degraded && <span className="text-amber-600 dark:text-amber-400"> (degraded — 1 disk missing, still usable)</span>}
+                                        </div>
+                                    ))}
+                                    <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">
+                                        This looks like your data drive. Mount it to <code className="bg-amber-100 dark:bg-amber-800/50 px-1 rounded">/var/mnt/data</code> so services can store data on it?
+                                    </p>
+                                    <button
+                                        type="button"
+                                        disabled={raidMounting}
+                                        onClick={async () => {
+                                            setRaidMounting(true);
+                                            try {
+                                                const raid = raidArrays[0];
+                                                const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`, {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({
+                                                        device: raid.device,
+                                                        mountpoint: '/var/mnt/data',
+                                                        label: raid.label,
+                                                        fstype: raid.fstype,
+                                                    }),
+                                                });
+                                                if (res.ok) {
+                                                    setRaidMounted(true);
+                                                    setRaidArrays([]);
+                                                }
+                                            } catch { /* ignore */ }
+                                            setRaidMounting(false);
+                                        }}
+                                        className="px-3 py-1.5 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                                    >
+                                        {raidMounting ? <><Loader2 className="w-3 h-3 animate-spin inline mr-1" /> Mounting...</> : 'Mount & persist across reboots'}
+                                    </button>
+                                </div>
+                            )}
+                            {raidMounted && (
+                                <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                                    <p className="text-sm text-green-800 dark:text-green-200 flex items-center gap-2">
+                                        <CheckCircle className="w-4 h-4" /> RAID mounted at <code className="bg-green-100 dark:bg-green-800/50 px-1 rounded">/var/mnt/data</code> and will persist across reboots.
+                                    </p>
+                                </div>
+                            )}
                         </>
                     )}
 
@@ -827,13 +1001,13 @@ export default function OnboardingWizard() {
                                 <div className="flex items-center justify-center py-4 text-gray-400">
                                     <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading variables...
                                 </div>
-                            ) : stackVariables.filter(v => !v.global).length === 0 ? (
+                            ) : stackVariables.filter(v => !v.global && v.meta?.type !== 'secret').length === 0 ? (
                                 <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded text-sm">
                                     No configuration needed. Ready to install.
                                 </div>
                             ) : (
-                                <div className="space-y-3 max-h-60 overflow-y-auto">
-                                    {stackVariables.filter(v => !v.global).map((v) => {
+                                <div className="space-y-3 max-h-[50vh] overflow-y-auto">
+                                    {stackVariables.filter(v => !v.global && v.meta?.type !== 'secret').map((v) => {
                                         const idx = stackVariables.findIndex(x => x.name === v.name);
                                         return (
                                             <div key={v.name}>
@@ -866,7 +1040,29 @@ export default function OnboardingWizard() {
                                                         <input type="text" value={v.value} onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }} className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-l-md text-sm border-r-0" placeholder={v.meta.default || 'subdomain'} />
                                                         <span className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 text-gray-500 text-xs rounded-r-md whitespace-nowrap">.{stackVariables.find(x => x.name === 'PUBLIC_DOMAIN')?.value || 'example.com'}</span>
                                                     </div>
-                                                ) : (
+                                                ) : v.meta?.type === 'device' ? (() => {
+                                                    const devPath = v.meta?.devicePath || '/dev/serial/by-id';
+                                                    const devices = stackDeviceOptions[devPath] || [];
+                                                    return (
+                                                        <div className="flex gap-2">
+                                                            <select value={v.value} onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }} className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm flex-1">
+                                                                <option value="" disabled>{stackLoadingDevices ? 'Loading devices...' : !stackSelectedNode ? 'Select a node first' : devices.length === 0 ? 'No devices found' : 'Select device...'}</option>
+                                                                {devices.map(dev => <option key={dev} value={dev}>{dev.replace(`${devPath}/`, '')}</option>)}
+                                                            </select>
+                                                            {stackSelectedNode && (
+                                                                <button type="button" onClick={() => {
+                                                                    setStackLoadingDevices(true);
+                                                                    fetch(`/api/system/devices?node=${stackSelectedNode}&path=${encodeURIComponent(devPath)}`)
+                                                                        .then(r => r.json())
+                                                                        .then(data => { setStackDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] })); setStackLoadingDevices(false); })
+                                                                        .catch(() => setStackLoadingDevices(false));
+                                                                }} className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700" title="Refresh device list">
+                                                                    <RefreshCw size={14} className={stackLoadingDevices ? 'animate-spin' : ''} />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })() : (
                                                     <input
                                                         type="text"
                                                         value={v.value}

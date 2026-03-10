@@ -511,7 +511,7 @@ export class ServiceManager {
         }
     }
 
-    static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string) {
+    static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string, extraFiles?: { path: string; content: string }[]) {
         // Ensure TimeoutStartSec for multi-image pods so image pulls don't cause systemd timeout
         const images = this.extractImages(yamlContent);
         if (images.length > 1 && !kubeContent.includes('TimeoutStartSec')) {
@@ -521,6 +521,24 @@ export class ServiceManager {
         await this.writeFile(nodeName, yamlName, yamlContent);
         await this.writeFile(nodeName, `${name}.kube`, kubeContent);
         await this.ensurePodmanSocket(nodeName);
+
+        // Write extra config files (e.g. Authelia configuration.yml) to the node filesystem
+        if (extraFiles?.length) {
+            const agent = await agentManager.ensureAgent(nodeName);
+            for (const f of extraFiles) {
+                // Ensure parent directory exists
+                const dir = f.path.substring(0, f.path.lastIndexOf('/'));
+                if (dir) {
+                    await agent.sendCommand('exec', { command: `mkdir -p ${dir}` });
+                }
+                const res = await agent.sendCommand('write_file', { path: f.path, content: f.content });
+                if (res !== 'ok') {
+                    logger.warn('ServiceManager', `Failed to write extra file ${f.path}`);
+                } else {
+                    logger.info('ServiceManager', `Wrote extra config file: ${f.path}`);
+                }
+            }
+        }
 
         // Ensure unprivileged port binding if any port < 1024 is used
         if (this.hasPrivilegedPorts(yamlContent)) {
