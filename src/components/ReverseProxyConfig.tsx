@@ -10,6 +10,7 @@ export default function ReverseProxyConfig() {
     const [installing, setInstalling] = useState(false);
     const [status, setStatus] = useState<'installed' | 'not-installed' | 'unknown'>('unknown');
     const [nginxNode, setNginxNode] = useState<string | null>(null);
+    const [adminPort, setAdminPort] = useState<number>(8081);
     const { addToast } = useToast();
 
     useEffect(() => {
@@ -23,6 +24,7 @@ export default function ReverseProxyConfig() {
             const data = await res.json();
             setStatus(data.installed ? 'installed' : 'not-installed');
             if (data.node) setNginxNode(data.node);
+            if (data.adminPort) setAdminPort(data.adminPort);
         } catch (error) {
             logger.error('ReverseProxy', 'Check status failed', error);
             setStatus('unknown');
@@ -114,7 +116,7 @@ export default function ReverseProxyConfig() {
                                     <span className="font-medium">Ready to serve traffic</span>
                                 </div>
                                 <a
-                                    href={`${window.location.protocol}//${window.location.hostname}:8081`}
+                                    href={`${window.location.protocol}//${window.location.hostname}:${adminPort}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"

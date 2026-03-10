@@ -19,11 +19,20 @@ export async function GET() {
                 (s.description?.toLowerCase().includes('nginx') && !s.name.startsWith('install-'))
             );
             if (nginxService) {
+                // Find the admin port (highest port, typically 8081)
+                const ports = (nginxService.ports || [])
+                    .map((p: { host?: string | number }) => parseInt(String(p.host), 10))
+                    .filter((p: number) => !isNaN(p))
+                    .sort((a: number, b: number) => a - b);
+                // Admin port is neither 80 nor 443 — pick the first non-standard port
+                const adminPort = ports.find((p: number) => p !== 80 && p !== 443) || 8081;
+
                 return NextResponse.json({
                     installed: true,
                     active: nginxService.active || false,
                     name: nginxService.name,
-                    node: nodeName
+                    node: nodeName,
+                    adminPort,
                 });
             }
         }
