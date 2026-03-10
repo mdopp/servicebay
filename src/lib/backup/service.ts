@@ -389,14 +389,6 @@ export function scheduleBackup(): void {
     });
 }
 
-function cancelScheduledBackup(): void {
-    if (scheduledTimer) {
-        clearTimeout(scheduledTimer);
-        scheduledTimer = null;
-        logger.info('Backup', 'Scheduled backup cancelled');
-    }
-}
-
 export function isBackupRunning(): boolean {
     return isRunning;
 }
