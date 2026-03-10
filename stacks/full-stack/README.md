@@ -6,6 +6,8 @@ Passwort-Manager, Foto-Verwaltung, Dateifreigabe und Smart-Home.
 ## Included Services
 
 - [x] nginx-web
+- [x] lldap
+- [x] authelia
 - [x] adguard
 - [x] vaultwarden
 - [x] immich
@@ -20,6 +22,8 @@ Domain und Subdomains sind bei der Installation anpassbar.
 | Subdomain | Service | Port | WebSocket | Besonderheiten |
 |-----------|---------|------|-----------|----------------|
 | nginx.{domain} | Nginx Proxy Manager | 8081 | — | LAN-Zugriff empfohlen |
+| ldap.{domain} | LLDAP | 17170 | — | Benutzerverwaltung, LAN-Zugriff empfohlen |
+| auth.{domain} | Authelia | 9091 | Ja | SSO-Portal, OIDC-Provider |
 | vault.{domain} | Vaultwarden | 8222 | Ja | HTTP/2 deaktiviert (WS-Kompatibilität) |
 | photos.{domain} | Immich | 2283 | Ja | Unbegrenzter Upload, lange Timeouts |
 | dns.{domain} | AdGuard Home | 8083 | — | LAN-Zugriff empfohlen |
