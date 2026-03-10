@@ -71,11 +71,11 @@ spec:
   volumes:
   - name: shared-data
     hostPath:
-      path: {{DATA_DIR}}/stacks/file-share/data
+      path: {{DATA_DIR}}/file-share/data
       type: DirectoryOrCreate
   - name: syncthing-config
     hostPath:
-      path: {{DATA_DIR}}/stacks/file-share/syncthing
+      path: {{DATA_DIR}}/file-share/syncthing
       type: DirectoryOrCreate
   - name: usb-data
     hostPath:

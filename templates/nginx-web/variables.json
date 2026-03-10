@@ -28,5 +28,16 @@
       "block_exploits": true,
       "ssl_forced": true
     }
+  },
+  "SERVICEBAY_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for ServiceBay admin panel",
+    "default": "admin",
+    "proxyPort": "5888",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true
+    }
   }
 }

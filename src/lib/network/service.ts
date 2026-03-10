@@ -1405,6 +1405,10 @@ export class NetworkService {
                             if (serviceMatch) {
                                 targetId = prefix(`service-${serviceMatch.name}`);
                             }
+                            // Check if target is the proxy service itself (e.g. NPM admin UI route)
+                            if (!targetId && proxyService?.ports?.some(p => p.hostPort === targetPort)) {
+                                targetId = prefix(`service-${proxyService.name}`);
+                            }
                         }
 
                         // Fallback to Pod if no container found but we have a pod
@@ -1583,12 +1587,13 @@ export class NetworkService {
         
         if (!cId && (!cNames || cNames.length === 0)) continue;
         
-        // Robust Infra Detection
-        const isInfra = container.isInfra || 
-                        (cImage && cImage.includes('podman-pause')) || 
-                        (cNames.some((n: string) => n.includes('-infra')));
-                        
-        if (isInfra) continue; // Skip Infra containers in Graph
+        // Robust Infra/Service Container Detection
+        const isInfra = container.isInfra ||
+                        (cImage && cImage.includes('podman-pause')) ||
+                        (cNames.some((n: string) => n.endsWith('-infra') || n.endsWith('-service'))) ||
+                        (!cImage && cNames.some((n: string) => /^[0-9a-f]+-service$/.test(n)));
+
+        if (isInfra) continue; // Skip infra/service containers in Graph
 
         const containerId = prefix(cId);
         

@@ -13,6 +13,9 @@ spec:
     env:
     - name: TZ
       value: "Europe/Berlin"
+    ports:
+    - containerPort: 8123
+      hostPort: 8123
     volumeMounts:
     - mountPath: /config
       name: ha-config
@@ -32,6 +35,11 @@ spec:
       value: "{{ZWAVE_SECRET}}"
     - name: ZWAVEJS_EXTERNAL_CONFIG
       value: "/usr/src/app/store/.config-db"
+    ports:
+    - containerPort: 8091
+      hostPort: 8091
+    - containerPort: 3000
+      hostPort: 3000
     volumeMounts:
     - mountPath: /usr/src/app/store
       name: zwave-config
@@ -55,16 +63,18 @@ spec:
     securityContext:
       privileged: true
 
-  # 4. Whisper (Speech-to-Text via Wyoming protocol)
-  - name: whisper
-    image: ghcr.io/home-assistant/addon-wyoming-whisper:latest
-    env:
-    - name: TZ
-      value: "Europe/Berlin"
-    - name: WHISPER_MODEL
-      value: "{{WHISPER_MODEL}}"
-    - name: WHISPER_LANGUAGE
-      value: "{{WHISPER_LANGUAGE}}"
+  # 4. Faster Whisper (Speech-to-Text via Wyoming protocol)
+  - name: faster-whisper
+    image: docker.io/rhasspy/wyoming-whisper:latest
+    args:
+    - --model
+    - "{{WHISPER_MODEL}}"
+    - --language
+    - "{{WHISPER_LANGUAGE}}"
+    - --data-dir
+    - /data
+    - --uri
+    - tcp://0.0.0.0:10300
     ports:
     - containerPort: 10300
     volumeMounts:
@@ -73,12 +83,14 @@ spec:
 
   # 5. Piper (Text-to-Speech via Wyoming protocol)
   - name: piper
-    image: ghcr.io/home-assistant/addon-wyoming-piper:latest
-    env:
-    - name: TZ
-      value: "Europe/Berlin"
-    - name: PIPER_VOICE
-      value: "{{PIPER_VOICE}}"
+    image: docker.io/rhasspy/wyoming-piper:latest
+    args:
+    - --voice
+    - "{{PIPER_VOICE}}"
+    - --data-dir
+    - /data
+    - --uri
+    - tcp://0.0.0.0:10200
     ports:
     - containerPort: 10200
     volumeMounts:
@@ -87,10 +99,10 @@ spec:
 
   # 6. openWakeWord (Wake-word detection via Wyoming protocol)
   - name: openwakeword
-    image: ghcr.io/home-assistant/addon-wyoming-openwakeword:latest
-    env:
-    - name: TZ
-      value: "Europe/Berlin"
+    image: docker.io/rhasspy/wyoming-openwakeword:latest
+    args:
+    - --uri
+    - tcp://0.0.0.0:10400
     ports:
     - containerPort: 10400
 

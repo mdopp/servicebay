@@ -56,7 +56,7 @@ Pair devices by exchanging device IDs in the Syncthing UI, then share the defaul
 ## Data Layout
 
 ```
-{{DATA_DIR}}/stacks/file-share/
+{{DATA_DIR}}/file-share/
   data/             ← Shared files (WebDAV serves, Syncthing syncs, Samba shares)
   syncthing/        ← Syncthing config, keys, and database
 ```

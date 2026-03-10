@@ -20,7 +20,7 @@ export async function checkDomains(nginxConfig: NginxConfig, fbStatus: FritzBoxS
 
     for (const server of nginxConfig.servers) {
         for (const name of server.server_name) {
-            if (name !== 'localhost' && name !== '_' && !name.match(/^\d+\.\d+\.\d+\.\d+$/) && !name.includes('*')) {
+            if (name !== 'localhost' && name !== '_' && !name.match(/^\d+\.\d+\.\d+\.\d+$/) && !name.includes('*') && name.includes('.')) {
                 domains.add(name);
             }
         }
