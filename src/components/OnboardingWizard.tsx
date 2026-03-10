@@ -18,7 +18,7 @@ import { getNodes } from '@/app/actions/system';
 import { Template, VariableMeta } from '@/lib/registry';
 import Mustache from 'mustache';
 
-import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package } from 'lucide-react';
+import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 // Steps definition
@@ -28,6 +28,37 @@ interface StackItem {
   name: string;
   checked: boolean;
   yaml?: string;
+  alreadyInstalled?: boolean;
+}
+
+/** Fetch names of services already deployed on the target node */
+async function fetchExistingServices(node?: string): Promise<Set<string>> {
+  try {
+    const query = node ? `?node=${node}` : '';
+    const res = await fetch(`/api/services${query}`);
+    if (!res.ok) return new Set();
+    const services = await res.json();
+    return new Set(services.map((s: { name: string }) => s.name?.toLowerCase()));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Wait for NPM to become reachable, polling up to maxWait ms */
+async function waitForNpm(node: string | undefined, maxWait = 30000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    try {
+      const query = node ? `?node=${node}` : '';
+      const res = await fetch(`/api/system/nginx/status${query}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.installed && data.active) return true;
+      }
+    } catch { /* keep trying */ }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return false;
 }
 
 interface Variable {
@@ -91,6 +122,7 @@ export default function OnboardingWizard() {
   const [stackNodes, setStackNodes] = useState<{ Name: string; URI: string }[]>([]);
   const [stackSelectedNode, setStackSelectedNode] = useState('');
   const [stacksLoading, setStacksLoading] = useState(false);
+  const [stackDomain, setStackDomain] = useState('');
 
   // Track whether we're in stacks-only mode (post-install first boot)
   const [stacksOnlyMode, setStacksOnlyMode] = useState(false);
@@ -258,14 +290,23 @@ export default function OnboardingWizard() {
     setStacksLoading(true);
 
     try {
-      const readme = await fetchReadme(stack.name, 'stack', stack.source);
+      const [readme, existing] = await Promise.all([
+        fetchReadme(stack.name, 'stack', stack.source),
+        fetchExistingServices(stackSelectedNode || undefined),
+      ]);
       const lines = (readme || '').split('\n');
       const parsedItems: StackItem[] = [];
       const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)/;
       lines.forEach(line => {
         const match = line.match(regex);
         if (match) {
-          parsedItems.push({ name: match[2].trim(), checked: match[1].toLowerCase() === 'x' });
+          const name = match[2].trim();
+          const isInstalled = existing.has(name.toLowerCase());
+          parsedItems.push({
+            name,
+            checked: !isInstalled && match[1].toLowerCase() === 'x',
+            alreadyInstalled: isInstalled,
+          });
         }
       });
       setStackItems(parsedItems);
@@ -280,7 +321,7 @@ export default function OnboardingWizard() {
     setStackInstallStep('configure');
     setStacksLoading(true);
 
-    const selected = stackItems.filter(i => i.checked);
+    const selected = stackItems.filter(i => i.checked && !i.alreadyInstalled);
     const vars = new Set<string>();
     const newItems = [...stackItems];
     const allMeta: Record<string, VariableMeta> = {};
@@ -313,6 +354,8 @@ export default function OnboardingWizard() {
     setStackVariables(Array.from(vars).map(v => {
       const meta = allMeta[v];
       let value = globalSettings[v] || '';
+      // Pre-fill PUBLIC_DOMAIN from the domain prompt
+      if (v === 'PUBLIC_DOMAIN' && stackDomain) value = stackDomain;
       if (!value && meta?.default) value = meta.default;
       if (!value && meta?.type === 'secret') value = generateSecret();
       return { name: v, value, global: !!globalSettings[v], meta };
@@ -326,6 +369,11 @@ export default function OnboardingWizard() {
     const selected = stackItems.filter(i => i.checked);
 
     for (const item of selected) {
+      // Skip already-installed services
+      if (item.alreadyInstalled) {
+        setStackLogs(prev => [...prev, `\u2705 ${item.name} already installed, skipping.`]);
+        continue;
+      }
       if (!item.yaml) continue;
       setStackLogs(prev => [...prev, `Installing ${item.name}...`]);
 
@@ -355,35 +403,47 @@ export default function OnboardingWizard() {
       }
     }
 
-    // Configure proxy routes
+    // Configure proxy routes (with retry for NPM startup)
     const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
     if (domain) {
       const subdomainVars = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
       if (subdomainVars.length > 0) {
-        setStackLogs(prev => [...prev, 'Configuring reverse proxy routes...']);
-        const hosts = subdomainVars.map(sv => {
-          let port = sv.meta?.proxyPort || '';
-          const portVar = stackVariables.find(v => v.name === port);
-          if (portVar) port = portVar.value;
-          const service = sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase().replace(/^ha$/, 'home-assistant');
-          return { domain: `${sv.value}.${domain}`, forwardPort: parseInt(port, 10), service, proxyConfig: sv.meta?.proxyConfig };
-        }).filter(h => h.forwardPort);
+        setStackLogs(prev => [...prev, 'Waiting for Nginx Proxy Manager to start...']);
 
-        if (hosts.length > 0) {
-          try {
-            const res = await fetch('/api/system/nginx/proxy-hosts', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ hosts, publicDomain: domain, node: stackSelectedNode || undefined }),
-            });
-            const data = await res.json();
-            if (res.ok && data.created?.length) {
-              setStackLogs(prev => [...prev, `\u2705 Proxy routes created: ${data.created.join(', ')}`]);
-            } else if (res.status === 401) {
-              setStackLogs(prev => [...prev, `\u26a0\ufe0f NPM password changed. Configure proxy routes manually.`]);
+        const npmReady = await waitForNpm(stackSelectedNode || undefined);
+        if (!npmReady) {
+          setStackLogs(prev => [...prev, '\u26a0\ufe0f Nginx Proxy Manager not ready. Configure proxy routes manually in the NPM admin panel.']);
+        } else {
+          setStackLogs(prev => [...prev, 'Configuring reverse proxy routes...']);
+          const hosts = subdomainVars.map(sv => {
+            let port = sv.meta?.proxyPort || '';
+            const portVar = stackVariables.find(v => v.name === port);
+            if (portVar) port = portVar.value;
+            const service = sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase().replace(/^ha$/, 'home-assistant');
+            return { domain: `${sv.value}.${domain}`, forwardPort: parseInt(port, 10), service, proxyConfig: sv.meta?.proxyConfig };
+          }).filter(h => h.forwardPort);
+
+          if (hosts.length > 0) {
+            try {
+              const res = await fetch('/api/system/nginx/proxy-hosts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hosts, publicDomain: domain, node: stackSelectedNode || undefined }),
+              });
+              const data = await res.json();
+              if (res.ok && data.created?.length) {
+                setStackLogs(prev => [...prev, `\u2705 Proxy routes created: ${data.created.join(', ')}`]);
+                if (data.failed?.length) {
+                  setStackLogs(prev => [...prev, `\u26a0\ufe0f Some routes failed: ${data.failed.map((f: { domain: string }) => f.domain).join(', ')}`]);
+                }
+              } else if (res.status === 401) {
+                setStackLogs(prev => [...prev, '\u26a0\ufe0f NPM default password was already changed. Configure proxy routes manually in the NPM admin panel.']);
+              } else {
+                setStackLogs(prev => [...prev, `\u26a0\ufe0f Proxy route error: ${data.error || 'unknown'}`]);
+              }
+            } catch {
+              setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Nginx Proxy Manager.']);
             }
-          } catch {
-            setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Nginx Proxy Manager.']);
           }
         }
       }
@@ -650,20 +710,48 @@ export default function OnboardingWizard() {
                             ) : (
                                 <div className="space-y-2">
                                     {stackItems.map((item, i) => (
-                                        <label key={item.name} className="flex items-center gap-3 p-3 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors">
+                                        <label key={item.name} className={`flex items-center gap-3 p-3 border rounded transition-colors ${
+                                            item.alreadyInstalled
+                                                ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10'
+                                                : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer'
+                                        }`}>
                                             <input
                                                 type="checkbox"
                                                 checked={item.checked}
+                                                disabled={item.alreadyInstalled}
                                                 onChange={() => {
+                                                    if (item.alreadyInstalled) return;
                                                     const newItems = [...stackItems];
                                                     newItems[i].checked = !newItems[i].checked;
                                                     setStackItems(newItems);
                                                 }}
                                                 className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
                                             />
-                                            <span className="font-medium text-sm text-gray-900 dark:text-gray-200">{item.name}</span>
+                                            <span className={`font-medium text-sm ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-900 dark:text-gray-200'}`}>{item.name}</span>
+                                            {item.alreadyInstalled && (
+                                                <span className="text-xs text-green-600 dark:text-green-400 ml-auto">already installed</span>
+                                            )}
                                         </label>
                                     ))}
+                                </div>
+                            )}
+
+                            {/* Domain prompt — shown here before configure step */}
+                            {stackItems.some(i => i.checked && !i.alreadyInstalled) && (
+                                <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                                    <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">
+                                        <Globe className="w-4 h-4" /> Public Domain
+                                    </label>
+                                    <p className="text-xs text-blue-600 dark:text-blue-400 mb-2">
+                                        Your services will be accessible as subdomains of this domain (e.g. photos.yourdomain.com).
+                                    </p>
+                                    <input
+                                        type="text"
+                                        value={stackDomain}
+                                        onChange={(e) => setStackDomain(e.target.value)}
+                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                        placeholder="example.com"
+                                    />
                                 </div>
                             )}
                         </>
@@ -750,7 +838,7 @@ export default function OnboardingWizard() {
 
                     {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (
                         <div>
-                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs h-40 overflow-y-auto border border-gray-800">
+                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs h-32 overflow-y-auto border border-gray-800">
                                 {stackLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
                                 {stackInstallStep === 'installing' && (
                                     <div className="flex items-center gap-2 text-gray-400 mt-2">
@@ -758,11 +846,48 @@ export default function OnboardingWizard() {
                                     </div>
                                 )}
                             </div>
-                            {stackInstallStep === 'done' && (
-                                <p className="text-sm text-green-600 dark:text-green-400 mt-3 font-medium">
-                                    Stack installation complete. You can configure additional settings from the dashboard.
-                                </p>
-                            )}
+                            {stackInstallStep === 'done' && (() => {
+                                const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+                                const subdomains = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
+                                const hasProxyRoutes = domain && subdomains.length > 0;
+                                return (
+                                    <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                                        {hasProxyRoutes ? (
+                                            <>
+                                                <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-1.5">
+                                                    <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
+                                                    <p className="text-xs text-blue-700 dark:text-blue-300">
+                                                        Create A records pointing to your server IP:
+                                                    </p>
+                                                    <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
+                                                        {subdomains.map(sv => (
+                                                            <div key={sv.name}>{sv.value}.{domain} &rarr; {'<SERVER-IP>'}</div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-1.5">
+                                                    <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
+                                                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                                                        Open Nginx Proxy Manager and request Let&apos;s Encrypt SSL certificates for each proxy host.
+                                                    </p>
+                                                </div>
+
+                                                <div className="p-2.5 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-1.5">
+                                                    <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (recommended)</p>
+                                                    <p className="text-xs text-gray-600 dark:text-gray-400">
+                                                        In NPM, add IP-based access lists for admin services (Nginx Admin, AdGuard) to restrict LAN-only access.
+                                                    </p>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                                                Stack installation complete.
+                                            </p>
+                                        )}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     )}
                 </div>
