@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.24.0...servicebay-v0.25.0) (2026-03-11)
+
+
+### Features
+
+* replace podman pull CLI with Podman REST API for streaming progress ([dbdbbda](https://github.com/mdopp/servicebay/commit/dbdbbda15ca1cf7733ca395a1ab7f2634316ba6f))
+* streaming image pull progress via Podman REST API ([4791d29](https://github.com/mdopp/servicebay/commit/4791d2921e7a8716c6b02bc9ea09e37450f44189))
+
 ## [0.24.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.23.0...servicebay-v0.24.0) (2026-03-10)
 
 
