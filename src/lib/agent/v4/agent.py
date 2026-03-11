@@ -13,8 +13,22 @@ import struct
 import select
 import tempfile
 import re
+import http.client
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional, Any, Tuple, Callable
+
+
+class UnixHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection over a Unix domain socket (for Podman API)."""
+    def __init__(self, socket_path, timeout=300):
+        super().__init__('localhost', timeout=timeout)
+        self._socket_path = socket_path
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._socket_path)
+        self.sock = sock
 
 try:
     import psutil
@@ -1817,6 +1831,67 @@ class Agent:
                 with self.lock:
                     self.monitoring_enabled = False
                 reply(result='ok')
+            elif cmd == 'pull_image':
+                image = payload.get('image')
+                pull_id = payload.get('pull_id', '')
+                if not image:
+                    reply(error="Missing image")
+                else:
+                    def _do_pull(img, pid, reply_fn):
+                        try:
+                            uid = os.getuid()
+                            sock_path = f"/run/user/{uid}/podman/podman.sock"
+                            conn = UnixHTTPConnection(sock_path)
+                            from urllib.parse import quote
+                            ref = quote(img, safe='')
+                            conn.request('POST', f'/v5.0.0/images/pull?reference={ref}')
+                            resp = conn.getresponse()
+                            if resp.status != 200:
+                                body = resp.read().decode('utf-8', errors='replace')
+                                reply_fn(error=f"Podman API error {resp.status}: {body[:500]}")
+                                return
+                            last_push = 0
+                            throttle_ms = 250
+                            buf = b''
+                            while True:
+                                chunk = resp.read(4096)
+                                if not chunk:
+                                    break
+                                buf += chunk
+                                while b'\n' in buf:
+                                    line, buf = buf.split(b'\n', 1)
+                                    line = line.strip()
+                                    if not line:
+                                        continue
+                                    try:
+                                        obj = json.loads(line)
+                                    except json.JSONDecodeError:
+                                        continue
+                                    if 'error' in obj and obj['error']:
+                                        reply_fn(error=obj['error'])
+                                        return
+                                    now = time.time() * 1000
+                                    if now - last_push >= throttle_ms:
+                                        progress = {
+                                            'pull_id': pid,
+                                            'image': img,
+                                            'id': obj.get('id', ''),
+                                            'status': obj.get('status', ''),
+                                            'stream': obj.get('stream', ''),
+                                        }
+                                        detail = obj.get('progressDetail') or {}
+                                        if detail.get('current') is not None:
+                                            progress['current'] = detail['current']
+                                        if detail.get('total') is not None:
+                                            progress['total'] = detail['total']
+                                        self.push_state('PULL_PROGRESS', progress)
+                                        last_push = now
+                            conn.close()
+                            reply_fn(result={'success': True, 'image': img})
+                        except Exception as e:
+                            reply_fn(error=str(e))
+                    t = threading.Thread(target=_do_pull, args=(image, pull_id, reply), daemon=True)
+                    t.start()
             else:
                 reply(error=f"Unknown command: {cmd}")
         except Exception as e:

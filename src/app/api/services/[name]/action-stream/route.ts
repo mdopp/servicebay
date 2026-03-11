@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getExecutor } from '@/lib/executor';
 import { listNodes } from '@/lib/nodes';
 import { ServiceManager } from '@/lib/services/ServiceManager';
+import { agentManager } from '@/lib/agent/manager';
 import yaml from 'js-yaml';
 
 export const dynamic = 'force-dynamic';
@@ -74,27 +75,25 @@ export async function POST(
 
             if (images.size > 0) {
                 await write(`Found ${images.size} images to pull...`);
+                const agent = await agentManager.ensureAgent(streamNodeName);
                 for (const image of images) {
                     await write(`Pulling ${image}...`);
                     try {
-                        const { stdout, stderr, promise } = executor.spawn(`podman pull ${image}`, { pty: true, cols: 120 });
-                        
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const streamToWriter = async (stream: any) => {
-                            for await (const chunk of stream) {
-                                await writeRaw(chunk.toString());
+                        await agent.pullImage(image, async (evt) => {
+                            if (evt.id && evt.status) {
+                                if (evt.total && evt.current !== undefined) {
+                                    const currentMB = (evt.current / 1048576).toFixed(1);
+                                    const totalMB = (evt.total / 1048576).toFixed(1);
+                                    const pct = Math.round(evt.current / evt.total * 100);
+                                    await write(`  Layer ${evt.id.slice(0, 12)}: ${evt.status} ${currentMB} MB / ${totalMB} MB (${pct}%)`);
+                                } else {
+                                    await write(`  Layer ${evt.id.slice(0, 12)}: ${evt.status}`);
+                                }
                             }
-                        };
-
-                        await Promise.all([
-                            streamToWriter(stdout),
-                            streamToWriter(stderr),
-                            promise
-                        ]);
-                        
-                        await write(`\r\n✓ Successfully pulled ${image}`);
+                        });
+                        await write(`✓ Successfully pulled ${image}`);
                     } catch (e) {
-                        await write(`\r\n✗ Failed to pull ${image}: ${e instanceof Error ? e.message : String(e)}`);
+                        await write(`✗ Failed to pull ${image}: ${e instanceof Error ? e.message : String(e)}`);
                     }
                 }
             } else {
