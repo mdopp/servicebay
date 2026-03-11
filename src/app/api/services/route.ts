@@ -297,6 +297,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
+  // Streaming mode: return progress events as they happen
+  if (searchParams.get('stream') === '1') {
+    const encoder = new TextEncoder();
+    const stream = new TransformStream();
+    const writer = stream.writable.getWriter();
+
+    (async () => {
+      try {
+        await ServiceManager.deployKubeService(targetNode, name, kubeContent, yamlContent, yamlFileName, extraFiles, (message) => {
+          writer.write(encoder.encode(JSON.stringify({ type: 'progress', message }) + '\n')).catch(() => {});
+        });
+        await writer.write(encoder.encode(JSON.stringify({ type: 'complete', success: true }) + '\n'));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await writer.write(encoder.encode(JSON.stringify({ type: 'error', message: msg }) + '\n'));
+      } finally {
+        await writer.close();
+      }
+    })();
+
+    return new Response(stream.readable, {
+      headers: {
+        'Content-Type': 'application/x-ndjson',
+        'Transfer-Encoding': 'chunked',
+      },
+    });
+  }
+
   await ServiceManager.deployKubeService(targetNode, name, kubeContent, yamlContent, yamlFileName, extraFiles);
   return NextResponse.json({ success: true });
 }

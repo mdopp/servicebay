@@ -56,6 +56,16 @@ export interface AgentEvent {
   payload: any;
 }
 
+export interface PullProgressEvent {
+  pull_id: string;
+  image: string;
+  id: string;         // layer id
+  status: string;     // "Downloading" | "Extracting" | "Pull complete" | etc.
+  stream?: string;
+  current?: number;
+  total?: number;
+}
+
 export interface AgentHealth {
   nodeName: string;
   isConnected: boolean;
@@ -419,6 +429,30 @@ export class AgentHandler extends EventEmitter {
         }
     });
   }
+
+    public async pullImage(image: string, onProgress?: (event: PullProgressEvent) => void): Promise<{ success: boolean }> {
+      const pullId = `pull-${Date.now().toString(36)}-${Math.random().toString(36).slice(-4)}`;
+
+      // Register temporary listener for PULL_PROGRESS events
+      const handler = onProgress ? (payload: PullProgressEvent) => {
+        if (payload?.pull_id === pullId) {
+          onProgress(payload);
+        }
+      } : undefined;
+
+      if (handler) {
+        this.on('PULL_PROGRESS', handler);
+      }
+
+      try {
+        const result = await this.sendCommand('pull_image', { image, pull_id: pullId }, { timeoutMs: 300_000 });
+        return result as { success: boolean };
+      } finally {
+        if (handler) {
+          this.off('PULL_PROGRESS', handler);
+        }
+      }
+    }
 
     public async restart(reason: string = 'manual', timeoutMs: number = 30000): Promise<void> {
       const sessionId = this.getSessionId();

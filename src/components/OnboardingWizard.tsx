@@ -480,7 +480,7 @@ export default function OnboardingWizard() {
       Mustache.escape = savedEscape;
 
       try {
-        const query = stackSelectedNode ? `?node=${stackSelectedNode}` : '';
+        const query = stackSelectedNode ? `?node=${stackSelectedNode}&stream=1` : '?stream=1';
         const res = await fetch(`/api/services${query}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -490,6 +490,45 @@ export default function OnboardingWizard() {
           const err = await res.json();
           throw new Error(err.error || 'Unknown error');
         }
+
+        // Read streaming progress
+        const reader = res.body?.getReader();
+        if (reader) {
+          const decoder = new TextDecoder();
+          let buf = '';
+          let lastProgressLine = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop() || '';
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const evt = JSON.parse(line);
+                if (evt.type === 'progress') {
+                  // Update last progress line in-place to avoid log spam
+                  if (lastProgressLine) {
+                    setStackLogs(prev => {
+                      const next = [...prev];
+                      next[next.length - 1] = evt.message;
+                      return next;
+                    });
+                  } else {
+                    setStackLogs(prev => [...prev, evt.message]);
+                  }
+                  lastProgressLine = evt.message;
+                } else if (evt.type === 'error') {
+                  throw new Error(evt.message);
+                }
+              } catch (parseErr) {
+                if (parseErr instanceof Error && parseErr.message !== line.trim()) throw parseErr;
+              }
+            }
+          }
+        }
+
         setStackLogs(prev => [...prev, `\u2705 ${item.name} installed successfully.`]);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

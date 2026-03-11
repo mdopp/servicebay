@@ -511,7 +511,7 @@ export class ServiceManager {
         }
     }
 
-    static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string, extraFiles?: { path: string; content: string }[]) {
+    static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string, extraFiles?: { path: string; content: string }[], onProgress?: (message: string) => void) {
         // Ensure TimeoutStartSec for multi-image pods so image pulls don't cause systemd timeout
         const images = this.extractImages(yamlContent);
         if (images.length > 1 && !kubeContent.includes('TimeoutStartSec')) {
@@ -548,7 +548,18 @@ export class ServiceManager {
         await this.reloadDaemon(nodeName);
 
         // Pre-pull all images before starting to avoid systemd timeout
-        await this.prePullImages(nodeName, images);
+        await this.prePullImages(nodeName, images, onProgress ? (image, idx, total, evt) => {
+            if (evt.id && evt.status) {
+                if (evt.total && evt.current !== undefined) {
+                    const pct = Math.round(evt.current / evt.total * 100);
+                    const currentMB = (evt.current / 1048576).toFixed(1);
+                    const totalMB = (evt.total / 1048576).toFixed(1);
+                    onProgress(`Pulling image ${idx + 1}/${total}: ${image} — ${evt.id.slice(0, 12)}: ${evt.status} ${currentMB} MB / ${totalMB} MB (${pct}%)`);
+                } else {
+                    onProgress(`Pulling image ${idx + 1}/${total}: ${image} — ${evt.id.slice(0, 12)}: ${evt.status}`);
+                }
+            }
+        } : undefined);
 
         // Fix volume ownership for containers running as non-root UIDs
         await this.fixVolumeOwnership(nodeName, yamlContent);
@@ -623,12 +634,17 @@ export class ServiceManager {
     }
 
     /** Pre-pull container images so systemd start doesn't timeout */
-    private static async prePullImages(nodeName: string, images: string[]) {
+    static async prePullImages(
+        nodeName: string,
+        images: string[],
+        onProgress?: (image: string, imageIndex: number, total: number, event: import('../agent/handler').PullProgressEvent) => void
+    ) {
         const agent = await agentManager.ensureAgent(nodeName);
-        for (const image of images) {
+        for (let i = 0; i < images.length; i++) {
+            const image = images[i];
             try {
                 logger.info('ServiceManager', `Pre-pulling image: ${image}`);
-                await agent.sendCommand('exec', { command: `podman pull ${image}`, timeout: 300 });
+                await agent.pullImage(image, onProgress ? (evt) => onProgress(image, i, images.length, evt) : undefined);
             } catch (e) {
                 logger.warn('ServiceManager', `Failed to pre-pull ${image} (will retry on start):`, e);
             }
@@ -1026,7 +1042,12 @@ export class ServiceManager {
                 for (const image of images) {
                     logs.push(`Pulling image: ${image}`);
                     try {
-                        await agent.sendCommand('exec', { command: `podman pull ${image}`, timeout: 300 });
+                        await agent.pullImage(image, (evt) => {
+                            if (evt.status && evt.id) {
+                                const pct = evt.total ? ` ${Math.round((evt.current || 0) / evt.total * 100)}%` : '';
+                                logs.push(`  ${evt.id}: ${evt.status}${pct}`);
+                            }
+                        });
                         logs.push(`Successfully pulled ${image}`);
                     } catch (e) {
                         const msg = e instanceof Error ? e.message : String(e);
