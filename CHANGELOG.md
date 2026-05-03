@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.25.0...servicebay-v1.0.0) (2026-05-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* monitoring HTTP checks now refuse private/loopback/ link-local addresses by default. Set MONITORING_ALLOW_INTERNAL=1 to re-enable home-lab targets (localhost, 192.168.x.x, etc.). Monitoring check targets and identifiers (container, service, host) are now rejected if they contain shell metacharacters; checks created with malformed targets stop running until edited.
+* AUTH_SECRET environment variable is now required (>= 32 characters). Server refuses to start without it. Plaintext config.auth.password is replaced by config.auth.passwordHash; existing deployments must reset the admin password on first login or set SERVICEBAY_PASSWORD for one-time bootstrap.
+
+### Features
+
+* enforce auth on all API and Socket.IO surfaces ([ac36f2d](https://github.com/mdopp/servicebay/commit/ac36f2d5c1ca3187d9ed367229b37669d9c0dacc))
+* graceful shutdown and atomic state writes ([007e149](https://github.com/mdopp/servicebay/commit/007e149e7c06aca334ef01ed269e23373bb59230))
+* graceful shutdown and atomic state writes ([c9f138c](https://github.com/mdopp/servicebay/commit/c9f138c6a38fdadd95005b2de39ffc7b48f45b43))
+* validate API and agent inputs with zod ([a942f4e](https://github.com/mdopp/servicebay/commit/a942f4e295f18e82f0f94bcfbc9f2a884aea5d8f))
+
+
+### Bug Fixes
+
+* move middleware.ts into src/ so Next picks it up ([60f4849](https://github.com/mdopp/servicebay/commit/60f48490846bc690daef75be10f29093dc197815))
+* split auth helpers so server.ts doesn't pull in next/headers ([1aa9496](https://github.com/mdopp/servicebay/commit/1aa9496abb9faf014cf0ef7dd9a3a2e55f671948))
+
 ## [0.25.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.24.0...servicebay-v0.25.0) (2026-03-11)
 
 
