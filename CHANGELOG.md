@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v1.0.0...servicebay-v2.0.0) (2026-05-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* split settings page into URL-routed tabs
+
+### Features
+
+* frontend usability hardening pass ([630bb1c](https://github.com/mdopp/servicebay/commit/630bb1cbee8cca5c0fa36395b5fff73e9cef26f4))
+* frontend usability hardening pass ([6b55413](https://github.com/mdopp/servicebay/commit/6b55413dec5288a9cfc3036937c0cf295b1b7cc7))
+
+
+### Code Refactoring
+
+* split settings page into URL-routed tabs ([68af1bf](https://github.com/mdopp/servicebay/commit/68af1bfecbd38151fda461aa2dd0f415218539e2))
+
 ## [1.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v0.25.0...servicebay-v1.0.0) (2026-05-03)
 
 
