@@ -160,6 +160,27 @@ export class SSHConnectionPool {
     }
   }
 
+  /**
+   * Close all live connections. Each client is asked to `.end()` (graceful
+   * close); after a short grace period any still-attached client is
+   * `.destroy()`'d to release the socket. Safe to call once during shutdown.
+   */
+  public async shutdown(graceMs = 2000): Promise<void> {
+    const wrappers = Array.from(this.clients.values());
+    this.clients.clear();
+    this.pendingConnections.clear();
+    if (wrappers.length === 0) return;
+
+    logger.info('SSH', `Shutting down ${wrappers.length} pooled connection(s)`);
+    for (const w of wrappers) {
+      try { w.client.end(); } catch { /* ignore */ }
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, graceMs));
+    for (const w of wrappers) {
+      try { w.client.destroy(); } catch { /* ignore */ }
+    }
+  }
+
   private async parseConnectionConfig(node: PodmanConnection) {
     const uri = new URL(node.URI);
     // URI format: ssh://user@host:port/path (path is ignored for connection)

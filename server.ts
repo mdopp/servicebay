@@ -24,6 +24,12 @@ import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { TerminalSessionManager } from './src/lib/terminal/sessionManager';
 import { ResourceBroadcast } from './src/lib/monitoring/resourceBroadcast';
+import { CharRingBuffer } from './src/lib/util/ringBuffer';
+import { SSHConnectionPool } from './src/lib/ssh/pool';
+import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './src/lib/auth/session';
+
+// Fail-fast at startup so misconfigured deploys don't appear to work.
+assertAuthSecret();
 
 // Helper: collect request body as parsed JSON
 function collectBody(req: import('http').IncomingMessage): Promise<unknown> {
@@ -69,6 +75,8 @@ logger.info('Server', `Session ID: ${sessionId}`);
 
 // Terminal sessions and resource broadcast moved into dedicated modules
 // (src/lib/terminal/sessionManager.ts, src/lib/monitoring/resourceBroadcast.ts).
+// CharRingBuffer is wired in below via TerminalSessionManager's createHistory
+// option to keep PR 3's bounded scrollback behavior.
 
 // Ensure configuration is encrypted on startup (migration)
 // and apply initial configuration
@@ -152,6 +160,18 @@ app.prepare().then(() => {
           return;
         }
 
+        // Auth: MCP lives outside /api/* so the Next middleware doesn't see it.
+        const session = await getSessionFromCookieHeader(req.headers.cookie);
+        if (!session) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32001, message: 'Unauthorized' },
+            id: null,
+          }));
+          return;
+        }
+
         // Stateless: create a fresh server + transport per request
         const mcpServer = createMcpServer();
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -174,6 +194,18 @@ app.prepare().then(() => {
   });
 
   const io = new Server(server);
+
+  // Socket.IO auth: every connection must carry a valid session cookie.
+  io.use(async (socket, next) => {
+    const session = await getSessionFromCookieHeader(socket.handshake.headers.cookie);
+    if (!session) {
+      logger.warn('Server', `Rejected unauthenticated socket from ${socket.handshake.address}`);
+      return next(new Error('unauthorized'));
+    }
+    (socket.data as { user?: SessionPayload }).user = session;
+    next();
+  });
+
   const twinStore = DigitalTwinStore.getInstance();
 
   // Load serverName from config into twin store
@@ -192,8 +224,14 @@ app.prepare().then(() => {
   const resourceBroadcast = new ResourceBroadcast();
   resourceBroadcast.attach(io);
 
-  // Terminal session manager (moved into TerminalSessionManager).
-  const terminalManager = new TerminalSessionManager({ io });
+  // Terminal session manager (moved into TerminalSessionManager). Plug in the
+  // bounded CharRingBuffer from PR 3 — caps each PTY's scrollback at 50KB
+  // with newline-aligned truncation, replacing the substring-shift fallback.
+  const terminalManager = new TerminalSessionManager({
+    io,
+    historyBytes: 50_000,
+    createHistory: (bytes) => new CharRingBuffer(bytes),
+  });
   terminalManager.start();
 
   // Track active clients for monitoring optimization
@@ -340,6 +378,43 @@ app.prepare().then(() => {
       updateMonitoringState();
     });
   });
+
+  // ─── Graceful shutdown ─────────────────────────────────────────────
+  // PTY sweep + session cleanup live inside TerminalSessionManager; we just
+  // ask the manager to stop, then drain everything else.
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info('Server', `Received ${signal}, starting graceful shutdown`);
+
+      const finish = setTimeout(() => {
+          logger.error('Server', 'Graceful shutdown timeout, forcing exit');
+          process.exit(1);
+      }, 10_000);
+      finish.unref();
+
+      try {
+          terminalManager.stop();
+          io.close();
+          await SSHConnectionPool.getInstance().shutdown(2000);
+          await new Promise<void>(resolve => server.close(() => resolve()));
+          logger.info('Server', 'Shutdown complete');
+          process.exit(0);
+      } catch (e) {
+          logger.error('Server', 'Error during shutdown', e);
+          process.exit(1);
+      }
+  };
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
+  process.on('uncaughtException', (err) => {
+      logger.error('Server', 'uncaughtException', err);
+  });
+  process.on('unhandledRejection', (reason) => {
+      logger.error('Server', 'unhandledRejection', reason);
+  });
+
 
   server.listen(port, async () => {
     logger.info('Server', `> Ready on http://${hostname}:${port}`);

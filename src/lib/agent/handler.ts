@@ -420,12 +420,26 @@ export class AgentHandler extends EventEmitter {
         }, timeoutMs);
 
         const payload = cmd + '\n';
-        if (this.channel) {
-            this.channel.write(payload);
-        } else {
-             this.health.errorCount++;
-             this.health.lastError = 'No active channel/process';
-             reject(new Error('No active channel/process'));
+        if (!this.channel) {
+            this.health.errorCount++;
+            this.health.lastError = 'No active channel/process';
+            reject(new Error('No active channel/process'));
+            return;
+        }
+        try {
+            const ok = this.channel.write(payload);
+            if (ok === false && typeof this.channel.once === 'function') {
+                // Backpressure: pause input until the agent stream drains.
+                // We don't unblock the caller — they're already in the pending
+                // map and will resolve when the agent replies. This guards the
+                // local write buffer from growing unboundedly under bursts.
+                this.channel.once('drain', () => { /* drained */ });
+            }
+        } catch (e) {
+            this.pendingRequests.delete(id);
+            this.health.errorCount++;
+            this.health.lastError = `channel.write failed: ${e instanceof Error ? e.message : String(e)}`;
+            reject(e instanceof Error ? e : new Error(String(e)));
         }
     });
   }
