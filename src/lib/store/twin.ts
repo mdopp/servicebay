@@ -6,6 +6,7 @@ import type { AgentHealth } from '../agent/handler';
 import type { ServiceBundle } from '../unmanaged/bundleShared';
 import { sanitizeBundleName } from '../unmanaged/bundleShared';
 import { buildServiceBundlesForNode } from '../unmanaged/bundleBuilder';
+import { NodeTwinUpdateSchema } from './schema';
 
 const normalizeNameToken = (value?: string | null): string | null => {
     if (!value) return null;
@@ -152,32 +153,17 @@ export class DigitalTwinStore {
       this.registerNode(nodeId);
     }
 
-    // Validation
-    if (data.containers !== undefined && !Array.isArray(data.containers)) {
-        logger.error('TwinStore', `Invalid containers update for ${nodeId} (expected Array):`, typeof data.containers);
-        delete data.containers;
-    }
-    if (data.services !== undefined && !Array.isArray(data.services)) {
-        logger.error('TwinStore', `Invalid services update for ${nodeId} (expected Array):`, typeof data.services);
-        delete data.services;
-    }
-    if (data.volumes !== undefined && !Array.isArray(data.volumes)) {
-        logger.error('TwinStore', `Invalid volumes update for ${nodeId} (expected Array):`, typeof data.volumes);
-        delete data.volumes;
-    }
-    if (data.proxy !== undefined && !Array.isArray(data.proxy)) {
-         logger.error('TwinStore', `Invalid proxy update for ${nodeId} (expected Array):`, typeof data.proxy);
-         delete data.proxy;
-    }
-    if (data.history !== undefined && !Array.isArray(data.history)) {
-        logger.error('TwinStore', `Invalid history update for ${nodeId} (expected Array):`, typeof data.history);
-        delete data.history;
-    }
-
-    // Files is a Record (Object)
-    if (data.files !== undefined && (typeof data.files !== 'object' || data.files === null || Array.isArray(data.files))) {
-         logger.error('TwinStore', `Invalid files update for ${nodeId} (expected Object):`, typeof data.files);
-         delete data.files;
+    // Single validated entry point: top-level shape (array vs object) is enforced
+    // here, not deep contents — the agent shapes inner objects before pushing.
+    // Invalid keys are dropped rather than throwing so a single bad field can't
+    // crash the store under fuzzed input.
+    const parsed = NodeTwinUpdateSchema.safeParse(data);
+    if (!parsed.success) {
+      const flat = parsed.error.flatten().fieldErrors;
+      for (const key of Object.keys(flat)) {
+        logger.error('TwinStore', `Invalid ${key} update for ${nodeId}:`, flat[key]);
+        delete (data as Record<string, unknown>)[key];
+      }
     }
 
     // Normalization: Ensure ports are PortMapping objects

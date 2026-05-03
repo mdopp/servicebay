@@ -58,6 +58,7 @@ describe('NodesManager', () => {
         
         vi.mocked(getExecutor).mockReturnValue({
             exec: mockExec,
+            execArgv: vi.fn().mockResolvedValue({ stdout: 'ok', stderr: '' }),
             spawn: vi.fn(), // Add missing spawn mock
             readFile: vi.fn(),
             writeFile: vi.fn(),

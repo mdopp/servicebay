@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import { CheckConfig } from '@/lib/monitoring/types';
 import { v4 as uuidv4 } from 'uuid';
+import { withApiHandler } from '@/lib/api/handler';
+import { MonitoringCheckTarget, NodeName } from '@/lib/api/schemas';
 
 export async function GET() {
   const checks = MonitoringStore.getChecks();
@@ -9,7 +12,7 @@ export async function GET() {
   const enrichedChecks = checks.map(check => {
     const results = MonitoringStore.getResults(check.id);
     const lastResult = results[0];
-    
+
     // Get last 20 results for sparkline/heartbeat
     const history = results.slice(0, 20).map(r => ({
         status: r.status,
@@ -28,38 +31,42 @@ export async function GET() {
   return NextResponse.json(enrichedChecks);
 }
 
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    
-    // If ID is provided, it's an update (or we are respecting the ID)
-    // Otherwise generate a new one
-    const check: CheckConfig = {
-      id: body.id || uuidv4(),
-      created_at: body.created_at || new Date().toISOString(),
-      enabled: body.enabled !== undefined ? body.enabled : true,
-      name: body.name,
-      type: body.type,
-      target: body.target,
-      interval: body.interval || 60,
-      httpConfig: body.httpConfig
-    };
-    
-    MonitoringStore.saveCheck(check);
-    return NextResponse.json(check);
-  } catch {
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
-  }
-}
+const CheckPostBody = z.object({
+  id: z.string().min(1).max(64).optional(),
+  created_at: z.string().optional(),
+  enabled: z.boolean().optional(),
+  name: z.string().min(1).max(255),
+  type: z.enum(['http', 'ping', 'script', 'podman', 'service', 'systemd', 'node', 'agent', 'fritzbox', 'backup']),
+  target: MonitoringCheckTarget,
+  interval: z.number().int().min(5).max(86400).optional(),
+  nodeName: NodeName.optional(),
+  httpConfig: z.object({
+    expectedStatus: z.number().int().min(100).max(599).optional(),
+    bodyMatch: z.string().optional(),
+    bodyMatchType: z.enum(['contains', 'regex']).optional(),
+  }).optional(),
+});
 
-export async function DELETE(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id');
-  
-  if (!id) {
-    return NextResponse.json({ error: 'ID required' }, { status: 400 });
-  }
+export const POST = withApiHandler({ body: CheckPostBody }, async ({ body }) => {
+  const check: CheckConfig = {
+    id: body.id || uuidv4(),
+    created_at: body.created_at || new Date().toISOString(),
+    enabled: body.enabled !== undefined ? body.enabled : true,
+    name: body.name,
+    type: body.type,
+    target: body.target,
+    interval: body.interval || 60,
+    nodeName: body.nodeName,
+    httpConfig: body.httpConfig,
+  };
 
-  MonitoringStore.deleteCheck(id);
-  return NextResponse.json({ success: true });
-}
+  MonitoringStore.saveCheck(check);
+  return check;
+});
+
+const CheckDeleteQuery = z.object({ id: z.string().min(1).max(64) });
+
+export const DELETE = withApiHandler({ query: CheckDeleteQuery }, async ({ query }) => {
+  MonitoringStore.deleteCheck(query.id);
+  return { success: true };
+});

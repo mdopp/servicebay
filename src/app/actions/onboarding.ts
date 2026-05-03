@@ -67,7 +67,7 @@ export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
         updates: config.autoUpdate.enabled,
         registries: config.registries?.enabled ?? false,
         email: config.notifications?.email?.enabled ?? false,
-        auth: !!config.auth?.password
+        auth: !!config.auth?.passwordHash
     }
   };
 }

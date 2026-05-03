@@ -5,26 +5,29 @@ import { CheckConfig } from '../../src/lib/monitoring/types';
 
 // Mock dependencies
 vi.mock('../../src/lib/monitoring/store');
-vi.mock('../../src/lib/executor', () => ({
-    getExecutor: vi.fn(() => ({
-        exec: vi.fn((cmd: string) => {
-            if (cmd.includes('failhost')) {
-                throw new Error('ping: failhost: Name or service not known');
-            }
-            if (cmd.startsWith('ping')) {
-                return { stdout: '1 packets transmitted, 1 received', stderr: '' };
-            }
-            if (cmd.includes('inspect') && cmd.includes('format')) {
-                return { stdout: 'running|healthy', stderr: '' };
-            }
-            // Script checks
-            if (cmd.includes('success_cmd')) {
-                return { stdout: 'ok', stderr: '' };
-            }
-            throw new Error(`Command failed: ${cmd}`);
-        }),
-    })),
-}));
+vi.mock('../../src/lib/executor', () => {
+    const dispatch = (cmd: string) => {
+        if (cmd.includes('failhost')) {
+            throw new Error('ping: failhost: Name or service not known');
+        }
+        if (cmd.startsWith('ping')) {
+            return { stdout: '1 packets transmitted, 1 received', stderr: '' };
+        }
+        if (cmd.includes('inspect') && cmd.includes('format')) {
+            return { stdout: 'running|healthy', stderr: '' };
+        }
+        if (cmd.includes('success_cmd')) {
+            return { stdout: 'ok', stderr: '' };
+        }
+        throw new Error(`Command failed: ${cmd}`);
+    };
+    return {
+        getExecutor: vi.fn(() => ({
+            exec: vi.fn((cmd: string) => dispatch(cmd)),
+            execArgv: vi.fn((argv: string[]) => dispatch(argv.join(' '))),
+        })),
+    };
+});
 vi.mock('../../src/lib/nodes');
 
 // Mock child_process for Ping check

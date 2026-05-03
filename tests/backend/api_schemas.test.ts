@@ -1,0 +1,78 @@
+import { describe, it, expect } from 'vitest';
+import {
+  ContainerId,
+  ServiceName,
+  NodeName,
+  HostString,
+  MonitoringCheckTarget,
+  BackupFileName,
+} from '../../src/lib/api/schemas';
+
+describe('ContainerId', () => {
+  it('accepts well-formed names', () => {
+    expect(ContainerId.safeParse('nginx').success).toBe(true);
+    expect(ContainerId.safeParse('a1.b2_c-3').success).toBe(true);
+    expect(ContainerId.safeParse('1234567890abcdef').success).toBe(true);
+  });
+  it('rejects shell metacharacters', () => {
+    for (const bad of ['nginx;rm', '`whoami`', '$(echo)', 'a b', 'a/b', 'a"b', "a'b"]) {
+      expect(ContainerId.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+});
+
+describe('ServiceName', () => {
+  it('accepts unit names', () => {
+    expect(ServiceName.safeParse('podman.service').success).toBe(true);
+    expect(ServiceName.safeParse('user@1000.service').success).toBe(true);
+  });
+  it('rejects slashes and metacharacters', () => {
+    expect(ServiceName.safeParse('foo;bar').success).toBe(false);
+    expect(ServiceName.safeParse('foo bar').success).toBe(false);
+  });
+});
+
+describe('NodeName', () => {
+  it('alnum and dashes only', () => {
+    expect(NodeName.safeParse('Local').success).toBe(true);
+    expect(NodeName.safeParse('node-01').success).toBe(true);
+    expect(NodeName.safeParse('node 01').success).toBe(false);
+    expect(NodeName.safeParse('').success).toBe(false);
+  });
+});
+
+describe('HostString', () => {
+  it('accepts hostnames and IPs', () => {
+    expect(HostString.safeParse('1.1.1.1').success).toBe(true);
+    expect(HostString.safeParse('example.com').success).toBe(true);
+    expect(HostString.safeParse('[::1]').success).toBe(true);
+  });
+  it('rejects shell metacharacters', () => {
+    for (const bad of ['1.1.1.1; rm /tmp', '$(whoami)', '`id`', 'host with space']) {
+      expect(HostString.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+});
+
+describe('MonitoringCheckTarget', () => {
+  it('accepts URLs and plain strings', () => {
+    expect(MonitoringCheckTarget.safeParse('https://example.com/health').success).toBe(true);
+    expect(MonitoringCheckTarget.safeParse('podman-name').success).toBe(true);
+  });
+  it('rejects shell metacharacters', () => {
+    for (const bad of ['x; ls', 'a $(b)', '`cat /etc/passwd`', 'a|b', 'a&b', 'a\nb']) {
+      expect(MonitoringCheckTarget.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+});
+
+describe('BackupFileName', () => {
+  it('accepts plain filenames', () => {
+    expect(BackupFileName.safeParse('backup-2026-05-03.tar.gz').success).toBe(true);
+  });
+  it('rejects path traversal and separators', () => {
+    for (const bad of ['../etc/passwd', 'a/b', 'a\\b', '..', '.hidden']) {
+      expect(BackupFileName.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+});

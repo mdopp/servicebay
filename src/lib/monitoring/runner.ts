@@ -5,6 +5,8 @@ import { getExecutor, Executor } from '../executor';
 import { listNodes, verifyNodeConnection } from '../nodes';
 import { agentManager } from '../agent/manager';
 import { getConfig } from '../config';
+import { assertHttpTargetAllowed } from './ssrfGuard';
+import { ContainerId, ServiceName, HostString } from '../api/schemas';
 
 export class CheckRunner {
   static async run(check: CheckConfig): Promise<CheckResult> {
@@ -84,9 +86,10 @@ export class CheckRunner {
   }
 
   private static async runHttpCheck(check: CheckConfig) {
+    await assertHttpTargetAllowed(check.target);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-    
+
     try {
       const res = await fetch(check.target, { signal: controller.signal });
       
@@ -125,41 +128,45 @@ export class CheckRunner {
   }
 
   private static async runPingCheck(host: string, executor: Executor) {
+    const validatedHost = HostString.parse(host);
     try {
-      const { stdout } = await executor.exec(`ping -c 1 -W 2 ${host}`);
+      const { stdout } = await executor.execArgv(['ping', '-c', '1', '-W', '2', validatedHost]);
       if (!stdout.includes('1 received')) {
         throw new Error('Ping failed: no reply');
       }
     } catch (e) {
-      throw new Error(`Ping ${host} failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw new Error(`Ping ${validatedHost} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   private static async runPodmanCheck(containerName: string, executor: Executor) {
+    const validated = ContainerId.parse(containerName);
     try {
-        const { stdout } = await executor.exec(`podman inspect ${containerName} --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'`);
+        const { stdout } = await executor.execArgv([
+            'podman', 'inspect', validated,
+            '--format', '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}',
+        ]);
         const [status, health] = stdout.trim().split('|');
-        
+
         if (status !== 'running') {
             throw new Error(`Container is ${status}`);
         }
-        
+
         if (health !== 'none' && health !== 'healthy') {
             throw new Error(`Container health is ${health}`);
         }
     } catch (e) {
         // If the container is not found, podman inspect returns exit code 125 or 1
-        throw new Error(`Container ${containerName} check failed: ${e instanceof Error ? e.message : String(e)}`);
+        throw new Error(`Container ${validated} check failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   private static async runServiceCheck(serviceName: string, executor: Executor) {
-    // Managed service (user service)
-    // If the user didn't provide a unit type suffix, default to .service
-    const unit = serviceName.includes('.') ? serviceName : `${serviceName}.service`;
-    
+    const validated = ServiceName.parse(serviceName);
+    const unit = validated.includes('.') ? validated : `${validated}.service`;
+
     try {
-        const { stdout } = await executor.exec(`systemctl --user is-active ${unit}`);
+        const { stdout } = await executor.execArgv(['systemctl', '--user', 'is-active', unit]);
         const status = stdout.trim();
         if (status !== 'active') {
             throw new Error(`Service is ${status}`);
@@ -170,15 +177,15 @@ export class CheckRunner {
   }
 
   private static async runSystemdCheck(unitName: string, executor: Executor) {
-    // System service (system-wide)
+    const validated = ServiceName.parse(unitName);
     try {
-        const { stdout } = await executor.exec(`systemctl is-active ${unitName}`);
+        const { stdout } = await executor.execArgv(['systemctl', 'is-active', validated]);
         const status = stdout.trim();
         if (status !== 'active') {
             throw new Error(`System unit is ${status}`);
         }
     } catch (e) {
-        throw new Error(`System unit ${unitName} check failed: ${e instanceof Error ? e.message : String(e)}`);
+        throw new Error(`System unit ${validated} check failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

@@ -1,5 +1,5 @@
 // src/lib/backup/service.ts
-import { exec, execFile } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
@@ -11,7 +11,6 @@ import { DATA_DIR } from '../dirs';
 import { sendEmailAlert } from '../email';
 import { atomicWriteFile } from '../util/atomicWrite';
 
-const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
 const BACKUP_HISTORY_FILE = path.join(DATA_DIR, 'backup-history.json');
@@ -84,10 +83,18 @@ function buildRsyncArgs(source: string, target: BackupTarget, excludePatterns: s
 }
 
 function buildSSHCommand(target: { host: string; port?: number; user?: string; identityFile?: string }): string {
+    // Used as the `-e` argument to rsync, which expects a shell-tokenized string.
     const parts = ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null'];
     if (target.port) parts.push('-p', String(target.port));
     if (target.identityFile) parts.push('-i', target.identityFile);
     return parts.join(' ');
+}
+
+function buildSSHArgv(target: { host: string; port?: number; user?: string; identityFile?: string }): string[] {
+    const argv = ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null'];
+    if (target.port) argv.push('-p', String(target.port));
+    if (target.identityFile) argv.push('-i', target.identityFile);
+    return argv;
 }
 
 async function mountTarget(target: BackupTarget, mountPath: string): Promise<void> {
@@ -107,10 +114,10 @@ async function mountTarget(target: BackupTarget, mountPath: string): Promise<voi
         opts.push(`gid=${process.getgid?.() ?? 1000}`);
         opts.push('file_mode=0664', 'dir_mode=0775');
 
-        await execAsync(`sudo mount -t cifs ${share} ${mountPath} -o ${opts.join(',')}`);
+        await execFileAsync('sudo', ['mount', '-t', 'cifs', share, mountPath, '-o', opts.join(',')]);
     } else if (target.type === 'nfs') {
         const nfsPath = `${target.host}:${target.export}`;
-        await execAsync(`sudo mount -t nfs ${nfsPath} ${mountPath}`);
+        await execFileAsync('sudo', ['mount', '-t', 'nfs', nfsPath, mountPath]);
     }
 
     // Create subfolder if specified
@@ -122,7 +129,7 @@ async function mountTarget(target: BackupTarget, mountPath: string): Promise<voi
 
 async function unmountTarget(mountPath: string): Promise<void> {
     try {
-        await execAsync(`sudo umount ${mountPath}`);
+        await execFileAsync('sudo', ['umount', mountPath]);
     } catch (e) {
         logger.warn('Backup', `Failed to unmount ${mountPath}: ${e}`);
     }
@@ -156,8 +163,8 @@ async function ensureTargetDir(target: BackupTarget): Promise<void> {
     if (target.type === 'local') {
         await fs.mkdir(target.path, { recursive: true });
     } else if (target.type === 'ssh') {
-        const sshCmd = buildSSHCommand(target);
-        await execAsync(`${sshCmd} ${target.user}@${target.host} "mkdir -p ${target.path}"`);
+        const [sshBin, ...sshArgs] = buildSSHArgv(target);
+        await execFileAsync(sshBin, [...sshArgs, `${target.user}@${target.host}`, 'mkdir', '-p', target.path]);
     }
 }
 
@@ -413,8 +420,13 @@ export async function testBackupTarget(target: BackupTarget): Promise<{ success:
             }
 
             case 'ssh': {
-                const sshCmd = buildSSHCommand(target);
-                await execAsync(`${sshCmd} ${target.user}@${target.host} "mkdir -p ${target.path} && echo ok"`);
+                const [sshBin, ...sshArgs] = buildSSHArgv(target);
+                // Use a fixed sentinel command to verify connectivity + path writability.
+                await execFileAsync(sshBin, [
+                    ...sshArgs,
+                    `${target.user}@${target.host}`,
+                    'sh', '-c', 'mkdir -p "$1" && echo ok', '--', target.path,
+                ]);
                 return { success: true, message: `SSH connection to ${target.host} successful, path writable` };
             }
 
