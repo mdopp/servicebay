@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { decrypt } from '@/lib/auth';
+import { decrypt } from '@/lib/auth/session';
 
 const PUBLIC_API_PREFIXES = [
   '/api/auth/login',

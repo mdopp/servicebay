@@ -25,7 +25,7 @@ import { syncRegistries } from './src/lib/registry';
 import { createMcpServer } from './src/lib/mcp/server';
 import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './src/lib/auth';
+import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './src/lib/auth/session';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
