@@ -49,7 +49,7 @@ function collectBody(req: import('http').IncomingMessage): Promise<unknown> {
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
 const port = parseInt(process.env.PORT || '3000', 10);
-// when using middleware `hostname` and `port` must be provided below
+// when using a Next.js proxy (formerly middleware), `hostname` and `port` must be provided below
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
@@ -160,7 +160,7 @@ app.prepare().then(() => {
           return;
         }
 
-        // Auth: MCP lives outside /api/* so the Next middleware doesn't see it.
+        // Auth: MCP lives outside /api/* so the Next proxy gate doesn't see it.
         const session = await getSessionFromCookieHeader(req.headers.cookie);
         if (!session) {
           res.writeHead(401, { 'Content-Type': 'application/json' });

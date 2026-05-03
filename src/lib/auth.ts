@@ -1,6 +1,6 @@
 // Thin shim: keeps the original public surface (`login`, `decrypt`, etc.) for
 // callers that already imported from '@/lib/auth'. Server-side modules that
-// boot the custom server (server.ts, middleware.ts) should prefer importing
+// boot the custom server (server.ts, proxy.ts) should prefer importing
 // from '@/lib/auth/session' directly to avoid pulling in `next/headers`.
 import { cookies } from 'next/headers';
 import { encryptSession } from './auth/session';
