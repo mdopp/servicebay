@@ -9,6 +9,7 @@ import { getConfig, updateConfig } from '../config';
 import { logger } from '../logger';
 import { DATA_DIR } from '../dirs';
 import { sendEmailAlert } from '../email';
+import { atomicWriteFile } from '../util/atomicWrite';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,7 +37,7 @@ async function appendHistory(result: BackupRunResult): Promise<void> {
     if (history.length > MAX_HISTORY_ENTRIES) {
         history.length = MAX_HISTORY_ENTRIES;
     }
-    await fs.writeFile(BACKUP_HISTORY_FILE, JSON.stringify(history, null, 2));
+    await atomicWriteFile(BACKUP_HISTORY_FILE, JSON.stringify(history, null, 2));
 }
 
 // ─── Target Resolution ───────────────────────────────────────────────

@@ -25,6 +25,8 @@ import { syncRegistries } from './src/lib/registry';
 import { createMcpServer } from './src/lib/mcp/server';
 import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { CharRingBuffer } from './src/lib/util/ringBuffer';
+import { SSHConnectionPool } from './src/lib/ssh/pool';
 import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './src/lib/auth/session';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
@@ -75,9 +77,11 @@ logger.info('Server', `Session ID: ${sessionId}`);
 // Global PTY state
 interface PtySession {
   process: pty.IPty;
-  history: string;
+  history: CharRingBuffer;
   lastActive: number;
 }
+
+const PTY_HISTORY_BYTES = 50_000;
 
 const sessions = new Map<string, PtySession>();
 const resourceViewers = new Map<string, Set<string>>(); // nodeName -> Set<socketId>
@@ -503,22 +507,19 @@ app.prepare().then(() => {
 
     logger.info('Server', `Spawned new PTY process for ${id} (PID: ${ptyProcess.pid})`);
 
+    const history = new CharRingBuffer(PTY_HISTORY_BYTES);
+    history.append(`\r\n\x1b[32m>>> Connected to terminal session: ${id}\x1b[0m\r\n${containerFallbackWarning}`);
     const session: PtySession = {
         process: ptyProcess,
-        history: `\r\n\x1b[32m>>> Connected to terminal session: ${id}\x1b[0m\r\n${containerFallbackWarning}`,
+        history,
         lastActive: Date.now()
     };
 
     sessions.set(id, session);
 
     ptyProcess.onData((data) => {
-      session.history += data;
+      session.history.append(data);
       session.lastActive = Date.now();
-      // Keep buffer size reasonable (e.g., 100KB)
-      if (session.history.length > 100000) {
-        session.history = session.history.substring(session.history.length - 100000);
-      }
-      // Broadcast to room
       io.to(id).emit('output', data);
     });
 
@@ -559,7 +560,7 @@ app.prepare().then(() => {
         socket.join(id);
         try {
             const session = await ensurePty(id, cols, rows);
-            socket.emit('history', session.history);
+            socket.emit('history', session.history.toString());
         } catch (e) {
             logger.error('Server', 'Failed to join terminal:', e);
             socket.emit('output', '\r\n\x1b[31m>>> Failed to join terminal session.\x1b[0m\r\n');
@@ -619,7 +620,7 @@ app.prepare().then(() => {
   });
 
   // Cleanup inactive container sessions
-  setInterval(() => {
+  const ptySweepTimer = setInterval(() => {
       const now = Date.now();
       for (const [id, session] of sessions.entries()) {
           if (id !== 'host' && now - session.lastActive > 1000 * 60 * 5) { // 5 mins inactivity
@@ -629,6 +630,44 @@ app.prepare().then(() => {
           }
       }
   }, 60000);
+
+  // ─── Graceful shutdown ─────────────────────────────────────────────
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info('Server', `Received ${signal}, starting graceful shutdown`);
+
+      const finish = setTimeout(() => {
+          logger.error('Server', 'Graceful shutdown timeout, forcing exit');
+          process.exit(1);
+      }, 10_000);
+      finish.unref();
+
+      try {
+          clearInterval(ptySweepTimer);
+          io.close();
+          for (const [id, session] of sessions.entries()) {
+              try { session.process.kill(); } catch { /* ignore */ }
+              sessions.delete(id);
+          }
+          await SSHConnectionPool.getInstance().shutdown(2000);
+          await new Promise<void>(resolve => server.close(() => resolve()));
+          logger.info('Server', 'Shutdown complete');
+          process.exit(0);
+      } catch (e) {
+          logger.error('Server', 'Error during shutdown', e);
+          process.exit(1);
+      }
+  };
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
+  process.on('uncaughtException', (err) => {
+      logger.error('Server', 'uncaughtException', err);
+  });
+  process.on('unhandledRejection', (reason) => {
+      logger.error('Server', 'unhandledRejection', reason);
+  });
 
   server.listen(port, async () => {
     logger.info('Server', `> Ready on http://${hostname}:${port}`);
