@@ -111,7 +111,8 @@ export interface AppConfig {
   };
   auth?: {
     username?: string;
-    password?: string;
+    /** scrypt-encoded password hash. Use hashPassword() to produce. */
+    passwordHash?: string;
   };
   oidc?: {
     enabled: boolean;
