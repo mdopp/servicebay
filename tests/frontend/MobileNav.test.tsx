@@ -2,57 +2,63 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MobileTopBar, MobileBottomBar } from '../../src/components/MobileNav';
+import { ToastProvider } from '../../src/providers/ToastProvider';
 
 const mockPush = vi.fn();
+let currentNode: string | null = null;
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/network', // Default active
-  useRouter: () => ({ push: mockPush })
+  usePathname: () => '/network',
+  useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => ({ get: (key: string) => (key === 'node' ? currentNode : null) }),
 }));
+
+const renderWithToast = (ui: React.ReactNode) =>
+    render(<ToastProvider>{ui}</ToastProvider>);
 
 describe('MobileNav', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        currentNode = null;
+        if (typeof window !== 'undefined') window.localStorage.clear();
     });
 
-    it('MobileTopBar renders logo and settings', () => {
-        render(<MobileTopBar />);
+    it('MobileTopBar renders logo and routes Settings click', () => {
+        renderWithToast(<MobileTopBar />);
         expect(screen.getByText('ServiceBay')).toBeDefined();
-        
-        // Find Settings button using class logic or assumptions?
-        // Actually, MobileTopBar buttons: Settings and Github.
-        // We can look for buttons.
-        const buttons = screen.getAllByRole('button');
-        // Filter for the one that calls push('/settings') on click?
-        // Or better, let's just find the first one which is Settings in the code.
-        const settingsBtn = buttons[0]; 
-        
+
+        const settingsBtn = screen.getByLabelText('Open settings');
         fireEvent.click(settingsBtn);
         expect(mockPush).toHaveBeenCalledWith('/settings');
     });
 
-    it('MobileBottomBar renders plugins except Settings', () => {
-        render(<MobileBottomBar />);
-        
-        // Should show Container Engine (via title)
+    it('MobileTopBar preserves ?node= on Settings click', () => {
+        currentNode = 'edge-1';
+        renderWithToast(<MobileTopBar />);
+        fireEvent.click(screen.getByLabelText('Open settings'));
+        expect(mockPush).toHaveBeenCalledWith('/settings?node=edge-1');
+    });
+
+    it('MobileBottomBar renders plugins except Settings using shortLabel', () => {
+        renderWithToast(<MobileBottomBar />);
         expect(screen.getByTitle('Container Engine')).toBeDefined();
-        // Should show Network
         expect(screen.getByTitle('Network Map')).toBeDefined();
-        
-        // Should NOT show Settings (filtered out)
         expect(screen.queryByTitle('Settings')).toBeNull();
+        // shortLabel renders "Containers", not the trimmed-first-word "Container".
+        expect(screen.getByText('Containers')).toBeDefined();
     });
 
     it('MobileBottomBar highlights active route', () => {
-        // usePathname is '/network'
-        render(<MobileBottomBar />);
-        
+        renderWithToast(<MobileBottomBar />);
         const networkBtn = screen.getByTitle('Network Map');
-        
-        // Active class logic in MobileNav: isActive ? 'text-blue-600 ...' : 'text-gray-500 ...'
         expect(networkBtn.className).toContain('text-blue-600');
-        
-        // Inactive
         const containersBtn = screen.getByTitle('Container Engine');
         expect(containersBtn.className).not.toContain('text-blue-600');
+    });
+
+    it('MobileBottomBar threads ?node= into navigation', () => {
+        currentNode = 'edge-1';
+        renderWithToast(<MobileBottomBar />);
+        fireEvent.click(screen.getByTitle('Container Engine'));
+        expect(mockPush).toHaveBeenCalledWith('/containers?node=edge-1');
     });
 });

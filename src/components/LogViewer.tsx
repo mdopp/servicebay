@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Download, ChevronRight, ChevronDown, Info, Settings } from 'lucide-react';
+import { RefreshCw, Download, ChevronRight, ChevronDown, Info, Settings, Copy, Pause, Play } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
+import { humanizeError } from '@/lib/util/humanizeError';
 import { MultiSelect } from './MultiSelect';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -200,7 +201,8 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
     search: undefined,
     limit: 100
   });
-  
+  const [livePaused, setLivePaused] = useState(false);
+
   const { socket, isConnected } = useSocket();
   const { addToast } = useToast();
 
@@ -273,7 +275,8 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
       }
     } catch (err) {
       console.error('Failed to load logs:', err);
-      addToast('error', 'Failed to load logs', String(err));
+      const { title, detail } = humanizeError(err, 'Failed to load logs');
+      addToast('error', title, detail);
     } finally {
       setLoading(false);
     }
@@ -287,6 +290,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
   // Live streaming logic
   useEffect(() => {
     if (selectedDate !== 'live' || !socket || !isConnected) return;
+    if (livePaused) return;
 
     socket.emit('logs:subscribe');
 
@@ -297,7 +301,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
             const matches = filter.tags.some(t => entry.tag.includes(t));
             if (!matches) return;
         }
-        
+
         const effectiveSearch = searchQuery || filter.search;
         if (effectiveSearch) {
              const term = effectiveSearch.toLowerCase();
@@ -313,16 +317,21 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
         socket.emit('logs:unsubscribe');
         socket.off('log:entry', handleLogEntry);
     };
-  }, [selectedDate, socket, isConnected, filter, searchQuery]);
+  }, [selectedDate, socket, isConnected, filter, searchQuery, livePaused]);
 
   const handleRefresh = () => {
     fetchLogs();
   };
 
-  const handleDownload = () => {
-    const text = logs
+  const formatLogsAsText = () =>
+    logs
+      .slice()
+      .reverse() // logs are stored newest-first; export oldest-first for readability
       .map(log => `${log.timestamp} [${log.level.toUpperCase()}] [${log.tag}] ${log.message}`)
       .join('\n');
+
+  const handleDownload = () => {
+    const text = formatLogsAsText();
 
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -331,6 +340,18 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
     a.download = `logs-${selectedDate}-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleCopy = async () => {
+    if (logs.length === 0) return;
+    const text = formatLogsAsText();
+    try {
+      await navigator.clipboard.writeText(text);
+      addToast('success', 'Copied', `${logs.length} log entries copied to clipboard.`);
+    } catch (err) {
+      console.error('Copy failed:', err);
+      addToast('error', 'Copy failed', 'Could not access the clipboard. Try downloading instead.');
+    }
   };
 
   const handleClearFilter = () => {
@@ -447,6 +468,16 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
               </button>
               
               <button
+                onClick={handleCopy}
+                disabled={logs.length === 0}
+                className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
+                title="Copy visible logs to clipboard"
+                aria-label="Copy logs"
+              >
+                <Copy className="w-4 h-4" />
+              </button>
+
+              <button
                 onClick={handleDownload}
                 disabled={logs.length === 0}
                 className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
@@ -454,7 +485,18 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
               >
                 <Download className="w-4 h-4" />
               </button>
-              
+
+              {selectedDate === 'live' && (
+                <button
+                  onClick={() => setLivePaused(p => !p)}
+                  className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
+                  title={livePaused ? 'Resume live stream' : 'Pause live stream'}
+                  aria-label={livePaused ? 'Resume live stream' : 'Pause live stream'}
+                >
+                  {livePaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                </button>
+              )}
+
               {hasActiveFilter && (
                 <button
                    onClick={handleClearFilter}
@@ -542,7 +584,11 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
       {/* Footer */}
       <div className="px-4 py-2 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex justify-between">
         <span>Showing {logs.length} logs</span>
-        <span>{selectedDate === 'live' ? 'Live Stream Active' : 'Historical View'}</span>
+        <span>
+          {selectedDate === 'live'
+            ? (livePaused ? 'Live Stream Paused' : 'Live Stream Active')
+            : 'Historical View'}
+        </span>
       </div>
     </div>
   );

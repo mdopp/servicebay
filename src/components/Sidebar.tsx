@@ -7,12 +7,12 @@ import ServiceBayLogo from './ServiceBayLogo';
 import pkg from '../../package.json';
 
 export const plugins = [
-    { id: 'services', name: 'Services', icon: Box, path: '/services' },
-    { id: 'containers', name: 'Container Engine', icon: LayoutDashboard, path: '/containers' },
-    { id: 'network', name: 'Network Map', icon: Network, path: '/network' },
-    { id: 'monitoring', name: 'Monitoring', icon: Activity, path: '/monitoring' },
-    { id: 'terminal', name: 'SSH Terminal', icon: Terminal, path: '/terminal' },
-    { id: 'settings', name: 'Settings', icon: Settings, path: '/settings' },
+    { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },
+    { id: 'containers', name: 'Container Engine', shortLabel: 'Containers', icon: LayoutDashboard, path: '/containers' },
+    { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
+    { id: 'monitoring', name: 'Monitoring', shortLabel: 'Monitor', icon: Activity, path: '/monitoring' },
+    { id: 'terminal', name: 'SSH Terminal', shortLabel: 'Terminal', icon: Terminal, path: '/terminal' },
+    { id: 'settings', name: 'Settings', shortLabel: 'Settings', icon: Settings, path: '/settings' },
 ];
 
 export default function Sidebar() {
@@ -21,6 +21,7 @@ export default function Sidebar() {
   const node = searchParams?.get('node');
   const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [showCollapsedNodeLabel, setShowCollapsedNodeLabel] = useState(false);
   const [lldapUrl, setLldapUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -68,7 +69,18 @@ export default function Sidebar() {
             </div>
         )}
         {node && isCollapsed && (
-            <div className="mx-auto mb-1 w-3 h-3 rounded-full bg-amber-500 animate-pulse" title={`Node: ${node}`} />
+            <button
+                type="button"
+                onClick={() => setShowCollapsedNodeLabel(v => !v)}
+                title={`Node: ${node}`}
+                aria-label={`Active node: ${node}. Tap for details.`}
+                className="mx-auto mb-1 flex flex-col items-center gap-0.5 focus:outline-none"
+            >
+                <span className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
+                {showCollapsedNodeLabel && (
+                    <span className="text-[9px] font-mono text-amber-600 dark:text-amber-400 max-w-[3.5rem] truncate">{node}</span>
+                )}
+            </button>
         )}
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
             {plugins.map(p => {

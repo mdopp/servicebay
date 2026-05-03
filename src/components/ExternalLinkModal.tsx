@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X, AlertCircle } from 'lucide-react';
 
 interface LinkForm {
     name: string;
@@ -17,8 +17,21 @@ interface ExternalLinkModalProps {
     setForm: (form: LinkForm) => void;
 }
 
+function isValidHttpUrl(value: string): boolean {
+    if (!value) return false;
+    try {
+        const u = new URL(value);
+        return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
 export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, form, setForm }: ExternalLinkModalProps) {
     if (!isOpen) return null;
+    const nameMissing = !form.name.trim();
+    const urlInvalid = !isValidHttpUrl(form.url.trim());
+    const canSave = !nameMissing && !urlInvalid;
 
     return (
         <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -42,13 +55,23 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL</label>
-                        <input 
-                            type="url" 
+                        <input
+                            type="url"
                             value={form.url}
                             onChange={e => setForm({...form, url: e.target.value})}
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            className={`w-full p-2 rounded-lg border bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 outline-none ${
+                                form.url && urlInvalid
+                                    ? 'border-red-400 dark:border-red-500 focus:ring-red-500'
+                                    : 'border-gray-300 dark:border-gray-700 focus:ring-blue-500'
+                            }`}
                             placeholder="http://192.168.1.10:8123"
+                            aria-invalid={form.url ? urlInvalid : undefined}
                         />
+                        {form.url && urlInvalid && (
+                            <p className="mt-1 flex items-center gap-1 text-xs text-red-600 dark:text-red-400" role="alert">
+                                <AlertCircle size={12} /> URL must start with http:// or https://
+                            </p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description (Optional)</label>
@@ -91,9 +114,10 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
                     >
                         Cancel
                     </button>
-                    <button 
+                    <button
                         onClick={onSave}
-                        className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium"
+                        disabled={!canSave}
+                        className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {isEditing ? 'Save Changes' : 'Add Link'}
                     </button>

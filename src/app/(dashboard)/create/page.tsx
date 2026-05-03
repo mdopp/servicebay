@@ -20,7 +20,7 @@ export default async function CreatePage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="h-full flex flex-col overflow-y-auto">
-      <PageHeader title={template ? `Create Service from Template: ${template}` : "Create New Service"} />
+      <PageHeader title={template ? `Create Service from Template: ${template}` : "Create New Service"} showBack />
       <div className="p-6">
         <ServiceForm initialData={initialData} />
       </div>
