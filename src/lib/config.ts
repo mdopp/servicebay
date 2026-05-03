@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { DATA_DIR } from './dirs';
+import { atomicWriteFile } from './util/atomicWrite';
 import { decrypt, encrypt } from './secrets';
 import { LogLevel } from './logger';
 import { PortMapping as GraphPortMapping } from './network/types';
@@ -228,7 +229,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     templateSettings: normalizeTemplateSettingsKeys(config.templateSettings)
   };
   const safeConfig = transformConfig(normalizedConfig, SENSITIVE_KEYS, encrypt);
-  await fs.writeFile(CONFIG_PATH, JSON.stringify(safeConfig, null, 2));
+  await atomicWriteFile(CONFIG_PATH, JSON.stringify(safeConfig, null, 2));
 }
 
 /**
