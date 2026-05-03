@@ -34,6 +34,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
 
   const [serviceToDelete, setServiceToDelete] = useState<ServiceViewModel | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteInFlight, setDeleteInFlight] = useState(false);
 
   const closeDrawer = useCallback(() => {
     setDrawerState(null);
@@ -110,8 +111,8 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
   }, []);
 
   const handleDelete = useCallback(async () => {
-    if (!serviceToDelete) return;
-    setDeleteModalOpen(false);
+    if (!serviceToDelete || deleteInFlight) return;
+    setDeleteInFlight(true);
     const toastId = addToast('loading', 'Deleting service...', `Removing ${serviceToDelete.name}`, 0);
 
     try {
@@ -132,8 +133,11 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
       }
     } catch {
       updateToast(toastId, 'error', 'Delete failed', 'An unexpected error occurred.');
+    } finally {
+      setDeleteInFlight(false);
+      setDeleteModalOpen(false);
     }
-  }, [addToast, onRefresh, serviceToDelete, updateToast]);
+  }, [addToast, deleteInFlight, onRefresh, serviceToDelete, updateToast]);
 
   const handleAction = useCallback(async (action: string) => {
     if (!selectedService) return;
@@ -179,12 +183,15 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     <>
       <ConfirmModal
         isOpen={deleteModalOpen}
-        title="Delete Service"
-        message={`Are you sure you want to delete service "${serviceToDelete?.name ?? ''}"? This action cannot be undone.`}
+        title="Delete service"
+        message="Stops the service, removes the .kube and YAML units from disk, and reloads systemd. This cannot be undone — type the service name to confirm."
         confirmText="Delete"
         isDestructive
+        resourceName={serviceToDelete?.name ?? ''}
+        requireTypedConfirm={Boolean(serviceToDelete?.name)}
+        isLoading={deleteInFlight}
         onConfirm={handleDelete}
-        onCancel={() => setDeleteModalOpen(false)}
+        onCancel={() => { if (!deleteInFlight) setDeleteModalOpen(false); }}
       />
 
       {actionService && currentAction && (
@@ -354,6 +361,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     addToast,
     closeDrawer,
     currentAction,
+    deleteInFlight,
     deleteModalOpen,
     drawerLoading,
     drawerState,

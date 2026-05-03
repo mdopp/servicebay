@@ -88,12 +88,15 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
       <>
         <ConfirmModal
           isOpen={deleteModalOpen}
-          title="Delete Container"
-          message={`Are you sure you want to delete container "${selectedContainer.name}"? This action cannot be undone.`}
+          title="Delete container"
+          message="The container will be removed and any unmounted volumes will be lost. Type the container name to confirm."
           confirmText="Delete"
           isDestructive
+          resourceName={selectedContainer.name}
+          requireTypedConfirm
+          isLoading={actionLoading}
           onConfirm={() => handleAction('delete')}
-          onCancel={() => setDeleteModalOpen(false)}
+          onCancel={() => { if (!actionLoading) setDeleteModalOpen(false); }}
         />
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="relative bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-5">

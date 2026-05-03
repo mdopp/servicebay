@@ -102,7 +102,12 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
     }
 
     // Handle socket events
+    let hasEverConnected = false;
     socket.on('connect', () => {
+        if (hasEverConnected) {
+            term.write('\r\n\x1b[32mReconnected.\x1b[0m\r\n');
+        }
+        hasEverConnected = true;
         // Re-join on reconnect
         if (termRef.current) {
             socket.emit('join', { id, cols: termRef.current.cols, rows: termRef.current.rows });
@@ -119,8 +124,22 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
     });
 
     socket.on('disconnect', () => {
-      term.write('\r\n\x1b[31mDisconnected from server.\x1b[0m\r\n');
+      term.write('\r\n\x1b[31mDisconnected from server. Reconnecting…\x1b[0m\r\n');
     });
+
+    // When the tab becomes visible again (e.g. after backgrounding), re-fit
+    // the terminal so it draws crisply at the current container size.
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && fitAddonRef.current && termRef.current) {
+        try {
+          fitAddonRef.current.fit();
+          if (socketRef.current) {
+            socketRef.current.emit('resize', { id, cols: termRef.current.cols, rows: termRef.current.rows });
+          }
+        } catch { /* noop */ }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
     // Handle terminal input
     term.onData((data) => {
@@ -157,6 +176,7 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
       socket.disconnect();
       term.dispose();
       window.removeEventListener('resize', handleResize);
+      document.removeEventListener('visibilitychange', handleVisibility);
       resizeObserver.disconnect();
       initObserver?.disconnect();
     };

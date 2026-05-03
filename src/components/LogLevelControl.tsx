@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Settings, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { humanizeError } from '@/lib/util/humanizeError';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -51,7 +52,8 @@ export default function LogLevelControl() {
         addToast('error', 'Failed to Update Log Level', data.error);
       }
     } catch (err) {
-      addToast('error', 'Failed to Update Log Level', String(err));
+      const { title, detail } = humanizeError(err, 'Failed to Update Log Level');
+      addToast('error', title, detail);
     } finally {
       setSaving(false);
     }

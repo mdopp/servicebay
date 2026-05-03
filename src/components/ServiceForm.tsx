@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import yaml from 'js-yaml';
-import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard } from 'lucide-react';
+import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2 } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
@@ -86,6 +86,7 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
   const [newServiceName, setNewServiceName] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'yaml' | 'kube' | 'service' | 'history'>('yaml');
 
   // Options for generation
@@ -280,10 +281,12 @@ WantedBy=default.target`;
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (isSaving) return;
         const query = selectedNode ? `?node=${selectedNode}` : '';
         const url = isEdit ? `/api/services/${name}${query}` : `/api/services${query}`;
         const method = isEdit ? 'PUT' : 'POST';
 
+        setIsSaving(true);
         try {
                 const res = await fetch(url, {
                     method,
@@ -295,6 +298,8 @@ WantedBy=default.target`;
                         throw new Error(data.error || 'Failed to save service');
                 }
 
+                addToast('success', 'Service saved', isEdit ? `${name} updated` : `${name} created`);
+
                 if (variant === 'embedded') {
                         onClose?.();
                         router.refresh();
@@ -305,6 +310,8 @@ WantedBy=default.target`;
         } catch (error) {
                 const message = error instanceof Error ? error.message : 'Failed to save service';
                 addToast('error', 'Save failed', message);
+        } finally {
+                setIsSaving(false);
         }
     };
 
@@ -719,12 +726,13 @@ WantedBy=default.target`;
                     Cancel
                 </button>
             )}
-            <button 
-                type="submit" 
-                disabled={!!yamlError || !name || !selectedNode}
-                className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            <button
+                type="submit"
+                disabled={!!yamlError || !name || !selectedNode || isSaving}
+                className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
-            Save Service
+            {isSaving && <Loader2 size={16} className="animate-spin" />}
+            {isSaving ? 'Saving…' : 'Save Service'}
             </button>
         </div>
 

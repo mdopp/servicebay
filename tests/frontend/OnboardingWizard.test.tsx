@@ -107,6 +107,11 @@ const mockNodes = [{ Name: 'Local', URI: 'unix:///run/podman/podman.sock', Ident
 describe('OnboardingWizard', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        // The wizard now persists in-progress state to sessionStorage. Clear it
+        // between tests so each spec starts with a clean wizard.
+        if (typeof window !== 'undefined') {
+            window.sessionStorage.clear();
+        }
         (getNodes as any).mockResolvedValue(mockNodes);
         (fetchTemplates as any).mockResolvedValue(mockStacks);
         (fetchReadme as any).mockResolvedValue(mockStackReadme);

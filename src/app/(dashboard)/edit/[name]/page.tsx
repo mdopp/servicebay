@@ -73,7 +73,7 @@ export default async function EditPage({
 
   return (
     <div className="h-full flex flex-col overflow-y-auto">
-      <PageHeader title={`Edit Service: ${name}`} />
+      <PageHeader title={`Edit Service: ${name}`} showBack />
       <div className="p-6">
         <ServiceForm initialData={initialData} isEdit />
       </div>

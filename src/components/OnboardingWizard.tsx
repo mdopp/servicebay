@@ -82,10 +82,52 @@ function generateSecret(length = 32): string {
     .join('');
 }
 
+const WIZARD_STATE_KEY = 'sb.onboarding.v1';
+
+interface PersistedWizardState {
+  currentStep: WizardStep;
+  stepHistory: WizardStep[];
+  selection: {
+    gateway: boolean;
+    ssh: boolean;
+    updates: boolean;
+    registries: boolean;
+    email: boolean;
+    stacks: boolean;
+  };
+  gwHost: string;
+  gwUser: string;
+  emailHost: string;
+  emailPort: number;
+  emailSecure: boolean;
+  emailUser: string;
+  emailFrom: string;
+  emailRecipients: string;
+}
+
+function loadPersistedWizardState(): PersistedWizardState | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(WIZARD_STATE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedWizardState;
+  } catch {
+    return null;
+  }
+}
+
+function clearPersistedWizardState() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.removeItem(WIZARD_STATE_KEY);
+  } catch { /* noop */ }
+}
+
 export default function OnboardingWizard() {
+  const persisted = typeof window !== 'undefined' ? loadPersistedWizardState() : null;
   const [isOpen, setIsOpen] = useState(false);
-  const [currentStep, setCurrentStep] = useState<WizardStep>('welcome');
-  const [stepHistory, setStepHistory] = useState<WizardStep[]>([]);
+  const [currentStep, setCurrentStep] = useState<WizardStep>(persisted?.currentStep ?? 'welcome');
+  const [stepHistory, setStepHistory] = useState<WizardStep[]>(persisted?.stepHistory ?? []);
   
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -94,7 +136,7 @@ export default function OnboardingWizard() {
   const router = useRouter();
 
   // Selection Selection (Welcome Step)
-  const [selection, setSelection] = useState({
+  const [selection, setSelection] = useState(persisted?.selection ?? {
     gateway: true,
     ssh: true,
     updates: false,
@@ -103,20 +145,20 @@ export default function OnboardingWizard() {
     stacks: true
   });
 
-  // Gateway Form
-  const [gwHost, setGwHost] = useState('fritz.box');
-  const [gwUser, setGwUser] = useState('');
+  // Gateway Form (passwords are intentionally never persisted)
+  const [gwHost, setGwHost] = useState(persisted?.gwHost ?? 'fritz.box');
+  const [gwUser, setGwUser] = useState(persisted?.gwUser ?? '');
   const [gwPass, setGwPass] = useState('');
 
-  // Email Form
+  // Email Form (pass is intentionally never persisted)
   const [emailConfig, setEmailConfig] = useState({
-      host: '',
-      port: 587,
-      secure: false,
-      user: '',
+      host: persisted?.emailHost ?? '',
+      port: persisted?.emailPort ?? 587,
+      secure: persisted?.emailSecure ?? false,
+      user: persisted?.emailUser ?? '',
       pass: '',
-      from: '',
-      recipients: ''
+      from: persisted?.emailFrom ?? '',
+      recipients: persisted?.emailRecipients ?? ''
   });
 
   // Stack Selection
@@ -151,24 +193,71 @@ export default function OnboardingWizard() {
       setStatus(s);
       if (s.needsSetup) {
         setIsOpen(true);
-        // Pre-fill selection based on detection/defaults
-        setSelection(prev => ({
-            ...prev,
-            gateway: !s.features.gateway,
-            ssh: !s.features.ssh,
-            updates: !s.features.updates,
-            registries: !s.features.registries,
-            email: !s.features.email,
-            stacks: true
-        }));
+        // Only seed selection from feature detection if we have no persisted draft —
+        // otherwise the user's in-progress choices win.
+        if (!persisted) {
+          setSelection(prev => ({
+              ...prev,
+              gateway: !s.features.gateway,
+              ssh: !s.features.ssh,
+              updates: !s.features.updates,
+              registries: !s.features.registries,
+              email: !s.features.email,
+              stacks: true
+          }));
+        } else if (typeof window !== 'undefined') {
+          addToast(
+            'info',
+            'Setup resumed',
+            'We restored your in-progress onboarding from the previous session.',
+          );
+        }
       } else if (s.stackSetupPending) {
         // Setup was completed by installer, but stacks haven't been chosen yet
         setStacksOnlyMode(true);
         setCurrentStep('stacks');
         setIsOpen(true);
+      } else {
+        // No setup needed — clear any stale draft.
+        clearPersistedWizardState();
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Persist non-secret state on every change so refresh / closed-tab resumes from the same step.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isOpen) return;
+    const snapshot: PersistedWizardState = {
+      currentStep,
+      stepHistory,
+      selection,
+      gwHost,
+      gwUser,
+      emailHost: emailConfig.host,
+      emailPort: emailConfig.port,
+      emailSecure: emailConfig.secure,
+      emailUser: emailConfig.user,
+      emailFrom: emailConfig.from,
+      emailRecipients: emailConfig.recipients,
+    };
+    try {
+      window.sessionStorage.setItem(WIZARD_STATE_KEY, JSON.stringify(snapshot));
+    } catch { /* quota / disabled storage */ }
+  }, [isOpen, currentStep, stepHistory, selection, gwHost, gwUser, emailConfig.host, emailConfig.port, emailConfig.secure, emailConfig.user, emailConfig.from, emailConfig.recipients]);
+
+  // Warn before unload if the user has progressed past Welcome.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isOpen || currentStep === 'welcome' || currentStep === 'finish') return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isOpen, currentStep]);
 
   // Load stacks when entering the stacks step
   const loadStacks = useCallback(async () => {
@@ -228,6 +317,7 @@ export default function OnboardingWizard() {
 
   const handleSkip = async () => {
     await skipOnboarding();
+    clearPersistedWizardState();
     setIsOpen(false);
     addToast('info', 'Setup Skipped', 'You can configure settings later in the System menu.');
   };
@@ -252,6 +342,7 @@ export default function OnboardingWizard() {
     } else {
       await skipOnboarding(); // Mark as complete
     }
+    clearPersistedWizardState();
     setIsOpen(false);
     router.refresh();
     addToast('success', 'Setup Complete', 'Welcome to ServiceBay!');
@@ -665,6 +756,7 @@ export default function OnboardingWizard() {
     if (stacksOnlyMode) {
       // In stacks-only mode, skipping goes straight to finish
       await completeStackSetup();
+      clearPersistedWizardState();
       setIsOpen(false);
       router.refresh();
       addToast('info', 'Stack Setup Skipped', 'You can install services later from the Registry.');

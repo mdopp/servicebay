@@ -2,7 +2,8 @@
 
 // V4 Update: Use Digital Twin data
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { EnrichedContainer } from '@/lib/agent/types';
 
 interface ContainerItem extends Partial<EnrichedContainer> {
@@ -14,8 +15,17 @@ interface ContainerListProps {
   containers?: ContainerItem[];
 }
 
+const CONNECT_TIMEOUT_MS = 15_000;
+
 export default function ContainerList({ containers }: ContainerListProps = {}) {
   const { data: twin } = useDigitalTwin();
+  const [slowConnect, setSlowConnect] = useState(false);
+
+  useEffect(() => {
+    if (containers || twin) return;
+    const t = setTimeout(() => setSlowConnect(true), CONNECT_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [containers, twin]);
 
   const allContainers = useMemo((): ContainerItem[] => {
      if (containers) return containers;
@@ -30,9 +40,23 @@ export default function ContainerList({ containers }: ContainerListProps = {}) {
   }, [twin, containers]);
 
   if (!allContainers || allContainers.length === 0) {
+    const isLoading = !(containers || twin);
     return (
-        <div className="p-4 bg-[#2d2d2d] rounded-md text-gray-500 italic">
-            {(containers || twin) ? "No running containers found." : "Connecting to Digital Twin..."}
+        <div className="p-4 bg-[#2d2d2d] rounded-md text-gray-500 italic flex items-center justify-between gap-4">
+            <span>
+              {!isLoading && "No running containers found."}
+              {isLoading && !slowConnect && "Connecting to Digital Twin..."}
+              {isLoading && slowConnect && "Still connecting to Digital Twin… check Settings → Nodes if this persists."}
+            </span>
+            {isLoading && slowConnect && (
+                <button
+                    type="button"
+                    onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors not-italic"
+                >
+                    <RefreshCw size={12} /> Refresh
+                </button>
+            )}
         </div>
     );
   }
@@ -76,7 +100,10 @@ export default function ContainerList({ containers }: ContainerListProps = {}) {
                       </div>
                   ) : <span className="text-gray-600">-</span>}
               </td>
-              <td className="py-2 text-yellow-400">
+              <td
+                className="py-2 text-yellow-400 truncate max-w-[200px]"
+                title={Array.isArray(container.names) ? container.names.join(', ') : container.names}
+              >
                 {Array.isArray(container.names) ? container.names.join(', ') : container.names}
               </td>
             </tr>

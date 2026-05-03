@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
-import { Github, ArrowRight, Loader2, Shield } from 'lucide-react';
+import { Github, ArrowRight, Loader2, Shield, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import pkg from '../../../package.json';
 
@@ -24,6 +24,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [oidcEnabled, setOidcEnabled] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
+
+  const detectCapsLock = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (typeof e.getModifierState === 'function') {
+      setCapsLock(e.getModifierState('CapsLock'));
+    }
+  };
 
   useEffect(() => {
     // Check if OIDC is available
@@ -126,11 +133,19 @@ export default function LoginPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={detectCapsLock}
+                onKeyUp={detectCapsLock}
+                onBlur={() => setCapsLock(false)}
                 className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
                 placeholder="System password"
                 autoComplete="current-password"
                 required
               />
+              {capsLock && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" role="alert">
+                  <AlertTriangle size={12} /> Caps Lock is on
+                </p>
+              )}
             </div>
 
             <button

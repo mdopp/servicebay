@@ -1,9 +1,10 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, Minimize2 } from 'lucide-react';
 import type { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-// import { logger } from '@/lib/logger'; // Removed unused
+import { useToast } from '@/providers/ToastProvider';
+import { humanizeError } from '@/lib/util/humanizeError';
 
 interface ActionProgressModalProps {
   isOpen: boolean;
@@ -17,14 +18,60 @@ interface ActionProgressModalProps {
 export default function ActionProgressModal({ isOpen, onClose, serviceName, nodeName, action, onComplete }: ActionProgressModalProps) {
   const [status, setStatus] = useState<'running' | 'completed' | 'error'>('running');
   const [elapsed, setElapsed] = useState(0);
+  const [minimized, setMinimized] = useState(false);
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const onCompleteRef = useRef(onComplete);
+  const { addToast, updateToast, removeToast } = useToast();
+  const bgToastIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
   }, [onComplete]);
+
+  // When closed, reset minimized so reopening starts fresh.
+  useEffect(() => {
+    if (!isOpen) setMinimized(false);
+  }, [isOpen]);
+
+  // While minimized, surface a sticky background toast that swaps to
+  // success/error when the action finishes.
+  useEffect(() => {
+    if (!minimized || !isOpen) return;
+    if (status === 'running') {
+      if (!bgToastIdRef.current) {
+        bgToastIdRef.current = addToast(
+          'loading',
+          `${action === 'start' ? 'Starting' : action === 'stop' ? 'Stopping' : 'Restarting'} ${serviceName}`,
+          'Running in background…',
+          0,
+        );
+      }
+    } else if (bgToastIdRef.current) {
+      const verb = status === 'completed'
+        ? (action === 'start' ? 'started' : action === 'stop' ? 'stopped' : 'restarted')
+        : `${action} failed`;
+      updateToast(
+        bgToastIdRef.current,
+        status === 'completed' ? 'success' : 'error',
+        `${serviceName} ${verb}`,
+        '',
+        5000,
+      );
+      bgToastIdRef.current = null;
+    }
+  }, [minimized, isOpen, status, action, serviceName, addToast, updateToast]);
+
+  // Clean up the background toast if the parent closes us with one still pending.
+  useEffect(() => {
+    return () => {
+      if (bgToastIdRef.current) {
+        removeToast(bgToastIdRef.current);
+        bgToastIdRef.current = null;
+      }
+    };
+  }, [removeToast]);
 
   useEffect(() => {
     if (!isOpen || status !== 'running') return;
@@ -69,8 +116,8 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
        if (signal.aborted) {
            return;
        }
-       const msg = err instanceof Error ? err.message : String(err);
-       term.writeln(`\r\n\x1b[31;1mConnection Error: ${msg}\x1b[0m`);
+       const { detail } = humanizeError(err, 'Connection error');
+       term.writeln(`\r\n\x1b[31;1mConnection Error: ${detail}\x1b[0m`);
        setStatus('error');
     }
   }, [action, nodeName, serviceName]);
@@ -129,7 +176,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
     }
   }, [isOpen, startAction]);
 
-  if (!isOpen) return null;
+  if (!isOpen || minimized) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -148,9 +195,25 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
                 </span>
             )}
           </h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-1">
+            {status === 'running' && (
+              <button
+                onClick={() => setMinimized(true)}
+                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded transition-colors"
+                title="Run in background"
+                aria-label="Run in background"
+              >
+                <Minimize2 size={18} />
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded transition-colors"
+              aria-label="Close"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
         
         <div className="p-4 bg-[#1e1e1e] border-b border-gray-800">

@@ -47,8 +47,9 @@ export default async function ViewPage({ searchParams }: ViewPageProps) {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <PageHeader 
-        title="File Viewer" 
+      <PageHeader
+        title="File Viewer"
+        showBack
       >
         <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
             <FileText size={16} />
