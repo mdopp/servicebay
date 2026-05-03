@@ -5,9 +5,6 @@ import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';
 import { Server } from 'socket.io';
-import * as pty from 'node-pty';
-import os from 'os';
-import fs from 'fs';
 import { setUpdaterIO } from './src/lib/updater';
 import crypto from 'crypto';
 // Monitoring init moved to Agent logic in V4
@@ -25,6 +22,8 @@ import { syncRegistries } from './src/lib/registry';
 import { createMcpServer } from './src/lib/mcp/server';
 import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { TerminalSessionManager } from './src/lib/terminal/sessionManager';
+import { ResourceBroadcast } from './src/lib/monitoring/resourceBroadcast';
 import { CharRingBuffer } from './src/lib/util/ringBuffer';
 import { SSHConnectionPool } from './src/lib/ssh/pool';
 import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './src/lib/auth/session';
@@ -74,17 +73,10 @@ const sessionId = ensureSessionId();
 logger.info('Server', `Session ID: ${sessionId}`);
 
 
-// Global PTY state
-interface PtySession {
-  process: pty.IPty;
-  history: CharRingBuffer;
-  lastActive: number;
-}
-
-const PTY_HISTORY_BYTES = 50_000;
-
-const sessions = new Map<string, PtySession>();
-const resourceViewers = new Map<string, Set<string>>(); // nodeName -> Set<socketId>
+// Terminal sessions and resource broadcast moved into dedicated modules
+// (src/lib/terminal/sessionManager.ts, src/lib/monitoring/resourceBroadcast.ts).
+// CharRingBuffer is wired in below via TerminalSessionManager's createHistory
+// option to keep PR 3's bounded scrollback behavior.
 
 // Ensure configuration is encrypted on startup (migration)
 // and apply initial configuration
@@ -228,17 +220,19 @@ app.prepare().then(() => {
       io.to('logs:live').emit('log:entry', entry);
   });
 
-  const updateResourceMonitoring = (nodeName: string) => {
-      const viewers = resourceViewers.get(nodeName);
-      const isActive = viewers ? viewers.size > 0 : false;
-      try {
-          const agent = agentManager.getAgent(nodeName);
-          agent.setResourceMode(isActive);
-          logger.info('Server', `Updated resource mode for ${nodeName}${formatAgentIdSuffix(agent)}: ${isActive} (${viewers?.size || 0} viewers)`);
-      } catch {
-          // Agent might not be connected
-      }
-  };
+  // Resource-mode broadcasting (moved into ResourceBroadcast).
+  const resourceBroadcast = new ResourceBroadcast();
+  resourceBroadcast.attach(io);
+
+  // Terminal session manager (moved into TerminalSessionManager). Plug in the
+  // bounded CharRingBuffer from PR 3 — caps each PTY's scrollback at 50KB
+  // with newline-aligned truncation, replacing the substring-shift fallback.
+  const terminalManager = new TerminalSessionManager({
+    io,
+    historyBytes: 50_000,
+    createHistory: (bytes) => new CharRingBuffer(bytes),
+  });
+  terminalManager.start();
 
   // Track active clients for monitoring optimization
   const updateMonitoringState = () => {
@@ -370,268 +364,24 @@ app.prepare().then(() => {
 
 
 
-  // Function to spawn a PTY
-  const ensurePty = async (id: string, cols: number = 80, rows: number = 30) => {
-    if (sessions.has(id)) {
-        const session = sessions.get(id)!;
-        // Resize existing session if dimensions differ and are valid
-        if (cols > 0 && rows > 0) {
-            try {
-                session.process.resize(cols, rows);
-            } catch (e) {
-                logger.error('Server', `Error resizing existing session ${id}:`, e);
-            }
-        }
-        return session;
-    }
-
-    let shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || 'bash');
-    let args: string[] = [];
-    let containerFallbackWarning = '';
-
-    if (id.startsWith('container:')) {
-        const parts = id.split(':');
-        // Format: container:NODE:ID or container:ID (legacy/local)
-        let nodeName = 'local';
-        let containerId = '';
-
-        if (parts.length === 3) {
-            nodeName = parts[1];
-            containerId = parts[2];
-        } else {
-            containerId = parts[1];
-        }
-
-        if (!containerId) {
-            logger.error('Server', 'Invalid container ID');
-            if (sessions.has('host')) return sessions.get('host')!;
-            throw new Error('Invalid container ID');
-        }
-
-        if (nodeName && nodeName !== 'local') {
-            try {
-                const nodes = await listNodes();
-                const node = nodes.find(n => n.Name === nodeName);
-                if (node) {
-                    const uri = new URL(node.URI);
-                    if (uri.protocol === 'ssh:') {
-                        shell = 'ssh';
-                        args = [];
-                        
-                        if (node.Identity) args.push('-i', node.Identity);
-                        if (uri.port) args.push('-p', uri.port);
-                        
-                        args.push('-o', 'StrictHostKeyChecking=no');
-                        args.push('-o', 'UserKnownHostsFile=/dev/null');
-                        args.push('-t'); // Force PTY allocation
-                        
-                        args.push(`${uri.username}@${uri.hostname}`);
-                        
-                        // Command to run on remote
-                        args.push(`podman exec -it -e TERM=xterm-256color ${containerId} sh -c 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'`);
-                    }
-                }
-            } catch (e) {
-                logger.error('Server', `Failed to setup remote container terminal for ${nodeName}:`, e);
-            }
-        } else {
-            shell = 'podman';
-            // Try to use bash if available, otherwise sh. Pass TERM env var.
-            args = ['exec', '-it', '-e', 'TERM=xterm-256color', containerId, 'sh', '-c', 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'];
-        }
-    } else if (id === 'host' || id.startsWith('node:')) {
-        // 'host' uses the Local node; 'node:X' uses the named node
-        const nodeName = id === 'host' ? 'Local' : id.split(':')[1];
-        let nodeResolved = false;
-        try {
-            const nodes = await listNodes();
-            const node = nodes.find(n => n.Name === nodeName);
-            if (node) {
-                // Parse URI: ssh://user@host:port/path
-                const uri = new URL(node.URI);
-                if (uri.protocol === 'ssh:') {
-                    shell = 'ssh';
-                    args = [];
-
-                    // Identity file
-                    if (node.Identity) {
-                        args.push('-i', node.Identity);
-                    }
-
-                    // Port
-                    if (uri.port) {
-                        args.push('-p', uri.port);
-                    }
-
-                    // StrictHostKeyChecking=no to avoid interactive prompts on first connect
-                    args.push('-o', 'StrictHostKeyChecking=no');
-                    args.push('-o', 'UserKnownHostsFile=/dev/null');
-
-                    // User and Host
-                    args.push(`${uri.username}@${uri.hostname}`);
-                    nodeResolved = true;
-                }
-            } else {
-                logger.warn('Server', `Node "${nodeName}" not found. Available nodes: ${nodes.map(n => n.Name).join(', ') || '(none)'}`);
-            }
-        } catch (e) {
-            logger.error('Server', 'Failed to resolve node connection', e);
-        }
-        if (!nodeResolved) {
-            containerFallbackWarning = `\x1b[33m⚠ WARNING: Could not connect to node "${nodeName}" via SSH. Falling back to container shell.\x1b[0m\r\n\x1b[33m  This is the ServiceBay container, not the host system. Check your node configuration.\x1b[0m\r\n\r\n`;
-            logger.warn('Server', `Terminal fallback to container shell for "${id}" – node "${nodeName}" could not be resolved`);
-        }
-    }
-    
-    logger.info('Server', `Spawning PTY: ${shell} ${args.join(' ')}`);
-
-    let cwd = process.env.HOME;
-    try {
-        if (!cwd || !fs.existsSync(cwd)) {
-            logger.warn('Server', `Home directory ${cwd} invalid or missing. Defaulting terminal CWD to /`);
-            cwd = '/';
-        }
-    } catch {
-        // Fallback for strict permissions
-        cwd = '/';
-    }
-
-    const ptyProcess = pty.spawn(shell, args, {
-      name: 'xterm-256color',
-      cols: cols || 80,
-      rows: rows || 30,
-      cwd: cwd,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      env: { ...process.env, TERM: 'xterm-256color' } as any
-    });
-
-    logger.info('Server', `Spawned new PTY process for ${id} (PID: ${ptyProcess.pid})`);
-
-    const history = new CharRingBuffer(PTY_HISTORY_BYTES);
-    history.append(`\r\n\x1b[32m>>> Connected to terminal session: ${id}\x1b[0m\r\n${containerFallbackWarning}`);
-    const session: PtySession = {
-        process: ptyProcess,
-        history,
-        lastActive: Date.now()
-    };
-
-    sessions.set(id, session);
-
-    ptyProcess.onData((data) => {
-      session.history.append(data);
-      session.lastActive = Date.now();
-      io.to(id).emit('output', data);
-    });
-
-    ptyProcess.onExit((e) => {
-      const code = e.exitCode;
-      logger.info('Server', `PTY process ${id} exited with code ${code}`);
-      io.to(id).emit('output', `\r\n\x1b[31m>>> Session exited with code ${code}\x1b[0m\r\n`);
-      sessions.delete(id);
-    });
-
-    return session;
-  };
-
-  // Initialize host PTY immediately
-  ensurePty('host').catch(err => logger.error('Server', 'ensurePty(host) failed', err));
-
+  // Server-owned socket lifecycle: just the bits that aren't the terminal or
+  // resource broadcast (those are owned by their dedicated managers).
   io.on('connection', (socket) => {
     logger.info('Server', 'Client connected');
     updateMonitoringState();
-    
-    // Send immediate initial state to new client
     socket.emit('twin:state', twinStore.getSnapshot());
-    
-    socket.on('join', async (payload: string | { id: string, cols?: number, rows?: number }) => {
-        let id: string;
-        let cols = 80;
-        let rows = 30;
 
-        if (typeof payload === 'string') {
-            id = payload;
-        } else {
-            id = payload.id;
-            cols = payload.cols || 80;
-            rows = payload.rows || 30;
-        }
-        
-        logger.info('Server', `Client joining terminal ${id} with dims ${cols}x${rows}`);
-        socket.join(id);
-        try {
-            const session = await ensurePty(id, cols, rows);
-            socket.emit('history', session.history.toString());
-        } catch (e) {
-            logger.error('Server', 'Failed to join terminal:', e);
-            socket.emit('output', '\r\n\x1b[31m>>> Failed to join terminal session.\x1b[0m\r\n');
-        }
-    });
-
-    // Logging Subscription
-    socket.on('logs:subscribe', () => {
-        socket.join('logs:live');
-    });
-
-    socket.on('logs:unsubscribe', () => {
-        socket.leave('logs:live');
-    });
-
-    socket.on('input', ({ id, data }: { id: string, data: string }) => {
-      const session = sessions.get(id);
-      if (session) {
-        session.process.write(data);
-        session.lastActive = Date.now();
-      }
-    });
-
-    socket.on('resize', ({ id, cols, rows }: { id: string, cols: number, rows: number }) => {
-      const session = sessions.get(id);
-      if (session) {
-        session.process.resize(cols, rows);
-      }
-    });
-
-    // Resource Monitoring Protocol
-    socket.on('monitor:resources:start', ({ node }: { node: string }) => {
-        if (!node) return;
-        if (!resourceViewers.has(node)) resourceViewers.set(node, new Set());
-        resourceViewers.get(node)!.add(socket.id);
-        updateResourceMonitoring(node);
-    });
-
-    socket.on('monitor:resources:stop', ({ node }: { node: string }) => {
-        if (!node || !resourceViewers.has(node)) return;
-        resourceViewers.get(node)!.delete(socket.id);
-        updateResourceMonitoring(node);
-    });
-
+    socket.on('logs:subscribe', () => { socket.join('logs:live'); });
+    socket.on('logs:unsubscribe', () => { socket.leave('logs:live'); });
     socket.on('disconnect', () => {
       logger.info('Server', 'Client disconnected');
-      
-      // Remove from all resource viewing groups
-      for (const [node, viewers] of resourceViewers.entries()) {
-          if (viewers.delete(socket.id)) {
-              updateResourceMonitoring(node);
-          }
-      }
-
       updateMonitoringState();
     });
   });
 
-  // Cleanup inactive container sessions
-  const ptySweepTimer = setInterval(() => {
-      const now = Date.now();
-      for (const [id, session] of sessions.entries()) {
-          if (id !== 'host' && now - session.lastActive > 1000 * 60 * 5) { // 5 mins inactivity
-              logger.info('Server', `Killing inactive session ${id}`);
-              session.process.kill();
-              sessions.delete(id);
-          }
-      }
-  }, 60000);
-
   // ─── Graceful shutdown ─────────────────────────────────────────────
+  // PTY sweep + session cleanup live inside TerminalSessionManager; we just
+  // ask the manager to stop, then drain everything else.
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
       if (shuttingDown) return;
@@ -645,12 +395,8 @@ app.prepare().then(() => {
       finish.unref();
 
       try {
-          clearInterval(ptySweepTimer);
+          terminalManager.stop();
           io.close();
-          for (const [id, session] of sessions.entries()) {
-              try { session.process.kill(); } catch { /* ignore */ }
-              sessions.delete(id);
-          }
           await SSHConnectionPool.getInstance().shutdown(2000);
           await new Promise<void>(resolve => server.close(() => resolve()));
           logger.info('Server', 'Shutdown complete');
@@ -668,6 +414,7 @@ app.prepare().then(() => {
   process.on('unhandledRejection', (reason) => {
       logger.error('Server', 'unhandledRejection', reason);
   });
+
 
   server.listen(port, async () => {
     logger.info('Server', `> Ready on http://${hostname}:${port}`);
