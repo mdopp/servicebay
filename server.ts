@@ -25,6 +25,10 @@ import { syncRegistries } from './src/lib/registry';
 import { createMcpServer } from './src/lib/mcp/server';
 import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './src/lib/auth/session';
+
+// Fail-fast at startup so misconfigured deploys don't appear to work.
+assertAuthSecret();
 
 // Helper: collect request body as parsed JSON
 function collectBody(req: import('http').IncomingMessage): Promise<unknown> {
@@ -160,6 +164,18 @@ app.prepare().then(() => {
           return;
         }
 
+        // Auth: MCP lives outside /api/* so the Next middleware doesn't see it.
+        const session = await getSessionFromCookieHeader(req.headers.cookie);
+        if (!session) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32001, message: 'Unauthorized' },
+            id: null,
+          }));
+          return;
+        }
+
         // Stateless: create a fresh server + transport per request
         const mcpServer = createMcpServer();
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -182,6 +198,18 @@ app.prepare().then(() => {
   });
 
   const io = new Server(server);
+
+  // Socket.IO auth: every connection must carry a valid session cookie.
+  io.use(async (socket, next) => {
+    const session = await getSessionFromCookieHeader(socket.handshake.headers.cookie);
+    if (!session) {
+      logger.warn('Server', `Rejected unauthenticated socket from ${socket.handshake.address}`);
+      return next(new Error('unauthorized'));
+    }
+    (socket.data as { user?: SessionPayload }).user = session;
+    next();
+  });
+
   const twinStore = DigitalTwinStore.getInstance();
 
   // Load serverName from config into twin store
