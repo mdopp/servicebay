@@ -3,6 +3,7 @@ import { AgentHandler } from './handler';
 import { AgentManager } from './manager';
 import { Readable } from 'stream';
 import { logger } from '@/lib/logger';
+import { shellQuoteAll } from '../util/shellQuote';
 
 export class AgentExecutor implements Executor {
   private agent: AgentHandler;
@@ -34,6 +35,13 @@ export class AgentExecutor implements Executor {
         throw err;
     }
     return { stdout: res.stdout, stderr: res.stderr };
+  }
+
+  async execArgv(argv: string[], options: { timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
+    if (!Array.isArray(argv) || argv.length === 0) {
+      throw new Error('execArgv requires a non-empty argv array');
+    }
+    return this.exec(shellQuoteAll(argv), options);
   }
 
   async readFile(path: string): Promise<string> {
