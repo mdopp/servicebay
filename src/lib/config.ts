@@ -166,7 +166,11 @@ const DEFAULT_CONFIG: AppConfig = {
     }
   },
   autoUpdate: {
-    enabled: false,
+    // Auto-update on the stable channel by default for fresh installs. The
+    // home-lab use case strongly prefers "stays patched on its own" over
+    // "asks before every minor security release." Users can flip this off
+    // in Settings → System.
+    enabled: true,
     schedule: '0 0 * * *', // Daily at midnight
     channel: 'stable'
   }

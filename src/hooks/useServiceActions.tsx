@@ -105,6 +105,16 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     setShowActions(true);
   }, []);
 
+  // Inline-restart entry point used by the "Service is failed" banner on the
+  // service card. Skips the actions menu — selects the service and opens the
+  // ActionProgressModal directly.
+  const triggerRestart = useCallback((service: ServiceViewModel) => {
+    setSelectedService(service);
+    setActionService(service);
+    setCurrentAction('restart');
+    setActionModalOpen(true);
+  }, []);
+
   const requestDelete = useCallback((service: ServiceViewModel) => {
     setServiceToDelete(service);
     setDeleteModalOpen(true);
@@ -384,6 +394,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     openMonitorDrawer,
     openEditDrawer,
     openActions,
+    triggerRestart,
     requestDelete,
     actionLoading,
     overlays: actionOverlays,
