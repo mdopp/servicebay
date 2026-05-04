@@ -99,7 +99,7 @@ function getNodeIp(nodeName: string, twinStore: DigitalTwinStore): string {
 /**
  * Get an NPM API token. Tries credentials in order:
  * 1. Explicitly provided credentials (from wizard form)
- * 2. Stored credentials from config
+ * 2. Stored credentials from config (config.reverseProxy.npm)
  * 3. NPM default credentials (admin@example.com / changeme)
  */
 async function getNpmToken(
@@ -110,6 +110,17 @@ async function getNpmToken(
 
     if (providedCredentials) {
         candidates.push({ identity: providedCredentials.email, secret: providedCredentials.password });
+    }
+
+    // Stored credentials — set by Settings → Integrations → Reverse Proxy
+    try {
+        const config = await getConfig();
+        const stored = config.reverseProxy?.npm;
+        if (stored?.email && stored?.password) {
+            candidates.push({ identity: stored.email, secret: stored.password });
+        }
+    } catch {
+        // config not ready — fall through to defaults
     }
 
     // Always try default credentials last

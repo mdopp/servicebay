@@ -749,6 +749,18 @@ export default function OnboardingWizard() {
       setStackLogs(prev => [...prev, '\u274c Authentication failed. Please check your credentials.']);
       setNpmCredPrompt(true);
     } else {
+      // Persist the working creds so future installs don't prompt again.
+      // Best-effort — failure here doesn't block the install.
+      try {
+        await fetch('/api/system/nginx/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: npmEmail, password: npmPassword }),
+        });
+        setStackLogs(prev => [...prev, 'Saved NPM credentials for future installs.']);
+      } catch {
+        // ignore — install succeeded, just don't get auto-sync next time
+      }
       setStackInstallStep('done');
     }
   };
