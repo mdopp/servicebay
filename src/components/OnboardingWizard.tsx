@@ -22,7 +22,7 @@ import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, R
 import { useToast } from '@/providers/ToastProvider';
 
 // Steps definition
-type WizardStep = 'welcome' | 'gateway' | 'ssh' | 'updates' | 'registries' | 'email' | 'stacks' | 'finish';
+type WizardStep = 'welcome' | 'network' | 'stacks' | 'email' | 'finish';
 
 interface ConfigFile {
   filename: string;
@@ -296,12 +296,13 @@ export default function OnboardingWizard() {
   };
 
   const getNextStep = (current: WizardStep): WizardStep => {
-      // Calculate next step based on selection
-      const order: WizardStep[] = ['welcome', 'gateway', 'ssh', 'updates', 'registries', 'email', 'stacks', 'finish'];
+      const order: WizardStep[] = ['welcome', 'network', 'stacks', 'email', 'finish'];
 
-      // Determine which steps are active based on selection
+      // network step covers both Gateway and Remote Access (SSH key) — show
+      // it if either was selected on the welcome screen.
       const activeSteps = order.filter(step => {
          if (step === 'welcome' || step === 'finish') return true;
+         if (step === 'network') return selection.gateway || selection.ssh;
          return selection[step as keyof typeof selection];
       });
 
@@ -350,24 +351,24 @@ export default function OnboardingWizard() {
   
   // -- Specific Save Handlers --
 
-  const handleSaveGateway = () => saveAndNext(async () => {
-     await saveGatewayConfig(gwHost, gwUser, gwPass);
-     addToast('success', 'Gateway Saved');
+  // Welcome → next: persist the cheap toggle-only decisions (auto-update,
+  // template registries) inline so they don't need their own dedicated
+  // pass-through steps. Gateway / SSH / email / stacks still gate their own
+  // dedicated step because they need actual data or a confirmation action.
+  const handleSaveWelcome = () => saveAndNext(async () => {
+      const tasks: Promise<unknown>[] = [];
+      if (selection.updates) tasks.push(saveAutoUpdateConfig(true));
+      if (selection.registries) tasks.push(saveRegistriesConfig(true));
+      if (tasks.length > 0) await Promise.all(tasks);
   });
 
-  const handleFinishSSH = () => {
-     // SSH key generation is done inline, this just moves next
-     handleNext();
-  };
-
-  const handleSaveUpdates = () => saveAndNext(async () => {
-      await saveAutoUpdateConfig(true);
-      addToast('success', 'Updates Enabled');
-  });
-
-  const handleSaveRegistries = () => saveAndNext(async () => {
-      await saveRegistriesConfig(true);
-      addToast('success', 'Registries Configured');
+  const handleSaveNetwork = () => saveAndNext(async () => {
+      // Gateway and SSH key generation are conditional. Gateway needs the
+      // form values; SSH key generation is its own button (handled inline).
+      if (selection.gateway) {
+          await saveGatewayConfig(gwHost, gwUser, gwPass);
+          addToast('success', 'Gateway Saved');
+      }
   });
 
   const handleSaveEmail = () => saveAndNext(async () => {
@@ -782,9 +783,10 @@ export default function OnboardingWizard() {
              {stacksOnlyMode ? 'Install Services' : 'ServiceBay Setup'}
            </h2>
            {!stacksOnlyMode && (() => {
-             const order: WizardStep[] = ['welcome', 'gateway', 'ssh', 'updates', 'registries', 'email', 'stacks', 'finish'];
+             const order: WizardStep[] = ['welcome', 'network', 'stacks', 'email', 'finish'];
              const activeSteps = order.filter(step => {
                if (step === 'welcome' || step === 'finish') return true;
+               if (step === 'network') return selection.gateway || selection.ssh;
                return selection[step as keyof typeof selection];
              });
              const currentIndex = activeSteps.indexOf(currentStep);
@@ -867,65 +869,43 @@ export default function OnboardingWizard() {
                 </div>
             )}
 
-            {currentStep === 'gateway' && (
-                <div className="space-y-4">
-                     <h3 className="font-semibold text-lg flex items-center gap-2"><Network className="w-5 h-5 text-purple-500"/> Internet Gateway</h3>
-                     <p className="text-sm text-gray-500">
-                        Enter your FRITZ!Box details to enable network scanning.
-                     </p>
-                     
-                     <div className="space-y-3 pt-2">
-                        <Input label="Hostname / IP" value={gwHost} onChange={setGwHost} placeholder="fritz.box" />
-                        <Input label="Username" value={gwUser} onChange={setGwUser} placeholder="admin" />
-                        <Input label="Password" type="password" value={gwPass} onChange={setGwPass} />
-                     </div>
-                </div>
-            )}
+            {currentStep === 'network' && (
+                <div className="space-y-6">
+                    {selection.gateway && (
+                        <section className="space-y-3">
+                             <h3 className="font-semibold text-lg flex items-center gap-2"><Network className="w-5 h-5 text-purple-500"/> Internet Gateway</h3>
+                             <p className="text-sm text-gray-500">
+                                Enter your FRITZ!Box details to enable network scanning.
+                             </p>
+                             <div className="space-y-3">
+                                <Input label="Hostname / IP" value={gwHost} onChange={setGwHost} placeholder="fritz.box" />
+                                <Input label="Username" value={gwUser} onChange={setGwUser} placeholder="admin" />
+                                <Input label="Password" type="password" value={gwPass} onChange={setGwPass} />
+                             </div>
+                        </section>
+                    )}
 
-            {currentStep === 'ssh' && (
-                <div className="space-y-4">
-                    <h3 className="font-semibold text-lg flex items-center gap-2"><Key className="w-5 h-5 text-amber-500"/> SSH Configuration</h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-300">
-                        {status?.hasSshKey 
-                          ? "We found an existing SSH key. You are good to go!" 
-                          : "No SSH key found. Generate one now to enable management."}
-                    </p>
-                    
-                    {!status?.hasSshKey && (
-                        <div className="pt-2">
-                             <Button onClick={handleGenerateKey} disabled={loading} className="w-full justify-center">
-                                {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Key className="w-4 h-4 mr-2" />}
-                                Generate SSH Key
-                             </Button>
-                        </div>
+                    {selection.gateway && selection.ssh && (
+                        <hr className="border-gray-200 dark:border-gray-700" />
+                    )}
+
+                    {selection.ssh && (
+                        <section className="space-y-3">
+                            <h3 className="font-semibold text-lg flex items-center gap-2"><Key className="w-5 h-5 text-amber-500"/> Remote Access (SSH)</h3>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">
+                                {status?.hasSshKey
+                                  ? "We found an existing SSH key. You are good to go!"
+                                  : "No SSH key found. Generate one now to enable management of remote nodes."}
+                            </p>
+                            {!status?.hasSshKey && (
+                                 <Button onClick={handleGenerateKey} disabled={loading} className="w-full justify-center">
+                                    {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Key className="w-4 h-4 mr-2" />}
+                                    Generate SSH Key
+                                 </Button>
+                            )}
+                        </section>
                     )}
                 </div>
-            )}
-
-            {currentStep === 'updates' && (
-                 <div className="space-y-4">
-                    <h3 className="font-semibold text-lg flex items-center gap-2"><RefreshCw className="w-5 h-5 text-green-500"/> Auto Updates</h3>
-                    <p className="text-gray-600 dark:text-gray-300 text-sm">
-                        Enable automatic updates for ServiceBay and your containers.
-                        This will check for updates daily at midnight.
-                    </p>
-                    <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg text-sm text-blue-800 dark:text-blue-200">
-                        <p className="font-medium">Podman Quadlets</p>
-                        Your containers will be updated using <code>AutoUpdate=registry</code> mode.
-                    </div>
-                 </div>
-            )}
-
-            {currentStep === 'registries' && (
-                 <div className="space-y-4">
-                    <h3 className="font-semibold text-lg flex items-center gap-2"><Box className="w-5 h-5 text-blue-500"/> Template Registries</h3>
-                    <p className="text-gray-600 dark:text-gray-300 text-sm">
-                        Enable the default ServiceBay template registry to install popular applications like Nginx, Redis, and more.
-                    </p>
-                     <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-sm font-mono text-gray-600 dark:text-gray-400">
-                        https://github.com/mdopp/servicebay-templates
-                    </div>
-                 </div>
             )}
 
             {currentStep === 'email' && (
@@ -1365,16 +1345,14 @@ export default function OnboardingWizard() {
             )}
 
             {currentStep === 'welcome' && (
-                <Button onClick={handleNext}>
+                <Button onClick={handleSaveWelcome} disabled={loading}>
+                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     Next <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
             )}
 
             {/* Step specific primary actions */}
-            {currentStep === 'gateway' && <Button onClick={handleSaveGateway} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save & Next</Button>}
-            {currentStep === 'ssh' && <Button onClick={handleFinishSSH}>Continue <ArrowRight className="w-4 h-4 ml-2"/></Button>}
-            {currentStep === 'updates' && <Button onClick={handleSaveUpdates} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Enable Updates</Button>}
-            {currentStep === 'registries' && <Button onClick={handleSaveRegistries} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Enable Registry</Button>}
+            {currentStep === 'network' && <Button onClick={handleSaveNetwork} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} {selection.gateway ? 'Save & Next' : 'Continue'}</Button>}
             {currentStep === 'email' && <Button onClick={handleSaveEmail} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save Email</Button>}
 
             {currentStep === 'stacks' && stackInstallStep === 'select' && (
