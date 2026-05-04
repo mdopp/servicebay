@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.0.0...servicebay-v2.1.0) (2026-05-04)
+
+
+### Features
+
+* expand MCP tool surface for mutating ops; rename /monitor/[name] to /services/[name] ([aafd595](https://github.com/mdopp/servicebay/commit/aafd595f326330ff6d8d232821ac01a0fd240feb))
+* expand MCP tool surface; rename /monitor/[name] to /services/[name] ([6ffdca0](https://github.com/mdopp/servicebay/commit/6ffdca019e989af508d96c65541a7b874d5ce61c))
+* simplify settings IA — 4 tabs, primary "restore latest" backup CTA ([cfc47aa](https://github.com/mdopp/servicebay/commit/cfc47aae2eb40741e8bf992d31859f3812a80e97))
+* simplify settings IA — 4 tabs, primary restore-latest backup CTA ([fabd073](https://github.com/mdopp/servicebay/commit/fabd0739ba81e169ee071fac48019a296c9ff892))
+
+
+### Bug Fixes
+
+* **dev:** make local container dev environment work end-to-end ([5b8e771](https://github.com/mdopp/servicebay/commit/5b8e7711f692801f6751fb5bb430c3c13d9fd641))
+* **dev:** make local container dev environment work end-to-end ([1f270df](https://github.com/mdopp/servicebay/commit/1f270df5c83b8a88c5f26dd0bb604228a01f685f))
+
 ## [2.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v1.0.0...servicebay-v2.0.0) (2026-05-03)
 
 
