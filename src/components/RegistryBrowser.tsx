@@ -5,11 +5,12 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { Template } from '@/lib/registry';
 import { fetchReadme } from '@/app/actions';
 import ReactMarkdown from 'react-markdown';
-import { Download, Loader2, Folder, Layers, Server, Link as LinkIcon, Shield } from 'lucide-react';
+import { Download, Loader2, Folder, Layers, Server, Link as LinkIcon, Shield, FileCode } from 'lucide-react';
 import InstallerModal from './InstallerModal';
 import ExternalLinkConfig from './ExternalLinkConfig';
 import ManualServiceForm from './ManualServiceForm';
 import ReverseProxyConfig from './ReverseProxyConfig';
+import ServiceForm from './ServiceForm';
 
 type SpecialItem = {
     id: string;
@@ -36,6 +37,14 @@ const specialItems: SpecialItem[] = [
         icon: <Server size={18} className="text-blue-500" />,
         type: 'special',
         component: <ManualServiceForm />
+    },
+    {
+        id: 'blank',
+        name: 'Blank Quadlet',
+        description: 'Edit kube YAML from scratch',
+        icon: <FileCode size={18} className="text-amber-500" />,
+        type: 'special',
+        component: <ServiceForm variant="embedded" />
     },
     {
         id: 'link',
