@@ -34,8 +34,9 @@ FROM base AS prod-deps
 WORKDIR /app
 # Base image already has python3 make g++
 COPY package.json package-lock.json* ./
-# Install prod deps (builds native modules) AND tsx/typescript
-RUN npm ci --omit=dev && npm install tsx typescript
+# Install prod deps (builds native modules). tsx/typescript are no longer
+# needed at runtime because the custom server is pre-bundled to CJS.
+RUN npm ci --omit=dev
 
 # Production image, copy all the files and run next
 # Use clean slim image for runner
@@ -65,22 +66,20 @@ RUN useradd --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
 
-# Set the correct permission for prerender cache
-RUN mkdir .next
-
-# Automatically leverage output traces to reduce image size
-# https://nextjs.org/docs/advanced-features/output-file-tracing
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# Copy the full Next build output. We deliberately do NOT use `output: 'standalone'`
+# because we run our own custom server (server.ts) that wires Socket.IO, MCP, and
+# PTY sessions around `next()`. Standalone rearranges `.next/` in a way that
+# breaks `app.prepare()` from a custom-server entry point under Next 16.
+COPY --from=builder /app/.next ./.next
 
 # Copy templates and stacks
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/stacks ./stacks
 
-# Copy custom server and source code
-COPY --from=builder /app/server.ts ./
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/tsconfig.json ./
+# Copy the pre-bundled custom server (CJS, runs under plain node — no tsx).
+# server.ts and src/ are NOT shipped to the runtime; everything imported by
+# server.ts is folded into dist-server/server.cjs by scripts/build-server.mjs.
+COPY --from=builder /app/dist-server ./dist-server
 
 # Copy production node_modules (with built native modules)
 COPY --from=prod-deps /app/node_modules ./node_modules
@@ -99,4 +98,4 @@ ENV HOSTNAME "0.0.0.0"
 ENV HOST_SSH="host.containers.internal"
 ENV SSH_KEY_PATH="/root/.ssh/id_rsa"
 
-CMD ["tsx", "server.ts"]
+CMD ["node", "dist-server/server.cjs"]

@@ -20,6 +20,9 @@
 # production
 /build
 
+# custom-server CJS bundle (produced by scripts/build-server.mjs)
+/dist-server/
+
 # misc
 .DS_Store
 *.pem

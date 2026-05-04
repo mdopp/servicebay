@@ -1,6 +1,18 @@
 import { loadEnvConfig } from '@next/env';
 loadEnvConfig(process.cwd(), process.env.NODE_ENV !== 'production');
 
+// Catch rejections that happen during early bootstrap (before app.prepare().then
+// installs the proper handler). Without this, Next 16's source-map ignore-list
+// hides the real stack and we only see "at ignore-listed frames".
+process.on('unhandledRejection', (reason) => {
+   
+  console.error('[BOOT] unhandledRejection:', reason);
+  if (reason instanceof Error && reason.stack) {
+     
+    console.error('[BOOT] stack:', reason.stack);
+  }
+});
+
 import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';

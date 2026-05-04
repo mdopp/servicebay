@@ -84,9 +84,14 @@ async function saveNodes(nodes: PodmanConnection[]) {
 
 function buildDefaultLocalNode(): PodmanConnection {
   const username = process.env.HOST_USER || process.env.USER || 'root';
+  // In container mode the agent SSHs back to the host gateway, not to 127.0.0.1
+  // (which inside the container is the container itself). HOST_SSH is set by
+  // the runtime — `host.containers.internal` (podman) / `host.docker.internal`
+  // (docker) for dev, or the configured host address in production.
+  const host = process.env.HOST_SSH || '127.0.0.1';
   return {
     Name: 'Local',
-    URI: `ssh://${username}@127.0.0.1`,
+    URI: `ssh://${username}@${host}`,
     Identity: '/app/data/ssh/id_rsa',
     Default: true
   };
