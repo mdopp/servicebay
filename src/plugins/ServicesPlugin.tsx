@@ -26,7 +26,7 @@ import { EnrichedContainer } from '@/lib/agent/types';
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
-import { Plus, RefreshCw, Activity, Trash2, Power, Box, Search, X, AlertCircle, FileCode, ArrowRight, ShieldCheck, Terminal as TerminalIcon, Eraser } from 'lucide-react';
+import { Plus, RefreshCw, Activity, Trash2, Power, Box, Search, X, AlertCircle, FileCode, ArrowRight, ShieldCheck, Terminal as TerminalIcon, Eraser, RotateCcw } from 'lucide-react';
 import { ServiceBundle, BundleValidation, BundleStackArtifacts, BundlePortSummary, BundleContainerSummary, generateBundleStackArtifacts, sanitizeBundleName } from '@/lib/unmanaged/bundleShared';
 
 interface MigrationPlan {
@@ -302,6 +302,7 @@ export default function ServicesPlugin() {
         openMonitorDrawer,
         openEditDrawer,
         openActions,
+        triggerRestart,
         requestDelete,
         overlays: serviceActionOverlays,
         closeOverlays,
@@ -641,6 +642,34 @@ export default function ServicesPlugin() {
                         onDelete={requestDelete}
                     />
                 </div>
+
+                {/* Failed-state nudge: when a managed service is not active,
+                    surface a one-click restart and a direct link to logs
+                    instead of forcing the user to dig through the Actions
+                    menu. Hidden for gateway/link "services" because they
+                    have their own lifecycle. */}
+                {!service.active && service.type !== 'gateway' && service.type !== 'link' && (
+                    <div className="mb-3 -mt-1 flex items-center gap-2 px-3 py-2 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/60 text-sm text-red-800 dark:text-red-200">
+                        <AlertCircle size={14} className="shrink-0" />
+                        <span className="flex-1 truncate" title={service.status}>Service is {service.status || 'inactive'}.</span>
+                        <button
+                            type="button"
+                            onClick={() => triggerRestart(service)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border border-red-300 dark:border-red-700 text-red-800 dark:text-red-100 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                            title="Restart this service"
+                        >
+                            <RotateCcw size={12} /> Restart
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => openMonitorDrawer(service)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border border-red-300 dark:border-red-700 text-red-800 dark:text-red-100 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                            title="View recent logs"
+                        >
+                            View logs
+                        </button>
+                    </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-4 bg-gray-50/50 dark:bg-gray-800/20 rounded-md p-3 border border-gray-100 dark:border-gray-800/50 flex-1">
                     {service.type === 'gateway' ? (
