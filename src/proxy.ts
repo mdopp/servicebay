@@ -11,7 +11,7 @@ function isPublicApi(pathname: string): boolean {
   return PUBLIC_API_PREFIXES.some(p => pathname === p || pathname.startsWith(p + '/'));
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (!pathname.startsWith('/api/')) return NextResponse.next();

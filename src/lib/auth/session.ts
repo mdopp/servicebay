@@ -1,4 +1,4 @@
-// Runtime-agnostic session helpers. Importable from server.ts, middleware.ts,
+// Runtime-agnostic session helpers. Importable from server.ts, proxy.ts,
 // MCP, and Next.js route handlers. Crucially does NOT import `next/headers`,
 // which would pull `next/dist/server/app-render/...` into the custom server's
 // CJS load path and trip Next's AsyncLocalStorage invariant under tsx.
