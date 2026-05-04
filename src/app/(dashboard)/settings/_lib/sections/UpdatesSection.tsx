@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { RefreshCw, Download, Clock, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Download, Loader2, RefreshCw, XCircle } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
-import type { AppUpdateStatus } from '../_lib/helpers';
+import type { AppUpdateStatus } from '../helpers';
 
-export default function UpdatesSettingsPage() {
+export default function UpdatesSection() {
   const { addToast } = useToast();
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -114,10 +114,7 @@ export default function UpdatesSettingsPage() {
       const res = await fetch('/api/system/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'configure',
-          autoUpdate: { enabled: newState },
-        }),
+        body: JSON.stringify({ action: 'configure', autoUpdate: { enabled: newState } }),
       });
 
       if (res.ok) {
