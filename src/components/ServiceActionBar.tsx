@@ -26,7 +26,7 @@ export function ServiceActionBar({ service, onMonitor, onEdit, onActions, onEdit
       {isGateway ? (
         <>
           <Link
-            href="/monitor/gateway"
+            href="/services/gateway"
             className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-colors"
             title="Monitor Gateway"
           >
