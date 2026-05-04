@@ -33,11 +33,13 @@ cd "$REPO_ROOT"
 # ─── config ────────────────────────────────────────────────────────────────
 DATA_DIR="${SERVICEBAY_DEV_DIR:-$HOME/.servicebay-dev}"
 SECRET_FILE="$DATA_DIR/.auth-secret"
+PASSWORD_FILE="$DATA_DIR/.bootstrap-password"
 SSH_DIR="$DATA_DIR/data/ssh"
 SSH_KEY="$SSH_DIR/id_rsa"
 PORT="${SERVICEBAY_DEV_PORT:-3000}"
 NAME="${SERVICEBAY_DEV_NAME:-servicebay-dev}"
 IMAGE="servicebay:dev"
+DEV_USERNAME="${SERVICEBAY_USERNAME:-admin}"
 
 # ─── pick container engine ─────────────────────────────────────────────────
 if [ -z "${ENGINE:-}" ]; then
@@ -74,6 +76,47 @@ ensure_auth_secret() {
     log "generating AUTH_SECRET → $SECRET_FILE"
     install -m 0600 /dev/null "$SECRET_FILE"
     openssl rand -hex 32 > "$SECRET_FILE"
+  fi
+}
+
+preflight_host_sshd() {
+  # The agent inside the container SSHs back to the host via
+  # host.containers.internal. If no sshd is listening on the host's port 22,
+  # the UI will load but every Local-node action will fail with ECONNREFUSED.
+  # We warn here rather than fail — the rest of ServiceBay still works.
+  if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE '(^|:)22$'; then
+    return
+  fi
+  if command -v sshd > /dev/null 2>&1; then
+    cat >&2 <<'EOF'
+⚠ no sshd listening on the host (port 22). The agent will not be able to
+  reach back from the container. Start it with:
+    sudo service ssh start
+EOF
+  else
+    cat >&2 <<EOF
+⚠ openssh-server is not installed on this host. The agent inside the
+  container needs SSH back to the host (Local node) to inspect podman /
+  systemd state. Install it once, then re-run 'scripts/dev-container.sh up':
+
+    sudo apt update && sudo apt install -y openssh-server
+    sudo sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    sudo service ssh start
+
+  Public key to authorize (already added if you said 'y' above):
+    $SSH_KEY.pub → ~/.ssh/authorized_keys
+EOF
+  fi
+}
+
+ensure_bootstrap_password() {
+  # First-run bootstrap: ServiceBay reads SERVICEBAY_PASSWORD on first login,
+  # hashes it, persists the hash in config.json, and from then on the env var
+  # is unused. We always pass it so a fresh data dir can log in.
+  if [ ! -f "$PASSWORD_FILE" ]; then
+    log "generating dev bootstrap password → $PASSWORD_FILE"
+    install -m 0600 /dev/null "$PASSWORD_FILE"
+    openssl rand -hex 12 > "$PASSWORD_FILE"
   fi
 }
 
@@ -121,25 +164,46 @@ remove_if_exists() {
   fi
 }
 
+host_build() {
+  # Build .next/ and dist-server/ on the host. The dev image deliberately
+  # does NOT run `npm run build` inside the container — webpack inside podman
+  # under WSL reliably OOMs and crashes the WSL VM. Building on the host is
+  # both faster and safer.
+  if [ -n "${SERVICEBAY_DEV_SKIP_HOST_BUILD:-}" ]; then
+    log "SERVICEBAY_DEV_SKIP_HOST_BUILD set — reusing existing .next/ + dist-server/"
+    [ -d "$REPO_ROOT/.next" ] && [ -f "$REPO_ROOT/dist-server/server.cjs" ] || \
+      die "no prior build found; run without SERVICEBAY_DEV_SKIP_HOST_BUILD once"
+    return
+  fi
+  log "building Next.js + server bundle on the host (npm run build)"
+  ( cd "$REPO_ROOT" && npm run build )
+}
+
 build_image() {
-  log "building $IMAGE with $ENGINE (this can take a few minutes the first time)"
-  $ENGINE build -t "$IMAGE" "$REPO_ROOT"
+  log "building $IMAGE with $ENGINE from prebuilt artifacts"
+  $ENGINE build -f Dockerfile.dev -t "$IMAGE" "$REPO_ROOT"
 }
 
 run_container() {
-  local secret
+  local secret password
   secret=$(cat "$SECRET_FILE")
+  password=$(cat "$PASSWORD_FILE")
   log "starting $NAME on http://localhost:$PORT"
   $ENGINE run -d \
     --name "$NAME" \
     -p "${PORT}:3000" \
     -e AUTH_SECRET="$secret" \
+    -e SERVICEBAY_USERNAME="$DEV_USERNAME" \
+    -e SERVICEBAY_PASSWORD="$password" \
     -e HOST_SSH="$HOST_SSH_HOSTNAME" \
+    -e HOST_USER="${SERVICEBAY_HOST_USER:-$USER}" \
     -v "$DATA_DIR/data:/app/data:Z" \
     --restart=no \
     "${HOST_GATEWAY_FLAG[@]}" \
     "$IMAGE" > /dev/null
   log "ready. ServiceBay → http://localhost:$PORT"
+  log "login:  user '$DEV_USERNAME'  password (also in $PASSWORD_FILE):"
+  log "        $password"
   log "tail logs with: scripts/dev-container.sh logs"
 }
 
@@ -147,7 +211,10 @@ run_container() {
 cmd_up() {
   ensure_data_layout
   ensure_auth_secret
+  ensure_bootstrap_password
   ensure_ssh_key
+  preflight_host_sshd
+  host_build
   remove_if_exists
   build_image
   run_container
@@ -156,6 +223,7 @@ cmd_up() {
 cmd_restart() {
   ensure_data_layout
   ensure_auth_secret
+  ensure_bootstrap_password
   if ! container_exists; then
     log "no existing container; running 'up' instead"
     cmd_up

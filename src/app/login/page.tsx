@@ -1,5 +1,9 @@
 'use client';
 
+// useSearchParams forces dynamic rendering. Mark the page so static export
+// at build time doesn't try to pre-render and fail.
+export const dynamic = 'force-dynamic';
+
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ServiceBayLogo from '@/components/ServiceBayLogo';

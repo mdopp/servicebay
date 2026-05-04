@@ -1,0 +1,53 @@
+# Dev-only image — DO NOT use for production.
+# Production deployment is via Fedora CoreOS, see docs/INSTALLATION.md.
+#
+# This image deliberately skips the in-container Next.js build (which OOMs WSL)
+# and copies pre-built artifacts from the host:
+#   - .next/        produced by `npm run build` (webpack)
+#   - dist-server/  produced by scripts/build-server.mjs (esbuild bundle)
+#
+# scripts/dev-container.sh runs the host build before invoking podman/docker
+# build, so by the time this Dockerfile runs both directories already exist
+# in the build context.
+#
+# Native modules (better-sqlite3, node-pty, ssh2) MUST be compiled against the
+# container's Node version (not the host's), so we still run `npm ci` here.
+FROM node:20-slim
+
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PATH="/app/node_modules/.bin:$PATH" \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0 \
+    HOST_SSH=host.containers.internal \
+    SSH_KEY_PATH=/root/.ssh/id_rsa
+
+# Build toolchain for native modules + runtime utilities the agent needs.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 make g++ \
+        openssh-client python3-paramiko procps iproute2 ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install runtime deps — this rebuilds native modules for Node 20.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# Pre-built artifacts from the host. `dev-container.sh` ensures these exist.
+COPY .next ./.next
+COPY dist-server ./dist-server
+COPY public ./public
+COPY templates ./templates
+COPY stacks ./stacks
+
+# Python agent (streamed over SSH and executed on each managed node) and its
+# parser helper. Read at runtime by src/lib/agent/handler.ts; not bundled into
+# dist-server because it's a Python source file, not JS.
+COPY src/lib/agent/v4/agent.py ./src/lib/agent/v4/agent.py
+COPY src/lib/agent/v4/quadlet_parser.py ./src/lib/agent/v4/quadlet_parser.py
+
+EXPOSE 3000
+
+CMD ["node", "dist-server/server.cjs"]

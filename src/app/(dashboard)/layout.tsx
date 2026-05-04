@@ -2,6 +2,10 @@ import Sidebar from '@/components/Sidebar';
 import { MobileTopBar, MobileBottomBar } from '@/components/MobileNav';
 import OnboardingWizard from '@/components/OnboardingWizard';
 
+// Dashboard pages depend on the live Digital Twin state and SSH-pool
+// connectivity; never try to pre-render them at build time.
+export const dynamic = 'force-dynamic';
+
 export default function DashboardLayout({
   children,
 }: {

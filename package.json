@@ -7,8 +7,8 @@
   },
   "scripts": {
     "dev": "fuser -k 3000/tcp || true && tsx server.ts",
-    "build": "next build",
-    "start": "NODE_ENV=production tsx server.ts",
+    "build": "next build --webpack && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
+    "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "eslint",
     "knip": "knip",
     "test": "vitest run",
@@ -66,6 +66,7 @@
     "@types/semver": "^7.7.1",
     "@types/ssh2": "^1.15.5",
     "@vitejs/plugin-react": "^5.1.2",
+    "esbuild": "^0.27.7",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "eslint-plugin-unused-imports": "^4.3.0",

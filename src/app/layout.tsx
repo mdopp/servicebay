@@ -6,7 +6,12 @@ import { DigitalTwinProvider } from "@/providers/DigitalTwinProvider";
 import { getConfig } from "@/lib/config";
 import { DigitalTwinStore } from "@/lib/store/twin";
 
-export const dynamic = 'force-dynamic';
+// Keep the root layout dynamic to avoid build-time pre-rendering of pages
+// whose data only exists at runtime. The directive is applied at the layout
+// level via `revalidate = 0` rather than `dynamic = 'force-dynamic'`, because
+// the latter triggers a workAsyncStorage path under Next 16.2.4 that crashes
+// every page render with `forceStatic` undefined.
+export const revalidate = 0;
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
