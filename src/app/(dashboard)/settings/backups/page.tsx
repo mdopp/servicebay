@@ -110,6 +110,8 @@ export default function BackupsSettingsPage() {
   const [deleteTarget, setDeleteTarget] = useState<SystemBackupEntrySummary | null>(null);
   const [deletingBackup, setDeletingBackup] = useState(false);
   const [restoreExpandedSections, setRestoreExpandedSections] = useState<Record<string, boolean>>({});
+  const [restoringLatest, setRestoringLatest] = useState(false);
+  const [confirmRestoreLatestOpen, setConfirmRestoreLatestOpen] = useState(false);
 
   const [backupSync, setBackupSync] = useState<BackupSyncState>({
     enabled: false,
@@ -722,6 +724,30 @@ export default function BackupsSettingsPage() {
     }
   };
 
+  const handleRestoreLatest = useCallback(async () => {
+    if (backups.length === 0 || restoringLatest) return;
+    setRestoringLatest(true);
+    try {
+      const latest = backups[0];
+      const res = await fetch('/api/settings/backups/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: latest.fileName }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Restore failed');
+      }
+      addToast('success', 'Restore complete', `Restored from ${latest.fileName}`);
+      await fetchBackups();
+    } catch (e) {
+      addToast('error', 'Restore failed', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setRestoringLatest(false);
+      setConfirmRestoreLatestOpen(false);
+    }
+  }, [backups, restoringLatest, addToast, fetchBackups]);
+
   const availableRestoreTargets = Array.from(new Set(['Local', ...nodes.map(node => node.Name)]));
 
   const handleRestoreDrop = (event: React.DragEvent<HTMLDivElement>) => {
@@ -808,6 +834,45 @@ export default function BackupsSettingsPage() {
 
   return (
     <>
+      {/* Primary CTA: one-click restore from latest snapshot. The selective
+          flow stays available behind "Selective restore…" / per-row Restore. */}
+      {backups.length > 0 && (
+        <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm overflow-hidden w-full">
+          <div className="p-5 flex flex-col md:flex-row md:items-center gap-4">
+            <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-emerald-700 dark:text-emerald-200 shrink-0">
+              <RotateCcw size={24} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-gray-900 dark:text-white">Restore latest snapshot</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-300 break-all">
+                One-click restore of <span className="font-mono">{backups[0].fileName}</span>{' '}
+                <span className="text-gray-500 dark:text-gray-400">
+                  ({new Date(backups[0].createdAt).toLocaleString()}, {formatBytes(backups[0].size)})
+                </span>
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Need granular control?{' '}
+                <button
+                  type="button"
+                  onClick={() => openRestoreOverlay(true)}
+                  className="text-emerald-700 dark:text-emerald-300 underline"
+                >
+                  Selective restore…
+                </button>
+              </p>
+            </div>
+            <button
+              onClick={() => setConfirmRestoreLatestOpen(true)}
+              disabled={restoringLatest}
+              className="shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white font-medium rounded-lg shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+            >
+              {restoringLatest ? <Loader2 className="animate-spin" size={18} /> : <RotateCcw size={18} />}
+              {restoringLatest ? 'Restoring…' : 'Restore'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* System Backups */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
@@ -847,7 +912,7 @@ export default function BackupsSettingsPage() {
               onClick={() => openRestoreOverlay(true)}
               className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
             >
-              <UploadCloud size={16} /> Restore from Backup
+              <UploadCloud size={16} /> Selective restore…
             </button>
             <button
               onClick={handleCreateBackup}
@@ -1192,6 +1257,16 @@ export default function BackupsSettingsPage() {
         isDestructive
         onConfirm={confirmDeleteBackup}
         onCancel={() => !deletingBackup && setDeleteTarget(null)}
+      />
+
+      <ConfirmModal
+        isOpen={confirmRestoreLatestOpen}
+        title="Restore latest snapshot"
+        message={`This will overwrite current ServiceBay state with the contents of ${backups[0]?.fileName ?? ''}. Continue?`}
+        confirmText={restoringLatest ? 'Restoring…' : 'Restore'}
+        confirmDisabled={restoringLatest}
+        onConfirm={handleRestoreLatest}
+        onCancel={() => !restoringLatest && setConfirmRestoreLatestOpen(false)}
       />
 
       {restoreOverlayOpen && (

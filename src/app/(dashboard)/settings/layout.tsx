@@ -2,16 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Loader2, Mail, RefreshCw, Server, Settings, Database } from 'lucide-react';
+import { Database, Loader2, Plug, Server, Settings } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { SettingsProvider, useSettings } from './_lib/SettingsContext';
 
 const TABS = [
   { id: 'nodes', label: 'Nodes', icon: Server },
+  { id: 'system', label: 'System', icon: Settings },
+  { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'backups', label: 'Backups', icon: Database },
-  { id: 'notifications', label: 'Notifications', icon: Mail },
-  { id: 'updates', label: 'Updates', icon: RefreshCw },
-  { id: 'advanced', label: 'Advanced', icon: Settings },
 ] as const;
 
 function SettingsShell({ children }: { children: React.ReactNode }) {

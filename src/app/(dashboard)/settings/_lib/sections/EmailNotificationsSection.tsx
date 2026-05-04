@@ -2,27 +2,19 @@
 
 import { useState } from 'react';
 import { Mail, Plus, Trash2 } from 'lucide-react';
-import { useSettings } from '../_lib/SettingsContext';
+import { useSettings } from '../SettingsContext';
 
-export default function NotificationsSettingsPage() {
+export default function EmailNotificationsSection() {
   const {
     saving,
-    emailEnabled,
-    setEmailEnabled,
-    emailHost,
-    setEmailHost,
-    emailPort,
-    setEmailPort,
-    emailSecure,
-    setEmailSecure,
-    emailUser,
-    setEmailUser,
-    emailPass,
-    setEmailPass,
-    emailFrom,
-    setEmailFrom,
-    emailRecipients,
-    setEmailRecipients,
+    emailEnabled, setEmailEnabled,
+    emailHost, setEmailHost,
+    emailPort, setEmailPort,
+    emailSecure, setEmailSecure,
+    emailUser, setEmailUser,
+    emailPass, setEmailPass,
+    emailFrom, setEmailFrom,
+    emailRecipients, setEmailRecipients,
     persistSettings,
   } = useSettings();
 
@@ -43,12 +35,12 @@ export default function NotificationsSettingsPage() {
     void persistSettings({ email: { to: updated } });
   };
 
-  const handleEmailEnabledToggle = (enabled: boolean) => {
+  const handleEnabledToggle = (enabled: boolean) => {
     setEmailEnabled(enabled);
     void persistSettings({ email: { enabled } });
   };
 
-  const handleEmailSecureToggle = (secure: boolean) => {
+  const handleSecureToggle = (secure: boolean) => {
     setEmailSecure(secure);
     void persistSettings({ email: { secure } });
   };
@@ -60,8 +52,8 @@ export default function NotificationsSettingsPage() {
           <Mail size={20} />
         </div>
         <div>
-          <h3 className="font-bold text-gray-900 dark:text-white">Email Notifications</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Configure SMTP settings for alerts</p>
+          <h3 className="font-bold text-gray-900 dark:text-white">Email (SMTP)</h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Configure SMTP settings for ServiceBay alerts</p>
         </div>
         <div className="ml-auto">
           <label className="relative inline-flex items-center cursor-pointer">
@@ -69,7 +61,7 @@ export default function NotificationsSettingsPage() {
               type="checkbox"
               className="sr-only peer"
               checked={emailEnabled}
-              onChange={e => handleEmailEnabledToggle(e.target.checked)}
+              onChange={e => handleEnabledToggle(e.target.checked)}
               disabled={saving}
             />
             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
@@ -154,7 +146,7 @@ export default function NotificationsSettingsPage() {
                 <input
                   type="checkbox"
                   checked={emailSecure}
-                  onChange={e => handleEmailSecureToggle(e.target.checked)}
+                  onChange={e => handleSecureToggle(e.target.checked)}
                   disabled={saving}
                   className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
                 />
