@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.4.0...servicebay-v2.5.0) (2026-05-05)
+
+
+### Features
+
+* in-app self-test — surface common gotchas without leaving the UI ([73f6d25](https://github.com/mdopp/servicebay/commit/73f6d25db47d78c1f4acca6187afc51f27139aa7))
+* in-app self-test — surface common gotchas without leaving the UI ([cd82a68](https://github.com/mdopp/servicebay/commit/cd82a68b1cf73697d00db1d91ab5ed6e95418412))
+
+
+### Bug Fixes
+
+* **agent:** use --no-block on systemctl + bump default cmd timeout 10→30s ([64e40d2](https://github.com/mdopp/servicebay/commit/64e40d289620b4dbd3d1a237922f54a2146e90b3))
+* **agent:** use --no-block on systemctl + bump default cmd timeout 10→30s ([c1d270e](https://github.com/mdopp/servicebay/commit/c1d270e16c47503f4d0bf7c4128fc38c35a296a7))
+
 ## [2.4.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.3.0...servicebay-v2.4.0) (2026-05-05)
 
 
