@@ -459,6 +459,29 @@ export function createMcpServer() {
     },
   );
 
+  // --- Self-Diagnose (mirrors POST /api/system/diagnose) ---
+  server.tool(
+    'diagnose',
+    'Run a battery of self-test probes on a node — agent reachable, podman, pods, failed units, USB sticks, /mnt/data, first-boot units. Returns a structured list of probes with status (ok/warn/fail/info) and remediation hints. Useful for "why isn\'t this working?" troubleshooting.',
+    { node: nodeParam },
+    async ({ node }) => {
+      const nodeName = await resolveNode(node);
+      try {
+        const { POST } = await import('@/app/api/system/diagnose/route');
+        const fakeRequest = new Request('http://localhost/api/system/diagnose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ node: nodeName }),
+        });
+        const res = await POST(fakeRequest);
+        const data = await res.json();
+        return textResult(data);
+      } catch (err) {
+        return errorResult(`Error running diagnostics: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
   // --- Update Service YAML (edit then redeploy) ---
   server.tool(
     'update_service_yaml',
