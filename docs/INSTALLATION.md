@@ -363,3 +363,37 @@ Host filesystem (after FCOS install)
 │  UserNS: keep-id  (root in container = user on host)           │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## 12. Post-Install Diagnostics
+
+When the box is up but ServiceBay isn't reachable on the configured port,
+run the diagnostics script from your dev machine:
+
+```bash
+scripts/fcos-diagnose.sh
+```
+
+It auto-detects the target IP, host user, SSH key, and ServiceBay port
+from `build/fcos/install-settings.env` and runs an SSH session that
+reports the seven things that are usually wrong:
+
+- `systemctl --user status servicebay` — is the unit active or
+  auto-restarting?
+- `podman ps -a` — is the container actually there?
+- `ss -ltn` — is anything listening on the configured port?
+- `curl http://localhost:$PORT` from inside the box — does the server
+  respond locally? If yes, the issue is firewall / routing; if no, the
+  container itself didn't start.
+- `firewall-cmd --list-ports` — only relevant if firewalld is installed
+  (FCOS default does not ship it; this is informational).
+- Status of the three first-boot oneshots (`setup-raid`,
+  `install-python`, `install-nginx`).
+- `df -h /mnt/data` + last 20 ServiceBay log lines for the smoking gun.
+
+Override the target by passing args or env:
+
+```bash
+scripts/fcos-diagnose.sh 192.168.1.50          # different IP
+FCOS_PORT=5888 scripts/fcos-diagnose.sh        # different port
+FCOS_KEY=~/.ssh/id_ed25519 scripts/fcos-diagnose.sh
+```

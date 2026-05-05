@@ -424,6 +424,9 @@ storage:
           Environment=PORT=${SERVICEBAY_PORT}
           Environment=NODE_ENV=production
           Environment=HOST_USER=${HOST_USER}
+          Environment=AUTH_SECRET=${AUTH_SECRET}
+          Environment=SERVICEBAY_USERNAME=${SERVICEBAY_ADMIN_USER}
+          Environment=SERVICEBAY_PASSWORD=${SERVICEBAY_ADMIN_PASSWORD}
           SecurityLabelDisable=true
 
           [Service]
@@ -909,6 +912,7 @@ EMAIL_SECURE=${EMAIL_SECURE:-N}
 EMAIL_USER=${EMAIL_USER:-}
 EMAIL_FROM=${EMAIL_FROM:-}
 EMAIL_RECIPIENTS=${EMAIL_RECIPIENTS:-}
+AUTH_SECRET=${AUTH_SECRET:-}
 SETTINGS
   echo "Settings saved to $SETTINGS_FILE"
 }
@@ -1190,8 +1194,7 @@ PASSWORD_HASH="$(printf '%s' "$HOST_PASSWORD" | openssl passwd -6 -stdin)"
 SERVICEBAY_CONFIG='{
   "serverName": "'"$SERVER_NAME"'",
   "auth": {
-    "username": "'"$SERVICEBAY_ADMIN_USER"'",
-    "password": "'"$SERVICEBAY_ADMIN_PASSWORD"'"
+    "username": "'"$SERVICEBAY_ADMIN_USER"'"
   },
   "autoUpdate": {
     "enabled": true,
@@ -1270,11 +1273,20 @@ SERVICEBAY_SSH_PUB="$(cat "$SERVICEBAY_SSH_DIR/id_rsa.pub")"
 # Indent private key for YAML inline block (10 spaces to match Butane template nesting)
 SERVICEBAY_SSH_PRIV="$(sed 's/^/          /' "$SERVICEBAY_SSH_DIR/id_rsa")"
 
+# AUTH_SECRET: required by the ServiceBay backend (≥32 bytes). Reuse a
+# previously-generated value across re-runs so an existing FCOS install's
+# encrypted config.json fields still decrypt; otherwise generate fresh.
+AUTH_SECRET="$(load_setting AUTH_SECRET)"
+if [[ -z "$AUTH_SECRET" || ${#AUTH_SECRET} -lt 32 ]]; then
+  AUTH_SECRET="$(openssl rand -hex 32)"
+fi
+
 export SERVER_NAME HOST_USER SSH_AUTHORIZED_KEY PASSWORD_HASH NET_INTERFACE STATIC_IP STATIC_PREFIX GATEWAY DNS_SERVERS \
-       DATA_ROOT SERVICEBAY_PORT SERVICEBAY_VERSION SERVICEBAY_CONFIG_JSON SERVICEBAY_SSH_PUB SERVICEBAY_SSH_PRIV
+       DATA_ROOT SERVICEBAY_PORT SERVICEBAY_VERSION SERVICEBAY_CONFIG_JSON SERVICEBAY_SSH_PUB SERVICEBAY_SSH_PRIV \
+       AUTH_SECRET SERVICEBAY_ADMIN_USER SERVICEBAY_ADMIN_PASSWORD
 
 # Render Butane template (only substitute explicit template variables, not shell vars in embedded scripts)
-envsubst '${SERVER_NAME} ${HOST_USER} ${SSH_AUTHORIZED_KEY} ${PASSWORD_HASH} ${NET_INTERFACE} ${STATIC_IP} ${STATIC_PREFIX} ${GATEWAY} ${DNS_SERVERS} ${DATA_ROOT} ${SERVICEBAY_PORT} ${SERVICEBAY_VERSION} ${SERVICEBAY_CONFIG_JSON} ${SERVICEBAY_SSH_PUB} ${SERVICEBAY_SSH_PRIV}' < "$TEMPLATE" > "$RENDERED_BU"
+envsubst '${SERVER_NAME} ${HOST_USER} ${SSH_AUTHORIZED_KEY} ${PASSWORD_HASH} ${NET_INTERFACE} ${STATIC_IP} ${STATIC_PREFIX} ${GATEWAY} ${DNS_SERVERS} ${DATA_ROOT} ${SERVICEBAY_PORT} ${SERVICEBAY_VERSION} ${SERVICEBAY_CONFIG_JSON} ${SERVICEBAY_SSH_PUB} ${SERVICEBAY_SSH_PRIV} ${AUTH_SECRET} ${SERVICEBAY_ADMIN_USER} ${SERVICEBAY_ADMIN_PASSWORD}' < "$TEMPLATE" > "$RENDERED_BU"
 
 # --- Stage backup file for post-install restore ---
 BACKUP_STAGED=""
