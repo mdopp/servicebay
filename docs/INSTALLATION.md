@@ -129,24 +129,21 @@ flowchart TD
     subgraph "Multi-Stage Dockerfile"
         B[base<br/>node:20-slim<br/>+ python3, make, g++]
         D[deps<br/>npm ci]
-        BU[builder<br/>npm run build<br/>Next.js production]
-        P[prod-deps<br/>npm ci --omit=dev<br/>+ tsx, typescript]
-        R[runner<br/>node:20-slim]
+        BU[builder<br/>npm run build<br/>= next build --webpack<br/>+ patch-routes-manifest<br/>+ esbuild server.ts → CJS]
+        P[prod-deps<br/>npm ci --omit=dev<br/>builds native modules]
+        R[runner<br/>node:20-slim<br/>CMD: node dist-server/server.cjs]
     end
 
     B --> D --> BU
     B --> P
 
-    BU -->|.next/standalone<br/>.next/static<br/>public/| R
+    BU -->|.next/<br/>dist-server/server.cjs<br/>public/| R
     P -->|node_modules/| R
 
     subgraph "Also copied into runner"
-        direction LR
         T[templates/ stacks/]
-        SRC[server.ts src/]
     end
     T --> R
-    SRC --> R
 
     subgraph "Runtime apt packages"
         direction LR
@@ -158,6 +155,14 @@ flowchart TD
     style BU fill:#e3f2fd
 ```
 
+The custom server (`server.ts`) is bundled to a single CommonJS file
+under `dist-server/server.cjs` via esbuild. The runtime image runs
+plain `node` — no `tsx`, no TypeScript loader, no Next.js standalone
+output. This avoids two Next 16 quirks the build script also patches:
+`routes-manifest.json` missing `onMatchHeaders`, and Turbopack's chunk
+layout duplicating `workAsyncStorage` so `getStore()` returns
+`undefined` mid-render.
+
 **Environment baked into image:**
 
 ```
@@ -166,6 +171,11 @@ HOST_SSH=host.containers.internal   SSH_KEY_PATH=/root/.ssh/id_rsa
 ```
 
 Container runs as root internally — `UserNS=keep-id` maps to host's rootless user.
+
+For a leaner local dev image that re-uses the host build (avoids
+running webpack inside the container), see `Dockerfile.dev` and
+`scripts/dev-container.sh`. That path is **development only** — the
+production FCOS image always uses the multi-stage `Dockerfile`.
 
 ## 6. Startup Procedure
 

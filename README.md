@@ -30,8 +30,9 @@ The installer creates a bootable USB that provisions the entire system: OS, netw
 - **Web Terminal** — SSH into any managed node from the browser
 - **Multi-Node** — manage containers across machines via SSH from a single UI
 - **System Backups** — snapshot all configs across nodes, restore in seconds
-- **Auto-Updates** — keep ServiceBay and containers current automatically
+- **Auto-Updates** — keep ServiceBay and containers current automatically (on by default for new installs)
 - **Mobile-Responsive** — full UI with dedicated mobile navigation
+- **MCP Server** — programmatic API with 37 tools so an LLM (Claude, OpenAI, etc.) can drive ServiceBay directly: list/start/stop/restart services, edit Quadlet YAML, manage proxy routes, run backups, change settings
 
 ## Architecture
 
@@ -73,12 +74,57 @@ For Nginx Proxy Manager: enable **Websockets Support**, then add `proxy_bufferin
 
 ## Development
 
+Two paths, depending on what you're working on:
+
 ```bash
 git clone https://github.com/mdopp/servicebay.git && cd servicebay
 npm install
-npm run dev        # http://localhost:3000
+
+# Fast iteration (hot-reload, no container)
+npm run dev                              # http://localhost:3000
+
+# Production-shape container (matches CI image, builds on host
+# to avoid OOM in WSL/podman; expects sshd reachable on the host)
+scripts/dev-container.sh up              # http://localhost:3000
+scripts/dev-container.sh logs            # follow
+scripts/dev-container.sh restart         # rebuild + restart
+scripts/dev-container.sh reset           # nukes ~/.servicebay-dev/
+
 npm test           # vitest
 npm run lint       # eslint
+```
+
+`dev-container.sh` generates and persists a bootstrap admin password
+(written once to `~/.servicebay-dev/.bootstrap-password`) and an SSH
+keypair that the in-container agent uses to manage the host.
+
+## Programmatic API & MCP
+
+Every UI action has an HTTP equivalent under `/api/`. For LLM-driven
+automation, ServiceBay also exposes a Model Context Protocol server
+at `/mcp` (session-cookie auth — same as the UI).
+
+The MCP server publishes 37 tools across read paths
+(`list_nodes`, `list_services`, `get_container_logs`,
+`get_network_graph`, `get_monitoring_checks`, …) and write paths
+(`start_service`/`stop_service`/`restart_service`, `update_service_yaml`,
+`add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`,
+`create_monitoring_check`/`run_check_now`, `get_config`/`update_config`,
+`exec_command`). Sensitive fields (`auth.passwordHash`,
+`oidc.clientSecret`, SMTP/NPM passwords) are redacted in `get_config`
+and write-allowlisted in `update_config`.
+
+Example client config (Claude Desktop / Claude Code):
+
+```json
+{
+  "mcpServers": {
+    "servicebay": {
+      "url": "http://localhost:3000/mcp",
+      "headers": { "Cookie": "session=YOUR_SESSION_COOKIE" }
+    }
+  }
+}
 ```
 
 ## Troubleshooting
