@@ -5,14 +5,14 @@ Passwort-Manager, Foto-Verwaltung, Dateifreigabe und Smart-Home.
 
 ## Included Services
 
-- [x] nginx-web
-- [x] lldap
-- [x] authelia
-- [x] adguard
-- [x] vaultwarden
-- [x] immich
-- [x] file-share
-- [x] home-assistant-stack
+- [x] nginx-web — Reverse-Proxy + automatische Let's-Encrypt-Zertifikate für alle Services
+- [x] lldap — Schlanker LDAP-Verzeichnisdienst, einmalige Benutzerverwaltung für alle Services
+- [x] authelia — Single-Sign-On + 2FA-Portal vor allen Web-Anwendungen
+- [x] adguard — Netzwerkweiter DNS-Werbe- und Tracker-Blocker (DNS-Sinkhole)
+- [x] vaultwarden — Selbst gehostetes Bitwarden: Passwörter, Notizen, TOTP, mit Apps für alle Plattformen
+- [x] immich — Selbst gehostete Foto- und Video-Sicherung mit AI-Suche, Mobile-Apps und Auto-Upload
+- [x] file-share — Datei-Sync (Syncthing) + Windows-Netzlaufwerk (Samba) auf einem geteilten Volume
+- [x] home-assistant-stack — Smart-Home-Hub, lokaler Sprachassistent, Z-Wave-/Matter-Bridges
 
 ## Reverse Proxy
 

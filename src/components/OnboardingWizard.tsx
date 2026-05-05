@@ -32,6 +32,8 @@ interface ConfigFile {
 
 interface StackItem {
   name: string;
+  /** Short rationale shown below the service name on the install picker. */
+  description?: string;
   checked: boolean;
   yaml?: string;
   alreadyInstalled?: boolean;
@@ -442,7 +444,9 @@ export default function OnboardingWizard() {
       ]);
       const lines = (readme || '').split('\n');
       const parsedItems: StackItem[] = [];
-      const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)/;
+      // Captures `- [x] name — description` (em-dash, en-dash, hyphen, or colon).
+      // Description part is optional so legacy stack READMEs without it still parse.
+      const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)\s*(?:[—–\-:]\s*(.+))?$/;
       lines.forEach(line => {
         const match = line.match(regex);
         if (match) {
@@ -450,6 +454,7 @@ export default function OnboardingWizard() {
           const isInstalled = existing.has(name.toLowerCase());
           parsedItems.push({
             name,
+            description: match[3]?.trim() || undefined,
             checked: !isInstalled && match[1].toLowerCase() === 'x',
             alreadyInstalled: isInstalled,
           });
@@ -1003,7 +1008,7 @@ export default function OnboardingWizard() {
                             ) : (
                                 <div className="space-y-2">
                                     {stackItems.map((item, i) => (
-                                        <label key={item.name} className={`flex items-center gap-3 p-3 border rounded transition-colors ${
+                                        <label key={item.name} className={`flex items-start gap-3 p-3 border rounded transition-colors ${
                                             item.alreadyInstalled
                                                 ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10'
                                                 : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer'
@@ -1018,12 +1023,21 @@ export default function OnboardingWizard() {
                                                     newItems[i].checked = !newItems[i].checked;
                                                     setStackItems(newItems);
                                                 }}
-                                                className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
+                                                className="w-5 h-5 mt-0.5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
                                             />
-                                            <span className={`font-medium text-sm ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-900 dark:text-gray-200'}`}>{item.name}</span>
-                                            {item.alreadyInstalled && (
-                                                <span className="text-xs text-green-600 dark:text-green-400 ml-auto">already installed</span>
-                                            )}
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`font-medium text-sm ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-900 dark:text-gray-200'}`}>{item.name}</span>
+                                                    {item.alreadyInstalled && (
+                                                        <span className="text-xs text-green-600 dark:text-green-400">already installed</span>
+                                                    )}
+                                                </div>
+                                                {item.description && (
+                                                    <p className={`text-xs mt-0.5 ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                                                        {item.description}
+                                                    </p>
+                                                )}
+                                            </div>
                                         </label>
                                     ))}
                                 </div>

@@ -4,8 +4,8 @@ This stack installs a complete web application environment consisting of an Ngin
 
 ## Included Services
 
-- [x] nginx-web
-- [x] redis-cache
+- [x] nginx-web — Reverse-Proxy + automatische Let's-Encrypt-Zertifikate
+- [x] redis-cache — In-Memory-Datenbank für Sessions, Caches, Pub/Sub
 
 ## Usage
 
