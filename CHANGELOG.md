@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.1.0...servicebay-v2.2.0) (2026-05-04)
+
+
+### Features
+
+* better defaults + friction cuts (auto-update, login hint, failed-service nudge) ([1cf7a1d](https://github.com/mdopp/servicebay/commit/1cf7a1d9cc67cc7bee7f1de6404c69d17290cd96))
+* better defaults + friction cuts (auto-update, login hint, failed-service nudge) ([d11b807](https://github.com/mdopp/servicebay/commit/d11b8073f7a2aa1c4db96f50548f0784ba10c7c8))
+* **onboarding:** collapse wizard from 8 steps to 5 ([b7abf4c](https://github.com/mdopp/servicebay/commit/b7abf4c3b5c03920b8264a6e2ad0176119598b4a))
+* **onboarding:** collapse wizard from 8 steps to 5 ([0028b54](https://github.com/mdopp/servicebay/commit/0028b54ed76f72e6d564c8a9acbc7629b1f21c7e))
+
 ## [2.1.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.0.0...servicebay-v2.1.0) (2026-05-04)
 
 
