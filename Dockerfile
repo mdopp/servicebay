@@ -81,6 +81,14 @@ COPY --from=builder /app/stacks ./stacks
 # server.ts is folded into dist-server/server.cjs by scripts/build-server.mjs.
 COPY --from=builder /app/dist-server ./dist-server
 
+# Python agent script — streamed over SSH to each managed node and executed
+# there. Read at runtime by src/lib/agent/handler.ts (path resolved with
+# `process.cwd() + 'src/lib/agent/v4/agent.py'`), so it must exist at that
+# exact path inside the runner image. Not bundled into dist-server because
+# it's Python, not JS, and not invoked locally.
+COPY --from=builder /app/src/lib/agent/v4/agent.py ./src/lib/agent/v4/agent.py
+COPY --from=builder /app/src/lib/agent/v4/quadlet_parser.py ./src/lib/agent/v4/quadlet_parser.py
+
 # Copy production node_modules (with built native modules)
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
