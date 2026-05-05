@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.2.0...servicebay-v2.3.0) (2026-05-05)
+
+
+### Features
+
+* stored NPM credentials so reverse-proxy auto-sync just works ([d8b2b15](https://github.com/mdopp/servicebay/commit/d8b2b15dbb0c059b2d00a8df6e5fb1b336450f95))
+* unify service creation under /registry ([02dd6d7](https://github.com/mdopp/servicebay/commit/02dd6d7f577f654298e8cbfb05e1170677bcf388))
+
 ## [2.2.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.1.0...servicebay-v2.2.0) (2026-05-04)
 
 
