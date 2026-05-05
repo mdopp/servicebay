@@ -53,8 +53,9 @@ async function fetchExistingServices(node?: string): Promise<Set<string>> {
   }
 }
 
-/** Wait for NPM to become reachable, polling up to maxWait ms */
-async function waitForNpm(node: string | undefined, maxWait = 30000): Promise<boolean> {
+/** Wait for NPM to become reachable, polling up to maxWait ms.
+ *  3 minutes covers cold-start image pull + first-time DB schema init. */
+async function waitForNpm(node: string | undefined, maxWait = 180_000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < maxWait) {
     try {
@@ -63,6 +64,26 @@ async function waitForNpm(node: string | undefined, maxWait = 30000): Promise<bo
       if (res.ok) {
         const data = await res.json();
         if (data.installed && data.active) return true;
+      }
+    } catch { /* keep trying */ }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return false;
+}
+
+/** Wait for an LLDAP HTTP endpoint to respond. Polls up to maxWait ms. */
+async function waitForLldap(host: string, port: number, maxWait = 180_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    try {
+      const res = await fetch('/api/system/lldap/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, port }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.reachable) return true;
       }
     } catch { /* keep trying */ }
     await new Promise(r => setTimeout(r, 3000));
@@ -626,39 +647,50 @@ export default function OnboardingWizard() {
           }
         }
 
-        setStackLogs(prev => [...prev, `\u2705 ${item.name} installed successfully.`]);
+        setStackLogs(prev => [...prev, `\u2705 ${item.name} deployed (containers may still be starting in background).`]);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setStackLogs(prev => [...prev, `\u274c Failed to install ${item.name}: ${msg}`]);
       }
     }
 
-    // Seed LLDAP groups if lldap was installed
+    // Seed LLDAP groups if lldap was installed.
+    // Need to wait for the LLDAP container to actually start serving HTTP
+    // before firing the seed: `--no-block` returned right after dispatching
+    // the systemd start, so the pod is still cold-starting (image extract,
+    // sqlite init, bind to :17170).
     if (selected.some(i => i.name === 'lldap')) {
-      setStackLogs(prev => [...prev, 'Seeding LLDAP groups...']);
       const lldapPassword = stackVariables.find(v => v.name === 'LLDAP_ADMIN_PASSWORD')?.value;
       const lldapPort = stackVariables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
+      const lldapHost = stackSelectedNode || 'localhost';
       if (lldapPassword) {
-        try {
-          const res = await fetch('/api/system/lldap/seed', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              host: stackSelectedNode || 'localhost',
-              port: parseInt(lldapPort, 10),
-              password: lldapPassword,
-            }),
-          });
-          const data = await res.json();
-          if (res.ok) {
-            if (data.created?.length) setStackLogs(prev => [...prev, `\u2705 Groups created: ${data.created.join(', ')}`]);
-            if (data.existing?.length) setStackLogs(prev => [...prev, `\u2139\ufe0f Groups already exist: ${data.existing.join(', ')}`]);
-            if (data.failed?.length) setStackLogs(prev => [...prev, `\u26a0\ufe0f Failed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
-          } else {
-            setStackLogs(prev => [...prev, `\u26a0\ufe0f Could not seed LLDAP groups: ${data.error || 'unknown error'}`]);
+        setStackLogs(prev => [...prev, 'Waiting for LLDAP to start (up to 3 min)...']);
+        const lldapReady = await waitForLldap(lldapHost, parseInt(lldapPort, 10));
+        if (!lldapReady) {
+          setStackLogs(prev => [...prev, '\u26a0\ufe0f LLDAP did not respond in time \u2014 seed groups manually via Settings \u2192 Self-Test, then admins/family groups in the LLDAP UI.']);
+        } else {
+          setStackLogs(prev => [...prev, 'Seeding LLDAP groups...']);
+          try {
+            const res = await fetch('/api/system/lldap/seed', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                host: lldapHost,
+                port: parseInt(lldapPort, 10),
+                password: lldapPassword,
+              }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+              if (data.created?.length) setStackLogs(prev => [...prev, `\u2705 Groups created: ${data.created.join(', ')}`]);
+              if (data.existing?.length) setStackLogs(prev => [...prev, `\u2139\ufe0f Groups already exist: ${data.existing.join(', ')}`]);
+              if (data.failed?.length) setStackLogs(prev => [...prev, `\u26a0\ufe0f Failed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
+            } else {
+              setStackLogs(prev => [...prev, `\u26a0\ufe0f Could not seed LLDAP groups: ${data.error || 'unknown error'}`]);
+            }
+          } catch {
+            setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach LLDAP to seed groups. Create admins/family groups manually.']);
           }
-        } catch {
-          setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach LLDAP to seed groups. Create admins/family groups manually.']);
         }
       }
     }
