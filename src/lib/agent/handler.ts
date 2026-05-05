@@ -463,7 +463,11 @@ export class AgentHandler extends EventEmitter {
       }
 
       try {
-        const result = await this.sendCommand('pull_image', { image, pull_id: pullId }, { timeoutMs: 300_000 });
+        // 60 min per image: cover slow internet (multi-GB pulls on a 5 Mbps
+        // line) without giving up. The agent emits PULL_PROGRESS events every
+        // 250 ms while bytes are flowing, so the UI sees forward motion;
+        // we only fall over if the registry is genuinely unreachable.
+        const result = await this.sendCommand('pull_image', { image, pull_id: pullId }, { timeoutMs: 3_600_000 });
         return result as { success: boolean };
       } finally {
         if (handler) {

@@ -1,4 +1,13 @@
 {
+  "NGINX_ADMIN_EMAIL": {
+    "type": "text",
+    "description": "Initial NPM admin email (used as the login for ServiceBay's auto-sync of proxy routes)",
+    "default": "admin@servicebay.local"
+  },
+  "NGINX_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "Initial NPM admin password — auto-generated, also stored in Settings → Integrations → Reverse Proxy so ServiceBay can sync routes without prompting"
+  },
   "NGINX_PORT": {
     "type": "text",
     "description": "HTTP port",

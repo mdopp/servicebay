@@ -65,7 +65,7 @@ describe('AgentHandler.pullImage', () => {
         expect(sendSpy).toHaveBeenCalledWith(
             'pull_image',
             expect.objectContaining({ image: 'redis:7', pull_id: expect.any(String) }),
-            { timeoutMs: 300_000 }
+            { timeoutMs: 3_600_000 }
         );
         expect(progressEvents).toHaveLength(2);
         expect(progressEvents[0].status).toBe('Downloading');
