@@ -61,6 +61,17 @@ export interface ReverseProxyConfig {
   publicDomain?: string;
   /** Proxy hosts created during stack deployment */
   hosts?: ProxyHostEntry[];
+  /**
+   * NPM (Nginx Proxy Manager) admin credentials. When set, ServiceBay reuses
+   * them to auto-sync proxy routes during service install/update without
+   * prompting the user. Leave unset to fall back to NPM's default creds
+   * (admin@example.com / changeme) — which only work before the NPM admin
+   * password is changed.
+   */
+  npm?: {
+    email: string;
+    password: string;
+  };
 }
 
 interface AgentRestartSchedule {
