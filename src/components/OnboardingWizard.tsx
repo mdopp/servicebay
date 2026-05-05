@@ -53,10 +53,27 @@ async function fetchExistingServices(node?: string): Promise<Set<string>> {
   }
 }
 
-/** Wait for NPM to become reachable, polling up to maxWait ms.
- *  3 minutes covers cold-start image pull + first-time DB schema init. */
-async function waitForNpm(node: string | undefined, maxWait = 180_000): Promise<boolean> {
+/** Format elapsed milliseconds as `Mm Ss` for human-readable log lines. */
+function fmtElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+/** Wait for NPM to become reachable. Polls every 3 s and emits a heartbeat
+ *  log line every 30 s so the user sees forward motion while NPM cold-starts.
+ *  Default ceiling 60 min — generous enough for slow CPUs / first-boot DB
+ *  init / late image extracts on weak hardware.
+ *
+ *  `onProgress` receives a human-readable status line for the UI. */
+async function waitForNpm(
+  node: string | undefined,
+  onProgress: (msg: string) => void,
+  maxWait = 60 * 60_000,
+): Promise<boolean> {
   const start = Date.now();
+  let lastBeat = 0;
   while (Date.now() - start < maxWait) {
     try {
       const query = node ? `?node=${node}` : '';
@@ -66,14 +83,26 @@ async function waitForNpm(node: string | undefined, maxWait = 180_000): Promise<
         if (data.installed && data.active) return true;
       }
     } catch { /* keep trying */ }
+    const elapsed = Date.now() - start;
+    if (elapsed - lastBeat >= 30_000) {
+      onProgress(`Still waiting for Nginx Proxy Manager (${fmtElapsed(elapsed)} elapsed)...`);
+      lastBeat = elapsed;
+    }
     await new Promise(r => setTimeout(r, 3000));
   }
   return false;
 }
 
-/** Wait for an LLDAP HTTP endpoint to respond. Polls up to maxWait ms. */
-async function waitForLldap(host: string, port: number, maxWait = 180_000): Promise<boolean> {
+/** Wait for an LLDAP HTTP endpoint to respond. Same heartbeat pattern as
+ *  waitForNpm. */
+async function waitForLldap(
+  host: string,
+  port: number,
+  onProgress: (msg: string) => void,
+  maxWait = 60 * 60_000,
+): Promise<boolean> {
   const start = Date.now();
+  let lastBeat = 0;
   while (Date.now() - start < maxWait) {
     try {
       const res = await fetch('/api/system/lldap/probe', {
@@ -86,6 +115,11 @@ async function waitForLldap(host: string, port: number, maxWait = 180_000): Prom
         if (data.reachable) return true;
       }
     } catch { /* keep trying */ }
+    const elapsed = Date.now() - start;
+    if (elapsed - lastBeat >= 30_000) {
+      onProgress(`Still waiting for LLDAP (${fmtElapsed(elapsed)} elapsed)...`);
+      lastBeat = elapsed;
+    }
     await new Promise(r => setTimeout(r, 3000));
   }
   return false;
@@ -664,8 +698,12 @@ export default function OnboardingWizard() {
       const lldapPort = stackVariables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
       const lldapHost = stackSelectedNode || 'localhost';
       if (lldapPassword) {
-        setStackLogs(prev => [...prev, 'Waiting for LLDAP to start (up to 3 min)...']);
-        const lldapReady = await waitForLldap(lldapHost, parseInt(lldapPort, 10));
+        setStackLogs(prev => [...prev, 'Waiting for LLDAP to start (image pull / cold-start can take a while)...']);
+        const lldapReady = await waitForLldap(
+          lldapHost,
+          parseInt(lldapPort, 10),
+          msg => setStackLogs(prev => [...prev, msg]),
+        );
         if (!lldapReady) {
           setStackLogs(prev => [...prev, '\u26a0\ufe0f LLDAP did not respond in time \u2014 seed groups manually via Settings \u2192 Self-Test, then admins/family groups in the LLDAP UI.']);
         } else {
@@ -691,6 +729,28 @@ export default function OnboardingWizard() {
           } catch {
             setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach LLDAP to seed groups. Create admins/family groups manually.']);
           }
+        }
+      }
+    }
+
+    // If nginx-web was just installed, persist its NPM admin credentials
+    // into ServiceBay config so all subsequent proxy operations (this run
+    // and future ones) authenticate cleanly. Without this, NPM gets a
+    // user-supplied INITIAL_ADMIN_PASSWORD on first start, but ServiceBay
+    // would still try the hardcoded `changeme` defaults later.
+    if (selected.some(i => i.name === 'nginx-web')) {
+      const npmEmailVar = stackVariables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value;
+      const npmPasswordVar = stackVariables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value;
+      if (npmEmailVar && npmPasswordVar) {
+        try {
+          await fetch('/api/system/nginx/credentials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: npmEmailVar, password: npmPasswordVar }),
+          });
+          setStackLogs(prev => [...prev, '✅ Saved NPM admin credentials for auto-sync.']);
+        } catch {
+          setStackLogs(prev => [...prev, '⚠️ Could not persist NPM credentials — set them later in Settings → Integrations.']);
         }
       }
     }
@@ -744,8 +804,11 @@ export default function OnboardingWizard() {
     if (!domain || hosts.length === 0) return;
 
     if (!credentials) {
-      setStackLogs(prev => [...prev, 'Waiting for Nginx Proxy Manager to start...']);
-      const npmReady = await waitForNpm(stackSelectedNode || undefined);
+      setStackLogs(prev => [...prev, 'Waiting for Nginx Proxy Manager to start (image pull / DB schema init can take a while)...']);
+      const npmReady = await waitForNpm(
+        stackSelectedNode || undefined,
+        msg => setStackLogs(prev => [...prev, msg]),
+      );
       if (!npmReady) {
         setStackLogs(prev => [...prev, '\u26a0\ufe0f Nginx Proxy Manager not ready. Configure proxy routes manually in the NPM admin panel.']);
         return;
