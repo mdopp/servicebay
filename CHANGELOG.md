@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.3.0...servicebay-v2.4.0) (2026-05-05)
+
+
+### Features
+
+* **onboarding:** show why-this-service descriptions in stack picker ([2dcbd97](https://github.com/mdopp/servicebay/commit/2dcbd976afe4b307e13993852df97f233aeac135))
+* **onboarding:** show why-this-service descriptions in stack picker ([9321f9b](https://github.com/mdopp/servicebay/commit/9321f9b79415ccab7465b64dde40128b5a1183ea))
+
+
+### Bug Fixes
+
+* **image:** ship agent.py + quadlet_parser.py in the production image ([c1dbdf1](https://github.com/mdopp/servicebay/commit/c1dbdf11e6d9522a1f2805dda9bef3278863fed7))
+* **image:** ship agent.py + quadlet_parser.py in the production image ([8ffb5e8](https://github.com/mdopp/servicebay/commit/8ffb5e8838c486fbf0d04baf737d927ae2fec163))
+* **installer:** set AUTH_SECRET + bootstrap admin password in Quadlet env, add diagnose script ([ddcfa8a](https://github.com/mdopp/servicebay/commit/ddcfa8abc1aceffb65ba9df13ec74309f3310e16))
+* **installer:** set AUTH_SECRET + bootstrap admin password in Quadlet, add diagnose script ([a2a91bf](https://github.com/mdopp/servicebay/commit/a2a91bf8f3413215dc651407a5a272a513555c0f))
+
 ## [2.3.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.2.0...servicebay-v2.3.0) (2026-05-05)
 
 
