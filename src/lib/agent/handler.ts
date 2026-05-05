@@ -407,15 +407,19 @@ export class AgentHandler extends EventEmitter {
         // maintain pending map
         this.pendingRequests.set(id, { resolve, reject });
         
-        // Timeout (extendable per command; defaults to 10s)
-        const timeoutMs = options.timeoutMs ?? 10000;
+        // Timeout (extendable per command; defaults to 30s).
+        // 10s was too aggressive: a `systemctl start <pod>` for a fresh deploy
+        // routinely takes 10–30s even with `--no-block`, and timeouts cascade
+        // because subsequent commands queue behind the in-flight one through
+        // the single SSH channel.
+        const timeoutMs = options.timeoutMs ?? 30000;
         setTimeout(() => {
             if (this.pendingRequests.has(id)) {
                 this.pendingRequests.delete(id);
                 this.health.errorCount++;
                 this.health.lastError = `Command timeout: ${action}`;
-                this.log(this.nodeName, 'warn', `Command timeout for '${action}' (id: ${id})`);
-                reject(new Error('Agent request timeout'));
+                this.log(this.nodeName, 'warn', `Command timeout for '${action}' after ${timeoutMs}ms (id: ${id})`);
+                reject(new Error(`Agent request timeout (${action} after ${timeoutMs}ms)`));
             }
         }, timeoutMs);
 

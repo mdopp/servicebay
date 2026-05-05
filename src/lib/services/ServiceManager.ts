@@ -448,21 +448,28 @@ export class ServiceManager {
         
         return services;
     }
+    // `--no-block` returns immediately after dispatching the start/restart
+    // request to systemd; image pulls and container creation continue in the
+    // background, governed by the unit's `TimeoutStartSec` (set to 600s for
+    // multi-image pods in `injectServiceTimeout`). Without this flag a fresh
+    // deploy with several large images would block the SSH channel for
+    // minutes and cause subsequent agent commands (write_file for the next
+    // service's .kube file) to time out and never get sent.
     static async startService(nodeName: string, serviceName: string) {
         const agent = await agentManager.ensureAgent(nodeName);
-        const res = await agent.sendCommand('exec', { command: `systemctl --user start ${serviceName}.service` });
+        const res = await agent.sendCommand('exec', { command: `systemctl --user --no-block start ${serviceName}.service` });
         if (res.code !== 0) throw new Error(res.stderr);
     }
 
     static async stopService(nodeName: string, serviceName: string) {
         const agent = await agentManager.ensureAgent(nodeName);
-        const res = await agent.sendCommand('exec', { command: `systemctl --user stop ${serviceName}.service` });
+        const res = await agent.sendCommand('exec', { command: `systemctl --user --no-block stop ${serviceName}.service` });
         if (res.code !== 0) throw new Error(res.stderr);
     }
 
     static async restartService(nodeName: string, serviceName: string) {
         const agent = await agentManager.ensureAgent(nodeName);
-         const res = await agent.sendCommand('exec', { command: `systemctl --user restart ${serviceName}.service` });
+         const res = await agent.sendCommand('exec', { command: `systemctl --user --no-block restart ${serviceName}.service` });
          if (res.code !== 0) throw new Error(res.stderr);
     }
 
@@ -1067,11 +1074,11 @@ export class ServiceManager {
 
         const unit = serviceName.endsWith('.service') ? serviceName : `${serviceName}.service`;
         logs.push(`Stopping service ${unit}...`);
-        try { await agent.sendCommand('exec', { command: `systemctl --user stop ${unit}` }); } catch { /* ok */ }
+        try { await agent.sendCommand('exec', { command: `systemctl --user --no-block stop ${unit}` }); } catch { /* ok */ }
 
         logs.push(`Starting service ${unit}...`);
         try {
-            await agent.sendCommand('exec', { command: `systemctl --user start ${unit}` });
+            await agent.sendCommand('exec', { command: `systemctl --user --no-block start ${unit}` });
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             logs.push(`Error starting service: ${msg}`);
