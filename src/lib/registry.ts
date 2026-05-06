@@ -275,6 +275,12 @@ export interface VariableMeta {
   oidcClient?: OidcClientConfig;
   /** For bcrypt type: name of another variable whose plaintext gets bcrypt-hashed */
   bcryptSource?: string;
+  /**
+   * Name of the template that first declared this variable. Set by the
+   * wizard / installer when collecting variables across multiple templates,
+   * used by the UI to group the configure step by service.
+   */
+  templateName?: string;
 }
 
 export async function getTemplateVariables(name: string, source?: string): Promise<Record<string, VariableMeta> | null> {
