@@ -4,6 +4,15 @@
     "description": "Port for the Audiobookshelf web UI + API",
     "default": "13378"
   },
+  "ABS_ADMIN_USER": {
+    "type": "text",
+    "description": "Audiobookshelf root admin username",
+    "default": "root"
+  },
+  "ABS_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "Audiobookshelf root admin password — auto-generated. ServiceBay calls /init after deploy to skip the first-launch wizard."
+  },
   "TZ": {
     "type": "text",
     "description": "Timezone (used for podcast download schedules)",

@@ -21,9 +21,9 @@ Both library paths default into the **file-share template's Samba volume** — d
 
 ## Setup
 
-1. Deploy via ServiceBay
+1. Deploy via ServiceBay — the wizard auto-creates the root admin via Audiobookshelf's `/init` endpoint, so the first-launch wizard is skipped.
 2. Open `https://books.<your-domain>` (or `http://<server-ip>:13378`)
-3. The first user you create becomes **root admin**
+3. Log in with the credentials shown in the install log (default user `root`, auto-generated password)
 4. Add libraries:
    - `Audiobooks` → folder `/audiobooks` (mounted from `ABS_AUDIOBOOKS_PATH`)
    - `Podcasts` → folder `/podcasts` (mounted from `ABS_PODCASTS_PATH`)
