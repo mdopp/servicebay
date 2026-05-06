@@ -13,6 +13,8 @@ Passwort-Manager, Foto-Verwaltung, Dateifreigabe und Smart-Home.
 - [x] immich — Selbst gehostete Foto- und Video-Sicherung mit AI-Suche, Mobile-Apps und Auto-Upload
 - [x] file-share — Datei-Sync (Syncthing) + Windows-Netzlaufwerk (Samba) auf einem geteilten Volume
 - [x] home-assistant-stack — Smart-Home-Hub, lokaler Sprachassistent, Z-Wave-/Matter-Bridges
+- [ ] navidrome — Musik-Server mit Subsonic-API (Symfonium / DSub / ähnliches)
+- [ ] audiobookshelf — Hörbücher und Podcasts mit eigenen iOS/Android-Apps
 
 ## Reverse Proxy
 
@@ -29,6 +31,8 @@ Domain und Subdomains sind bei der Installation anpassbar.
 | dns.{domain} | AdGuard Home | 8083 | — | LAN-Zugriff empfohlen |
 | home.{domain} | Home Assistant | 8123 | Ja | 24h Timeouts, kein Buffering |
 | drive.{domain} | File Share (WebDAV) | 8090 | — | Unbegrenzter Upload |
+| music.{domain} | Navidrome | 4533 | Ja | Subsonic-API für Mobile-Apps (siehe Template-README für Authelia-Bypass) |
+| books.{domain} | Audiobookshelf | 13378 | Ja | Hörbücher + Podcasts, eigene Mobile-Apps |
 
 ## Nach der Installation
 

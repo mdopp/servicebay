@@ -1,0 +1,33 @@
+{
+  "ABS_PORT": {
+    "type": "text",
+    "description": "Port for the Audiobookshelf web UI + API",
+    "default": "13378"
+  },
+  "TZ": {
+    "type": "text",
+    "description": "Timezone (used for podcast download schedules)",
+    "default": "Europe/Berlin"
+  },
+  "ABS_AUDIOBOOKS_PATH": {
+    "type": "text",
+    "description": "Host path to your audiobook library. Defaults to the file-share Samba volume.",
+    "default": "/mnt/data/stacks/file-share/data/Audiobooks"
+  },
+  "ABS_PODCASTS_PATH": {
+    "type": "text",
+    "description": "Host path where Audiobookshelf will download podcast episodes.",
+    "default": "/mnt/data/stacks/file-share/data/Podcasts"
+  },
+  "ABS_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for Audiobookshelf",
+    "default": "books",
+    "proxyPort": "ABS_PORT",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true
+    }
+  }
+}
