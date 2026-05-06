@@ -173,9 +173,10 @@ export default function OnboardingWizard() {
   // Track whether we're in stacks-only mode (post-install first boot)
   const [stacksOnlyMode, setStacksOnlyMode] = useState(false);
 
-  // NPM credentials (shown when default auth fails during proxy setup)
+  // NPM credentials (shown when default auth fails during proxy setup).
+  // Empty defaults — the prompt pre-fills from stackVariables when it opens.
   const [npmCredPrompt, setNpmCredPrompt] = useState(false);
-  const [npmEmail, setNpmEmail] = useState('admin@example.com');
+  const [npmEmail, setNpmEmail] = useState('');
   const [npmPassword, setNpmPassword] = useState('');
 
   // Clean install — wipe existing service data before deploying.
@@ -242,16 +243,21 @@ export default function OnboardingWizard() {
   }, [isOpen, currentStep, stepHistory, selection, gwHost, gwUser, emailConfig.host, emailConfig.port, emailConfig.secure, emailConfig.user, emailConfig.from, emailConfig.recipients]);
 
   // Warn before unload if the user has progressed past Welcome.
+  // Only block tab-close while we're actively installing — the API stream
+  // is in flight and abandoning it leaves a half-deployed stack. Outside of
+  // that window the prompt is just user-hostile (the wizard's state lives
+  // in sessionStorage and survives reloads anyway).
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (!isOpen || currentStep === 'welcome' || currentStep === 'finish') return;
+    if (!isOpen) return;
+    if (!(currentStep === 'stacks' && stackInstallStep === 'installing')) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [isOpen, currentStep]);
+  }, [isOpen, currentStep, stackInstallStep]);
 
   // Load stacks when entering the stacks step
   const loadStacks = useCallback(async () => {
@@ -710,6 +716,16 @@ export default function OnboardingWizard() {
     });
 
     if (proxyResult === 'needs_credentials') {
+      // Pre-fill the prompt with whatever the wizard configured — usually
+      // the auto-generated values are correct but NPM rejected them
+      // because of a stale data volume from a previous install. Showing
+      // the user the values they meant to use lets them just hit "Retry"
+      // (which will fail again) or paste a real password if they reset
+      // NPM manually.
+      const fallbackEmail = stackVariables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value;
+      const fallbackPassword = stackVariables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value;
+      if (fallbackEmail) setNpmEmail(fallbackEmail);
+      if (fallbackPassword) setNpmPassword(fallbackPassword);
       setNpmCredPrompt(true);
     } else {
       setStackInstallStep('done');
@@ -1266,12 +1282,13 @@ export default function OnboardingWizard() {
                                             placeholder="NPM admin email"
                                         />
                                         <input
-                                            type="password"
+                                            type="text"
                                             value={npmPassword}
                                             onChange={(e) => setNpmPassword(e.target.value)}
-                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-md text-sm"
+                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-md text-sm font-mono"
                                             placeholder="NPM admin password"
-                                            autoComplete="current-password"
+                                            autoComplete="off"
+                                            spellCheck={false}
                                         />
                                         <div className="flex gap-2">
                                             <button
