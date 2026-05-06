@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.1](https://github.com/mdopp/servicebay/compare/servicebay-v2.5.0...servicebay-v2.5.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **install:** zero-config LLDAP, Authelia OIDC + AdGuard pre-seed ([#125](https://github.com/mdopp/servicebay/issues/125)) ([f6edf22](https://github.com/mdopp/servicebay/commit/f6edf226a1523a292b91d0929c1b7beeca68c75e))
+* **onboarding:** wait for LLDAP + NPM to be ready before post-install steps ([9cc52da](https://github.com/mdopp/servicebay/commit/9cc52daa46ab7c75af49b8d03357386ce74c8255))
+* real wait-for-ready logic + bootstrap NPM admin creds at deploy time ([261dff0](https://github.com/mdopp/servicebay/commit/261dff0be04e8f354c57f3aa95fadc6b7fd8cfe0))
+* real wait-for-ready logic + bootstrap NPM admin creds at deploy time ([0d7e0b7](https://github.com/mdopp/servicebay/commit/0d7e0b7724726abda3c040a72a6bce731518a8b9))
+
 ## [2.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.4.0...servicebay-v2.5.0) (2026-05-05)
 
 
