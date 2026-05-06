@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: navidrome
+  labels:
+    app: navidrome
+    servicebay.role: media
+  annotations:
+    servicebay.ports: "{{NAVIDROME_PORT}}/tcp"
+spec:
+  hostNetwork: true
+  containers:
+  - name: navidrome
+    image: docker.io/deluan/navidrome:latest
+    env:
+      - name: ND_PORT
+        value: "{{NAVIDROME_PORT}}"
+      - name: ND_DATAFOLDER
+        value: /data
+      - name: ND_MUSICFOLDER
+        value: /music
+      - name: ND_LOGLEVEL
+        value: info
+      - name: ND_SCANSCHEDULE
+        value: "@every 1h"
+      - name: ND_ENABLEUSEREDITING
+        value: "true"
+      # Trust the X-Authelia-User header so the SSO login becomes the
+      # Navidrome login automatically. Bound to the loopback subnet
+      # because the proxy lives on the same host. Subsonic API calls
+      # (mobile apps) ignore this and use built-in user auth.
+      - name: ND_REVERSEPROXYUSERHEADER
+        value: Remote-User
+      - name: ND_REVERSEPROXYWHITELIST
+        value: 127.0.0.1/32
+    ports:
+      - containerPort: {{NAVIDROME_PORT}}
+    volumeMounts:
+      - mountPath: /data
+        name: navidrome-data
+      - mountPath: /music
+        name: navidrome-music
+        readOnly: true
+  volumes:
+  - name: navidrome-data
+    hostPath:
+      path: {{DATA_DIR}}/navidrome/data
+      type: DirectoryOrCreate
+  - name: navidrome-music
+    hostPath:
+      path: {{NAVIDROME_MUSIC_PATH}}
+      type: DirectoryOrCreate
