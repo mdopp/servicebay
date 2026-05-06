@@ -22,10 +22,6 @@
     "type": "secret",
     "description": "JWT secret for LLDAP session tokens"
   },
-  "LLDAP_KEY_SEED": {
-    "type": "secret",
-    "description": "Seed used by LLDAP to derive its private key (must remain stable across container restarts)"
-  },
   "LLDAP_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for LLDAP Web UI",

@@ -11,7 +11,6 @@ A lightweight LDAP server for centralized user management. Provides a simple web
 | `LLDAP_BASE_DN` | LDAP base DN | `dc=dopp,dc=cloud` |
 | `LLDAP_ADMIN_PASSWORD` | Admin password (user `admin`) | — (auto-generated, shown in install log + Settings → Integrations) |
 | `LLDAP_JWT_SECRET` | JWT secret for sessions | — (auto-generated) |
-| `LLDAP_KEY_SEED` | Seed for LLDAP private-key derivation | — (auto-generated) |
 
 ## Ports
 

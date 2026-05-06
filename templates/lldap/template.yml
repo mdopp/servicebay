@@ -14,8 +14,6 @@ spec:
     env:
       - name: LLDAP_JWT_SECRET
         value: "{{LLDAP_JWT_SECRET}}"
-      - name: LLDAP_KEY_SEED
-        value: "{{LLDAP_KEY_SEED}}"
       - name: LLDAP_LDAP_BASE_DN
         value: "{{LLDAP_BASE_DN}}"
       - name: LLDAP_LDAP_USER_PASS

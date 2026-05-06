@@ -218,13 +218,17 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
         return { name: v, value, global: isGlobal, meta };
     });
     // Async fill for rsa-private types — needs server-side crypto.generateKeyPair.
+    // The PEM is pre-indented with 10 spaces so it can be dropped under a
+    // YAML `key: |` block scalar without further mustache gymnastics.
     await Promise.all(resolvedVars.map(async v => {
         if (v.value || v.meta?.type !== 'rsa-private') return;
         try {
             const res = await fetch('/api/system/keys/rsa');
             if (res.ok) {
                 const data = await res.json();
-                if (typeof data.pem === 'string') v.value = data.pem;
+                if (typeof data.pem === 'string') {
+                    v.value = data.pem.trimEnd().split('\n').map((l: string) => '          ' + l).join('\n');
+                }
             }
         } catch { /* leave empty */ }
     }));
