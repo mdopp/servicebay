@@ -1243,7 +1243,7 @@ export default function OnboardingWizard() {
 
                     {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (
                         <div>
-                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs h-32 overflow-y-auto border border-gray-800">
+                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs h-96 overflow-y-auto border border-gray-800">
                                 {stackLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
                                 {stackInstallStep === 'installing' && (
                                     <div className="flex items-center gap-2 text-gray-400 mt-2">

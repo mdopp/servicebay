@@ -688,7 +688,7 @@ WantedBy=default.target`;
 
                 {(step === 'installing' || step === 'done') && (
                     <div>
-                        <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm h-48 overflow-y-auto mb-4 border border-gray-800">
+                        <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm h-96 overflow-y-auto mb-4 border border-gray-800">
                             {logs.map((log, i) => (
                                 <div key={i} className="mb-1">{log}</div>
                             ))}
