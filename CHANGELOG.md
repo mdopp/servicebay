@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.2](https://github.com/mdopp/servicebay/compare/servicebay-v2.5.1...servicebay-v2.5.2) (2026-05-06)
+
+
+### Bug Fixes
+
+* **install:** unbreak LLDAP key handling, Authelia jwks, wizard ordering ([#126](https://github.com/mdopp/servicebay/issues/126)) ([3212108](https://github.com/mdopp/servicebay/commit/32121088d853a1d9ee6bc7227cb906e391bf1b49))
+
 ## [2.5.1](https://github.com/mdopp/servicebay/compare/servicebay-v2.5.0...servicebay-v2.5.1) (2026-05-06)
 
 
