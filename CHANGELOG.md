@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.7.0...servicebay-v2.8.0) (2026-05-06)
+
+
+### Features
+
+* **wizard:** show auto-generated secrets in configure step ([#133](https://github.com/mdopp/servicebay/issues/133)) ([0e78776](https://github.com/mdopp/servicebay/commit/0e7877683cadfc93d11aabe4dca3b042934c1197))
+
 ## [2.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.6.0...servicebay-v2.7.0) (2026-05-06)
 
 
