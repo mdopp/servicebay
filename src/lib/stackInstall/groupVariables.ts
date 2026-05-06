@@ -36,8 +36,12 @@ export interface VariableGroup {
  * `rsa-private` / `bcrypt`) are dropped — there is nothing to render.
  */
 export function groupVariablesByTemplate(variables: StackVariable[]): VariableGroup[] {
+  // Hide variables that are computed automatically and not meaningful to
+  // edit by hand (multi-line PEMs, bcrypt hashes derived from another var).
+  // `secret` types stay visible — the wizard renders them with an edit
+  // input + a regenerate button so users can accept the auto-gen value or
+  // override it with something memorable.
   const isHidden = (v: StackVariable) =>
-    v.meta?.type === 'secret' ||
     v.meta?.type === 'rsa-private' ||
     v.meta?.type === 'bcrypt';
 

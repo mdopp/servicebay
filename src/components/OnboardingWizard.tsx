@@ -1176,8 +1176,15 @@ export default function OnboardingWizard() {
                                                     />
                                                 ) : v.meta?.type === 'secret' ? (
                                                     <div className="flex gap-2">
-                                                        <input type="text" value={v.value} readOnly className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border border-gray-300 dark:border-gray-700 rounded-md text-xs font-mono flex-1" />
-                                                        <button type="button" onClick={() => { const nv = [...stackVariables]; nv[idx].value = generateSecret(); setStackVariables(nv); }} className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700"><RefreshCw size={14} /></button>
+                                                        <input
+                                                            type="text"
+                                                            value={v.value}
+                                                            onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }}
+                                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-xs font-mono flex-1"
+                                                            spellCheck={false}
+                                                            autoComplete="off"
+                                                        />
+                                                        <button type="button" onClick={() => { const nv = [...stackVariables]; nv[idx].value = generateSecret(); setStackVariables(nv); }} title="Regenerate" className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700"><RefreshCw size={14} /></button>
                                                     </div>
                                                 ) : v.meta?.type === 'select' && v.meta.options ? (
                                                     <select value={v.value} onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }} className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm">
