@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.5.2...servicebay-v2.6.0) (2026-05-06)
+
+
+### Features
+
+* **wizard:** clean-install option to wipe existing service data ([#128](https://github.com/mdopp/servicebay/issues/128)) ([2ea84cd](https://github.com/mdopp/servicebay/commit/2ea84cd983cdf4e87e6131e329b4506cc44e5041))
+
 ## [2.5.2](https://github.com/mdopp/servicebay/compare/servicebay-v2.5.1...servicebay-v2.5.2) (2026-05-06)
 
 
