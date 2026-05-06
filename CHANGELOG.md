@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.6.0...servicebay-v2.7.0) (2026-05-06)
+
+
+### Features
+
+* **templates:** add navidrome (music) + audiobookshelf ([#131](https://github.com/mdopp/servicebay/issues/131)) ([b394179](https://github.com/mdopp/servicebay/commit/b39417914d6b8f52bebce299c081f3520d17197f))
+
 ## [2.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.5.2...servicebay-v2.6.0) (2026-05-06)
 
 
