@@ -34,10 +34,10 @@ Authelia is a Single Sign-On (SSO) and identity provider that works with LLDAP t
 
 1. Deploy LLDAP first and create users/groups
 2. Deploy Authelia with matching LLDAP credentials
-3. The configuration file is generated at `{{DATA_DIR}}/authelia/config/configuration.yml`, the RSA signing key at `{{DATA_DIR}}/authelia/config/oidc.pem`
+3. The configuration file is generated at `{{DATA_DIR}}/authelia/config/configuration.yml` with the RSA signing key embedded inline
 4. Access the Authelia portal at `https://auth.{{PUBLIC_DOMAIN}}`
 
-> **Authelia 4.39 note:** the OIDC `jwks` block must reference a real RSA key — the older "key gets auto-generated" behaviour was removed. ServiceBay generates a 2048-bit key at install time and writes it to `oidc.pem`; the configuration uses `key_path` to reference it.
+> **Authelia 4.39 note:** the OIDC `jwks` block must contain a real RSA key inline (`key: |` block scalar) — the older "auto-generate" behaviour was removed and `key_path` is not yet recognized by 4.39.x. ServiceBay generates a 2048-bit key at install time and writes it directly into the config.
 
 ## OIDC Clients
 

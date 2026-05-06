@@ -595,13 +595,17 @@ export default function OnboardingWizard() {
       return { name: v, value, global: isGlobal, meta };
     });
     // Async fill for rsa-private types — needs server-side crypto.generateKeyPair.
+    // The PEM is pre-indented with 10 spaces so it can be dropped under a
+    // YAML `key: |` block scalar without further mustache gymnastics.
     await Promise.all(resolvedVars.map(async v => {
       if (v.value || v.meta?.type !== 'rsa-private') return;
       try {
         const res = await fetch('/api/system/keys/rsa');
         if (res.ok) {
           const data = await res.json();
-          if (typeof data.pem === 'string') v.value = data.pem;
+          if (typeof data.pem === 'string') {
+            v.value = data.pem.trimEnd().split('\n').map((l: string) => '          ' + l).join('\n');
+          }
         }
       } catch { /* leave empty — install will fail with a clearer error */ }
     }));
@@ -726,62 +730,26 @@ export default function OnboardingWizard() {
       }
     }
 
-    // Seed LLDAP groups if lldap was installed.
-    // Need to wait for the LLDAP container to actually start serving HTTP
-    // before firing the seed: `--no-block` returned right after dispatching
-    // the systemd start, so the pod is still cold-starting (image extract,
-    // sqlite init, bind to :17170).
+    // \u2500\u2500\u2500 Surface LLDAP credentials immediately \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    // The user might Ctrl-W away after install \u2014 make sure the auto-gen
+    // password is visible the moment containers are deployed.
     if (selected.some(i => i.name === 'lldap')) {
       const lldapPassword = stackVariables.find(v => v.name === 'LLDAP_ADMIN_PASSWORD')?.value;
       const lldapPort = stackVariables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
-      const lldapHost = stackSelectedNode || 'localhost';
       if (lldapPassword) {
-        // Persist credentials immediately \u2014 even if seeding later fails, the
-        // user can retrieve their auto-generated admin password from
-        // Settings \u2192 Integrations and log into LLDAP manually.
-        const lldapUrl = `http://${lldapHost}:${lldapPort}`;
         try {
           await fetch('/api/system/lldap/credentials', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: lldapUrl, username: 'admin', password: lldapPassword }),
+            body: JSON.stringify({
+              url: `http://localhost:${lldapPort}`,
+              username: 'admin',
+              password: lldapPassword,
+            }),
           });
-          setStackLogs(prev => [...prev, `\ud83d\udd11 LLDAP admin: ${lldapUrl} (user: admin, password: ${lldapPassword}) \u2014 saved to Settings \u2192 Integrations.`]);
+          setStackLogs(prev => [...prev, `\ud83d\udd11 LLDAP admin (user: admin, password: ${lldapPassword}) \u2014 open http://<server-ip>:${lldapPort} or via NPM. Stored in Settings \u2192 Integrations.`]);
         } catch {
-          setStackLogs(prev => [...prev, `\u26a0\ufe0f Could not persist LLDAP credentials. Note them now: user: admin, password: ${lldapPassword}`]);
-        }
-
-        setStackLogs(prev => [...prev, 'Waiting for LLDAP to start (image pull / cold-start can take a while)...']);
-        const lldapReady = await waitForLldap(
-          lldapHost,
-          parseInt(lldapPort, 10),
-          msg => setStackLogs(prev => [...prev, msg]),
-        );
-        if (!lldapReady) {
-          setStackLogs(prev => [...prev, '\u26a0\ufe0f LLDAP did not respond in time \u2014 seed groups manually via Settings \u2192 Self-Test, then admins/family groups in the LLDAP UI.']);
-        } else {
-          setStackLogs(prev => [...prev, 'Seeding LLDAP groups...']);
-          try {
-            const res = await fetch('/api/system/lldap/seed', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                host: lldapHost,
-                port: parseInt(lldapPort, 10),
-                password: lldapPassword,
-              }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-              if (data.created?.length) setStackLogs(prev => [...prev, `\u2705 Groups created: ${data.created.join(', ')}`]);
-              if (data.existing?.length) setStackLogs(prev => [...prev, `\u2139\ufe0f Groups already exist: ${data.existing.join(', ')}`]);
-              if (data.failed?.length) setStackLogs(prev => [...prev, `\u26a0\ufe0f Failed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
-            } else {
-              setStackLogs(prev => [...prev, `\u26a0\ufe0f Could not seed LLDAP groups: ${data.error || 'unknown error'}`]);
-            }
-          } catch {
-            setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach LLDAP to seed groups. Create admins/family groups manually.']);
-          }
+          setStackLogs(prev => [...prev, `\u26a0\ufe0f Could not persist LLDAP credentials. Note now: admin / ${lldapPassword}`]);
         }
       }
     }
@@ -794,9 +762,8 @@ export default function OnboardingWizard() {
       const agUser = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_USER')?.value || 'admin';
       const agPassword = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_PASSWORD')?.value;
       const agPort = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_PORT')?.value || '8083';
-      const agHost = stackSelectedNode || 'localhost';
       if (agPassword) {
-        setStackLogs(prev => [...prev, `🔑 AdGuard admin: http://${agHost}:${agPort} (user: ${agUser}, password: ${agPassword}) — note this now, it's only shown once.`]);
+        setStackLogs(prev => [...prev, `🔑 AdGuard admin (user: ${agUser}, password: ${agPassword}) — open http://<server-ip>:${agPort}. Note now, only shown once.`]);
       }
     }
 
@@ -822,8 +789,54 @@ export default function OnboardingWizard() {
       }
     }
 
-    // Configure proxy routes (with retry for NPM startup)
+    // ─── Configure proxy routes BEFORE the LLDAP wait ───
+    // A hung LLDAP cold-start used to block proxy creation entirely, leaving
+    // the user without working subdomains. Run this first so subdomains
+    // exist regardless of LLDAP's state.
     const proxyResult = await configureProxyRoutes();
+
+    // ─── Seed LLDAP groups (best-effort, can hang/fail) ───
+    // ServiceBay and LLDAP both run host-networked on the same node, so
+    // localhost is correct for the probe regardless of the node name.
+    if (selected.some(i => i.name === 'lldap')) {
+      const lldapPassword = stackVariables.find(v => v.name === 'LLDAP_ADMIN_PASSWORD')?.value;
+      const lldapPort = stackVariables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
+      if (lldapPassword) {
+        setStackLogs(prev => [...prev, 'Waiting for LLDAP to start (cold-start usually < 30s)...']);
+        const lldapReady = await waitForLldap(
+          'localhost',
+          parseInt(lldapPort, 10),
+          msg => setStackLogs(prev => [...prev, msg]),
+          10 * 60_000, // 10 min ceiling — image pull is already done by here
+        );
+        if (!lldapReady) {
+          setStackLogs(prev => [...prev, `⚠️ LLDAP did not respond in time. Open http://<server-ip>:${lldapPort} as admin and create groups admins+family manually.`]);
+        } else {
+          setStackLogs(prev => [...prev, 'Seeding LLDAP groups...']);
+          try {
+            const res = await fetch('/api/system/lldap/seed', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                host: 'localhost',
+                port: parseInt(lldapPort, 10),
+                password: lldapPassword,
+              }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+              if (data.created?.length) setStackLogs(prev => [...prev, `✅ Groups created: ${data.created.join(', ')}`]);
+              if (data.existing?.length) setStackLogs(prev => [...prev, `ℹ️ Groups already exist: ${data.existing.join(', ')}`]);
+              if (data.failed?.length) setStackLogs(prev => [...prev, `⚠️ Failed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
+            } else {
+              setStackLogs(prev => [...prev, `⚠️ Could not seed LLDAP groups: ${data.error || 'unknown error'}`]);
+            }
+          } catch {
+            setStackLogs(prev => [...prev, '⚠️ Could not reach LLDAP to seed groups. Create admins/family manually in the LLDAP UI.']);
+          }
+        }
+      }
+    }
 
     // If credentials are needed, stay on 'installing' step — the credential prompt is shown inline
     if (proxyResult !== 'needs_credentials') {

@@ -71,12 +71,15 @@ identity_providers:
   oidc:
     hmac_secret: '{{AUTHELIA_OIDC_HMAC_SECRET}}'
     jwks:
-      # Authelia 4.39+ requires a real key — ServiceBay writes a 2048-bit RSA
-      # private key to /config/oidc.pem at install time (auto-generated).
+      # Authelia 4.39 requires a real RSA key inline; key_path under jwks is
+      # not yet supported in 4.39.x. ServiceBay generates a 2048-bit key at
+      # install time and the wizard pre-indents it with 10 spaces so the
+      # block scalar below renders as valid YAML.
       - key_id: 'main'
         algorithm: 'RS256'
         use: 'sig'
-        key_path: '/config/oidc.pem'
+        key: |
+{{{AUTHELIA_OIDC_RSA_PRIVATE_KEY}}}
     clients:
       - client_id: 'servicebay'
         client_name: 'ServiceBay'
