@@ -16,6 +16,11 @@ import { generateLocalKey } from '@/app/actions/ssh';
 import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
 import { getNodes } from '@/app/actions/system';
 import { Template, VariableMeta } from '@/lib/registry';
+import {
+  runPostInstall,
+  configureProxyRoutes as sharedConfigureProxyRoutes,
+} from '@/lib/stackInstall/postInstall';
+import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import Mustache from 'mustache';
 
 import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive } from 'lucide-react';
@@ -51,78 +56,6 @@ async function fetchExistingServices(node?: string): Promise<Set<string>> {
   } catch {
     return new Set();
   }
-}
-
-/** Format elapsed milliseconds as `Mm Ss` for human-readable log lines. */
-function fmtElapsed(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
-}
-
-/** Wait for NPM to become reachable. Polls every 3 s and emits a heartbeat
- *  log line every 30 s so the user sees forward motion while NPM cold-starts.
- *  Default ceiling 60 min — generous enough for slow CPUs / first-boot DB
- *  init / late image extracts on weak hardware.
- *
- *  `onProgress` receives a human-readable status line for the UI. */
-async function waitForNpm(
-  node: string | undefined,
-  onProgress: (msg: string) => void,
-  maxWait = 60 * 60_000,
-): Promise<boolean> {
-  const start = Date.now();
-  let lastBeat = 0;
-  while (Date.now() - start < maxWait) {
-    try {
-      const query = node ? `?node=${node}` : '';
-      const res = await fetch(`/api/system/nginx/status${query}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.installed && data.active) return true;
-      }
-    } catch { /* keep trying */ }
-    const elapsed = Date.now() - start;
-    if (elapsed - lastBeat >= 30_000) {
-      onProgress(`Still waiting for Nginx Proxy Manager (${fmtElapsed(elapsed)} elapsed)...`);
-      lastBeat = elapsed;
-    }
-    await new Promise(r => setTimeout(r, 3000));
-  }
-  return false;
-}
-
-/** Wait for an LLDAP HTTP endpoint to respond. Same heartbeat pattern as
- *  waitForNpm. */
-async function waitForLldap(
-  host: string,
-  port: number,
-  onProgress: (msg: string) => void,
-  maxWait = 60 * 60_000,
-): Promise<boolean> {
-  const start = Date.now();
-  let lastBeat = 0;
-  while (Date.now() - start < maxWait) {
-    try {
-      const res = await fetch('/api/system/lldap/probe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ host, port }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.reachable) return true;
-      }
-    } catch { /* keep trying */ }
-    const elapsed = Date.now() - start;
-    if (elapsed - lastBeat >= 30_000) {
-      onProgress(`Still waiting for LLDAP (${fmtElapsed(elapsed)} elapsed)...`);
-      lastBeat = elapsed;
-    }
-    await new Promise(r => setTimeout(r, 3000));
-  }
-  return false;
 }
 
 interface Variable {
@@ -554,7 +487,16 @@ export default function OnboardingWizard() {
         const matches = yaml.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
         for (const match of matches) vars.add(match[1]);
         const meta = await fetchTemplateVariables(item.name, selectedStack?.source || 'Built-in');
-        if (meta) Object.assign(allMeta, meta);
+        if (meta) {
+          // First template that declares a variable owns it for grouping —
+          // shared vars (LLDAP_ADMIN_PASSWORD, LLDAP_HOST, ...) live under
+          // the originator and are inherited by other templates' YAMLs.
+          for (const [key, value] of Object.entries(meta)) {
+            if (!allMeta[key]) {
+              allMeta[key] = { ...value, templateName: item.name };
+            }
+          }
+        }
 
         // Fetch extra config files (.mustache) and resolve target paths from YAML volumes
         const cfgFiles = await fetchTemplateConfigFiles(item.name, selectedStack?.source || 'Built-in');
@@ -760,219 +702,49 @@ export default function OnboardingWizard() {
       }
     }
 
-    // \u2500\u2500\u2500 Surface LLDAP credentials immediately \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    // The user might Ctrl-W away after install \u2014 make sure the auto-gen
-    // password is visible the moment containers are deployed.
-    if (selected.some(i => i.name === 'lldap')) {
-      const lldapPassword = stackVariables.find(v => v.name === 'LLDAP_ADMIN_PASSWORD')?.value;
-      const lldapPort = stackVariables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
-      if (lldapPassword) {
-        try {
-          await fetch('/api/system/lldap/credentials', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              url: `http://localhost:${lldapPort}`,
-              username: 'admin',
-              password: lldapPassword,
-            }),
-          });
-          setStackLogs(prev => [...prev, `\ud83d\udd11 LLDAP admin (user: admin, password: ${lldapPassword}) \u2014 open http://<server-ip>:${lldapPort} or via NPM. Stored in Settings \u2192 Integrations.`]);
-        } catch {
-          setStackLogs(prev => [...prev, `\u26a0\ufe0f Could not persist LLDAP credentials. Note now: admin / ${lldapPassword}`]);
-        }
-      }
-    }
+    const proxyResult = await runPostInstall({
+      selected,
+      variables: stackVariables,
+      node: stackSelectedNode || undefined,
+      onLog: (msg) => setStackLogs(prev => [...prev, msg]),
+    });
 
-    // If adguard was just installed, surface its auto-generated admin password
-    // so the user can log into the pre-seeded portal at the configured port
-    // (no AdGuard setup wizard runs because we wrote AdGuardHome.yaml with
-    // users + ports already populated).
-    if (selected.some(i => i.name === 'adguard')) {
-      const agUser = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_USER')?.value || 'admin';
-      const agPassword = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_PASSWORD')?.value;
-      const agPort = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_PORT')?.value || '8083';
-      if (agPassword) {
-        setStackLogs(prev => [...prev, `🔑 AdGuard admin (user: ${agUser}, password: ${agPassword}) — open http://<server-ip>:${agPort}. Note now, only shown once.`]);
-      }
-    }
-
-    // If nginx-web was just installed, persist its NPM admin credentials
-    // into ServiceBay config so all subsequent proxy operations (this run
-    // and future ones) authenticate cleanly. Without this, NPM gets a
-    // user-supplied INITIAL_ADMIN_PASSWORD on first start, but ServiceBay
-    // would still try the hardcoded `changeme` defaults later.
-    if (selected.some(i => i.name === 'nginx-web')) {
-      const npmEmailVar = stackVariables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value;
-      const npmPasswordVar = stackVariables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value;
-      if (npmEmailVar && npmPasswordVar) {
-        try {
-          await fetch('/api/system/nginx/credentials', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: npmEmailVar, password: npmPasswordVar }),
-          });
-          setStackLogs(prev => [...prev, '✅ Saved NPM admin credentials for auto-sync.']);
-        } catch {
-          setStackLogs(prev => [...prev, '⚠️ Could not persist NPM credentials — set them later in Settings → Integrations.']);
-        }
-      }
-    }
-
-    // ─── Configure proxy routes BEFORE the LLDAP wait ───
-    // A hung LLDAP cold-start used to block proxy creation entirely, leaving
-    // the user without working subdomains. Run this first so subdomains
-    // exist regardless of LLDAP's state.
-    const proxyResult = await configureProxyRoutes();
-
-    // ─── Seed LLDAP groups (best-effort, can hang/fail) ───
-    // ServiceBay and LLDAP both run host-networked on the same node, so
-    // localhost is correct for the probe regardless of the node name.
-    if (selected.some(i => i.name === 'lldap')) {
-      const lldapPassword = stackVariables.find(v => v.name === 'LLDAP_ADMIN_PASSWORD')?.value;
-      const lldapPort = stackVariables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
-      if (lldapPassword) {
-        setStackLogs(prev => [...prev, 'Waiting for LLDAP to start (cold-start usually < 30s)...']);
-        const lldapReady = await waitForLldap(
-          'localhost',
-          parseInt(lldapPort, 10),
-          msg => setStackLogs(prev => [...prev, msg]),
-          10 * 60_000, // 10 min ceiling — image pull is already done by here
-        );
-        if (!lldapReady) {
-          setStackLogs(prev => [...prev, `⚠️ LLDAP did not respond in time. Open http://<server-ip>:${lldapPort} as admin and create groups admins+family manually.`]);
-        } else {
-          setStackLogs(prev => [...prev, 'Seeding LLDAP groups...']);
-          try {
-            const res = await fetch('/api/system/lldap/seed', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                host: 'localhost',
-                port: parseInt(lldapPort, 10),
-                password: lldapPassword,
-              }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-              if (data.created?.length) setStackLogs(prev => [...prev, `✅ Groups created: ${data.created.join(', ')}`]);
-              if (data.existing?.length) setStackLogs(prev => [...prev, `ℹ️ Groups already exist: ${data.existing.join(', ')}`]);
-              if (data.failed?.length) setStackLogs(prev => [...prev, `⚠️ Failed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
-            } else {
-              setStackLogs(prev => [...prev, `⚠️ Could not seed LLDAP groups: ${data.error || 'unknown error'}`]);
-            }
-          } catch {
-            setStackLogs(prev => [...prev, '⚠️ Could not reach LLDAP to seed groups. Create admins/family manually in the LLDAP UI.']);
-          }
-        }
-      }
-    }
-
-    // If credentials are needed, stay on 'installing' step — the credential prompt is shown inline
-    if (proxyResult !== 'needs_credentials') {
+    if (proxyResult === 'needs_credentials') {
+      setNpmCredPrompt(true);
+    } else {
       setStackInstallStep('done');
     }
   };
 
-  /** Build the proxy host list from subdomain variables */
-  const buildProxyHosts = () => {
-    const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-    if (!domain) return { domain, hosts: [] };
-    const subdomainVars = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
-    const hosts = subdomainVars.map(sv => {
-      let port = sv.meta?.proxyPort || '';
-      const portVar = stackVariables.find(v => v.name === port);
-      if (portVar) port = portVar.value;
-      const service = sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase().replace(/^ha$/, 'home-assistant');
-      return { domain: `${sv.value}.${domain}`, forwardPort: parseInt(port, 10), service, proxyConfig: sv.meta?.proxyConfig };
-    }).filter(h => h.forwardPort);
-    return { domain, hosts };
-  };
-
-  /** Send proxy host creation request, optionally with NPM credentials */
-  const sendProxyRequest = async (
-    hosts: { domain: string; forwardPort: number; service: string; proxyConfig?: unknown }[],
-    domain: string,
-    credentials?: { email: string; password: string },
-  ) => {
-    const res = await fetch('/api/system/nginx/proxy-hosts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        hosts,
-        publicDomain: domain,
-        node: stackSelectedNode || undefined,
-        ...(credentials ? { npmCredentials: credentials } : {}),
-      }),
-    });
-    return { res, data: await res.json() };
-  };
-
-  /** Configure proxy routes, prompting for NPM credentials if default auth fails */
-  const configureProxyRoutes = async (credentials?: { email: string; password: string }) => {
-    const { domain, hosts } = buildProxyHosts();
-    if (!domain || hosts.length === 0) return;
-
-    if (!credentials) {
-      setStackLogs(prev => [...prev, 'Waiting for Nginx Proxy Manager to start (image pull / DB schema init can take a while)...']);
-      const npmReady = await waitForNpm(
-        stackSelectedNode || undefined,
-        msg => setStackLogs(prev => [...prev, msg]),
-      );
-      if (!npmReady) {
-        setStackLogs(prev => [...prev, '\u26a0\ufe0f Nginx Proxy Manager not ready. Configure proxy routes manually in the NPM admin panel.']);
-        return;
-      }
-      setStackLogs(prev => [...prev, 'Configuring reverse proxy routes...']);
-    }
-
-    try {
-      const { res, data } = await sendProxyRequest(hosts, domain, credentials);
-      if (res.ok && data.created?.length) {
-        setStackLogs(prev => [...prev, `\u2705 Proxy routes created: ${data.created.join(', ')}`]);
-        if (data.failed?.length) {
-          setStackLogs(prev => [...prev, `\u26a0\ufe0f Some routes failed: ${data.failed.map((f: { domain: string }) => f.domain).join(', ')}`]);
-        }
-        setNpmCredPrompt(false);
-      } else if (res.status === 401 && data.needsCredentials) {
-        // Default & stored credentials failed — prompt user
-        setStackLogs(prev => [...prev, '\u26a0\ufe0f NPM default credentials did not work. Please enter your NPM admin credentials below.']);
-        setNpmCredPrompt(true);
-        // Don't proceed to 'done' yet — wait for user to submit credentials
-        return 'needs_credentials';
-      } else {
-        setStackLogs(prev => [...prev, `\u26a0\ufe0f Proxy route error: ${data.error || 'unknown'}`]);
-      }
-    } catch {
-      setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Nginx Proxy Manager.']);
-    }
-  };
-
-  /** Retry proxy route creation with user-provided NPM credentials */
+  /** Retry proxy route creation with user-provided NPM credentials. */
   const handleNpmCredentialSubmit = async () => {
     if (!npmEmail || !npmPassword) return;
     setNpmCredPrompt(false);
     setStackLogs(prev => [...prev, 'Retrying with provided credentials...']);
-    const result = await configureProxyRoutes({ email: npmEmail, password: npmPassword });
+    const result = await sharedConfigureProxyRoutes({
+      variables: stackVariables,
+      node: stackSelectedNode || undefined,
+      onLog: (msg) => setStackLogs(prev => [...prev, msg]),
+      credentials: { email: npmEmail, password: npmPassword },
+      skipWait: true,
+    });
     if (result === 'needs_credentials') {
-      // Still failed — prompt again
-      setStackLogs(prev => [...prev, '\u274c Authentication failed. Please check your credentials.']);
+      setStackLogs(prev => [...prev, '❌ Authentication failed. Please check your credentials.']);
       setNpmCredPrompt(true);
-    } else {
-      // Persist the working creds so future installs don't prompt again.
-      // Best-effort — failure here doesn't block the install.
-      try {
-        await fetch('/api/system/nginx/credentials', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: npmEmail, password: npmPassword }),
-        });
-        setStackLogs(prev => [...prev, 'Saved NPM credentials for future installs.']);
-      } catch {
-        // ignore — install succeeded, just don't get auto-sync next time
-      }
-      setStackInstallStep('done');
+      return;
     }
+    // Persist the working creds so future installs don't prompt.
+    try {
+      await fetch('/api/system/nginx/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: npmEmail, password: npmPassword }),
+      });
+      setStackLogs(prev => [...prev, 'Saved NPM credentials for future installs.']);
+    } catch {
+      /* ignore — install succeeded, just won't auto-sync next time */
+    }
+    setStackInstallStep('done');
   };
 
   const handleStackSkip = async () => {
@@ -1375,15 +1147,18 @@ export default function OnboardingWizard() {
                                 <div className="flex items-center justify-center py-4 text-gray-400">
                                     <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading variables...
                                 </div>
-                            ) : stackVariables.filter(v => !v.global && v.meta?.type !== 'secret').length === 0 ? (
+                            ) : groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').length === 0 ? (
                                 <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded text-sm">
                                     No configuration needed. Ready to install.
                                 </div>
                             ) : (
-                                <div className="space-y-3 max-h-[50vh] overflow-y-auto">
-                                    {stackVariables.filter(v => !v.global && v.meta?.type !== 'secret' && v.meta?.type !== 'rsa-private' && v.meta?.type !== 'bcrypt').map((v) => {
-                                        const idx = stackVariables.findIndex(x => x.name === v.name);
-                                        return (
+                                <div className="space-y-5 max-h-[50vh] overflow-y-auto">
+                                    {groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').map(group => (
+                                      <div key={group.key} className="space-y-3">
+                                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 pb-1">{group.label}</h4>
+                                        {group.variables.map((v) => {
+                                            const idx = stackVariables.findIndex(x => x.name === v.name);
+                                            return (
                                             <div key={v.name}>
                                                 <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
                                                 {v.meta?.description && <p className="text-xs text-gray-500 mb-1">{v.meta.description}</p>}
@@ -1450,8 +1225,10 @@ export default function OnboardingWizard() {
                                                     />
                                                 )}
                                             </div>
-                                        );
-                                    })}
+                                            );
+                                        })}
+                                      </div>
+                                    ))}
                                 </div>
                             )}
                         </>

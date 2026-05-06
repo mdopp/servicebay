@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { Template, VariableMeta } from '@/lib/registry';
+import { runPostInstall } from '@/lib/stackInstall/postInstall';
+import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
@@ -173,7 +175,13 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
 
             // Fetch variable metadata
             const meta = await fetchTemplateVariables(item.name, template.source);
-            if (meta) Object.assign(allMeta, meta);
+            if (meta) {
+              for (const [key, value] of Object.entries(meta)) {
+                if (!allMeta[key]) {
+                  allMeta[key] = { ...value, templateName: item.name };
+                }
+              }
+            }
 
             // Fetch extra config files (.mustache) and resolve target paths
             const cfgFiles = await fetchTemplateConfigFiles(item.name, template.source);
@@ -263,60 +271,6 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
       if (vwDomain) { vwDomain.value = `https://${vwSub}.${pubDomain}`; vwDomain.global = true; }
     }
     setVariables(resolvedVars);
-  };
-
-  const configureProxies = async () => {
-    const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-    if (!domain) return;
-
-    const subdomainVars = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
-    if (subdomainVars.length === 0) return;
-
-    setLogs(prev => [...prev, 'Configuring reverse proxy routes...']);
-
-    const hosts: { domain: string; forwardPort: number; service?: string; proxyConfig?: VariableMeta['proxyConfig'] }[] = [];
-    for (const sv of subdomainVars) {
-      const fqdn = `${sv.value}.${domain}`;
-      let port = sv.meta?.proxyPort || '';
-      // If proxyPort references another variable, resolve its value
-      const portVar = variables.find(v => v.name === port);
-      if (portVar) port = portVar.value;
-      if (!port) continue;
-
-      // Derive service name from variable name (e.g. VAULTWARDEN_SUBDOMAIN → vaultwarden)
-      const service = sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase().replace(/^ha$/, 'home-assistant');
-
-      hosts.push({
-        domain: fqdn,
-        forwardPort: parseInt(port, 10),
-        service,
-        proxyConfig: sv.meta?.proxyConfig,
-      });
-    }
-
-    if (hosts.length === 0) return;
-
-    try {
-      const res = await fetch('/api/system/nginx/proxy-hosts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hosts, publicDomain: domain, node: selectedNode || undefined }),
-      });
-      const data = await res.json();
-
-      if (res.ok && data.created?.length) {
-        setLogs(prev => [...prev, `\u2705 Proxy routes created: ${data.created.join(', ')}`]);
-        if (data.failed?.length) {
-          setLogs(prev => [...prev, `\u26a0\ufe0f Some routes failed: ${data.failed.map((f: { domain: string }) => f.domain).join(', ')}`]);
-        }
-      } else if (res.status === 401) {
-        setLogs(prev => [...prev, `\u26a0\ufe0f NPM password was changed. Configure proxy routes manually at ${data.adminUrl || 'http://<host>:8081'}`]);
-      } else {
-        setLogs(prev => [...prev, `\u26a0\ufe0f Could not configure proxy routes: ${data.error || 'unknown error'}`]);
-      }
-    } catch {
-      setLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Nginx Proxy Manager. Configure proxy routes manually.']);
-    }
   };
 
   const registerOidcClients = async () => {
@@ -445,40 +399,14 @@ WantedBy=default.target`;
         }
     }
 
-    // Seed LLDAP groups if lldap was installed
-    if (selectedItems.some(i => i.name === 'lldap')) {
-      setLogs(prev => [...prev, 'Seeding LLDAP groups...']);
-      const lldapPassword = variables.find(v => v.name === 'LLDAP_ADMIN_PASSWORD')?.value;
-      const lldapPort = variables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
-      if (lldapPassword) {
-        try {
-          const res = await fetch('/api/system/lldap/seed', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              host: selectedNode || 'localhost',
-              port: parseInt(lldapPort, 10),
-              password: lldapPassword,
-            }),
-          });
-          const data = await res.json();
-          if (res.ok) {
-            if (data.created?.length) setLogs(prev => [...prev, `\u2705 Groups created: ${data.created.join(', ')}`]);
-            if (data.existing?.length) setLogs(prev => [...prev, `\u2139\ufe0f Groups already exist: ${data.existing.join(', ')}`]);
-          } else {
-            setLogs(prev => [...prev, `\u26a0\ufe0f Could not seed LLDAP: ${data.error || 'unknown'}`]);
-          }
-        } catch {
-          setLogs(prev => [...prev, '\u26a0\ufe0f Could not reach LLDAP. Create admins/family groups manually.']);
-        }
-      }
-    }
+    await runPostInstall({
+      selected: selectedItems.map(i => ({ name: i.name, checked: true })),
+      variables,
+      node: selectedNode || undefined,
+      onLog: (msg) => setLogs(prev => [...prev, msg]),
+    });
 
-    // Configure reverse proxy routes if domain variables are present
-    await configureProxies();
-
-    // Auto-register OIDC clients with Authelia
-    await registerOidcClients();
+        await registerOidcClients();
 
     setStep('done');
   };
@@ -720,12 +648,12 @@ WantedBy=default.target`;
                                     </div>
                                 )}
 
-                                {/* User-configurable variables */}
-                                {variables.filter(v => !v.global && v.meta?.type !== 'secret' && v.meta?.type !== 'rsa-private' && v.meta?.type !== 'bcrypt').length > 0 && (
-                                    <div>
-                                        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Configure</p>
+                                {/* User-configurable variables, grouped by service */}
+                                {groupVariablesByTemplate(variables).filter(g => g.key !== '_global').map(group => (
+                                    <div key={group.key}>
+                                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 pb-1 mb-3">{group.label}</h4>
                                         <div className="grid gap-4">
-                                            {variables.filter(v => !v.global && v.meta?.type !== 'secret' && v.meta?.type !== 'rsa-private' && v.meta?.type !== 'bcrypt').map((v) => {
+                                            {group.variables.map((v) => {
                                                 const idx = variables.findIndex(x => x.name === v.name);
                                                 return (
                                                 <div key={v.name}>
@@ -739,7 +667,7 @@ WantedBy=default.target`;
                                             })}
                                         </div>
                                     </div>
-                                )}
+                                ))}
                             </div>
                         ) : (
                             <div className="p-4 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded mb-6">
