@@ -19,12 +19,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'host and port are required' }, { status: 400 });
     }
 
-    const url = `http://${host}:${port}/`;
+    const url = `http://${host}:${port}/api/graphql`;
     try {
-      const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(3000) });
-      // LLDAP serves its login page on root once the HTTP listener is up.
-      // Anything in the 2xx/3xx range counts as reachable.
-      return NextResponse.json({ reachable: res.status < 400, status: res.status });
+      // Posting a no-op GraphQL query exercises the full DB+auth path. LLDAP
+      // returns 401 (unauthenticated) once it is fully ready — that is the
+      // earliest reliable signal. The static root responds before the SQLite
+      // schema is initialized and would cause us to seed too early.
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ __typename }' }),
+        signal: AbortSignal.timeout(3000),
+      });
+      const reachable = res.status === 401 || res.ok;
+      return NextResponse.json({ reachable, status: res.status });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unreachable';
       return NextResponse.json({ reachable: false, error: msg });

@@ -14,10 +14,14 @@ spec:
     env:
       - name: LLDAP_JWT_SECRET
         value: "{{LLDAP_JWT_SECRET}}"
+      - name: LLDAP_KEY_SEED
+        value: "{{LLDAP_KEY_SEED}}"
       - name: LLDAP_LDAP_BASE_DN
         value: "{{LLDAP_BASE_DN}}"
       - name: LLDAP_LDAP_USER_PASS
         value: "{{LLDAP_ADMIN_PASSWORD}}"
+      - name: LLDAP_LDAP_USER_DN
+        value: "admin"
       - name: LLDAP_HTTP_PORT
         value: "{{LLDAP_PORT}}"
       - name: LLDAP_LDAP_PORT

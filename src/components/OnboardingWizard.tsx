@@ -555,12 +555,18 @@ export default function OnboardingWizard() {
         // Fetch extra config files (.mustache) and resolve target paths from YAML volumes
         const cfgFiles = await fetchTemplateConfigFiles(item.name, selectedStack?.source || 'Built-in');
         if (cfgFiles.length > 0) {
-          // Extract hostPath→mountPath mapping from YAML to resolve target path
+          // Extract hostPath→mountPath mapping from YAML to resolve target path.
+          // Also honor an explicit `servicebay.config-mount` annotation, which
+          // wins over heuristics for templates whose config dir isn't `/config`
+          // (e.g. AdGuard mounts `/opt/adguardhome/conf`).
           const volMounts = [...yaml.matchAll(/mountPath:\s*(\S+)/g)].map(m => m[1]);
           const hostPaths = [...yaml.matchAll(/path:\s*(\S+)/g)].map(m => m[1]);
+          const annotationMatch = yaml.match(/servicebay\.config-mount:\s*['"]?([^'"\s]+)/);
+          const explicitMount = annotationMatch?.[1];
           for (const cf of cfgFiles) {
-            // Match config file to volume: e.g. /config mount → hostPath + filename
-            const configMountIdx = volMounts.findIndex(m => m === '/config' || m.endsWith('/config'));
+            const configMountIdx = explicitMount
+              ? volMounts.findIndex(m => m === explicitMount)
+              : volMounts.findIndex(m => m === '/config' || m.endsWith('/config') || m.endsWith('/conf'));
             if (configMountIdx !== -1 && hostPaths[configMountIdx]) {
               cf.targetPath = `${hostPaths[configMountIdx]}/${cf.filename}`;
             }
@@ -588,6 +594,38 @@ export default function OnboardingWizard() {
       if (!value && meta?.type === 'secret') value = generateSecret();
       return { name: v, value, global: isGlobal, meta };
     });
+    // Async fill for rsa-private types — needs server-side crypto.generateKeyPair.
+    await Promise.all(resolvedVars.map(async v => {
+      if (v.value || v.meta?.type !== 'rsa-private') return;
+      try {
+        const res = await fetch('/api/system/keys/rsa');
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.pem === 'string') v.value = data.pem;
+        }
+      } catch { /* leave empty — install will fail with a clearer error */ }
+    }));
+    // Async fill for bcrypt types — derives from another variable's plaintext
+    // (e.g. ADGUARD_ADMIN_PASSWORD_HASH ← bcrypt(ADGUARD_ADMIN_PASSWORD)).
+    // Runs after the secret pass above so the source value is already populated.
+    await Promise.all(resolvedVars.map(async v => {
+      if (v.value || v.meta?.type !== 'bcrypt') return;
+      const sourceName = v.meta?.bcryptSource;
+      if (!sourceName) return;
+      const source = resolvedVars.find(x => x.name === sourceName);
+      if (!source?.value) return;
+      try {
+        const res = await fetch('/api/system/keys/bcrypt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: source.value }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.hash === 'string') v.value = data.hash;
+        }
+      } catch { /* leave empty */ }
+    }));
     // Auto-derive VAULTWARDEN_DOMAIN from subdomain + PUBLIC_DOMAIN
     const pubDomain = resolvedVars.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
     const vwSub = resolvedVars.find(v => v.name === 'VAULTWARDEN_SUBDOMAIN')?.value;
@@ -698,6 +736,21 @@ export default function OnboardingWizard() {
       const lldapPort = stackVariables.find(v => v.name === 'LLDAP_PORT')?.value || '17170';
       const lldapHost = stackSelectedNode || 'localhost';
       if (lldapPassword) {
+        // Persist credentials immediately \u2014 even if seeding later fails, the
+        // user can retrieve their auto-generated admin password from
+        // Settings \u2192 Integrations and log into LLDAP manually.
+        const lldapUrl = `http://${lldapHost}:${lldapPort}`;
+        try {
+          await fetch('/api/system/lldap/credentials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: lldapUrl, username: 'admin', password: lldapPassword }),
+          });
+          setStackLogs(prev => [...prev, `\ud83d\udd11 LLDAP admin: ${lldapUrl} (user: admin, password: ${lldapPassword}) \u2014 saved to Settings \u2192 Integrations.`]);
+        } catch {
+          setStackLogs(prev => [...prev, `\u26a0\ufe0f Could not persist LLDAP credentials. Note them now: user: admin, password: ${lldapPassword}`]);
+        }
+
         setStackLogs(prev => [...prev, 'Waiting for LLDAP to start (image pull / cold-start can take a while)...']);
         const lldapReady = await waitForLldap(
           lldapHost,
@@ -730,6 +783,20 @@ export default function OnboardingWizard() {
             setStackLogs(prev => [...prev, '\u26a0\ufe0f Could not reach LLDAP to seed groups. Create admins/family groups manually.']);
           }
         }
+      }
+    }
+
+    // If adguard was just installed, surface its auto-generated admin password
+    // so the user can log into the pre-seeded portal at the configured port
+    // (no AdGuard setup wizard runs because we wrote AdGuardHome.yaml with
+    // users + ports already populated).
+    if (selected.some(i => i.name === 'adguard')) {
+      const agUser = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_USER')?.value || 'admin';
+      const agPassword = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_PASSWORD')?.value;
+      const agPort = stackVariables.find(v => v.name === 'ADGUARD_ADMIN_PORT')?.value || '8083';
+      const agHost = stackSelectedNode || 'localhost';
+      if (agPassword) {
+        setStackLogs(prev => [...prev, `🔑 AdGuard admin: http://${agHost}:${agPort} (user: ${agUser}, password: ${agPassword}) — note this now, it's only shown once.`]);
       }
     }
 
@@ -1239,7 +1306,7 @@ export default function OnboardingWizard() {
                                 </div>
                             ) : (
                                 <div className="space-y-3 max-h-[50vh] overflow-y-auto">
-                                    {stackVariables.filter(v => !v.global && v.meta?.type !== 'secret').map((v) => {
+                                    {stackVariables.filter(v => !v.global && v.meta?.type !== 'secret' && v.meta?.type !== 'rsa-private' && v.meta?.type !== 'bcrypt').map((v) => {
                                         const idx = stackVariables.findIndex(x => x.name === v.name);
                                         return (
                                             <div key={v.name}>

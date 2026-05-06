@@ -262,7 +262,7 @@ export interface OidcClientConfig {
 }
 
 export interface VariableMeta {
-  type?: 'text' | 'password' | 'secret' | 'select' | 'device' | 'subdomain';
+  type?: 'text' | 'password' | 'secret' | 'rsa-private' | 'bcrypt' | 'select' | 'device' | 'subdomain';
   description?: string;
   default?: string;
   options?: string[];
@@ -273,6 +273,8 @@ export interface VariableMeta {
   proxyConfig?: ProxyConfig;
   /** OIDC client to register with Authelia when this service is deployed */
   oidcClient?: OidcClientConfig;
+  /** For bcrypt type: name of another variable whose plaintext gets bcrypt-hashed */
+  bcryptSource?: string;
 }
 
 export async function getTemplateVariables(name: string, source?: string): Promise<Record<string, VariableMeta> | null> {

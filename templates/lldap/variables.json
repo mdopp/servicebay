@@ -15,12 +15,16 @@
     "default": "dc=dopp,dc=cloud"
   },
   "LLDAP_ADMIN_PASSWORD": {
-    "type": "password",
-    "description": "LLDAP admin password"
+    "type": "secret",
+    "description": "LLDAP admin password — auto-generated. Saved to Settings → Integrations → LLDAP after install so you can retrieve it for first login (user: admin)."
   },
   "LLDAP_JWT_SECRET": {
     "type": "secret",
     "description": "JWT secret for LLDAP session tokens"
+  },
+  "LLDAP_KEY_SEED": {
+    "type": "secret",
+    "description": "Seed used by LLDAP to derive its private key (must remain stable across container restarts)"
   },
   "LLDAP_SUBDOMAIN": {
     "type": "subdomain",
