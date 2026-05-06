@@ -245,6 +245,10 @@ export default function OnboardingWizard() {
   const [npmEmail, setNpmEmail] = useState('admin@example.com');
   const [npmPassword, setNpmPassword] = useState('');
 
+  // Clean install — wipe existing service data before deploying.
+  const [cleanInstall, setCleanInstall] = useState(false);
+  const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
+
   useEffect(() => {
     checkOnboardingStatus().then(s => {
       setStatus(s);
@@ -644,6 +648,32 @@ export default function OnboardingWizard() {
   const handleStackInstall = async () => {
     setStackInstallStep('installing');
     setStackLogs([]);
+
+    // Optional: wipe existing service data before deploying.
+    if (cleanInstall && cleanInstallConfirm === 'RESET') {
+      setStackLogs(prev => [...prev, '🧹 Clean install — wiping existing service data...']);
+      try {
+        const res = await fetch('/api/system/stacks/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: 'RESET', node: stackSelectedNode || undefined }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const removed = data.deleted?.length ?? 0;
+          setStackLogs(prev => [...prev, `✅ Reset done — removed ${removed} service${removed === 1 ? '' : 's'}, wiped ${data.dataDir}.`]);
+          if (data.failed?.length) {
+            setStackLogs(prev => [...prev, `⚠️ Some services could not be cleanly removed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
+          }
+        } else {
+          setStackLogs(prev => [...prev, `⚠️ Reset failed: ${data.error || 'unknown error'}. Continuing with install — existing data may remain.`]);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'unknown error';
+        setStackLogs(prev => [...prev, `⚠️ Reset call failed: ${msg}. Continuing with install.`]);
+      }
+    }
+
     const selected = stackItems.filter(i => i.checked);
 
     for (const item of selected) {
@@ -1309,6 +1339,38 @@ export default function OnboardingWizard() {
                                     </select>
                                 </div>
                             )}
+
+                            <div className="mb-4 border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3">
+                                <label className="flex items-start gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={cleanInstall}
+                                        onChange={(e) => { setCleanInstall(e.target.checked); if (!e.target.checked) setCleanInstallConfirm(''); }}
+                                        className="mt-0.5"
+                                    />
+                                    <div className="text-sm text-amber-900 dark:text-amber-100">
+                                        <strong>Clean install</strong> — wipe existing service data first.
+                                        <p className="text-xs text-amber-800 dark:text-amber-200/80 mt-1">
+                                            Stops every stack service, deletes their Quadlet definitions and the contents of <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. ServiceBay itself is not affected. Use for true fresh-installs or when re-testing from scratch.
+                                        </p>
+                                    </div>
+                                </label>
+                                {cleanInstall && (
+                                    <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
+                                        <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
+                                            Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={cleanInstallConfirm}
+                                            onChange={(e) => setCleanInstallConfirm(e.target.value)}
+                                            className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
+                                            placeholder="RESET"
+                                            autoComplete="off"
+                                        />
+                                    </div>
+                                )}
+                            </div>
                             {stacksLoading ? (
                                 <div className="flex items-center justify-center py-4 text-gray-400">
                                     <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading variables...
@@ -1570,8 +1632,11 @@ export default function OnboardingWizard() {
             {currentStep === 'stacks' && stackInstallStep === 'configure' && (
                 <div className="flex gap-2">
                     <button onClick={() => setStackInstallStep('services')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
-                    <Button onClick={handleStackInstall} disabled={!stackSelectedNode && stackNodes.length > 1}>
-                        Install Stack
+                    <Button
+                        onClick={handleStackInstall}
+                        disabled={(!stackSelectedNode && stackNodes.length > 1) || (cleanInstall && cleanInstallConfirm !== 'RESET')}
+                    >
+                        {cleanInstall ? 'Reset & Install' : 'Install Stack'}
                     </Button>
                 </div>
             )}

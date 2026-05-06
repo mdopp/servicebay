@@ -55,6 +55,10 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   const [deviceOptions, setDeviceOptions] = useState<Record<string, string[]>>({});
   const [loadingDevices, setLoadingDevices] = useState(false);
 
+  // Clean install — wipe existing service data before deploying.
+  const [cleanInstall, setCleanInstall] = useState(false);
+  const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
+
   useEffect(() => {
     getNodes().then(setNodes);
   }, []);
@@ -361,6 +365,31 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   const handleInstall = async () => {
     setStep('installing');
     setLogs([]);
+
+    if (cleanInstall && cleanInstallConfirm === 'RESET') {
+      setLogs(prev => [...prev, '🧹 Clean install — wiping existing service data...']);
+      try {
+        const res = await fetch('/api/system/stacks/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: 'RESET', node: selectedNode || undefined }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const removed = data.deleted?.length ?? 0;
+          setLogs(prev => [...prev, `✅ Reset done — removed ${removed} service${removed === 1 ? '' : 's'}, wiped ${data.dataDir}.`]);
+          if (data.failed?.length) {
+            setLogs(prev => [...prev, `⚠️ Some services could not be cleanly removed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
+          }
+        } else {
+          setLogs(prev => [...prev, `⚠️ Reset failed: ${data.error || 'unknown error'}. Continuing — existing data may remain.`]);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'unknown error';
+        setLogs(prev => [...prev, `⚠️ Reset call failed: ${msg}. Continuing.`]);
+      }
+    }
+
     const selectedItems = items.filter(i => i.checked);
 
     for (const item of selectedItems) {
@@ -642,6 +671,38 @@ WantedBy=default.target`;
                             </div>
                         </div>
 
+                        <div className="mb-6 border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3">
+                            <label className="flex items-start gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={cleanInstall}
+                                    onChange={(e) => { setCleanInstall(e.target.checked); if (!e.target.checked) setCleanInstallConfirm(''); }}
+                                    className="mt-0.5"
+                                />
+                                <div className="text-sm text-amber-900 dark:text-amber-100">
+                                    <strong>Clean install</strong> — wipe existing service data first.
+                                    <p className="text-xs text-amber-800 dark:text-amber-200/80 mt-1">
+                                        Stops every stack service, deletes their Quadlet definitions and the contents of <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. ServiceBay itself is not affected.
+                                    </p>
+                                </div>
+                            </label>
+                            {cleanInstall && (
+                                <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
+                                    <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
+                                        Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={cleanInstallConfirm}
+                                        onChange={(e) => setCleanInstallConfirm(e.target.value)}
+                                        className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
+                                        placeholder="RESET"
+                                        autoComplete="off"
+                                    />
+                                </div>
+                            )}
+                        </div>
+
                         {variables.length > 0 ? (
                             <div className="space-y-4 mb-6">
                                 {/* Global settings (read-only, from Settings > Template Settings) */}
@@ -771,10 +832,10 @@ WantedBy=default.target`;
                         </button>
                         <button
                             onClick={handleInstall}
-                            disabled={!selectedNode}
+                            disabled={!selectedNode || (cleanInstall && cleanInstallConfirm !== 'RESET')}
                             className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            Install
+                            {cleanInstall ? 'Reset & Install' : 'Install'}
                         </button>
                     </>
                 )}
