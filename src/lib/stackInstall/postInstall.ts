@@ -53,7 +53,9 @@ async function waitForNpm(
       }
     } catch { /* keep trying */ }
     const elapsed = Date.now() - start;
-    if (elapsed - lastBeat >= 30_000) {
+    // 10-second heartbeat — frequent enough that the user sees forward
+    // motion without spamming the log on long waits.
+    if (elapsed - lastBeat >= 10_000) {
       onProgress(`Still waiting for Nginx Proxy Manager (${fmtElapsed(elapsed)} elapsed)...`);
       lastBeat = elapsed;
     }
@@ -84,7 +86,7 @@ async function waitForLldap(
       }
     } catch { /* keep trying */ }
     const elapsed = Date.now() - start;
-    if (elapsed - lastBeat >= 30_000) {
+    if (elapsed - lastBeat >= 10_000) {
       onProgress(`Still waiting for LLDAP (${fmtElapsed(elapsed)} elapsed)...`);
       lastBeat = elapsed;
     }
@@ -280,13 +282,18 @@ interface RunPostInstallOpts {
 }
 
 /** Orchestrate every post-install step. Returns the proxy-route status so
- *  the caller can decide whether to render the NPM-credential prompt. */
+ *  the caller can decide whether to render the NPM-credential prompt.
+ *
+ *  LLDAP group seeding is **fire-and-forget**: it runs in the background
+ *  while we await the proxy step. That way the NPM credentials prompt
+ *  appears as soon as the proxy call returns, instead of waiting on the
+ *  LLDAP cold-start (up to 10 minutes). Seed logs interleave with proxy
+ *  logs in the install panel — both streams are independent. */
 export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyResult> {
   const { selected, variables, node, onLog } = opts;
   const isSelected = (name: string) => selected.some(i => i.name === name);
 
-  // Surface credentials immediately — independent of any wait. A tab close
-  // mid-flow must not lose the auto-generated passwords.
+  // Surface credentials immediately — independent of any wait.
   if (isSelected('lldap')) {
     await persistLldapCredentials({ variables, onLog });
   }
@@ -297,14 +304,12 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
     await persistNpmCredentials({ variables, onLog });
   }
 
-  // Configure proxy routes BEFORE the LLDAP wait. A hung LLDAP cold-start
-  // used to block route creation entirely — that has caused production
-  // incidents. Routes first, LLDAP seed second.
-  const proxyResult = await configureProxyRoutes({ variables, node, onLog });
-
+  // Kick off LLDAP seed in the background; failures are logged via onLog
+  // inside seedLldap itself, so an unhandled rejection here is fine to
+  // swallow.
   if (isSelected('lldap')) {
-    await seedLldap({ variables, onLog });
+    void seedLldap({ variables, onLog }).catch(() => { /* logged inline */ });
   }
 
-  return proxyResult;
+  return configureProxyRoutes({ variables, node, onLog });
 }

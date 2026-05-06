@@ -498,21 +498,24 @@ WantedBy=default.target`;
       );
     }
 
-    // Secret (auto-generated, shown read-only with regenerate button)
+    // Secret (auto-generated default, editable so users can override with
+    // a memorable value; regenerate button picks a fresh random one).
     if (v.meta?.type === 'secret') {
       return (
         <div className="flex gap-2">
           <input
             type="text"
             value={v.value}
-            readOnly
-            className={inputClass + " font-mono text-xs bg-gray-50 dark:bg-gray-800/50 flex-1"}
+            onChange={(e) => update(e.target.value)}
+            className={inputClass + " font-mono text-xs flex-1"}
+            spellCheck={false}
+            autoComplete="off"
           />
           <button
             type="button"
             onClick={() => update(generateSecret())}
             className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-            title="Regenerate secret"
+            title="Regenerate"
           >
             <RefreshCw size={16} />
           </button>
@@ -685,7 +688,7 @@ WantedBy=default.target`;
 
                 {(step === 'installing' || step === 'done') && (
                     <div>
-                        <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm h-48 overflow-y-auto mb-4 border border-gray-800">
+                        <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm h-96 overflow-y-auto mb-4 border border-gray-800">
                             {logs.map((log, i) => (
                                 <div key={i} className="mb-1">{log}</div>
                             ))}
