@@ -6,12 +6,19 @@ metadata:
     app: adguard
     servicebay.role: dns
   annotations:
-    servicebay.ports: "8083/tcp,53/udp,53/tcp"
+    servicebay.ports: "{{ADGUARD_ADMIN_PORT}}/tcp,53/udp,53/tcp"
+    servicebay.config-mount: /opt/adguardhome/conf
 spec:
   hostNetwork: true
   containers:
   - name: adguard-home
     image: docker.io/adguard/adguardhome:latest
+    ports:
+      - containerPort: {{ADGUARD_ADMIN_PORT}}
+      - containerPort: 53
+        protocol: UDP
+      - containerPort: 53
+        protocol: TCP
     volumeMounts:
     - mountPath: /opt/adguardhome/work
       name: adguard-work

@@ -27,6 +27,10 @@
     "type": "secret",
     "description": "HMAC secret for OIDC token signing"
   },
+  "AUTHELIA_OIDC_RSA_PRIVATE_KEY": {
+    "type": "rsa-private",
+    "description": "RSA private key (PEM) for OIDC token signing — Authelia 4.39+ requires a real key, no longer auto-generates one. Server-generated 2048-bit at install time."
+  },
   "AUTHELIA_STORAGE_ENCRYPTION_KEY": {
     "type": "secret",
     "description": "Encryption key for Authelia SQLite storage (min 20 chars)"

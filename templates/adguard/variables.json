@@ -1,9 +1,28 @@
 {
+  "ADGUARD_ADMIN_PORT": {
+    "type": "text",
+    "description": "AdGuard Home admin web UI port (avoid 80 to leave it free for NPM)",
+    "default": "8083"
+  },
+  "ADGUARD_ADMIN_USER": {
+    "type": "text",
+    "description": "AdGuard Home admin username",
+    "default": "admin"
+  },
+  "ADGUARD_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "AdGuard Home admin password — auto-generated, shown in install log so first login works without going through the setup wizard."
+  },
+  "ADGUARD_ADMIN_PASSWORD_HASH": {
+    "type": "bcrypt",
+    "description": "Bcrypt hash of ADGUARD_ADMIN_PASSWORD — written into AdGuardHome.yaml so AdGuard accepts the auto-generated password on first start.",
+    "bcryptSource": "ADGUARD_ADMIN_PASSWORD"
+  },
   "ADGUARD_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for AdGuard Home admin",
     "default": "dns",
-    "proxyPort": "8083",
+    "proxyPort": "ADGUARD_ADMIN_PORT",
     "proxyConfig": {
       "block_exploits": true,
       "ssl_forced": true

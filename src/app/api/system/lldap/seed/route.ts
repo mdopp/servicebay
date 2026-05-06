@@ -20,38 +20,43 @@ interface SeedRequest {
 
 const DEFAULT_GROUPS = ['admins', 'family'];
 
-/** Wait for LLDAP to become reachable, polling up to maxWait ms. */
-async function waitForLldap(baseUrl: string, maxWait = 30000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < maxWait) {
-    try {
-      const res = await fetch(`${baseUrl}/api/graphql`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: '{ __typename }' }),
-        signal: AbortSignal.timeout(3000),
-      });
-      // LLDAP returns 401 for unauthenticated requests — that means it's up
-      if (res.status === 401 || res.ok) return true;
-    } catch { /* not ready yet */ }
-    await new Promise(r => setTimeout(r, 2000));
+/** Quick reachability check: LLDAP returns 401 on /api/graphql once the API
+ *  layer + DB are up. Caller is the wizard which has already polled for
+ *  readiness — we only re-probe with a short timeout to fail fast. */
+async function isReachable(baseUrl: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '{ __typename }' }),
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.status === 401 || res.ok;
+  } catch {
+    return false;
   }
-  return false;
 }
 
-/** Authenticate with LLDAP and get a JWT token. */
-async function authenticate(baseUrl: string, password: string): Promise<string | null> {
+/** Authenticate with LLDAP and get a JWT token. Returns the token on success,
+ *  or a structured error indicating why authentication failed. */
+type AuthResult = { ok: true; token: string } | { ok: false; status: number; reason: string };
+
+async function authenticate(baseUrl: string, password: string): Promise<AuthResult> {
   try {
     const res = await fetch(`${baseUrl}/auth/simple/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password }),
+      signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return { ok: false, status: res.status, reason: `LLDAP returned HTTP ${res.status}` };
+    }
     const data = await res.json();
-    return data.token || null;
-  } catch {
-    return null;
+    if (!data.token) return { ok: false, status: res.status, reason: 'LLDAP login response missing token' };
+    return { ok: true, token: data.token };
+  } catch (e) {
+    return { ok: false, status: 0, reason: e instanceof Error ? e.message : 'connection failed' };
   }
 }
 
@@ -98,20 +103,27 @@ export async function POST(request: Request) {
 
   const baseUrl = `http://${host}:${port}`;
 
-  // Wait for LLDAP to be ready (it may have just been installed)
-  const ready = await waitForLldap(baseUrl);
-  if (!ready) {
+  // Quick re-probe — wizard already waited for readiness, so this is mostly a
+  // belt-and-suspenders check that we're talking to the right thing.
+  if (!(await isReachable(baseUrl))) {
     return NextResponse.json({ error: 'LLDAP not reachable — it may still be starting up' }, { status: 503 });
   }
 
-  // Authenticate
-  const token = await authenticate(baseUrl, password);
-  if (!token) {
-    return NextResponse.json({ error: 'Failed to authenticate with LLDAP — check admin password' }, { status: 401 });
+  const auth = await authenticate(baseUrl, password);
+  if (!auth.ok) {
+    if (auth.status === 401 || auth.status === 403) {
+      // Most common root cause: the data volume from a previous install still
+      // holds the old admin password, so the new env LLDAP_LDAP_USER_PASS was
+      // ignored. Surface that explicitly so the user knows to wipe the volume.
+      return NextResponse.json({
+        error: 'LLDAP rejected the admin password. This usually means an existing data volume from a previous install still holds the old password — env LLDAP_LDAP_USER_PASS only takes effect on first DB initialization. Either wipe ' + (host === 'localhost' ? '/var/lib/servicebay/data/lldap' : `the LLDAP data dir on ${host}`) + ' and reinstall, or reset the admin password from inside the LLDAP UI.',
+        reason: 'auth_rejected',
+      }, { status: 401 });
+    }
+    return NextResponse.json({ error: `Could not authenticate with LLDAP: ${auth.reason}`, reason: 'auth_failed' }, { status: 502 });
   }
 
-  // Create groups
-  const results = await Promise.all(groups.map(g => createGroup(baseUrl, token, g)));
+  const results = await Promise.all(groups.map(g => createGroup(baseUrl, auth.token, g)));
   const created = results.filter(r => r.created).map(r => r.name);
   const existing = results.filter(r => !r.created && !r.error).map(r => r.name);
   const failed = results.filter(r => r.error).map(r => ({ name: r.name, error: r.error }));

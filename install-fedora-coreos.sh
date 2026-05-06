@@ -108,6 +108,17 @@ storage:
       contents:
         inline: ${SERVER_NAME}
 
+    # Free port 53 for AdGuard Home — disable systemd-resolved's stub listener.
+    # Without this, AdGuard's DNS port collides with the 127.0.0.53:53 stub on
+    # FCOS and the install wizard refuses to bind. /etc/resolv.conf is
+    # repointed below so name resolution still works via systemd-resolved.
+    - path: /etc/systemd/resolved.conf.d/no-stub.conf
+      mode: 0644
+      contents:
+        inline: |
+          [Resolve]
+          DNSStubListener=no
+
     # USB automount: udev rule to trigger systemd service on USB block device add
     - path: /etc/udev/rules.d/99-usb-automount.rules
       mode: 0644
@@ -659,6 +670,14 @@ ${SERVICEBAY_SSH_PRIV}
           WantedBy=multi-user.target
 
   links:
+    # Repoint /etc/resolv.conf away from the stub listener (which we disabled
+    # above to free port 53 for AdGuard). systemd-resolved still writes
+    # upstream DNS into /run/systemd/resolve/resolv.conf, so name resolution
+    # on the host keeps working.
+    - path: /etc/resolv.conf
+      target: /run/systemd/resolve/resolv.conf
+      overwrite: true
+
     # Enable RAID data mount
     - path: /etc/systemd/system/multi-user.target.wants/var-mnt-data.mount
       target: /etc/systemd/system/var-mnt-data.mount

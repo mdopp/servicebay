@@ -134,6 +134,16 @@ export interface AppConfig {
     allowedGroups?: string[];
   };
   backup?: BackupConfig;
+  /**
+   * LLDAP admin credentials, persisted by the install wizard so the user can
+   * retrieve their auto-generated admin password from Settings → Integrations
+   * after first install. Mirrors the `reverseProxy.npm` pattern.
+   */
+  lldap?: {
+    url: string;
+    username: string;
+    password: string;
+  };
   setupCompleted?: boolean;
   stackSetupPending?: boolean;
 }

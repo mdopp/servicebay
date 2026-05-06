@@ -176,8 +176,12 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             if (cfgFiles.length > 0) {
               const volMounts = [...yaml.matchAll(/mountPath:\s*(\S+)/g)].map(m => m[1]);
               const hostPaths = [...yaml.matchAll(/path:\s*(\S+)/g)].map(m => m[1]);
+              const annotationMatch = yaml.match(/servicebay\.config-mount:\s*['"]?([^'"\s]+)/);
+              const explicitMount = annotationMatch?.[1];
               for (const cf of cfgFiles) {
-                const configMountIdx = volMounts.findIndex(m => m === '/config' || m.endsWith('/config'));
+                const configMountIdx = explicitMount
+                  ? volMounts.findIndex(m => m === explicitMount)
+                  : volMounts.findIndex(m => m === '/config' || m.endsWith('/config') || m.endsWith('/conf'));
                 if (configMountIdx !== -1 && hostPaths[configMountIdx]) {
                   cf.targetPath = `${hostPaths[configMountIdx]}/${cf.filename}`;
                 }
@@ -213,6 +217,36 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
         if (!value && meta?.type === 'secret') value = generateSecret();
         return { name: v, value, global: isGlobal, meta };
     });
+    // Async fill for rsa-private types — needs server-side crypto.generateKeyPair.
+    await Promise.all(resolvedVars.map(async v => {
+        if (v.value || v.meta?.type !== 'rsa-private') return;
+        try {
+            const res = await fetch('/api/system/keys/rsa');
+            if (res.ok) {
+                const data = await res.json();
+                if (typeof data.pem === 'string') v.value = data.pem;
+            }
+        } catch { /* leave empty */ }
+    }));
+    // Async fill for bcrypt types — derives from another variable's plaintext.
+    await Promise.all(resolvedVars.map(async v => {
+        if (v.value || v.meta?.type !== 'bcrypt') return;
+        const sourceName = v.meta?.bcryptSource;
+        if (!sourceName) return;
+        const source = resolvedVars.find(x => x.name === sourceName);
+        if (!source?.value) return;
+        try {
+            const res = await fetch('/api/system/keys/bcrypt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: source.value }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (typeof data.hash === 'string') v.value = data.hash;
+            }
+        } catch { /* leave empty */ }
+    }));
     // Auto-derive VAULTWARDEN_DOMAIN from subdomain + PUBLIC_DOMAIN
     const pubDomain = resolvedVars.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
     const vwSub = resolvedVars.find(v => v.name === 'VAULTWARDEN_SUBDOMAIN')?.value;
@@ -622,11 +656,11 @@ WantedBy=default.target`;
                                 )}
 
                                 {/* User-configurable variables */}
-                                {variables.filter(v => !v.global && v.meta?.type !== 'secret').length > 0 && (
+                                {variables.filter(v => !v.global && v.meta?.type !== 'secret' && v.meta?.type !== 'rsa-private' && v.meta?.type !== 'bcrypt').length > 0 && (
                                     <div>
                                         <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Configure</p>
                                         <div className="grid gap-4">
-                                            {variables.filter(v => !v.global && v.meta?.type !== 'secret').map((v) => {
+                                            {variables.filter(v => !v.global && v.meta?.type !== 'secret' && v.meta?.type !== 'rsa-private' && v.meta?.type !== 'bcrypt').map((v) => {
                                                 const idx = variables.findIndex(x => x.name === v.name);
                                                 return (
                                                 <div key={v.name}>

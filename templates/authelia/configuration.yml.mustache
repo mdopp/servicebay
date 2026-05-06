@@ -71,10 +71,12 @@ identity_providers:
   oidc:
     hmac_secret: '{{AUTHELIA_OIDC_HMAC_SECRET}}'
     jwks:
+      # Authelia 4.39+ requires a real key — ServiceBay writes a 2048-bit RSA
+      # private key to /config/oidc.pem at install time (auto-generated).
       - key_id: 'main'
         algorithm: 'RS256'
         use: 'sig'
-        # Authelia auto-generates an RSA key pair on first start if not provided
+        key_path: '/config/oidc.pem'
     clients:
       - client_id: 'servicebay'
         client_name: 'ServiceBay'
@@ -88,8 +90,8 @@ identity_providers:
           - 'profile'
           - 'email'
           - 'groups'
-        id_token_claims:
-          groups: {}
+        # 'groups' claim is delivered automatically when the 'groups' scope is
+        # requested — no client-level claim mapping needed in 4.39+.
         response_types:
           - 'code'
         grant_types:
