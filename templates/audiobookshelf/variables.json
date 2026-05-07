@@ -37,6 +37,13 @@
       "allow_websocket_upgrade": true,
       "block_exploits": true,
       "ssl_forced": true
+    },
+    "oidcClient": {
+      "client_id": "audiobookshelf",
+      "client_name": "Audiobookshelf",
+      "authorization_policy": "one_factor",
+      "redirect_uris": ["/auth/openid/callback", "/auth/openid/mobile-redirect"],
+      "scopes": ["openid", "profile", "email", "groups"]
     }
   }
 }
