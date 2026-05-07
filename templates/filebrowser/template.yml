@@ -33,6 +33,12 @@ spec:
       - "--root=/srv"
       - "--address=127.0.0.1"
       - "--port={{FILEBROWSER_PORT}}"
+    # Declare the listening port so the agent surfaces it in the service's
+    # `ports[]` and the network map can match the proxy_pass route to this
+    # service. Host network = the containerPort is also the host port.
+    # Without this the `servicebay.ports` annotation alone is decorative.
+    ports:
+      - containerPort: {{FILEBROWSER_PORT}}
     volumeMounts:
       - mountPath: /srv
         name: shared-data
