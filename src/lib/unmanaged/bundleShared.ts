@@ -1,5 +1,6 @@
 import path from 'path';
 import yaml from 'js-yaml';
+import { injectServiceDirectives } from '@/lib/services/quadletDirectives';
 
 export type BundleAssetKind = 'kube' | 'container' | 'service' | 'pod' | 'yaml' | 'config' | 'unknown';
 
@@ -363,7 +364,11 @@ export const generateBundleStackArtifacts = (bundle: ServiceBundle, targetName?:
     }
   };
 
-  const kubeUnit = `[Unit]\nDescription=ServiceBay managed stack ${bundle.displayName || safeName}\nAfter=network-online.target\n\n[Kube]\nYaml=${safeName}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target\n`;
+  // Keep this aligned with ServiceManager.deployKubeService so a stack
+  // adopted via the bundle-migration path gets the same restart-backoff +
+  // start-timeout behaviour as a freshly-deployed one.
+  const kubeUnitBase = `[Unit]\nDescription=ServiceBay managed stack ${bundle.displayName || safeName}\nAfter=network-online.target\n\n[Kube]\nYaml=${safeName}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target\n`;
+  const kubeUnit = injectServiceDirectives(kubeUnitBase);
   const configPaths = Array.from(configPathsSet).sort();
 
   return {

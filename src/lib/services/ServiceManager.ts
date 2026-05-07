@@ -4,6 +4,7 @@ import yaml from 'js-yaml';
 import { logger } from '../logger';
 import { getConfig } from '../config';
 import { saveSnapshot } from '../history';
+import { injectServiceDirectives } from './quadletDirectives';
 
 const SYSTEMD_DIR = '.config/containers/systemd';
 
@@ -535,7 +536,7 @@ export class ServiceManager {
         // Ensure TimeoutStartSec for multi-image pods so image pulls don't cause systemd timeout
         const images = this.extractImages(yamlContent);
         if (images.length > 1 && !kubeContent.includes('TimeoutStartSec')) {
-            kubeContent = this.injectServiceTimeout(kubeContent);
+            kubeContent = injectServiceDirectives(kubeContent);
         }
 
         await this.writeFile(nodeName, yamlName, yamlContent);
@@ -717,13 +718,9 @@ export class ServiceManager {
         return false;
     }
 
-    /** Inject [Service] TimeoutStartSec into .kube content if not present */
-    private static injectServiceTimeout(kubeContent: string, timeout = 600): string {
-        if (kubeContent.includes('[Service]')) {
-            return kubeContent.replace('[Service]', `[Service]\nTimeoutStartSec=${timeout}`);
-        }
-        return kubeContent + `\n[Service]\nTimeoutStartSec=${timeout}\n`;
-    }
+    // Default systemd directives (TimeoutStartSec, restart backoff, etc.)
+    // live in `quadletDirectives.ts` so other kube-write paths can use the
+    // same transform without importing this whole class.
 
     /** Pre-pull container images so systemd start doesn't timeout */
     static async prePullImages(
