@@ -188,6 +188,15 @@ export default function OnboardingWizard() {
   const [npmEmail, setNpmEmail] = useState('');
   const [npmPassword, setNpmPassword] = useState('');
 
+  // Configure-step tab. Variables are categorised so the operator isn't
+  // staring at a 50-line flat list — the "subdomains" tab shows the
+  // user-meaningful per-service URLs, "settings" shows the misc
+  // text/select/secret inputs, "ports" shows host-port mappings (most
+  // operators never touch these).
+  type ConfigureTab = 'subdomains' | 'settings' | 'ports';
+  // null = "auto-pick the first non-empty tab"; user click locks the choice.
+  const [configureTab, setConfigureTab] = useState<ConfigureTab | null>(null);
+
   // Post-install self-test — auto-runs once the install pipeline reaches
   // 'done' so the user immediately sees a green/yellow/red verdict on
   // their fresh deployment instead of having to navigate to Settings.
@@ -1320,11 +1329,76 @@ export default function OnboardingWizard() {
                                     No configuration needed. Ready to install.
                                 </div>
                             ) : (
+                                <div className="space-y-3">
+                                    {/* Tab strip — categorise variables so
+                                        the operator isn't staring at a
+                                        50-line flat list. Subdomains first
+                                        (almost everyone touches them),
+                                        Settings second, Ports last (most
+                                        operators never touch ports). */}
+                                    {(() => {
+                                        const groups = groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global');
+                                        const isPortVar = (name: string) => /_PORT$/i.test(name);
+                                        const counts = {
+                                            subdomains: 0, settings: 0, ports: 0,
+                                        };
+                                        for (const g of groups) {
+                                            for (const v of g.variables) {
+                                                if (v.meta?.type === 'subdomain') counts.subdomains++;
+                                                else if (isPortVar(v.name)) counts.ports++;
+                                                else counts.settings++;
+                                            }
+                                        }
+                                        const tabs = ([
+                                            { id: 'subdomains' as ConfigureTab, label: 'Subdomains', count: counts.subdomains },
+                                            { id: 'settings' as ConfigureTab,   label: 'Settings',   count: counts.settings },
+                                            { id: 'ports' as ConfigureTab,      label: 'Ports',      count: counts.ports },
+                                        ] as const).filter(t => t.count > 0);
+                                        // If the user hasn't picked a tab yet, default to the first
+                                        // tab that actually has variables (so a stack with no
+                                        // subdomains lands on Settings, not an empty Subdomains).
+                                        const activeTab: ConfigureTab = configureTab ?? (tabs[0]?.id ?? 'settings');
+                                        return (
+                                            <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700">
+                                                {tabs.map(t => (
+                                                    <button
+                                                        key={t.id}
+                                                        type="button"
+                                                        onClick={() => setConfigureTab(t.id)}
+                                                        className={`px-3 py-1.5 text-sm font-medium border-b-2 transition-colors ${
+                                                            activeTab === t.id
+                                                                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                                                                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                                                        }`}
+                                                    >
+                                                        {t.label}
+                                                        <span className="ml-1.5 text-xs opacity-70">{t.count}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
+                                    {(configureTab ?? (groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').some(g => g.variables.some(v => v.meta?.type === 'subdomain')) ? 'subdomains' : 'settings')) === 'ports' && (
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 italic px-1">
+                                            Host-port mappings. Defaults are usually fine — change only if you have a port collision with another service.
+                                        </p>
+                                    )}
                                 <div className="space-y-5 max-h-[50vh] overflow-y-auto">
-                                    {groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').map(group => (
+                                    {groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').map(group => {
+                                      // Filter group variables by active tab.
+                                      const isPortVar = (name: string) => /_PORT$/i.test(name);
+                                      const subdomainCountAll = groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').reduce((acc, g) => acc + g.variables.filter(v => v.meta?.type === 'subdomain').length, 0);
+                                      const tab = configureTab ?? (subdomainCountAll > 0 ? 'subdomains' : 'settings');
+                                      const filtered = group.variables.filter(v => {
+                                          if (tab === 'subdomains') return v.meta?.type === 'subdomain';
+                                          if (tab === 'ports') return isPortVar(v.name);
+                                          return v.meta?.type !== 'subdomain' && !isPortVar(v.name);
+                                      });
+                                      if (filtered.length === 0) return null;
+                                      return (
                                       <div key={group.key} className="space-y-3">
                                         <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 pb-1">{group.label}</h4>
-                                        {group.variables.map((v) => {
+                                        {filtered.map((v) => {
                                             const idx = stackVariables.findIndex(x => x.name === v.name);
                                             return (
                                             <div key={v.name}>
@@ -1403,7 +1477,9 @@ export default function OnboardingWizard() {
                                             );
                                         })}
                                       </div>
-                                    ))}
+                                      );
+                                    })}
+                                </div>
                                 </div>
                             )}
                         </>
