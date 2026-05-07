@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.1.2...servicebay-v3.1.3) (2026-05-07)
+
+
+### Bug Fixes
+
+* schedule new health checks, accurate disk metric, installer race, watcher spam, ghost-node clickability ([#166](https://github.com/mdopp/servicebay/issues/166)) ([0245a5a](https://github.com/mdopp/servicebay/commit/0245a5a77ea17b4553533295204949d0ec878dbb))
+* **templates:** radicale entrypoint chain + filebrowser containerPort ([#164](https://github.com/mdopp/servicebay/issues/164)) ([20bb6dd](https://github.com/mdopp/servicebay/commit/20bb6dd678d1fe4fba3242c99e425e2f1d2346ee))
+
 ## [3.1.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.1.1...servicebay-v3.1.2) (2026-05-07)
 
 
