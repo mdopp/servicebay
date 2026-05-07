@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.3.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.2.0...servicebay-v3.3.0) (2026-05-07)
+
+
+### Features
+
+* **security:** MCP read-only mode + exec denylist + auto-snapshot before destructive ops ([#169](https://github.com/mdopp/servicebay/issues/169)) ([d9e6a24](https://github.com/mdopp/servicebay/commit/d9e6a24ade6b916825314cd0bd3c3f6879ae5c3a))
+
 ## [3.2.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.1.3...servicebay-v3.2.0) (2026-05-07)
 
 
