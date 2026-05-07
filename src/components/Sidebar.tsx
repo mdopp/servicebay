@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink, Sparkles } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
+import PluginHelp from './PluginHelp';
 import pkg from '../../package.json';
 
 export const plugins = [
@@ -121,7 +122,21 @@ export default function Sidebar() {
             )}
         </div>
 
-        <div className="p-2">
+        <div className="p-2 space-y-1">
+            {/* "What's new" — opens the same modal PluginHelp uses, but loads
+              CHANGELOG.md instead of a per-plugin help file. Available
+              independent of "is there an update pending?". */}
+            <div className={isCollapsed ? 'flex justify-center' : ''}>
+                <PluginHelp
+                    helpId="changelog"
+                    title="What's new in ServiceBay"
+                    icon={Sparkles}
+                    label={isCollapsed ? undefined : "What's new"}
+                    className={isCollapsed
+                        ? 'p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
+                        : 'w-full flex items-center gap-3 px-3 py-3 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors !bg-transparent !border-0 !text-current font-medium'}
+                />
+            </div>
             <a
                 href="https://github.com/mdopp/servicebay"
                 target="_blank"

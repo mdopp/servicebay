@@ -18,7 +18,13 @@ export async function GET(request: Request) {
   // Prevent directory traversal
   const safeId = id.replace(/[^a-zA-Z0-9-]/g, '');
   const normalizedId = HELP_ALIASES[safeId] ?? safeId;
-  const filePath = path.join(process.cwd(), 'src/content/help', `${normalizedId}.md`);
+
+  // Special-case: CHANGELOG.md lives at the project root (release-please owns
+  // it). Serve it through this endpoint so the existing PluginHelp modal can
+  // render it without a separate API surface.
+  const filePath = normalizedId === 'changelog'
+    ? path.join(process.cwd(), 'CHANGELOG.md')
+    : path.join(process.cwd(), 'src/content/help', `${normalizedId}.md`);
 
   try {
     const content = await fs.readFile(filePath, 'utf-8');
