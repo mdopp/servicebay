@@ -26,6 +26,12 @@ ServiceBay pre-seeds `AdGuardHome.yaml` with the configured ports and admin user
 
 The auto-generated password is shown once during install — copy it into your password manager.
 
+## SSO / Authelia
+
+AdGuard Home has no native OIDC or trusted-header support — every visit shows AdGuard's own login form. The Authelia wildcard rule in front of `dns.<your-domain>` adds a layer (admins-group + 2FA), but you'll still type the AdGuard admin password on the AdGuard login page itself. Save it in your password manager.
+
+If you want strictly-LAN access without bothering with Authelia at all, add an Access List in NPM (Settings → Access Lists → Add → Allow `192.168.0.0/16`) and assign it to the `dns.<domain>` proxy host.
+
 ## Port 53 on the host
 
 AdGuard binds DNS to `0.0.0.0:53`. On Fedora CoreOS the systemd-resolved stub listener occupies that port by default. The ServiceBay Butane config disables the stub (`DNSStubListener=no`) and repoints `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf` so name resolution keeps working on the host.

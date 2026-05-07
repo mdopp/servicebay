@@ -34,6 +34,22 @@ Add server in Symfonium:
 
 > ℹ️ Symfonium calls the Subsonic API directly (`/rest/*` endpoints). Authelia in front of the subdomain can interfere — see the **Authelia + Subsonic API** section below if your setup blocks mobile apps.
 
+## SSO via Authelia (header trust)
+
+Navidrome doesn't speak OIDC natively but **does** trust an upstream proxy header for SSO. The template pre-sets `ND_REVERSEPROXYUSERHEADER=Remote-User` so once Authelia injects that header, browser users skip the Navidrome login entirely.
+
+To enable it:
+
+1. NPM → edit the `music.<your-domain>` proxy host → tab **Advanced** → paste:
+
+   ```
+   include /data/nginx/snippets/authelia.conf;  # or paste the auth_request block from https://www.authelia.com/integration/proxies/nginx-proxy-manager/
+   ```
+
+2. Save. Browser visit to `https://music.<your-domain>` now goes Authelia → Navidrome with the user already signed in.
+
+Mobile Subsonic clients (Symfonium etc.) keep using the built-in `admin` user since they cannot complete an interactive Authelia login. See **Authelia + Subsonic API** below for path-bypass rules so the API endpoints stay reachable.
+
 ## Authelia + Subsonic API
 
 The Subsonic API used by mobile apps is at `/rest/ping.view`, `/rest/getArtists.view`, etc. The default Authelia `*.{{PUBLIC_DOMAIN}}` rule (one_factor) will block these calls because mobile apps cannot complete an interactive login.

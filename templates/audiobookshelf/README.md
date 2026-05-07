@@ -37,6 +37,20 @@ Both library paths default into the **file-share template's Samba volume** — d
 | iOS | **Audiobookshelf** (official, App Store) | Same as Android. |
 | Any Subsonic client (e.g. Symfonium) | Set type = Subsonic, URL = `https://books.<your-domain>`, login. | One app for music + audiobooks if you want a single player. |
 
+## SSO via Authelia (OIDC)
+
+Audiobookshelf supports OpenID Connect natively. ServiceBay auto-registers an OIDC client with Authelia when both are installed in the same stack — the client credentials end up in Authelia's `configuration.yml`. To finish wiring it up:
+
+1. Open Audiobookshelf → **Settings** → **Authentication**
+2. Enable **OpenID Connect**
+3. Issuer URL: `https://auth.<your-domain>`
+4. Client ID: `audiobookshelf`
+5. Client Secret: (visible in Authelia's `configuration.yml` — under `identity_providers.oidc.clients`, look for `client_id: 'audiobookshelf'`, copy the `$plaintext$<value>` after `client_secret`)
+6. Redirect URI: leave default (Audiobookshelf shows it back to you)
+7. Save → log out → next browser login goes through Authelia
+
+Mobile apps fall back to the Subsonic / built-in admin login as before.
+
 ## Authelia + mobile apps
 
 Same caveat as Navidrome: the Audiobookshelf API endpoints (`/api/*`, `/socket.io/*`) cannot complete an interactive Authelia login from a mobile app. Either:
