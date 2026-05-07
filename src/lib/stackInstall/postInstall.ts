@@ -11,6 +11,7 @@
  * however it likes.
  */
 
+import Mustache from 'mustache';
 import type { VariableMeta } from '@/lib/registry';
 import { buildCredentialsManifest, formatCredentialsBanner } from './credentialsManifest';
 
@@ -96,6 +97,31 @@ async function waitForLldap(
   return false;
 }
 
+/**
+ * Render Mustache placeholders inside an NPM proxyConfig (mainly the
+ * `advanced_config` block, which references things like `{{PUBLIC_DOMAIN}}`
+ * and `{{AUTHELIA_PORT}}` for cross-template wiring). Without this step the
+ * placeholders are forwarded to NPM verbatim and any SSO snippet that points
+ * at another stack template silently 404s.
+ */
+function renderProxyConfig(
+  proxyConfig: VariableMeta['proxyConfig'] | undefined,
+  view: Record<string, string>,
+): VariableMeta['proxyConfig'] | undefined {
+  if (!proxyConfig) return proxyConfig;
+  if (!proxyConfig.advanced_config) return proxyConfig;
+  const savedEscape = Mustache.escape;
+  Mustache.escape = (text: string) => text;
+  try {
+    return {
+      ...proxyConfig,
+      advanced_config: Mustache.render(proxyConfig.advanced_config, view),
+    };
+  } finally {
+    Mustache.escape = savedEscape;
+  }
+}
+
 /** Build the proxy-host list from subdomain-typed variables. */
 function buildProxyHosts(variables: StackVariable[]): {
   domain: string | undefined;
@@ -103,6 +129,10 @@ function buildProxyHosts(variables: StackVariable[]): {
 } {
   const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
   if (!domain) return { domain, hosts: [] };
+  const view = variables.reduce<Record<string, string>>(
+    (acc, v) => { acc[v.name] = v.value; return acc; },
+    {},
+  );
   const subdomainVars = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
   const hosts = subdomainVars.map(sv => {
     let port = sv.meta?.proxyPort || '';
@@ -113,7 +143,7 @@ function buildProxyHosts(variables: StackVariable[]): {
       domain: `${sv.value}.${domain}`,
       forwardPort: parseInt(port, 10),
       service,
-      proxyConfig: sv.meta?.proxyConfig,
+      proxyConfig: renderProxyConfig(sv.meta?.proxyConfig, view),
     };
   }).filter(h => Number.isFinite(h.forwardPort) && h.forwardPort > 0);
   return { domain, hosts };
