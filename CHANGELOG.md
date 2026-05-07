@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.0.1...servicebay-v3.1.0) (2026-05-07)
+
+
+### Features
+
+* **updates:** readable release notes, What's-new modal, email-on-new-release ([#157](https://github.com/mdopp/servicebay/issues/157)) ([151dd64](https://github.com/mdopp/servicebay/commit/151dd64a4ea754ab658ed22523cc88deb54db85c))
+
 ## [3.0.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.0.0...servicebay-v3.0.1) (2026-05-07)
 
 
