@@ -28,6 +28,10 @@
     "description": "Host path where Audiobookshelf will download podcast episodes.",
     "default": "/mnt/data/stacks/file-share/data/Podcasts"
   },
+  "ABS_OIDC_SECRET": {
+    "type": "secret",
+    "description": "OIDC client secret for Audiobookshelf ↔ Authelia. Auto-generated; surfaced in the install log so you can paste it into ABS Settings → Authentication → OIDC."
+  },
   "ABS_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for Audiobookshelf",
@@ -43,7 +47,8 @@
       "client_name": "Audiobookshelf",
       "authorization_policy": "one_factor",
       "redirect_uris": ["/auth/openid/callback", "/auth/openid/mobile-redirect"],
-      "scopes": ["openid", "profile", "email", "groups"]
+      "scopes": ["openid", "profile", "email", "groups"],
+      "clientSecretVar": "ABS_OIDC_SECRET"
     }
   }
 }

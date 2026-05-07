@@ -13,6 +13,19 @@ spec:
       value: "{{VAULTWARDEN_DOMAIN}}"
     - name: SIGNUPS_ALLOWED
       value: "{{VAULTWARDEN_SIGNUPS}}"
+    # Authelia SSO — disabled by default (set VAULTWARDEN_SSO_ENABLED=true).
+    # When enabled, the wizard has already registered the matching OIDC
+    # client with Authelia using the same VAULTWARDEN_SSO_SECRET below.
+    - name: SSO_ENABLED
+      value: "{{VAULTWARDEN_SSO_ENABLED}}"
+    - name: SSO_AUTHORITY
+      value: "https://auth.{{PUBLIC_DOMAIN}}"
+    - name: SSO_CLIENT_ID
+      value: "vaultwarden"
+    - name: SSO_CLIENT_SECRET
+      value: "{{VAULTWARDEN_SSO_SECRET}}"
+    - name: SSO_SCOPES
+      value: "email profile"
     ports:
     - containerPort: 80
       hostPort: {{VAULTWARDEN_PORT}}

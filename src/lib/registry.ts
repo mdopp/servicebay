@@ -259,6 +259,15 @@ export interface OidcClientConfig {
   authorization_policy?: string;
   redirect_uris: string[];
   scopes?: string[];
+  /**
+   * Name of a `secret`-type variable whose value should be used as the
+   * client_secret. When set, the wizard auto-generates the secret once and
+   * substitutes it into BOTH the service's env (e.g. SSO_CLIENT_SECRET) and
+   * Authelia's clients[] entry, so env-var-driven OIDC integrations work
+   * without any post-deploy copy-paste. Omit to let the oidc-clients
+   * endpoint generate a fresh random secret each time (legacy behaviour).
+   */
+  clientSecretVar?: string;
 }
 
 export interface VariableMeta {

@@ -481,6 +481,13 @@ export default function OnboardingWizard() {
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
         globalSettings = settings.templateSettings || {};
+        // The install script can pre-bake reverseProxy.publicDomain into
+        // config.json — pull it here so the wizard's domain prompt shows
+        // it as default and the user doesn't have to retype it.
+        const bakedDomain = settings.reverseProxy?.publicDomain;
+        if (bakedDomain && !stackDomain) {
+          setStackDomain(bakedDomain);
+        }
       }
     } catch { /* use empty defaults */ }
 
