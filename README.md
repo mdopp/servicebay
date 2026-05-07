@@ -101,31 +101,21 @@ keypair that the in-container agent uses to manage the host.
 ## Programmatic API & MCP
 
 Every UI action has an HTTP equivalent under `/api/`. For LLM-driven
-automation, ServiceBay also exposes a Model Context Protocol server
-at `/mcp` (session-cookie auth — same as the UI).
-
-The MCP server publishes 37 tools across read paths
-(`list_nodes`, `list_services`, `get_container_logs`,
-`get_network_graph`, `get_health_checks`, …) and write paths
-(`start_service`/`stop_service`/`restart_service`, `update_service_yaml`,
+automation, ServiceBay also exposes a [Model Context Protocol](https://modelcontextprotocol.io)
+server at `/mcp` (session-cookie auth — same as the UI), publishing ~37 tools
+across services, containers, proxy, backups, health checks, and config:
+read paths like `list_nodes`, `list_services`, `get_container_logs`,
+`get_network_graph`, `get_health_checks`, …, and write paths like
+`start_service`/`stop_service`/`restart_service`, `update_service_yaml`,
 `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`,
 `create_health_check`/`run_check_now`, `get_config`/`update_config`,
-`exec_command`). Sensitive fields (`auth.passwordHash`,
-`oidc.clientSecret`, SMTP/NPM passwords) are redacted in `get_config`
-and write-allowlisted in `update_config`.
+`exec_command`. Sensitive fields (`auth.passwordHash`, `oidc.clientSecret`,
+SMTP/NPM passwords) are redacted in `get_config` and write-allowlisted in
+`update_config`.
 
-Example client config (Claude Desktop / Claude Code):
-
-```json
-{
-  "mcpServers": {
-    "servicebay": {
-      "url": "http://localhost:3000/mcp",
-      "headers": { "Cookie": "session=YOUR_SESSION_COOKIE" }
-    }
-  }
-}
-```
+**Setup walk-through with `claude mcp add` syntax, env-var refresh, and
+troubleshooting:** [docs/MCP.md](docs/MCP.md). The same instructions are
+also linked from **Settings → Integrations → MCP Server** in the running UI.
 
 ## Troubleshooting
 
@@ -179,6 +169,7 @@ Settings → System → Check for Updates → Update. Your service containers ar
 |----------|---------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flow, API reference, testing strategy, frontend design |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md) | Build pipeline, startup procedure, first-boot sequence, system modifications |
+| [docs/MCP.md](docs/MCP.md) | Connect Claude Code / Claude Desktop / any MCP client to your ServiceBay instance |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 
 ## Comparison
