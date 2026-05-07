@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
+import { ContainerId } from '@/lib/api/schemas';
+import { parseRouteParam } from '@/lib/api/validate';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,7 +10,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const parsed = await parseRouteParam(params, 'id', ContainerId);
+  if (!parsed.ok) return parsed.response;
+  const id = parsed.value;
   const searchParams = request.nextUrl.searchParams;
   const nodeName = searchParams.get('node') || 'Local';
 
@@ -31,7 +36,6 @@ export async function GET(
     
     return NextResponse.json({ logs: 'Unknown error' }, { status: 500 });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ logs: msg }, { status: 500 });
+    return apiError(error, { tag: 'api:containers:logs', status: 500 });
   }
 }

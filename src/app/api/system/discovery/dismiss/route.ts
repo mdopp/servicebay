@@ -3,6 +3,7 @@ import { DigitalTwinStore } from '@/lib/store/twin';
 import { deleteBundleResources } from '@/lib/discovery';
 import { listNodes } from '@/lib/nodes';
 import type { PodmanConnection } from '@/lib/nodes';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +49,6 @@ export async function POST(request: Request) {
             missingFiles: result.missingFiles
         });
     } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to delete bundle';
-        return NextResponse.json({ error: message }, { status: 500 });
+        return apiError(error, { tag: 'api:system:discovery:dismiss', status: 500 });
     }
 }

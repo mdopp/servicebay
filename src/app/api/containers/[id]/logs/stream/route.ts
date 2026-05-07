@@ -1,6 +1,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
+import { ContainerId } from '@/lib/api/schemas';
+import { parseRouteParam } from '@/lib/api/validate';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,7 +10,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const parsed = await parseRouteParam(params, 'id', ContainerId);
+  if (!parsed.ok) {
+    const r = parsed.response.clone();
+    return new NextResponse(await r.text(), { status: 400 });
+  }
+  const id = parsed.value;
   const searchParams = request.nextUrl.searchParams;
   const nodeName = searchParams.get('node') || 'Local';
 

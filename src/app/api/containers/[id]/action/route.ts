@@ -1,6 +1,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
+import { ContainerId } from '@/lib/api/schemas';
+import { parseRouteParam } from '@/lib/api/validate';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,21 +11,18 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const parsed = await parseRouteParam(params, 'id', ContainerId);
+  if (!parsed.ok) return parsed.response;
+  const id = parsed.value;
   const searchParams = request.nextUrl.searchParams;
   const nodeName = searchParams.get('node') || 'Local';
-  
+
   try {
       const body = await request.json();
       const { action } = body;
-      
+
       if (!['start', 'stop', 'restart', 'delete', 'kill'].includes(action)) {
           return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
-      }
-
-      // Validate container ID: hex hash, short name, or alphanumeric with hyphens/underscores/dots
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$/.test(id)) {
-          return NextResponse.json({ error: 'Invalid container ID' }, { status: 400 });
       }
 
       const agent = agentManager.getAgent(nodeName);
@@ -46,7 +46,6 @@ export async function POST(
       return NextResponse.json({ error: 'Action failed', details: response }, { status: 500 });
       
   } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      return NextResponse.json({ error: msg }, { status: 500 });
+      return apiError(error, { tag: 'api:containers:action', status: 500 });
   }
 }

@@ -21,7 +21,7 @@ export async function GET(req: Request) {
             logs
         });
     } catch (err) {
-        console.error('Failed to query logs:', err);
+        logger.error('api:logs:query', 'Failed to query logs', err);
         return NextResponse.json({ success: false, logs: [] }, { status: 500 });
     }
 }

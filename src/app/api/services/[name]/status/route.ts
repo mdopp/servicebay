@@ -1,16 +1,22 @@
 import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
+import { ServiceName } from '@/lib/api/schemas';
+import { apiError } from '@/lib/api/errors';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  const { name: rawName } = await params;
-  const name = decodeURIComponent(rawName);
+  const resolved = await params;
+  const rawName = resolved?.name ?? '';
+  let decoded = '';
+  try { decoded = decodeURIComponent(rawName); } catch {
+    return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
+  }
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node') || 'Local';
 
-  if (name === 'gateway' || name === 'Internet Gateway') {
+  if (decoded === 'gateway' || decoded === 'Internet Gateway') {
         const { getConfig } = await import('@/lib/config');
         const { FritzBoxClient } = await import('@/lib/fritzbox/client');
         const config = await getConfig();
@@ -23,14 +29,19 @@ export async function GET(
                 return NextResponse.json({ status: 'unknown' });
             }
         }
-        return NextResponse.json({ status: 'active' }); // Assume active if just a gateway placeholder
+        return NextResponse.json({ status: 'active' });
   }
+
+  const check = ServiceName.safeParse(decoded);
+  if (!check.success) {
+    return NextResponse.json({ error: 'invalid name' }, { status: 400 });
+  }
+  const name = check.data;
 
   try {
     const status = await ServiceManager.getServiceStatus(nodeName, name);
     return NextResponse.json({ status });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e, { tag: 'api:services:status', status: 500 });
   }
 }

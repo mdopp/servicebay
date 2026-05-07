@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { migrateService, DiscoveredService } from '@/lib/discovery';
 import { listNodes } from '@/lib/nodes';
+import { apiError } from '@/lib/api/errors';
 
 export async function POST(request: Request) {
   try {
@@ -29,8 +30,6 @@ export async function POST(request: Request) {
     
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    console.error('Migration failed:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:discovery:migrate', status: 500 });
   }
 }

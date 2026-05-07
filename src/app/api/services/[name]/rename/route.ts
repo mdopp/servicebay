@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
+import { ServiceName } from '@/lib/api/schemas';
+import { parseRouteParam } from '@/lib/api/validate';
+import { apiError } from '@/lib/api/errors';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  const { name: rawName } = await params;
-  const name = decodeURIComponent(rawName);
+  const parsed = await parseRouteParam(params, 'name', ServiceName);
+  if (!parsed.ok) return parsed.response;
+  const name = parsed.value;
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node') || 'Local';
 
@@ -18,10 +22,14 @@ export async function POST(
       return NextResponse.json({ error: 'New name is required' }, { status: 400 });
     }
 
-    await ServiceManager.renameService(nodeName, name, newName);
+    const newCheck = ServiceName.safeParse(newName);
+    if (!newCheck.success) {
+      return NextResponse.json({ error: 'invalid newName' }, { status: 400 });
+    }
+
+    await ServiceManager.renameService(nodeName, name, newCheck.data);
     return NextResponse.json({ success: true });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(error, { tag: 'api:services:rename', status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getConfig, saveConfig, AppConfig } from '@/lib/config';
 import { getTemplateSettingsSchema } from '@/lib/registry';
 import { DigitalTwinStore } from '@/lib/store/twin';
+import { logger } from '@/lib/logger';
 
 export async function GET() {
   const [config, templateSettingsSchema] = await Promise.all([
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(newConfig);
   } catch (error) {
-    console.error('Failed to save config:', error);
+    logger.error('api:settings:post', 'Failed to save config', error);
     return NextResponse.json({ error: 'Failed to save config' }, { status: 500 });
   }
 }

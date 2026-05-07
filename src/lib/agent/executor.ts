@@ -56,9 +56,8 @@ export class AgentExecutor implements Executor {
   }
 
   async exists(path: string): Promise<boolean> {
-     // Use exec for now
      try {
-         await this.exec(`test -e "${path}"`);
+         await this.execArgv(['test', '-e', path]);
          return true;
      } catch {
          return false;
@@ -66,20 +65,20 @@ export class AgentExecutor implements Executor {
   }
 
   async mkdir(path: string): Promise<void> {
-      await this.exec(`mkdir -p "${path}"`);
+      await this.execArgv(['mkdir', '-p', path]);
   }
 
   async readdir(path: string): Promise<string[]> {
-      const { stdout } = await this.exec(`ls -1 "${path}"`);
+      const { stdout } = await this.execArgv(['ls', '-1', path]);
       return stdout.trim().split('\n').filter(s => s.length > 0);
   }
 
   async rm(path: string): Promise<void> {
-      await this.exec(`rm -rf "${path}"`);
+      await this.execArgv(['rm', '-rf', path]);
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
-      await this.exec(`mv "${oldPath}" "${newPath}"`);
+      await this.execArgv(['mv', oldPath, newPath]);
   }
 
   spawn(command: string, options: { pty?: boolean; cols?: number; rows?: number } = {}): { stdout: Readable; stderr: Readable; promise: Promise<void> } {

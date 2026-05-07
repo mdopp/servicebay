@@ -4,6 +4,8 @@ import { getExecutor } from '@/lib/executor';
 import { listNodes } from '@/lib/nodes';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { agentManager } from '@/lib/agent/manager';
+import { ServiceName } from '@/lib/api/schemas';
+import { parseRouteParam } from '@/lib/api/validate';
 import yaml from 'js-yaml';
 
 export const dynamic = 'force-dynamic';
@@ -12,8 +14,9 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  const { name: rawName } = await params;
-  const name = decodeURIComponent(rawName);
+  const parsed = await parseRouteParam(params, 'name', ServiceName);
+  if (!parsed.ok) return parsed.response;
+  const name = parsed.value;
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node');
   

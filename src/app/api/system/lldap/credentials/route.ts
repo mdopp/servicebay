@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getConfig, saveConfig, updateConfig } from '@/lib/config';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,8 +41,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to save credentials';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:lldap:credentials:post', status: 500 });
   }
 }
 

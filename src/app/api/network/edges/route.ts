@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { NetworkStore } from '@/lib/network/store';
+import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
 export async function POST(req: Request) {
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
     await NetworkStore.addEdge(edge);
     return NextResponse.json(edge);
   } catch (e) {
-    console.error('Failed to add edge', e);
+    logger.error('api:network:edges:post', 'Failed to add edge', e);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -40,7 +41,7 @@ export async function DELETE(req: Request) {
     await NetworkStore.removeEdge(id);
     return NextResponse.json({ success: true });
   } catch (e) {
-    console.error('Failed to remove edge', e);
+    logger.error('api:network:edges:delete', 'Failed to remove edge', e);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

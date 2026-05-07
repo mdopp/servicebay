@@ -5,6 +5,7 @@ import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import { listNodes } from '@/lib/nodes';
 import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
+import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -131,7 +132,7 @@ export async function GET(request: Request) {
     const proxyCandidates = services.filter(s => s.isReverseProxy);
 
     // Debug logging for Nginx detection
-    console.log(`[API] Listing Services for ${nodeName}: Found ${proxyCandidates.length} Proxy Candidates`, proxyCandidates.map(c => `${c.name} (${c.status})`));
+    logger.debug('api:services:get', `Listing services for ${nodeName}: found ${proxyCandidates.length} proxy candidates`, proxyCandidates.map(c => `${c.name} (${c.status})`));
 
     if (proxyCandidates.length > 0) {
         // Sort candidates: Active first, then by meaningfulness
@@ -231,7 +232,7 @@ export async function GET(request: Request) {
     return NextResponse.json([...mappedLinks, ...gatewayService, ...mappedServices]);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error('Failed to list services:', error);
+    logger.error('api:services:get', 'Failed to list services', error);
     return NextResponse.json(
         { error: msg || 'Internal Server Error' },
         { status: 500 }

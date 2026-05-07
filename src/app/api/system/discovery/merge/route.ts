@@ -4,6 +4,8 @@ import { cookies } from 'next/headers';
 import { mergeServices, DiscoveredService } from '@/lib/discovery';
 import { listNodes } from '@/lib/nodes';
 import { decrypt } from '@/lib/auth';
+import { apiError } from '@/lib/api/errors';
+import { logger } from '@/lib/logger';
 
 async function resolveActor(request: Request): Promise<string> {
   const forwarded = request.headers.get('x-forwarded-user') || request.headers.get('remote-user');
@@ -21,7 +23,7 @@ async function resolveActor(request: Request): Promise<string> {
       }
     }
   } catch (error) {
-    console.warn('Failed to resolve actor from session', error);
+    logger.warn('api:system:discovery:merge', 'Failed to resolve actor from session', error);
   }
 
   return 'unknown';
@@ -65,8 +67,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    console.error('Merge failed:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:discovery:merge', status: 500 });
   }
 }

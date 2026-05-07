@@ -285,7 +285,7 @@ export async function POST(request: Request) {
             node: npm.nodeName,
         });
     } catch (error) {
-        console.error('Failed to configure proxy hosts:', error);
+        logger.error('api:nginx:proxy-hosts', 'Failed to configure proxy hosts', error);
         return NextResponse.json({ error: 'Failed to configure proxy hosts' }, { status: 500 });
     }
 }

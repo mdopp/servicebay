@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +39,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ reachable: false, error: msg });
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'probe failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:lldap:probe', status: 500 });
   }
 }

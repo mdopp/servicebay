@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +19,6 @@ export async function GET(request: NextRequest) {
         const list = await agent.sendCommand('listContainers');
         return NextResponse.json(list || []);
     } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return NextResponse.json({ error: msg }, { status: 500 });
+        return apiError(e, { tag: 'api:containers:get', status: 500 });
     }
 }

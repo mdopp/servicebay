@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { NetworkService } from '@/lib/network/service';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -11,7 +12,7 @@ export async function GET(request: Request) {
     const graph = await service.getGraph(node || undefined);
     return NextResponse.json(graph);
   } catch (e) {
-    console.error('Network Graph Error:', e);
+    logger.error('api:network:graph', 'Network graph error', e);
     return NextResponse.json({ error: 'Failed to generate network graph' }, { status: 500 });
   }
 }

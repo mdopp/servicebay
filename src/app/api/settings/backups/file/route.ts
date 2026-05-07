@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import os from 'os';
 import path from 'path';
 import { getBackupFileMeta, readSystemBackupFile } from '@/lib/systemBackup';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,6 @@ export async function POST(request: Request) {
     const content = await readSystemBackupFile(archivePath, nodeName, relativePath);
     return NextResponse.json({ content });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to read backup file';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:settings:backups:file', status: 500 });
   }
 }
