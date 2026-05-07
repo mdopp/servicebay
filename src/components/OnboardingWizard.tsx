@@ -1411,7 +1411,71 @@ export default function OnboardingWizard() {
 
                     {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (
                         <div>
-                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs h-96 overflow-y-auto border border-gray-800">
+                            {/* Per-service status strip parsed live from the
+                                install logs. Operator can see at a glance
+                                which services have already deployed, which
+                                is currently in flight, and which are still
+                                queued — without having to read the (verbose)
+                                log stream. The overlay would otherwise block
+                                the Services dashboard, so this is the only
+                                place the operator can watch progress. */}
+                            {stackItems.filter(i => i.checked && !i.alreadyInstalled).length > 0 && (() => {
+                                const joined = stackLogs.join('\n');
+                                const statusOf = (name: string): 'pending' | 'installing' | 'deployed' | 'failed' => {
+                                    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                                    if (new RegExp(`(?:❌|✗|Failed to install)\\s+${esc}\\b`, 'i').test(joined)) return 'failed';
+                                    if (new RegExp(`✅\\s+${esc}\\s+deployed\\b`, 'i').test(joined)) return 'deployed';
+                                    if (new RegExp(`Installing\\s+${esc}\\.\\.\\.`, 'i').test(joined)) return 'installing';
+                                    return 'pending';
+                                };
+                                const dotClass: Record<string, string> = {
+                                    pending:    'bg-gray-300 dark:bg-gray-600',
+                                    installing: 'bg-blue-500 animate-pulse',
+                                    deployed:   'bg-emerald-500',
+                                    failed:     'bg-red-500',
+                                };
+                                const items = stackItems.filter(i => i.checked && !i.alreadyInstalled);
+                                const counts = items.reduce<Record<string, number>>((a, i) => {
+                                    const s = statusOf(i.name);
+                                    a[s] = (a[s] ?? 0) + 1;
+                                    return a;
+                                }, {});
+                                return (
+                                    <div className="mb-3 p-3 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Service status</p>
+                                            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                                                {counts.deployed ?? 0}/{items.length} deployed
+                                                {counts.failed ? ` · ${counts.failed} failed` : ''}
+                                            </p>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {items.map(item => {
+                                                const s = statusOf(item.name);
+                                                return (
+                                                    <span
+                                                        key={item.name}
+                                                        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border ${
+                                                            s === 'pending'
+                                                                ? 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 opacity-70'
+                                                                : s === 'failed'
+                                                                    ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                                                                    : s === 'deployed'
+                                                                        ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                                                                        : 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                                                        }`}
+                                                        title={`${item.name}: ${s}`}
+                                                    >
+                                                        <span className={`w-2 h-2 rounded-full ${dotClass[s]}`}></span>
+                                                        {item.name}
+                                                    </span>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs h-[28rem] overflow-y-auto border border-gray-800">
                                 {stackLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
                                 {stackInstallStep === 'installing' && (
                                     <div className="flex items-center gap-2 text-gray-400 mt-2">
