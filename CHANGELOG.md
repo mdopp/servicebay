@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.8.0...servicebay-v2.9.0) (2026-05-07)
+
+
+### Features
+
+* **media:** auto-seed Audiobookshelf + Navidrome admin via API ([#135](https://github.com/mdopp/servicebay/issues/135)) ([e673508](https://github.com/mdopp/servicebay/commit/e67350862fb103607fb223a2e358598d2ec93a62))
+* **templates:** SSO integration for media servers + AdGuard ([#139](https://github.com/mdopp/servicebay/issues/139)) ([df907ba](https://github.com/mdopp/servicebay/commit/df907ba5c57a46cdd87f9800fdf33e852300d0a3))
+
+
+### Bug Fixes
+
+* **templates:** redis-cache deploy, full-stack contents ([#137](https://github.com/mdopp/servicebay/issues/137)) ([1b5ee57](https://github.com/mdopp/servicebay/commit/1b5ee5710017e4a9503067d13f88b53bbbdedcad))
+
 ## [2.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.7.0...servicebay-v2.8.0) (2026-05-06)
 
 
