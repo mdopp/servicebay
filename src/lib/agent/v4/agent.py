@@ -1358,23 +1358,11 @@ def get_sys_resources():
     except:
         pass
         
-    # 2. Disk (Root) - Legacy, keeping for compatibility
-    res_disk_usage = 0.0
-    try:
-        st = os.statvfs('/')
-        total = st.f_blocks * st.f_frsize
-        free = st.f_bavail * st.f_frsize
-        used = total - free
-        if total > 0:
-            res_disk_usage = round((used / total) * 100, 1)
-    except:
-        pass
-        
-    # 3. CPU
+    # 2. CPU
     res_cpu_usage = get_cpu_usage()
     res_cpu_info = get_cpu_info()
 
-    # 4. OS Static Info
+    # 3. OS Static Info
     # When containerized, socket.gethostname() returns the container hostname.
     # Use SSH to get the real host hostname instead.
     if IS_CONTAINERIZED:
@@ -1394,8 +1382,51 @@ def get_sys_resources():
         'uptime': get_sys_uptime_seconds()
     }
 
-    # 5. Full Disks
+    # 4. Full Disks (must come before the headline disk-usage computation
+    # below — the fallback path picks the largest non-pseudo disk from this
+    # list when neither /var/mnt/data nor /mnt/data is mounted.)
     disks = get_disk_partitions_and_usage()
+
+    # 5. Headline disk usage — single percentage shown in the dashboard's
+    # resource tile. We can't blindly use os.statvfs('/'): on Fedora CoreOS
+    # the root is composefs, a ~5 MB read-only image that sits at 100% by
+    # design. The operator cares about whatever mount actually holds their
+    # stacks.
+    #
+    # Preference order:
+    #   1. /var/mnt/data         — RAID/data volume on FCoS (where services
+    #                              actually write); the headline number.
+    #   2. /mnt/data             — same volume mounted at the legacy path.
+    #   3. Largest non-pseudo    — any other host install puts user data on
+    #      writeable mount         the biggest writeable filesystem.
+    #   4. /                     — last-resort fallback.
+    res_disk_usage = 0.0
+    PSEUDO_FSTYPES = {'composefs', 'overlay', 'tmpfs', 'devtmpfs', 'efivarfs', 'sysfs', 'proc', 'cgroup', 'cgroup2', 'autofs', 'fusectl'}
+    def _usage_pct(path):
+        try:
+            st = os.statvfs(path)
+            total = st.f_blocks * st.f_frsize
+            free = st.f_bavail * st.f_frsize
+            if total <= 0:
+                return None
+            return round(((total - free) / total) * 100, 1)
+        except Exception:
+            return None
+
+    primary = None
+    for preferred in ('/var/mnt/data', '/mnt/data'):
+        if os.path.ismount(preferred):
+            primary = _usage_pct(preferred)
+            if primary is not None:
+                break
+    if primary is None:
+        candidates = [d for d in disks if d.get('fstype') not in PSEUDO_FSTYPES and d.get('total', 0) > 0]
+        if candidates:
+            best = max(candidates, key=lambda d: d['total'])
+            primary = best.get('usePercent')
+    if primary is None:
+        primary = _usage_pct('/') or 0.0
+    res_disk_usage = float(primary)
     
     # 6. Network
     network_info = get_network_interfaces()

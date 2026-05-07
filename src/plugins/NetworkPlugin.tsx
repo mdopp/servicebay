@@ -1918,14 +1918,26 @@ export default function NetworkPlugin() {
                             </Link>
                         )}
 
-                        {selectedNodeData && selectedNodeData.type === 'service' && typeof selectedNodeData.rawData?.name === 'string' && (
-                            <Link 
+                        {selectedNodeData && selectedNodeData.type === 'service' && typeof selectedNodeData.rawData?.name === 'string' && !selectedNodeData.metadata?.isMissingService && (
+                            <Link
                                 href={buildServiceEditHref(selectedNodeData)}
                                 className="w-full flex items-center justify-center gap-2 p-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors text-sm font-medium"
                             >
                                 <Edit size={14} />
                                 Edit Service
                             </Link>
+                        )}
+
+                        {selectedNodeData?.metadata?.isMissingService && (
+                            <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/60 text-xs text-amber-800 dark:text-amber-200 space-y-1">
+                                <div className="font-semibold">No matching service found</div>
+                                <div>
+                                    Nginx forwards traffic to <span className="font-mono">{(selectedNodeData.metadata.targetUrl as string) || selectedNodeData.label}</span>, but no managed container or service is listening on that port. The most common causes: a stale proxy route from a removed/renamed service, or a service that crashed before it could bind.
+                                </div>
+                                <div>
+                                    Fix it by editing or deleting the route in <span className="font-mono">Settings → Reverse Proxy</span> (or directly in NPM admin).
+                                </div>
+                            </div>
                         )}
 
                         {selectedNodeData.type === 'proxy' && (

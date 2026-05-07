@@ -938,6 +938,18 @@ export class ServiceManager {
             if (twin && fullKubePath && twin.files[fullKubePath]?.content) {
                 kubeContent = twin.files[fullKubePath].content;
             } else {
+                // Don't blindly read_file unknown service names. When a network
+                // map ghost node (e.g. "Local Service 3000") gets clicked and
+                // its display label leaks into here, the read_file fails on
+                // the agent and the failure surfaces as the agent's
+                // user-visible `lastError`. Validate that the service is
+                // actually known to systemd before paying that cost.
+                if (twin && twin.services?.length) {
+                    const exists = twin.services.some((s: { name: string }) => s.name === serviceName);
+                    if (!exists) {
+                        throw new Error(`Service ${serviceName} not found on ${nodeName}`);
+                    }
+                }
                 const res = await agent.sendCommand('read_file', { path: `~/${kubePath}` });
                 kubeContent = extractFileContent(res);
             }
