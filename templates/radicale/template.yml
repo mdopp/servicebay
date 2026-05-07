@@ -12,6 +12,19 @@ spec:
   containers:
   - name: radicale
     image: docker.io/tomsquest/docker-radicale:latest
+    # The image's ENTRYPOINT is `["dumb-init", "--"]` and its CMD is
+    # `["radicale"]`. K8s `args:` replaces CMD only — without an explicit
+    # `command:` here, the resulting exec becomes
+    #     dumb-init -- --config=/config/config
+    # and dumb-init then tries to run `--config=…` as a program, exiting
+    # with `exec: line 49: illegal option --` in a tight restart loop.
+    # Setting `command:` re-injects the radicale binary in the chain so
+    # the args land where they belong. dumb-init stays the entrypoint
+    # (signal forwarding, zombie reaping intact).
+    command:
+      - "dumb-init"
+      - "--"
+      - "radicale"
     args:
       - "--config=/config/config"
     ports:
