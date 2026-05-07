@@ -76,6 +76,14 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/stacks ./stacks
 
+# Markdown content rendered at runtime by /api/help (per-page contextual
+# help, plus the CHANGELOG entry for the sidebar "What's new" modal). The
+# route reads `process.cwd()/src/content/help/<id>.md`, so the files must
+# exist at that exact path inside the runner image. Without this copy,
+# every help fetch returns "Help content not found".
+COPY --from=builder /app/src/content ./src/content
+COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
+
 # Copy the pre-bundled custom server (CJS, runs under plain node — no tsx).
 # server.ts and src/ are NOT shipped to the runtime; everything imported by
 # server.ts is folded into dist-server/server.cjs by scripts/build-server.mjs.
