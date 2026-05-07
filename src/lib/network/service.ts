@@ -1409,6 +1409,19 @@ export class NetworkService {
                             if (!targetId && proxyService?.ports?.some(p => p.hostPort === targetPort)) {
                                 targetId = prefix(`service-${proxyService.name}`);
                             }
+                            // NPM's own nginx config has server blocks that proxy_pass to
+                            // 127.0.0.1:<internal-port> for the admin UI backend (port 3000
+                            // by default). The internal port isn't published on the host, so
+                            // the previous check above never matches. Since these locations
+                            // are *inside* nginx-web's own config — `proxyService` IS the
+                            // emitter — attribute the edge back to nginx-web rather than
+                            // inventing a virtual "Local Service :3000" ghost node.
+                            if (!targetId && proxyService) {
+                                const isLoopback = ['localhost', '127.0.0.1', '::1'].includes(targetHost);
+                                if (isLoopback) {
+                                    targetId = prefix(`service-${proxyService.name}`);
+                                }
+                            }
                         }
 
                         // Fallback to Pod if no container found but we have a pod
