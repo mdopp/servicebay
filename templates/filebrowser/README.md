@@ -1,6 +1,8 @@
 # FileBrowser
 
-A web file manager for the shared `/data` volume. Same files Samba and Syncthing see — drop a file via Windows-mount, browse it from the phone via this UI.
+Family-facing web file manager for the shared `/data` volume. Same files Samba and Syncthing see — drop a file via the admin's Windows-mount, browse it from any family member's phone via this UI.
+
+> 🧭 **Design split**: in the full-stack, **FileBrowser is for the family**, **Samba is for the admin only**. The shared volume is the same, but each family member gets their own SSO session here while Samba stays single-user. ServiceBay pre-promotes the LLDAP `admin` to FileBrowser admin during install (see `FILEBROWSER_ADMIN_USER`) so there's a working admin from the first login.
 
 ## Variables
 
@@ -26,7 +28,7 @@ This means **no separate FileBrowser login**. SSO once, browse everything. As lo
 - Everyone in the `family` group (Authelia rule) can reach the UI
 - Each user gets their own FileBrowser account on first visit (auto-created from the SSO header)
 - All accounts default to permission `create + rename + modify + delete + share + download` on `/srv`
-- Admin promotion is manual: log into FileBrowser as the user → as admin user (the first one to log in) → User Settings → tick "Admin"
+- The user named in `FILEBROWSER_ADMIN_USER` (default `admin`) is **pre-promoted** to FB admin by ServiceBay's post-install step, so on their first SSO login they immediately have the admin panel for managing other users + shares.
 
 ## Data Layout
 

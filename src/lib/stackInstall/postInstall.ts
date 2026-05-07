@@ -11,6 +11,7 @@
  * however it likes.
  */
 
+import Mustache from 'mustache';
 import type { VariableMeta } from '@/lib/registry';
 import { buildCredentialsManifest, formatCredentialsBanner } from './credentialsManifest';
 
@@ -96,6 +97,31 @@ async function waitForLldap(
   return false;
 }
 
+/**
+ * Render Mustache placeholders inside an NPM proxyConfig (mainly the
+ * `advanced_config` block, which references things like `{{PUBLIC_DOMAIN}}`
+ * and `{{AUTHELIA_PORT}}` for cross-template wiring). Without this step the
+ * placeholders are forwarded to NPM verbatim and any SSO snippet that points
+ * at another stack template silently 404s.
+ */
+function renderProxyConfig(
+  proxyConfig: VariableMeta['proxyConfig'] | undefined,
+  view: Record<string, string>,
+): VariableMeta['proxyConfig'] | undefined {
+  if (!proxyConfig) return proxyConfig;
+  if (!proxyConfig.advanced_config) return proxyConfig;
+  const savedEscape = Mustache.escape;
+  Mustache.escape = (text: string) => text;
+  try {
+    return {
+      ...proxyConfig,
+      advanced_config: Mustache.render(proxyConfig.advanced_config, view),
+    };
+  } finally {
+    Mustache.escape = savedEscape;
+  }
+}
+
 /** Build the proxy-host list from subdomain-typed variables. */
 function buildProxyHosts(variables: StackVariable[]): {
   domain: string | undefined;
@@ -103,6 +129,10 @@ function buildProxyHosts(variables: StackVariable[]): {
 } {
   const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
   if (!domain) return { domain, hosts: [] };
+  const view = variables.reduce<Record<string, string>>(
+    (acc, v) => { acc[v.name] = v.value; return acc; },
+    {},
+  );
   const subdomainVars = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
   const hosts = subdomainVars.map(sv => {
     let port = sv.meta?.proxyPort || '';
@@ -113,7 +143,7 @@ function buildProxyHosts(variables: StackVariable[]): {
       domain: `${sv.value}.${domain}`,
       forwardPort: parseInt(port, 10),
       service,
-      proxyConfig: sv.meta?.proxyConfig,
+      proxyConfig: renderProxyConfig(sv.meta?.proxyConfig, view),
     };
   }).filter(h => Number.isFinite(h.forwardPort) && h.forwardPort > 0);
   return { domain, hosts };
@@ -351,6 +381,35 @@ async function seedAudiobookshelf(opts: { variables: StackVariable[]; onLog: (ms
   });
 }
 
+/** FileBrowser proxy-auth mode auto-creates user records on first SSO
+ *  request, but the new account inherits non-admin defaults. Without an
+ *  admin nobody can manage settings or other users — chicken-and-egg.
+ *  Pre-promote one LLDAP user (default 'admin') to FileBrowser admin
+ *  via the dedicated /api/system/filebrowser/init endpoint, which execs
+ *  the FileBrowser CLI inside the running container. Idempotent. */
+async function seedFileBrowserAdmin(opts: { variables: StackVariable[]; node?: string; onLog: (msg: string) => void }): Promise<void> {
+  const username = opts.variables.find(v => v.name === 'FILEBROWSER_ADMIN_USER')?.value || 'admin';
+  // Give the pod ~30s to come up before we exec into it.
+  await new Promise(r => setTimeout(r, 8000));
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const res = await fetch('/api/system/filebrowser/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, node: opts.node }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        opts.onLog(`✅ FileBrowser admin: ${username} (${data.action}) — log in via Authelia at https://files.<your-domain> to manage shares.`);
+        return;
+      }
+      // Container probably not ready yet — retry with backoff.
+    } catch { /* retry */ }
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  opts.onLog('⚠️ Could not pre-seed FileBrowser admin. Run `podman exec filebrowser-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db` once the pod is up.');
+}
+
 async function seedNavidrome(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): Promise<void> {
   return seedMediaServer({
     service: 'navidrome',
@@ -460,6 +519,9 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   }
   if (isSelected('navidrome')) {
     void seedNavidrome({ variables, onLog }).catch(() => { /* logged inline */ });
+  }
+  if (isSelected('filebrowser')) {
+    void seedFileBrowserAdmin({ variables, node, onLog }).catch(() => { /* logged inline */ });
   }
 
   const proxyResult = await configureProxyRoutes({ variables, node, onLog });

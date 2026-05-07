@@ -1,11 +1,13 @@
 # File Sharing Stack
 
-A file-sharing solution combining two services in a single pod:
+Two services in a single pod, sharing one data volume:
 
-1. **Syncthing** — Bidirectional folder sync with native apps for Android and Windows
-2. **Samba** — SMB/CIFS network shares for mapping as a Windows drive
+1. **Syncthing** — Bidirectional folder sync (Android + desktop apps)
+2. **Samba** — Single-user SMB share for the admin's primary Windows/macOS mount
 
-Both containers share a single data volume (`/mnt/data`), so files added through either method are immediately visible everywhere.
+> 🧭 **Design note**: family members aren't meant to use Samba. There's intentionally only **one** Samba account — the auto-generated admin password. Family-facing file access goes through **FileBrowser** at `https://files.<your-domain>`, which is wired to LLDAP/Authelia SSO and gives each user their own session against the same shared `/data` volume.
+
+Files added through any of the three (Samba, Syncthing, FileBrowser) are immediately visible to the others.
 
 ## Variables
 
