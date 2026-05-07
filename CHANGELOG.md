@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.9.0...servicebay-v2.10.0) (2026-05-07)
+
+
+### Features
+
+* **install:** bake PUBLIC_DOMAIN into config + auto-wire OIDC secrets ([#141](https://github.com/mdopp/servicebay/issues/141)) ([cf8c562](https://github.com/mdopp/servicebay/commit/cf8c56206dc03563a2876d78f48188f2a23d7884))
+* **templates:** add filebrowser + radicale, both LDAP/SSO-wired ([#145](https://github.com/mdopp/servicebay/issues/145)) ([1b9452b](https://github.com/mdopp/servicebay/commit/1b9452be3a208fa6b1c6894c67ade31856c36818))
+* **wizard:** end-of-install credentials summary + Bitwarden CSV export ([#143](https://github.com/mdopp/servicebay/issues/143)) ([c78cf9c](https://github.com/mdopp/servicebay/commit/c78cf9ca607aba1bb55bf3a6182854c8ebde0fa7))
+
+
+### Bug Fixes
+
+* **security:** close C1 + C3 + H6 from the post-2.5 audit ([#144](https://github.com/mdopp/servicebay/issues/144)) ([cb71bb2](https://github.com/mdopp/servicebay/commit/cb71bb265aab27bb9738dca9ea5fdf213e3baecd))
+
 ## [2.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.8.0...servicebay-v2.9.0) (2026-05-07)
 
 
