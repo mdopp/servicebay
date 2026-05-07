@@ -1,13 +1,18 @@
 import { Server } from 'socket.io';
+import fs from 'fs';
+import path from 'path';
 import { logger } from '@/lib/logger';
 import { HealthStore } from './store';
 import { CheckRunner } from './runner';
 import { CheckConfig, CheckResult } from './types';
 import { initializeDefaultChecks } from './init';
 import { sendEmailAlert } from '@/lib/email';
+import { DATA_DIR } from '@/lib/dirs';
 
 // In-memory interval tracking
 const intervals = new Map<string, NodeJS.Timeout>();
+
+const CHECKS_FILE = path.join(DATA_DIR, 'checks.json');
 
 export class HealthService {
   private static io: Server | null = null;
@@ -15,40 +20,53 @@ export class HealthService {
   static async init(io: Server) {
     this.io = io;
 
-    // Re-schedule whenever a check is added/edited/removed via the API,
-    // ServiceManager auto-add, the wizard, or any other store mutation.
-    // Without this, only the checks present at init time ever ran — checks
-    // added later (e.g. the per-service `Service: <name>` checks created
-    // when a stack deploys) sat dormant with lastResult=null forever.
-    HealthStore.subscribe({
-      onSave: (check) => this.scheduleOne(check),
-      onDelete: (id) => this.unscheduleOne(id),
-    });
-
     // 1. Ensure defaults
     await initializeDefaultChecks();
 
     // 2. Start initial scheduling
     this.restartAll();
+
+    // 3. Re-schedule whenever the checks file changes on disk.
+    //
+    // The previous design used an in-process listener on HealthStore,
+    // which worked for code paths that shared this module instance — but
+    // Next.js bundles API routes (and the wizard's ServiceManager
+    // auto-add path) into a webpack graph that's separate from the
+    // custom server's esbuild bundle. saveCheck calls from there
+    // landed on a *different* `listeners[]` array, so the listener
+    // never fired and the new checks sat dormant with lastResult=null.
+    //
+    // fs.watch is bundle-agnostic: any process that mutates the file
+    // triggers our restart, regardless of which module wrote it. We
+    // debounce because a single saveCheck typically emits two `change`
+    // events on Linux (one for each step of an atomic-ish replace).
+    this.startChecksFileWatcher();
   }
 
-  /** Schedule (or re-schedule) a single check. Idempotent. */
-  private static scheduleOne(check: CheckConfig) {
-    const existing = intervals.get(check.id);
-    if (existing) clearInterval(existing);
-    if (!check.enabled) {
-      intervals.delete(check.id);
-      return;
-    }
-    this.scheduleCheck(check);
-  }
+  private static checksWatcher: fs.FSWatcher | null = null;
+  private static checksWatcherDebounce: NodeJS.Timeout | null = null;
 
-  /** Stop a single check's interval. */
-  private static unscheduleOne(id: string) {
-    const t = intervals.get(id);
-    if (t) {
-      clearInterval(t);
-      intervals.delete(id);
+  private static startChecksFileWatcher() {
+    if (this.checksWatcher) return;
+    try {
+      // Make sure the file's parent dir exists; fs.watch on a missing
+      // path throws synchronously.
+      try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { /* ok */ }
+      this.checksWatcher = fs.watch(DATA_DIR, (_event, filename) => {
+        if (filename !== 'checks.json') return;
+        if (this.checksWatcherDebounce) clearTimeout(this.checksWatcherDebounce);
+        this.checksWatcherDebounce = setTimeout(() => {
+          this.checksWatcherDebounce = null;
+          logger.info('Health', 'checks.json changed — re-scheduling.');
+          this.restartAll();
+        }, 250);
+      });
+      this.checksWatcher.on('error', (e) => {
+        logger.warn('Health', `checks.json watcher error: ${e instanceof Error ? e.message : String(e)}`);
+      });
+      logger.info('Health', `Watching ${CHECKS_FILE} for new/changed checks.`);
+    } catch (e) {
+      logger.warn('Health', `Could not start checks.json watcher: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

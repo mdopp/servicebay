@@ -7,6 +7,11 @@ metadata:
   annotations:
     servicebay.ports: "{{FILEBROWSER_PORT}}/tcp"
     servicebay.config-mount: /config
+    # Disable SELinux labelling on the bind mounts. Same reason as the
+    # file-share pod: FCoS ships SELinux enforcing, podman play-kube
+    # doesn't relabel hostPath dirs by default, and the entrypoint's
+    # initial-config seed `cp` fails with EPERM otherwise.
+    io.podman.annotations.label/filebrowser: "disable"
 spec:
   hostNetwork: true
   containers:

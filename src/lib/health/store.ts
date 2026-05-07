@@ -17,28 +17,20 @@ function ensureDirs() {
 }
 
 /**
- * Listener interface for check mutations. HealthService subscribes here in
- * init() so any code path that adds/edits/removes a check (the wizard, the
- * API, ServiceManager auto-add, backup-sync) immediately gets the new check
- * scheduled — without each call site needing to know about the scheduler.
+ * Note: an earlier listener-callback design (PR #166) was abandoned because
+ * Next.js bundles API routes in a webpack module graph that's separate from
+ * the custom server's esbuild bundle. saveCheck calls from API routes
+ * therefore landed on a *different* listeners[] array than where
+ * HealthService.init subscribed — so the listener never fired and per-
+ * service checks created via the wizard sat dormant with lastResult=null.
+ *
+ * The current design is bundle-agnostic: HealthService watches the on-disk
+ * checks.json file with fs.watch and re-schedules whenever it changes.
+ * Both bundles share the filesystem, so the signal lands wherever the
+ * server is actually running.
  */
-export interface HealthStoreListener {
-  onSave?: (check: CheckConfig) => void;
-  onDelete?: (id: string) => void;
-}
-
-const listeners: HealthStoreListener[] = [];
 
 export class HealthStore {
-  /** Register a listener. Returns an unsubscribe fn. */
-  static subscribe(listener: HealthStoreListener): () => void {
-    listeners.push(listener);
-    return () => {
-      const i = listeners.indexOf(listener);
-      if (i >= 0) listeners.splice(i, 1);
-    };
-  }
-
   static getChecks(): CheckConfig[] {
     if (!fs.existsSync(CHECKS_FILE)) return [];
     try {
@@ -59,14 +51,12 @@ export class HealthStore {
       checks.push(check);
     }
     fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
-    for (const l of listeners) l.onSave?.(check);
   }
 
   static deleteCheck(id: string) {
     ensureDirs();
     const checks = this.getChecks().filter(c => c.id !== id);
     fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
-    for (const l of listeners) l.onDelete?.(id);
   }
 
   static saveResult(result: CheckResult) {

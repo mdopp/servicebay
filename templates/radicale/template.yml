@@ -7,25 +7,33 @@ metadata:
   annotations:
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
     servicebay.config-mount: /config
+    # Disable SELinux labelling on the bind mounts (same as file-share /
+    # filebrowser). FCoS + SELinux + podman play-kube otherwise refuses
+    # writes to hostPath bind dirs from the container.
+    io.podman.annotations.label/radicale: "disable"
 spec:
   hostNetwork: true
   containers:
   - name: radicale
     image: docker.io/tomsquest/docker-radicale:latest
-    # The image's ENTRYPOINT is `["dumb-init", "--"]` and its CMD is
-    # `["radicale"]`. K8s `args:` replaces CMD only — without an explicit
-    # `command:` here, the resulting exec becomes
+    # The image's ENTRYPOINT is `["dumb-init", "--"]` and CMD is
+    # `["radicale"]`. K8s `args:` replaces CMD only. The original bug was
+    # passing `--config=…` directly as args, producing
     #     dumb-init -- --config=/config/config
-    # and dumb-init then tries to run `--config=…` as a program, exiting
-    # with `exec: line 49: illegal option --` in a tight restart loop.
-    # Setting `command:` re-injects the radicale binary in the chain so
-    # the args land where they belong. dumb-init stays the entrypoint
-    # (signal forwarding, zombie reaping intact).
-    command:
-      - "dumb-init"
-      - "--"
-      - "radicale"
+    # → dumb-init ran `--config=…` as a program and exited.
+    #
+    # PR #164's fix used `command: ["dumb-init", "--", "radicale"]` to
+    # force the chain. That broke differently: when K8s `command:` is set,
+    # podman/crun doesn't propagate the image's PATH, so `dumb-init`
+    # wasn't found ("crun: executable file `dumb-init` not found in
+    # $PATH"). Image's ENTRYPOINT path resolution doesn't apply when
+    # we replace it from the manifest.
+    #
+    # The reliable fix: just restore the binary name as the first arg.
+    # ENTRYPOINT (`dumb-init --`) stays from the image, dumb-init resolves
+    # via the image's own PATH, then it execs `radicale` with our flags.
     args:
+      - "radicale"
       - "--config=/config/config"
     ports:
       - containerPort: {{RADICALE_PORT}}
