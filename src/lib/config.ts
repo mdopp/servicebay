@@ -115,6 +115,26 @@ export interface AppConfig {
   };
   registries?: RegistriesSettings;
   externalLinks?: ExternalLink[];
+  mcp?: {
+    /**
+     * Master gate for write/mutating MCP tools. When false, MCP clients can
+     * read state (`list_*`, `get_*`) but cannot start/stop/restart, deploy,
+     * delete, exec, or restore.
+     *
+     * Default policy:
+     *   - Fresh install (wizard sets this explicitly): false  — read-only.
+     *   - Pre-existing install (field absent in config.json): treated as
+     *     true so we don't break MCP clients that worked before this flag
+     *     was introduced. The Settings UI still shows the toggle.
+     */
+    allowMutations?: boolean;
+    /**
+     * Bypass the exec_command denylist (rm -rf /, mkfs, dd of=/dev/sd*, …).
+     * Off by default. Lift only if you genuinely need to run dangerous
+     * commands through MCP — note that `allowMutations` must also be true.
+     */
+    allowDangerousExec?: boolean;
+  };
   notifications?: {
     email?: {
       enabled: boolean;
