@@ -2,6 +2,7 @@
 
 import { getConfig, saveConfig } from '@/lib/config';
 import { SSH_DIR } from '@/lib/dirs';
+import { getInstallActive, setInstallActive, clearInstallActive } from '@/lib/wizard/installLock';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -11,6 +12,13 @@ export interface OnboardingStatus {
   hasGateway: boolean;
   hasSshKey: boolean;
   hasExternalLinks: boolean;
+  /**
+   * Set when an install pipeline is currently running in some session.
+   * Other tabs/devices use this to refuse to start a fresh install while
+   * the first one is still in flight. Auto-clears after 30 min if the
+   * heartbeat stops (covers crashed installs / lost power).
+   */
+  installInProgress: { startedAt: string; source?: string } | null;
   features: {
     gateway: boolean;
     ssh: boolean;
@@ -55,12 +63,15 @@ export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
   
   const needsSetup = !config.setupCompleted && !hasGateway;
 
+  const installInProgress = await getInstallActive();
+
   return {
     needsSetup,
     stackSetupPending: config.stackSetupPending === true,
     hasGateway,
     hasSshKey,
     hasExternalLinks,
+    installInProgress,
     features: {
         gateway: !!config.gateway,
         ssh: hasSshKey,
@@ -144,6 +155,7 @@ export async function skipOnboarding() {
     config.setupCompleted = true;
     setSafeMcpDefaults(config);
     await saveConfig(config);
+    await clearInstallActive();
 }
 
 export async function completeStackSetup() {
@@ -151,6 +163,19 @@ export async function completeStackSetup() {
     delete config.stackSetupPending;
     setSafeMcpDefaults(config);
     await saveConfig(config);
+    await clearInstallActive();
+}
+
+/** Acquire / refresh the install lock. Called by the wizard when it
+ *  enters the install pipeline and on a heartbeat while running. */
+export async function markInstallStarted(source: string = 'wizard'): Promise<void> {
+    await setInstallActive(source);
+}
+
+/** Force-clear a stuck lock. Surfaced in the UI so the operator can
+ *  recover from a crashed install without waiting 30 min for auto-expiry. */
+export async function forceClearInstallLock(): Promise<void> {
+    await clearInstallActive();
 }
 
 /**

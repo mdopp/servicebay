@@ -10,6 +10,8 @@ import {
     saveRegistriesConfig,
     saveEmailConfig,
     completeStackSetup,
+    markInstallStarted,
+    forceClearInstallLock,
     OnboardingStatus
 } from '@/app/actions/onboarding';
 import { generateLocalKey } from '@/app/actions/ssh';
@@ -197,6 +199,16 @@ export default function OnboardingWizard() {
   useEffect(() => {
     checkOnboardingStatus().then(s => {
       setStatus(s);
+      // If a server-side install lock exists and we're NOT actively
+      // running the install in this tab (we'd have set stackInstallStep
+      // = 'installing' already and started heartbeating), show the
+      // "another session is installing" gate so the operator doesn't
+      // race two installs in parallel.
+      if (s.installInProgress && stackInstallStep !== 'installing') {
+         
+        setIsOpen(true);
+        return;
+      }
       if (s.needsSetup) {
         setIsOpen(true);
         // Only seed selection from feature detection if we have no persisted draft —
@@ -269,6 +281,19 @@ export default function OnboardingWizard() {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [isOpen, currentStep, stackInstallStep]);
+
+  // Heartbeat the server-side install lock while the wizard is in
+  // 'installing'. Other tabs / devices polling /api/onboarding will see
+  // installInProgress and refuse to start a fresh install. The lock
+  // auto-expires server-side at 30 min if heartbeats stop (covers crashed
+  // installs / lost power).
+  useEffect(() => {
+    if (stackInstallStep !== 'installing') return;
+    const tick = () => { void markInstallStarted('wizard'); };
+    tick();
+    const id = setInterval(tick, 20_000);
+    return () => clearInterval(id);
+  }, [stackInstallStep]);
 
   // Auto-run the self-diagnose once the install pipeline lands on 'done'.
   // Gated by `diagnoseRanOnce` so reopening the panel doesn't re-fire and
@@ -858,7 +883,50 @@ export default function OnboardingWizard() {
 
         {/* Content */}
         <div className="p-6 overflow-y-auto">
-            {currentStep === 'welcome' && (
+            {/* Concurrent-install guard. Another browser tab / device /
+                MCP session is currently running an install. Refuse to
+                start a fresh one — racing two installs corrupts the
+                Quadlet directory and the digital twin. Auto-clears
+                30 min after the other session's last heartbeat. */}
+            {status?.installInProgress && stackInstallStep !== 'installing' ? (
+                <div className="space-y-4">
+                    <div className="p-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-100 mb-1">
+                            ⏳ Another session is installing
+                        </p>
+                        <p className="text-xs text-amber-800 dark:text-amber-200 mb-2">
+                            An install pipeline is already running ({status.installInProgress.source ?? 'unknown source'}, started {new Date(status.installInProgress.startedAt).toLocaleString()}). Switch to that tab and let it finish, or wait for it to complete here.
+                        </p>
+                        <p className="text-xs text-amber-700 dark:text-amber-300">
+                            If the other session crashed and the lock is stuck, the wizard will release it automatically after 30 minutes — or click below to force-clear.
+                        </p>
+                    </div>
+                    <div className="flex justify-between">
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                if (!confirm('Force-clear the install lock? Only do this if you are certain no other install is actually running — racing two installs will corrupt the Quadlet directory.')) return;
+                                await forceClearInstallLock();
+                                const fresh = await checkOnboardingStatus();
+                                setStatus(fresh);
+                            }}
+                            className="px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300 hover:underline"
+                        >
+                            Force-clear stuck lock
+                        </button>
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                const fresh = await checkOnboardingStatus();
+                                setStatus(fresh);
+                            }}
+                            className="px-3 py-1.5 text-xs rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+                        >
+                            Re-check
+                        </button>
+                    </div>
+                </div>
+            ) : currentStep === 'welcome' && (
                 <div className="space-y-4">
                     <p className="text-gray-600 dark:text-gray-300">
                         Welcome to ServiceBay! Only a few steps to get your environment ready.
