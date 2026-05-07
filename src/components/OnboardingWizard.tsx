@@ -188,6 +188,21 @@ export default function OnboardingWizard() {
   const [npmEmail, setNpmEmail] = useState('');
   const [npmPassword, setNpmPassword] = useState('');
 
+  // Service-dependency map. Hard deps must be installed together; soft
+  // deps just enable optional integrations (typically OIDC SSO). Keep
+  // this in sync with what the templates assume — eventually we should
+  // declare it inside each template's variables.json instead of here,
+  // but the catalog is small enough today that hardcoding is fine.
+  type ServiceDeps = { requires?: string[]; recommendedWith?: string[]; reason?: string };
+  const SERVICE_DEPS: Record<string, ServiceDeps> = {
+    authelia:        { requires: ['lldap'],     reason: 'authelia uses LLDAP as its user/group directory' },
+    vaultwarden:     { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional but recommended)' },
+    audiobookshelf:  { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
+    immich:          { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
+    'home-assistant-stack': { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
+    radicale:        { recommendedWith: ['authelia'] },
+  };
+
   // Configure-step tab. Variables are categorised so the operator isn't
   // staring at a 50-line flat list — the "subdomains" tab shows the
   // user-meaningful per-service URLs, "settings" shows the misc
@@ -1170,6 +1185,50 @@ export default function OnboardingWizard() {
                             </div>
 
                             <p className="text-sm text-gray-500 mb-2 mt-3">Select which services to install from <span className="font-medium">{selectedStack?.name}</span>:</p>
+                            {/* Hard-dependency warning: surface any required
+                                deps that the operator has unchecked.
+                                Auto-include happens on check, but operator
+                                can still uncheck a dep manually after — at
+                                which point we shout. */}
+                            {(() => {
+                                const checked = stackItems.filter(i => i.checked && !i.alreadyInstalled);
+                                const checkedNames = new Set(checked.map(i => i.name));
+                                const installedNames = new Set(stackItems.filter(i => i.alreadyInstalled).map(i => i.name));
+                                const missing: { from: string; needs: string }[] = [];
+                                for (const item of checked) {
+                                    for (const dep of SERVICE_DEPS[item.name]?.requires ?? []) {
+                                        if (!checkedNames.has(dep) && !installedNames.has(dep)) {
+                                            missing.push({ from: item.name, needs: dep });
+                                        }
+                                    }
+                                }
+                                if (missing.length === 0) return null;
+                                return (
+                                    <div className="mb-2 p-2 rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-xs text-red-800 dark:text-red-200 space-y-1">
+                                        <div className="font-semibold">Required dependencies are not selected:</div>
+                                        {missing.map(m => (
+                                            <div key={`${m.from}-${m.needs}`}>
+                                                <span className="font-mono">{m.from}</span> requires <span className="font-mono">{m.needs}</span>
+                                                {SERVICE_DEPS[m.from]?.reason && <span className="opacity-80"> — {SERVICE_DEPS[m.from].reason}</span>}
+                                            </div>
+                                        ))}
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const next = [...stackItems];
+                                                for (const m of missing) {
+                                                    const j = next.findIndex(x => x.name === m.needs);
+                                                    if (j >= 0) next[j].checked = true;
+                                                }
+                                                setStackItems(next);
+                                            }}
+                                            className="mt-1 px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-700 text-white"
+                                        >
+                                            Add the missing dependencies
+                                        </button>
+                                    </div>
+                                );
+                            })()}
                             {stacksLoading ? (
                                 <div className="flex items-center justify-center py-4 text-gray-400">
                                     <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...
@@ -1190,16 +1249,54 @@ export default function OnboardingWizard() {
                                                     if (item.alreadyInstalled) return;
                                                     const newItems = [...stackItems];
                                                     newItems[i].checked = !newItems[i].checked;
+                                                    // Auto-include hard deps when the operator
+                                                    // turns a service ON. Don't auto-uncheck
+                                                    // deps when turning OFF — the dep might
+                                                    // also be needed by another checked
+                                                    // service, and "you unchecked X so Y
+                                                    // also went away" is surprising.
+                                                    if (newItems[i].checked) {
+                                                        const required = SERVICE_DEPS[item.name]?.requires ?? [];
+                                                        for (const dep of required) {
+                                                            const j = newItems.findIndex(x => x.name === dep);
+                                                            if (j >= 0 && !newItems[j].checked && !newItems[j].alreadyInstalled) {
+                                                                newItems[j].checked = true;
+                                                            }
+                                                        }
+                                                    }
                                                     setStackItems(newItems);
                                                 }}
                                                 className="w-5 h-5 mt-0.5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
                                             />
                                             <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 flex-wrap">
                                                     <span className={`font-medium text-sm ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-900 dark:text-gray-200'}`}>{item.name}</span>
                                                     {item.alreadyInstalled && (
                                                         <span className="text-xs text-green-600 dark:text-green-400">already installed</span>
                                                     )}
+                                                    {/* Dependency badges. Hard deps in red so the
+                                                        operator notices; soft deps muted blue.
+                                                        Both labels link explicitly to the dep
+                                                        service name so it's obvious what's
+                                                        required. */}
+                                                    {(SERVICE_DEPS[item.name]?.requires ?? []).map(dep => (
+                                                        <span
+                                                            key={`req-${dep}`}
+                                                            className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"
+                                                            title={`Required dependency: ${dep}${SERVICE_DEPS[item.name]?.reason ? ' — ' + SERVICE_DEPS[item.name]?.reason : ''}`}
+                                                        >
+                                                            requires {dep}
+                                                        </span>
+                                                    ))}
+                                                    {(SERVICE_DEPS[item.name]?.recommendedWith ?? []).map(dep => (
+                                                        <span
+                                                            key={`rec-${dep}`}
+                                                            className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60"
+                                                            title={`Optional integration: ${dep}${SERVICE_DEPS[item.name]?.reason ? ' — ' + SERVICE_DEPS[item.name]?.reason : ''}`}
+                                                        >
+                                                            with {dep}
+                                                        </span>
+                                                    ))}
                                                 </div>
                                                 {item.description && (
                                                     <p className={`text-xs mt-0.5 ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-500 dark:text-gray-400'}`}>
