@@ -19,10 +19,11 @@ The default music path is **inside the file-share template's Samba volume**. If 
 
 ## Setup
 
-1. Deploy via ServiceBay
-2. Open `https://music.<your-domain>` (or `http://<server-ip>:4533`) — the **first user you register becomes the admin**, by Navidrome convention
-3. Drop music files into the Samba share's `Music/` folder (or whatever you set `NAVIDROME_MUSIC_PATH` to)
-4. Wait up to 1h for the first scan, or hit "Scan now" in Navidrome's settings
+1. Deploy via ServiceBay — the wizard auto-creates the admin user via Navidrome's `/auth/createAdmin` endpoint
+2. Open `https://music.<your-domain>` (or `http://<server-ip>:4533`)
+3. Log in with the credentials shown in the install log (default user `admin`, auto-generated password)
+4. Drop music files into the Samba share's `Music/` folder (or whatever you set `NAVIDROME_MUSIC_PATH` to)
+5. Wait up to 1h for the first scan, or hit "Scan now" in Navidrome's settings
 
 ## Symfonium (Android) configuration
 

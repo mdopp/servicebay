@@ -214,6 +214,22 @@ function logAdguardCredentials(opts: { variables: StackVariable[]; onLog: (msg: 
   opts.onLog(`🔑 AdGuard admin (user: ${user}, password: ${password}) — open http://<server-ip>:${port}. Note now, only shown once.`);
 }
 
+function logAudiobookshelfCredentials(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): void {
+  const user = opts.variables.find(v => v.name === 'ABS_ADMIN_USER')?.value || 'root';
+  const password = opts.variables.find(v => v.name === 'ABS_ADMIN_PASSWORD')?.value;
+  const port = opts.variables.find(v => v.name === 'ABS_PORT')?.value || '13378';
+  if (!password) return;
+  opts.onLog(`🔑 Audiobookshelf admin (user: ${user}, password: ${password}) — open http://<server-ip>:${port}. Note now, only shown once.`);
+}
+
+function logNavidromeCredentials(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): void {
+  const user = opts.variables.find(v => v.name === 'NAVIDROME_ADMIN_USER')?.value || 'admin';
+  const password = opts.variables.find(v => v.name === 'NAVIDROME_ADMIN_PASSWORD')?.value;
+  const port = opts.variables.find(v => v.name === 'NAVIDROME_PORT')?.value || '4533';
+  if (!password) return;
+  opts.onLog(`🔑 Navidrome admin (user: ${user}, password: ${password}) — open http://<server-ip>:${port}. Subsonic clients (Symfonium etc.) use the same credentials.`);
+}
+
 /** Persist NPM admin credentials so subsequent proxy-host operations
  *  authenticate without prompting. */
 async function persistNpmCredentials(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): Promise<void> {
@@ -230,6 +246,90 @@ async function persistNpmCredentials(opts: { variables: StackVariable[]; onLog: 
   } catch {
     opts.onLog('⚠️ Could not persist NPM credentials — set them later in Settings → Integrations.');
   }
+}
+
+/** Poll until a media server's first-run init endpoint accepts our admin
+ *  payload. Retries every 5s for up to 5 minutes — enough for image pull
+ *  to finish on slow connections. */
+async function seedMediaServer(opts: {
+  service: 'audiobookshelf' | 'navidrome';
+  variables: StackVariable[];
+  userVar: string;
+  passwordVar: string;
+  portVar: string;
+  defaultUser: string;
+  defaultPort: string;
+  serviceLabel: string;
+  onLog: (msg: string) => void;
+}): Promise<void> {
+  const username = opts.variables.find(v => v.name === opts.userVar)?.value || opts.defaultUser;
+  const password = opts.variables.find(v => v.name === opts.passwordVar)?.value;
+  const port = opts.variables.find(v => v.name === opts.portVar)?.value || opts.defaultPort;
+  if (!password) return;
+
+  opts.onLog(`Waiting for ${opts.serviceLabel} to start...`);
+  const start = Date.now();
+  let lastBeat = 0;
+  while (Date.now() - start < 5 * 60_000) {
+    try {
+      const res = await fetch('/api/system/media/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service: opts.service,
+          host: 'localhost',
+          port: parseInt(port, 10),
+          username,
+          password,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        opts.onLog(`✅ ${opts.serviceLabel} root user '${username}' created.`);
+        return;
+      }
+      if (res.ok && data.alreadySetup) {
+        opts.onLog(`ℹ️ ${opts.serviceLabel} already initialized — keeping existing admin. Reset manually if the password doesn't match.`);
+        return;
+      }
+      // Other errors: keep retrying — service might still be cold-starting.
+    } catch { /* not reachable yet */ }
+    const elapsed = Date.now() - start;
+    if (elapsed - lastBeat >= 10_000) {
+      opts.onLog(`Still waiting for ${opts.serviceLabel} (${fmtElapsed(elapsed)} elapsed)...`);
+      lastBeat = elapsed;
+    }
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  opts.onLog(`⚠️ ${opts.serviceLabel} did not become reachable in 5 minutes. Open http://<server-ip>:${port} and create the admin user manually.`);
+}
+
+async function seedAudiobookshelf(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): Promise<void> {
+  return seedMediaServer({
+    service: 'audiobookshelf',
+    variables: opts.variables,
+    userVar: 'ABS_ADMIN_USER',
+    passwordVar: 'ABS_ADMIN_PASSWORD',
+    portVar: 'ABS_PORT',
+    defaultUser: 'root',
+    defaultPort: '13378',
+    serviceLabel: 'Audiobookshelf',
+    onLog: opts.onLog,
+  });
+}
+
+async function seedNavidrome(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): Promise<void> {
+  return seedMediaServer({
+    service: 'navidrome',
+    variables: opts.variables,
+    userVar: 'NAVIDROME_ADMIN_USER',
+    passwordVar: 'NAVIDROME_ADMIN_PASSWORD',
+    portVar: 'NAVIDROME_PORT',
+    defaultUser: 'admin',
+    defaultPort: '4533',
+    serviceLabel: 'Navidrome',
+    onLog: opts.onLog,
+  });
 }
 
 interface SeedLldapOpts {
@@ -300,15 +400,27 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   if (isSelected('adguard')) {
     logAdguardCredentials({ variables, onLog });
   }
+  if (isSelected('audiobookshelf')) {
+    logAudiobookshelfCredentials({ variables, onLog });
+  }
+  if (isSelected('navidrome')) {
+    logNavidromeCredentials({ variables, onLog });
+  }
   if (isSelected('nginx-web')) {
     await persistNpmCredentials({ variables, onLog });
   }
 
-  // Kick off LLDAP seed in the background; failures are logged via onLog
-  // inside seedLldap itself, so an unhandled rejection here is fine to
-  // swallow.
+  // Kick off all "wait + initialize" tasks in the background. Their logs
+  // interleave with the proxy step's, but the proxy result returns ASAP
+  // so the NPM credentials prompt (if needed) appears responsive.
   if (isSelected('lldap')) {
     void seedLldap({ variables, onLog }).catch(() => { /* logged inline */ });
+  }
+  if (isSelected('audiobookshelf')) {
+    void seedAudiobookshelf({ variables, onLog }).catch(() => { /* logged inline */ });
+  }
+  if (isSelected('navidrome')) {
+    void seedNavidrome({ variables, onLog }).catch(() => { /* logged inline */ });
   }
 
   return configureProxyRoutes({ variables, node, onLog });
