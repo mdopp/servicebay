@@ -16,25 +16,21 @@ spec:
   containers:
   - name: radicale
     image: docker.io/tomsquest/docker-radicale:latest
-    # The image's ENTRYPOINT is `["dumb-init", "--"]` and CMD is
-    # `["radicale"]`. K8s `args:` replaces CMD only. The original bug was
-    # passing `--config=…` directly as args, producing
-    #     dumb-init -- --config=/config/config
-    # → dumb-init ran `--config=…` as a program and exited.
+    # We DO NOT override command: or args:. Each previous attempt to do
+    # so broke differently:
+    #   PR #164  command:[dumb-init,--,radicale] → "dumb-init not found
+    #            in PATH" (K8s command: doesn't carry the image's PATH).
+    #   PR #178  args:[radicale,--config=…]      → "radicale: not found"
+    #            (entrypoint.sh's PATH excludes the user-pip install loc).
     #
-    # PR #164's fix used `command: ["dumb-init", "--", "radicale"]` to
-    # force the chain. That broke differently: when K8s `command:` is set,
-    # podman/crun doesn't propagate the image's PATH, so `dumb-init`
-    # wasn't found ("crun: executable file `dumb-init` not found in
-    # $PATH"). Image's ENTRYPOINT path resolution doesn't apply when
-    # we replace it from the manifest.
-    #
-    # The reliable fix: just restore the binary name as the first arg.
-    # ENTRYPOINT (`dumb-init --`) stays from the image, dumb-init resolves
-    # via the image's own PATH, then it execs `radicale` with our flags.
-    args:
-      - "radicale"
-      - "--config=/config/config"
+    # The image's full default chain is
+    #   dumb-init -- /usr/local/bin/entrypoint.sh radicale
+    # which Just Works because the image was built with the right PATH
+    # and the right user. Don't fight it. Pass the config path via env
+    # var instead — radicale reads RADICALE_CONFIG natively.
+    env:
+      - name: RADICALE_CONFIG
+        value: /config/config
     ports:
       - containerPort: {{RADICALE_PORT}}
     volumeMounts:

@@ -20,16 +20,21 @@ spec:
   # 1. Syncthing — Bidirectional folder sync (Android & Windows apps)
   - name: syncthing
     image: docker.io/syncthing/syncthing:latest
-    # Run as container UID 0 so rootless podman's user-namespace maps the
-    # process to the host user that owns the hostPath bind dir. Setting
-    # runAsUser: 1000 here was the bug — in rootless mode that maps to a
-    # sub-UID (~100999), not host uid 1000, so the syncthing process
-    # couldn't `chmod /var/syncthing/config` or write `cert.pem` and
-    # crashed in a restart loop. There's no security regression; rootless
-    # "root" is already the unprivileged host user.
+    # Earlier attempts (runAsUser:0 + io.podman.annotations.label/syncthing
+    # = disable) didn't actually let syncthing chmod its config dir on
+    # FCoS. Either the annotation isn't honoured by this podman version,
+    # or the deeper issue is the bind-mount label rather than the
+    # process's SELinux context. Skip the puzzle and grant privileged:
+    # the UID-namespace + SELinux + cap-drop combo all step out of the
+    # way at once. This pod's containers (syncthing + samba) are both
+    # standard, unprivileged-on-the-host services; on a single-tenant
+    # homelab the operator already trusts the workload completely. The
+    # rootless-podman boundary still applies — privileged here means
+    # "no extra capability *deductions*", not "host root".
     securityContext:
       runAsUser: 0
       runAsGroup: 0
+      privileged: true
     env:
       - name: STGUIADDRESS
         value: "0.0.0.0:8384"

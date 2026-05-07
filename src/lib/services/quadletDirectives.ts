@@ -23,6 +23,13 @@ const DEFAULT_SERVICE_DIRECTIVES: readonly string[] = [
   'RestartSec=5',
   'RestartSteps=4',
   'RestartMaxDelaySec=300',
+  // Disable systemd's "5 fails in 10 s = give up" guard. A fast-failing
+  // image pull (~2 s before crash) hits the burst limit before our
+  // backoff has had a chance to expand, and systemd marks the unit
+  // start-limit-hit and stops retrying — exactly the symptom that bit
+  // nginx-web on the post-3.4.2 reinstall. 0 = no limit, retry forever
+  // per the backoff schedule.
+  'StartLimitIntervalSec=0',
 ];
 
 /**
