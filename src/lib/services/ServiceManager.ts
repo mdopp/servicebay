@@ -533,11 +533,19 @@ export class ServiceManager {
             throw new Error(`Port collision on node "${nodeName}": ${detail}. Change the host port and retry.`);
         }
 
-        // Ensure TimeoutStartSec for multi-image pods so image pulls don't cause systemd timeout
+        // Inject the default systemd directives (TimeoutStartSec for slow
+        // image pulls + Restart=on-failure with exponential backoff) into
+        // every .kube unit, single-image or multi-image. The previous
+        // multi-image-only gate was a leftover from when only the
+        // TimeoutStartSec was injected; it caused single-image services
+        // (radicale, filebrowser, nginx-web, …) to land *without* any
+        // restart directives, so a transient image-pull failure or any
+        // crash put the unit permanently in `failed` state with no auto-
+        // recovery. injectServiceDirectives is idempotent per-directive,
+        // so re-deploys never duplicate keys.
+        kubeContent = injectServiceDirectives(kubeContent);
+
         const images = this.extractImages(yamlContent);
-        if (images.length > 1 && !kubeContent.includes('TimeoutStartSec')) {
-            kubeContent = injectServiceDirectives(kubeContent);
-        }
 
         await this.writeFile(nodeName, yamlName, yamlContent);
         await this.writeFile(nodeName, `${name}.kube`, kubeContent);
