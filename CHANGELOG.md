@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.4.0...servicebay-v3.4.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* **installer:** wait 90s for NPM to seed admin user before declaring failure ([#177](https://github.com/mdopp/servicebay/issues/177)) ([310c00d](https://github.com/mdopp/servicebay/commit/310c00ddc20fa577b8d56bffea9694ef7f2465e1))
+
 ## [3.4.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.3.0...servicebay-v3.4.0) (2026-05-07)
 
 
