@@ -1,4 +1,9 @@
 {
+  "TZ": {
+    "type": "text",
+    "description": "Timezone (used by HA, Z-Wave JS and Matter Server for log/scheduling timestamps)",
+    "default": "Europe/Berlin"
+  },
   "ZWAVE_SECRET": {
     "type": "secret",
     "description": "Random string for Z-Wave JS session security (auto-generated)"

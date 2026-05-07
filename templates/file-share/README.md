@@ -12,8 +12,10 @@ Both containers share a single data volume (`/mnt/data`), so files added through
 | Variable | Description | Default |
 |---|---|---|
 | `DATA_DIR` | Base directory for persistent data (global) | `/mnt/data` |
-| `SHARE_USER` | Username for Samba access | `user` |
-| `SHARE_PASSWORD` | Password for Samba access | — |
+| `SHARE_USER` | Username for Samba access | `samba` |
+| `SHARE_PASSWORD` | Password for Samba access | — (auto-generated, shown in install log) |
+
+> ℹ️ Samba auth is local-only — no LDAP/Authelia integration. The single `SHARE_USER` is the credentials Windows/macOS prompts for when mounting the share. Syncthing devices pair via cryptographic device IDs and don't use LDAP either.
 
 ## Ports
 

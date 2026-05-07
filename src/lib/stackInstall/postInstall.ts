@@ -222,6 +222,13 @@ function logAudiobookshelfCredentials(opts: { variables: StackVariable[]; onLog:
   opts.onLog(`🔑 Audiobookshelf admin (user: ${user}, password: ${password}) — open http://<server-ip>:${port}. Note now, only shown once.`);
 }
 
+function logFileShareCredentials(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): void {
+  const user = opts.variables.find(v => v.name === 'SHARE_USER')?.value || 'samba';
+  const password = opts.variables.find(v => v.name === 'SHARE_PASSWORD')?.value;
+  if (!password) return;
+  opts.onLog(`🔑 Samba share (user: ${user}, password: ${password}) — mount via \\\\<server-ip>\\data on Windows or smb://<server-ip>/data on macOS. Note now, only shown once.`);
+}
+
 function logNavidromeCredentials(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): void {
   const user = opts.variables.find(v => v.name === 'NAVIDROME_ADMIN_USER')?.value || 'admin';
   const password = opts.variables.find(v => v.name === 'NAVIDROME_ADMIN_PASSWORD')?.value;
@@ -405,6 +412,9 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   }
   if (isSelected('navidrome')) {
     logNavidromeCredentials({ variables, onLog });
+  }
+  if (isSelected('file-share')) {
+    logFileShareCredentials({ variables, onLog });
   }
   if (isSelected('nginx-web')) {
     await persistNpmCredentials({ variables, onLog });
