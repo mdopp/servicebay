@@ -929,6 +929,7 @@ DNS_SERVERS=${DNS_SERVERS}
 SERVICEBAY_PORT=${SERVICEBAY_PORT}
 SERVICEBAY_CHANNEL=${SERVICEBAY_CHANNEL}
 SERVICEBAY_ADMIN_USER=${SERVICEBAY_ADMIN_USER}
+PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-}
 GW_HOST=${GW_HOST}
 GW_USER=${GW_USER}
 ENABLE_REGISTRIES=${ENABLE_REGISTRIES}
@@ -995,6 +996,7 @@ if $USE_SAVED; then
   SERVICEBAY_PORT="$(load_setting SERVICEBAY_PORT)"
   SERVICEBAY_CHANNEL="$(load_setting SERVICEBAY_CHANNEL)"
   SERVICEBAY_ADMIN_USER="$(load_setting SERVICEBAY_ADMIN_USER)"
+  PUBLIC_DOMAIN="$(load_setting PUBLIC_DOMAIN)"
   GW_HOST="$(load_setting GW_HOST)"
   GW_USER="$(load_setting GW_USER)"
   ENABLE_REGISTRIES="$(load_setting ENABLE_REGISTRIES)"
@@ -1246,7 +1248,8 @@ SERVICEBAY_CONFIG='{
 
 # Add reverseProxy.publicDomain if user supplied one — wizard reads this
 # as the default for PUBLIC_DOMAIN so they don't have to type it again.
-if [[ -n "$PUBLIC_DOMAIN" ]]; then
+# Default-empty in case an older saved-settings file pre-dates this field.
+if [[ -n "${PUBLIC_DOMAIN:-}" ]]; then
   SERVICEBAY_CONFIG+=',
   "reverseProxy": {
     "publicDomain": '"$(json_str "$PUBLIC_DOMAIN")"'
@@ -1478,13 +1481,19 @@ echo ""
 
 # --- Write to USB ---
 
-# Find removable USB drives
+# Find removable USB drives. Read size from sysfs (world-readable) rather
+# than `blockdev`, which needs read on the raw device — denied to regular
+# users not in the `disk` group, so the loop would silently report 0 and
+# drop genuine USB sticks.
 mapfile -t USB_DEVS < <(
   for dev in /sys/block/sd*; do
     [[ -e "$dev/removable" ]] || continue
     [[ "$(cat "$dev/removable" 2>/dev/null)" == "1" ]] || continue
     name=$(basename "$dev")
-    size_bytes=$(blockdev --getsize64 "/dev/$name" 2>/dev/null || echo 0)
+    sectors=$(cat "$dev/size" 2>/dev/null || echo 0)
+    # /sys/block/*/size is always in 512-byte units regardless of physical
+    # block size — see Documentation/ABI/stable/sysfs-block.
+    size_bytes=$(( sectors * 512 ))
     (( size_bytes > 0 )) || continue
     size_gib=$(( size_bytes / 1073741824 ))
     model=$(cat "$dev/device/model" 2>/dev/null | xargs || echo "Unknown")
