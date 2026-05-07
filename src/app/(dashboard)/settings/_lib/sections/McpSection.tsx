@@ -1,8 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Check, Copy, ShieldAlert } from 'lucide-react';
+import { Bot, Check, Copy, ShieldAlert, History, RefreshCw } from 'lucide-react';
 import PluginHelp from '@/components/PluginHelp';
+
+interface AuditEntry {
+  ts: string;
+  tool: string;
+  outcome: 'ok' | 'error' | 'blocked';
+  durationMs: number;
+  args?: Record<string, unknown>;
+  errorMessage?: string;
+}
 
 export default function McpSection() {
   const [mcpUrl, setMcpUrl] = useState('');
@@ -11,6 +20,18 @@ export default function McpSection() {
   const [allowDangerousExec, setAllowDangerousExec] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
+
+  const loadAudit = () => {
+    setAuditLoading(true);
+    fetch('/api/system/mcp-audit?limit=50')
+      .then(r => r.ok ? r.json() : { entries: [] })
+      .then(data => setAudit(data.entries ?? []))
+      .catch(() => setAudit([]))
+      .finally(() => setAuditLoading(false));
+  };
 
   useEffect(() => {
     // Read window.location after mount to avoid SSR/hydration mismatch.
@@ -164,6 +185,74 @@ export default function McpSection() {
         <p className="text-[11px] text-gray-400 dark:text-gray-500 italic">
           When mutations are enabled, every destructive call (delete/update/exec/restore) takes a labelled system-config snapshot first. Find them in <span className="font-mono">Settings → Backups</span> with a <span className="font-mono">pre-mutation</span> timestamp.
         </p>
+      </div>
+
+      {/* Recent MCP activity. Toggleable so the section stays compact for
+          operators who don't care about the audit feed. Lazy-loads on
+          open so a heavy log doesn't slow down the rest of Settings. */}
+      <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+        <button
+          type="button"
+          onClick={() => {
+            const next = !auditOpen;
+            setAuditOpen(next);
+            if (next && audit === null) loadAudit();
+          }}
+          className="w-full flex items-center justify-between text-sm font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400"
+        >
+          <span className="flex items-center gap-2">
+            <History size={14} />
+            Recent MCP activity
+            {audit && (
+              <span className="text-xs font-normal text-gray-500">({audit.length} entr{audit.length === 1 ? 'y' : 'ies'})</span>
+            )}
+          </span>
+          <span className="text-xs text-gray-400">{auditOpen ? '▾' : '▸'}</span>
+        </button>
+        {auditOpen && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+              <span>Newest first. Older entries roll over after 5 MB; full log persists in <span className="font-mono">DATA_DIR/mcp-audit.log</span>.</span>
+              <button
+                type="button"
+                onClick={loadAudit}
+                disabled={auditLoading}
+                className="flex items-center gap-1 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+              >
+                <RefreshCw size={12} className={auditLoading ? 'animate-spin' : ''} />
+                {auditLoading ? 'Loading…' : 'Refresh'}
+              </button>
+            </div>
+            {audit && audit.length === 0 && (
+              <p className="text-xs text-gray-500 italic">No MCP activity recorded yet.</p>
+            )}
+            {audit && audit.length > 0 && (
+              <ul className="space-y-1.5 max-h-64 overflow-y-auto">
+                {audit.map((e, i) => {
+                  const outcomeStyle = e.outcome === 'ok'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : e.outcome === 'blocked'
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-red-600 dark:text-red-400';
+                  const outcomeIcon = e.outcome === 'ok' ? '✓' : e.outcome === 'blocked' ? '⛔' : '✗';
+                  return (
+                    <li key={`${e.ts}-${i}`} className="text-xs border-l-2 border-gray-200 dark:border-gray-700 pl-2 py-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`font-mono ${outcomeStyle}`}>{outcomeIcon}</span>
+                        <span className="font-mono text-gray-900 dark:text-gray-100">{e.tool}</span>
+                        <span className="text-gray-400">{e.durationMs}ms</span>
+                        <span className="text-gray-400 ml-auto">{new Date(e.ts).toLocaleTimeString()}</span>
+                      </div>
+                      {e.errorMessage && (
+                        <div className={`pl-4 mt-0.5 ${outcomeStyle} opacity-80 break-words`}>{e.errorMessage}</div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
