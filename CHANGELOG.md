@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.11.0...servicebay-v3.0.0) (2026-05-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ui:** API routes, MCP tool names, and Socket.IO events renamed from monitoring → health. Safe because there are no live installations yet.
+
+### Features
+
+* **ui:** add error/loading/not-found boundaries ([#151](https://github.com/mdopp/servicebay/issues/151)) ([8b47090](https://github.com/mdopp/servicebay/commit/8b47090012a091ee501241989c0e0e65b69b42f8))
+* **ui:** UX pass + rename Monitoring → Health across all surfaces ([#153](https://github.com/mdopp/servicebay/issues/153)) ([c9f2f63](https://github.com/mdopp/servicebay/commit/c9f2f63a3d23c9b4395364cab065b247dab0ddae))
+
+
+### Bug Fixes
+
+* **security:** central route param validation, shell-quote agent fs, sanitize API errors ([#152](https://github.com/mdopp/servicebay/issues/152)) ([3a4c74e](https://github.com/mdopp/servicebay/commit/3a4c74ee40db2167e8e69aeb36a60662236a9c37))
+* **security:** persist rate-limit, equalize login timing, drop vulnerable deps ([#149](https://github.com/mdopp/servicebay/issues/149)) ([491a956](https://github.com/mdopp/servicebay/commit/491a9568cd06ee0960aa891a2b1a8fec0a332e3a))
+
 ## [2.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.10.0...servicebay-v2.11.0) (2026-05-07)
 
 
