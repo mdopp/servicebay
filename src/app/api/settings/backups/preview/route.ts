@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { getBackupFileMeta, previewSystemBackup } from '@/lib/systemBackup';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,7 +44,6 @@ export async function POST(request: Request) {
       source: { type: 'stored', fileName: entry.fileName }
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to preview backup';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:settings:backups:preview', status: 500 });
   }
 }

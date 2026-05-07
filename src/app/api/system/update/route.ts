@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { checkForUpdates, performUpdate } from '@/lib/updater';
 import { getConfig, saveConfig } from '@/lib/config';
+import { apiError } from '@/lib/api/errors';
+import { logger } from '@/lib/logger';
 
 export async function GET() {
   try {
@@ -8,9 +10,7 @@ export async function GET() {
     const config = await getConfig();
     return NextResponse.json({ ...status, config });
   } catch (e) {
-    console.error('[API] /update error:', e);
-    const message = e instanceof Error ? e.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(e, { tag: 'api:system:update:get', status: 500 });
   }
 }
 
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Version required' }, { status: 400 });
       }
       // This will restart the server, so the response might not reach the client
-      performUpdate(body.version).catch(console.error);
+      performUpdate(body.version).catch((err) => logger.error('api:system:update', 'performUpdate failed', err));
       return NextResponse.json({ success: true, message: 'Update started. Service will restart.' });
     }
     
@@ -49,7 +49,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(e, { tag: 'api:system:update:post', status: 500 });
   }
 }

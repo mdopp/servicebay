@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export async function GET() {
 
         return NextResponse.json({ installed: false, active: false });
     } catch (error) {
-        console.error('Failed to check nginx status:', error);
+        logger.error('api:nginx:status', 'Failed to check nginx status', error);
         return NextResponse.json({ installed: false, error: String(error) });
     }
 }

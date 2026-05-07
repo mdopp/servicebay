@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,8 +73,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ raids });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:storage:get', status: 500 });
   }
 }
 
@@ -180,7 +180,6 @@ UNIT`
       persistent: true,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:storage:post', status: 500 });
   }
 }

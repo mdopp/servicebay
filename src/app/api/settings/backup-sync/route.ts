@@ -3,6 +3,7 @@ import { getConfig, updateConfig } from '@/lib/config';
 import { runBackup, getBackupHistory, isBackupRunning, testBackupTarget, scheduleBackup } from '@/lib/backup/service';
 import type { BackupConfig, BackupTarget } from '@/lib/backup/types';
 import { MonitoringStore } from '@/lib/monitoring/store';
+import { apiError } from '@/lib/api/errors';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -39,8 +40,7 @@ export async function GET() {
             running: isBackupRunning(),
         });
     } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to load backup config';
-        return NextResponse.json({ error: message }, { status: 500 });
+        return apiError(error, { tag: 'api:settings:backup-sync:get', status: 500 });
     }
 }
 
@@ -91,7 +91,6 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
         }
     } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to process backup action';
-        return NextResponse.json({ error: message }, { status: 500 });
+        return apiError(error, { tag: 'api:settings:backup-sync:post', status: 500 });
     }
 }

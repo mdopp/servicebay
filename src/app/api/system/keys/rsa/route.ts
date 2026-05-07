@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,6 @@ export async function GET() {
     });
     return NextResponse.json({ pem: privateKey });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'key generation failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:keys:rsa', status: 500 });
   }
 }

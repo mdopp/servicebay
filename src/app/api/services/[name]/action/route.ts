@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
+import { ServiceName } from '@/lib/api/schemas';
+import { parseRouteParam } from '@/lib/api/validate';
+import { apiError } from '@/lib/api/errors';
 
 const VALID_ACTIONS = ['start', 'stop', 'restart', 'update'];
 
@@ -7,8 +10,9 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  const { name: rawName } = await params;
-  const name = decodeURIComponent(rawName);
+  const parsed = await parseRouteParam(params, 'name', ServiceName);
+  if (!parsed.ok) return parsed.response;
+  const name = parsed.value;
   const { action } = await request.json();
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node') || 'Local';
@@ -38,7 +42,6 @@ export async function POST(
     }
     return NextResponse.json(result);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e, { tag: 'api:services:action', status: 500 });
   }
 }

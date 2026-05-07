@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +20,6 @@ export async function POST(request: Request) {
     const hash = await bcrypt.hash(password, 10);
     return NextResponse.json({ hash });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'hash failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:keys:bcrypt', status: 500 });
   }
 }

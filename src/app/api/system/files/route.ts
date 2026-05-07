@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getExecutor } from '@/lib/executor';
 import { listNodes } from '@/lib/nodes';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ content });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Failed to read file content:', error);
+    logger.error('api:system:files', 'Failed to read file content', error);
     return NextResponse.json({ error: `Failed to read file: ${message}` }, { status: 500 });
   }
 }

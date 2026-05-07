@@ -1,6 +1,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
+import { ContainerId } from '@/lib/api/schemas';
+import { parseRouteParam } from '@/lib/api/validate';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,7 +11,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const parsed = await parseRouteParam(params, 'id', ContainerId);
+  if (!parsed.ok) return parsed.response;
+  const id = parsed.value;
   const searchParams = request.nextUrl.searchParams;
   const nodeName = searchParams.get('node') || 'Local';
 
@@ -34,7 +39,6 @@ export async function GET(
     return NextResponse.json({ error: 'Container not found or inspect failed', details: response }, { status: 404 });
 
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(error, { tag: 'api:containers:inspect', status: 500 });
   }
 }

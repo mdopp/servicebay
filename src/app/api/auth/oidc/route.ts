@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getConfig } from '@/lib/config';
 import { getOidcCallbackUrl } from '@/lib/config';
+import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
 export async function GET() {
@@ -38,7 +39,7 @@ export async function GET() {
 
     return response;
   } catch (error) {
-    console.error('OIDC redirect error:', error);
+    logger.error('api:auth:oidc', 'OIDC redirect error', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

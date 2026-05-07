@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig, getOidcCallbackUrl } from '@/lib/config';
 import { login } from '@/lib/auth';
+import { logger } from '@/lib/logger';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
 export async function GET(request: NextRequest) {
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
     const error = searchParams.get('error');
 
     if (error) {
-      console.error('OIDC error:', error, searchParams.get('error_description'));
+      logger.error('api:auth:oidc:callback', 'OIDC error', error, searchParams.get('error_description'));
       return NextResponse.redirect(new URL('/login?error=oidc_denied', request.url));
     }
 
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!tokenResponse.ok) {
-      console.error('OIDC token exchange failed:', await tokenResponse.text());
+      logger.error('api:auth:oidc:callback', 'OIDC token exchange failed', await tokenResponse.text());
       return NextResponse.redirect(new URL('/login?error=oidc_token', request.url));
     }
 
@@ -81,7 +82,7 @@ export async function GET(request: NextRequest) {
     response.cookies.delete('oidc_state');
     return response;
   } catch (error) {
-    console.error('OIDC callback error:', error);
+    logger.error('api:auth:oidc:callback', 'OIDC callback error', error);
     return NextResponse.redirect(new URL('/login?error=oidc_error', request.url));
   }
 }

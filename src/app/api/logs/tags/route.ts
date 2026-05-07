@@ -11,7 +11,7 @@ export async function GET() {
             tags
         });
     } catch (err) {
-        console.error('Failed to list tags:', err);
+        logger.error('api:logs:tags', 'Failed to list tags', err);
         return NextResponse.json({ success: false, tags: [] }, { status: 500 });
     }
 }

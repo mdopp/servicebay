@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getExecutor } from '@/lib/executor';
 import { findNginxConfDir } from '@/lib/nginx/confDir';
 import { extractNginxConfFromBackup } from '@/lib/nginx/backupExtract';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: Request) {
     try {
@@ -77,7 +78,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json({ success: true, imported, node: nodeName });
     } catch (error) {
-        console.error('Failed to import nginx config:', error);
+        logger.error('api:nginx:import', 'Failed to import nginx config', error);
         return NextResponse.json({ error: 'Failed to import nginx config' }, { status: 500 });
     }
 }

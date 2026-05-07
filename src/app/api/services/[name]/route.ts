@@ -3,6 +3,8 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { MonitoringStore } from '@/lib/monitoring/store';
 import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
+import { ServiceName } from '@/lib/api/schemas';
+import { apiError } from '@/lib/api/errors';
 import crypto from 'crypto';
 
 const parseIpTargets = (input: unknown, fallback: string[] = []) => {
@@ -18,13 +20,33 @@ function getNodeName(request: Request): string {
     return searchParams.get('node') || 'Local';
 }
 
+// Decode + validate the [name] segment. External links can use a UUID or a
+// human-readable label; managed services flow into shell commands so they
+// must satisfy ServiceName. We accept any non-empty string here and let the
+// caller decide how strict to be (link lookup vs. shell-bound action).
+async function decodeName(params: Promise<{ name: string }>): Promise<string | null> {
+  const resolved = await params;
+  const raw = resolved?.name ?? '';
+  try { return decodeURIComponent(raw); } catch { return null; }
+}
+
+function ensureServiceName(name: string): { ok: true; value: string } | { ok: false; response: NextResponse } {
+  const check = ServiceName.safeParse(name);
+  if (!check.success) {
+    return { ok: false, response: NextResponse.json({ error: 'invalid name' }, { status: 400 }) };
+  }
+  return { ok: true, value: check.data };
+}
+
 export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
   try {
-    const { name: rawName } = await params;
-    const name = decodeURIComponent(rawName);
+    const decoded = await decodeName(params);
+    if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
+    const guard = ensureServiceName(decoded);
+    if (!guard.ok) return guard.response;
     const nodeName = getNodeName(request);
 
-    const files = await ServiceManager.getServiceFiles(nodeName, name);
+    const files = await ServiceManager.getServiceFiles(nodeName, guard.value);
     return NextResponse.json(files);
   } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -32,14 +54,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ name: string }> }) {
-  const { name: rawName } = await params;
-  const name = decodeURIComponent(rawName);
+  const decoded = await decodeName(params);
+  if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
   const nodeName = getNodeName(request);
 
-  // Check if it's a link
+  // External-link branch: name may be a UUID or label, no shell interpolation. Match before strict validation.
   const config = await getConfig();
   if (config.externalLinks) {
-    const linkIndex = config.externalLinks.findIndex(l => l.name === name || l.id === name);
+    const linkIndex = config.externalLinks.findIndex(l => l.name === decoded || l.id === decoded);
     if (linkIndex !== -1) {
         const link = config.externalLinks[linkIndex];
         config.externalLinks.splice(linkIndex, 1);
@@ -56,13 +78,17 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
     }
   }
 
-  await ServiceManager.deleteService(nodeName, name);
+  // Managed service deletion: shell-bound, must satisfy ServiceName.
+  const guard = ensureServiceName(decoded);
+  if (!guard.ok) return guard.response;
+  await ServiceManager.deleteService(nodeName, guard.value);
   return NextResponse.json({ success: true });
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ name: string }> }) {
-  const { name: rawName } = await params;
-  const name = decodeURIComponent(rawName);
+  const decoded = await decodeName(params);
+  if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
+  const name = decoded;
   const body = await request.json();
   const nodeName = getNodeName(request);
 
@@ -169,14 +195,18 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
     }
   }
 
+  // Beyond this point we touch shell-bound managed services.
+  const guard = ensureServiceName(name);
+  if (!guard.ok) return guard.response;
+  const safeName = guard.value;
+
   // Handle Description Update for Managed Service
   if (body.description !== undefined && !body.kubeContent) {
       try {
-          await ServiceManager.updateServiceDescription(nodeName, name, body.description);
+          await ServiceManager.updateServiceDescription(nodeName, safeName, body.description);
           return NextResponse.json({ success: true });
       } catch (e) {
-          const message = e instanceof Error ? e.message : 'Unknown error';
-          return NextResponse.json({ error: message }, { status: 500 });
+          return apiError(e, { tag: 'api:services:update', status: 500 });
       }
   }
 
@@ -186,6 +216,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
       return NextResponse.json({ error: 'kubeContent and yamlContent are required' }, { status: 400 });
   }
 
-  await ServiceManager.saveService(nodeName, name, kubeContent, yamlContent, yamlFileName);
+  await ServiceManager.saveService(nodeName, safeName, kubeContent, yamlContent, yamlFileName);
   return NextResponse.json({ success: true });
 }

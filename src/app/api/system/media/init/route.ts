@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,8 +42,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ error: `unknown service: ${service}` }, { status: 400 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'init failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:media:init', status: 500 });
   }
 }
 

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { requireSession } from '@/lib/api/requireSession';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,7 +75,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, action: 'created', username });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'init failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:filebrowser:init', status: 500 });
   }
 }

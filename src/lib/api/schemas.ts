@@ -41,3 +41,6 @@ export const BackupFileName = z.string()
   .refine(s => !s.startsWith('.'), 'leading dot not allowed')
   .refine(s => !s.includes('..'), 'parent traversal not allowed');
 
+// Generic UUID (v1–v5). MonitoringStore uses crypto.randomUUID().
+export const UuidString = z.string().uuid();
+

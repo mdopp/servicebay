@@ -5,6 +5,7 @@ import { getConfig } from '@/lib/config';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { logger } from '@/lib/logger';
 import { requireSession } from '@/lib/api/requireSession';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,7 +104,6 @@ export async function POST(request: NextRequest) {
       protected: Array.from(PROTECTED),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'reset failed';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:stacks:reset', status: 500 });
   }
 }

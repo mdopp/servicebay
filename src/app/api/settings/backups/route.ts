@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSystemBackup, deleteSystemBackup, listSystemBackups } from '@/lib/systemBackup';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,8 +10,7 @@ export async function GET() {
     const payload = backups.map(({ fileName, createdAt, size }) => ({ fileName, createdAt, size }));
     return NextResponse.json(payload);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to list backups';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:settings:backups:list', status: 500 });
   }
 }
 
@@ -56,7 +56,6 @@ export async function DELETE(request: Request) {
     await deleteSystemBackup(fileName);
     return NextResponse.json({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to delete backup';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:settings:backups:delete', status: 500 });
   }
 }

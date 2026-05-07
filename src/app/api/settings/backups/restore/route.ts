@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
 import { getBackupFileMeta, restoreSystemBackup, restoreSystemBackupSelection, type BackupRestoreSelection } from '@/lib/systemBackup';
+import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,7 +45,6 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ success: true, restored: payload });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to restore backup';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:settings:backups:restore', status: 500 });
   }
 }

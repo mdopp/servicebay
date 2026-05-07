@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllSystemServices } from '@/lib/manager';
 import { listNodes } from '@/lib/nodes';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
     const services = await getAllSystemServices(connection);
     return NextResponse.json(services);
   } catch (error) {
-    console.error('Failed to fetch system services:', error);
+    logger.error('api:system:services', 'Failed to fetch system services', error);
     return NextResponse.json({ error: 'Failed to fetch system services' }, { status: 500 });
   }
 }

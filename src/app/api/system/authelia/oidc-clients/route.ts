@@ -3,6 +3,7 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getTemplateVariables } from '@/lib/registry';
 import { requireSession } from '@/lib/api/requireSession';
+import { apiError } from '@/lib/api/errors';
 import crypto from 'crypto';
 import yaml from 'js-yaml';
 
@@ -214,8 +215,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ added, skipped });
   } catch (error) {
-    console.error('Failed to register OIDC clients:', error);
-    const message = error instanceof Error ? error.message : 'Failed to register OIDC clients';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, { tag: 'api:system:authelia:oidc-clients', status: 500 });
   }
 }

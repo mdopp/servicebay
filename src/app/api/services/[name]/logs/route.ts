@@ -2,18 +2,23 @@ import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getPodmanPs } from '@/lib/manager';
 import { listNodes } from '@/lib/nodes';
+import { ServiceName } from '@/lib/api/schemas';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  const { name: rawName } = await params;
-  const name = decodeURIComponent(rawName);
+  const resolved = await params;
+  const rawName = resolved?.name ?? '';
+  let decoded = '';
+  try { decoded = decodeURIComponent(rawName); } catch {
+    return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
+  }
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node') || 'Local';
 
-  // Special handling for Internet Gateway (FritzBox)
-  if (name === 'gateway' || name === 'Internet Gateway') {
+  // Gateway special-case: this branch never interpolates `name` into a shell command.
+  if (decoded === 'gateway' || decoded === 'Internet Gateway') {
       try {
           const { getConfig } = await import('@/lib/config');
           const { FritzBoxClient } = await import('@/lib/fritzbox/client');
@@ -43,7 +48,12 @@ export async function GET(
       }
   }
 
-  // getPodmanPs still needs a connection object for now (stays in manager.ts)
+  const check = ServiceName.safeParse(decoded);
+  if (!check.success) {
+    return NextResponse.json({ error: 'invalid name' }, { status: 400 });
+  }
+  const name = check.data;
+
   const nodes = await listNodes();
   const connection = nodes.find(n => n.Name === nodeName);
 

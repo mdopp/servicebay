@@ -52,7 +52,7 @@ WantedBy=default.target
 
         return NextResponse.json({ success: true, node: targetNode?.Name });
     } catch (error) {
-        console.error('Failed to install nginx container:', error);
+        logger.error('api:nginx:install', 'Failed to install nginx container', error);
         return NextResponse.json({ error: 'Failed to install nginx container' }, { status: 500 });
     }
 }

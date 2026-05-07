@@ -53,3 +53,11 @@ __pycache__/
 
 # windows/WSL
 *:Zone.Identifier
+
+# local scratch / never commit
+/temp-js/
+/temp/
+/scratch/
+/.claude/
+secret.key
+*.local.json

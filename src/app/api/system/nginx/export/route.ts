@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getExecutor } from '@/lib/executor';
 import { findNginxConfDir } from '@/lib/nginx/confDir';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,7 +60,7 @@ export async function GET(request: Request) {
 
         return NextResponse.json({ files: fileContents, node: nodeName, confDir });
     } catch (error) {
-        console.error('Failed to export nginx config:', error);
+        logger.error('api:nginx:export', 'Failed to export nginx config', error);
         return NextResponse.json({ error: 'Failed to export nginx config' }, { status: 500 });
     }
 }
