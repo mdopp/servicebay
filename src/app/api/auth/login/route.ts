@@ -3,6 +3,7 @@ import { login } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { hashPassword, isPasswordHash, verifyPassword } from '@/lib/auth/password';
 import { checkRateLimit, recordFailure, clearAttempts, clientKeyFromHeaders } from '@/lib/auth/rateLimit';
+import { isRequestSecure } from '@/lib/auth/requestSecurity';
 import { logger } from '@/lib/logger';
 
 // Pre-hashed sentinel used when the supplied username does not match. Verifying
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
 
     clearAttempts(clientKey);
     clearAttempts(uKey);
-    await login(username);
+    await login(username, isRequestSecure(request));
     return NextResponse.json({ success: true });
   } catch (error) {
     logger.error('auth:login', 'login crash', error instanceof Error ? error.message : String(error));

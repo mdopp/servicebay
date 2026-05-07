@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig, getOidcCallbackUrl } from '@/lib/config';
 import { login } from '@/lib/auth';
+import { isRequestSecure } from '@/lib/auth/requestSecurity';
 import { logger } from '@/lib/logger';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
@@ -75,7 +76,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Create session using existing login function
-    await login(username);
+    await login(username, isRequestSecure(request));
 
     // Clear the state cookie and redirect to services
     const response = NextResponse.redirect(new URL('/services', request.url));

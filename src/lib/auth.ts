@@ -11,7 +11,7 @@ export {
   readSessionCookie,
 } from './auth/session';
 
-export async function login(username: string) {
+export async function login(username: string, secure: boolean) {
   const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
   const session = await encryptSession({ user: username, expires });
 
@@ -20,8 +20,10 @@ export async function login(username: string) {
     expires,
     httpOnly: true,
     sameSite: 'lax',
-    // Require HTTPS in production. Dev runs over plain HTTP on localhost.
-    secure: process.env.NODE_ENV === 'production',
+    // `secure` is decided per-request by the caller via isRequestSecure().
+    // Setting it unconditionally in production breaks plain-HTTP LAN installs:
+    // browsers refuse to store Secure cookies that arrive over HTTP.
+    secure,
     path: '/',
   });
 }
