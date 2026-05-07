@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Template, VariableMeta } from '@/lib/registry';
 import { runPostInstall } from '@/lib/stackInstall/postInstall';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
+import { buildCredentialsManifest, buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
 import { fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
@@ -699,14 +700,55 @@ WantedBy=default.target`;
                             )}
                         </div>
 
-                        {step === 'done' && variables.some(v => v.meta?.type === 'subdomain' && v.value) && (() => {
+                        {step === 'done' && (() => {
                             const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
                             const subdomains = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
-                            if (!domain || subdomains.length === 0) return null;
+                            const hasProxyRoutes = !!domain && subdomains.length > 0;
+                            const selected = items.filter(i => i.checked);
+                            const host = typeof window !== 'undefined' ? window.location.hostname : '<server-ip>';
+                            const manifest = buildCredentialsManifest({ selected, variables, host });
+                            if (!hasProxyRoutes && manifest.length === 0) return null;
+                            const downloadCsv = () => {
+                                const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });
+                                const a = document.createElement('a');
+                                a.href = URL.createObjectURL(blob);
+                                a.download = `servicebay-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
+                                a.click();
+                                URL.revokeObjectURL(a.href);
+                            };
                             return (
                                 <div className="space-y-3">
                                     <p className="text-sm font-bold text-gray-700 dark:text-gray-300">Next steps</p>
 
+                                    {manifest.length > 0 && (
+                                        <div className="p-3 bg-rose-50 dark:bg-rose-900/20 rounded border border-rose-200 dark:border-rose-800 text-sm">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <p className="font-medium text-rose-800 dark:text-rose-200">🔑 Credentials — save now</p>
+                                                <button
+                                                    type="button"
+                                                    onClick={downloadCsv}
+                                                    className="text-xs px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded"
+                                                    title="Download as Bitwarden / Vaultwarden CSV"
+                                                >
+                                                    ⬇ Download CSV
+                                                </button>
+                                            </div>
+                                            <p className="text-xs text-rose-700 dark:text-rose-300 mb-2">
+                                                Won&apos;t be shown again. Copy now, or use the CSV: Vaultwarden → Tools → Import → Bitwarden (csv).
+                                            </p>
+                                            <div className="space-y-1.5 font-mono text-xs">
+                                                {manifest.filter(c => c.importance === 'critical').map(c => (
+                                                    <div key={c.service} className="border-l-2 border-rose-300 dark:border-rose-700 pl-2">
+                                                        <div className="font-sans font-medium text-rose-900 dark:text-rose-100">{c.service}</div>
+                                                        <div className="text-rose-700 dark:text-rose-300 break-all">{c.url}</div>
+                                                        <div className="text-rose-600 dark:text-rose-400">{c.username} / {c.password}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {hasProxyRoutes && (
                                     <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-2">
                                         <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
                                         <p className="text-blue-700 dark:text-blue-300">
@@ -718,20 +760,25 @@ WantedBy=default.target`;
                                             ))}
                                         </div>
                                     </div>
+                                    )}
 
+                                    {hasProxyRoutes && (
                                     <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-2">
                                         <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
                                         <p className="text-amber-700 dark:text-amber-300">
                                             Open Nginx Proxy Manager and add Let&apos;s Encrypt SSL certificates for each proxy host.
                                         </p>
                                     </div>
+                                    )}
 
+                                    {hasProxyRoutes && (
                                     <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-2">
                                         <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (optional)</p>
                                         <p className="text-gray-600 dark:text-gray-400">
                                             Add IP-based access lists in NPM for admin-only services (Nginx Admin, AdGuard).
                                         </p>
                                     </div>
+                                    )}
                                 </div>
                             );
                         })()}

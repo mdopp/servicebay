@@ -21,6 +21,7 @@ import {
   configureProxyRoutes as sharedConfigureProxyRoutes,
 } from '@/lib/stackInstall/postInstall';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
+import { buildCredentialsManifest, buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
 import Mustache from 'mustache';
 
 import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive } from 'lucide-react';
@@ -1319,9 +1320,60 @@ export default function OnboardingWizard() {
                                 const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
                                 const subdomains = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
                                 const hasProxyRoutes = domain && subdomains.length > 0;
+                                const selected = stackItems.filter(i => i.checked && !i.alreadyInstalled);
+                                const host = typeof window !== 'undefined' ? window.location.hostname : '<server-ip>';
+                                const manifest = buildCredentialsManifest({ selected, variables: stackVariables, host });
+                                const downloadCsv = () => {
+                                    const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });
+                                    const a = document.createElement('a');
+                                    a.href = URL.createObjectURL(blob);
+                                    a.download = `servicebay-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
+                                    a.click();
+                                    URL.revokeObjectURL(a.href);
+                                };
                                 return (
-                                    <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
-                                        {hasProxyRoutes ? (
+                                    <div className="mt-3 space-y-3 max-h-[60vh] overflow-y-auto">
+                                        {manifest.length > 0 && (
+                                            <div className="p-3 bg-rose-50 dark:bg-rose-900/20 rounded border border-rose-200 dark:border-rose-800 text-sm">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <p className="font-medium text-rose-800 dark:text-rose-200">🔑 Credentials — save now</p>
+                                                    <button
+                                                        type="button"
+                                                        onClick={downloadCsv}
+                                                        className="text-xs px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded"
+                                                        title="Download as Bitwarden / Vaultwarden CSV"
+                                                    >
+                                                        ⬇ Download CSV
+                                                    </button>
+                                                </div>
+                                                <p className="text-xs text-rose-700 dark:text-rose-300 mb-2">
+                                                    Won&apos;t be shown again. Either copy them into your password manager now or use the CSV button: Vaultwarden → Tools → Import → Bitwarden (csv).
+                                                </p>
+                                                <div className="space-y-1.5 font-mono text-xs">
+                                                    {manifest.filter(c => c.importance === 'critical').map(c => (
+                                                        <div key={c.service} className="border-l-2 border-rose-300 dark:border-rose-700 pl-2">
+                                                            <div className="font-sans font-medium text-rose-900 dark:text-rose-100">{c.service}</div>
+                                                            <div className="text-rose-700 dark:text-rose-300 break-all">{c.url}</div>
+                                                            <div className="text-rose-600 dark:text-rose-400">{c.username} / {c.password}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                {manifest.some(c => c.importance === 'system') && (
+                                                    <details className="mt-2 text-xs">
+                                                        <summary className="cursor-pointer text-rose-700 dark:text-rose-300">System / DR secrets ({manifest.filter(c => c.importance === 'system').length})</summary>
+                                                        <div className="mt-1 space-y-1 font-mono">
+                                                            {manifest.filter(c => c.importance === 'system').map(c => (
+                                                                <div key={c.service} className="text-rose-600 dark:text-rose-400 pl-2">
+                                                                    <span className="font-sans">{c.service}:</span> {c.password}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </details>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {hasProxyRoutes && (
                                             <>
                                                 <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-1.5">
                                                     <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
@@ -1349,7 +1401,9 @@ export default function OnboardingWizard() {
                                                     </p>
                                                 </div>
                                             </>
-                                        ) : (
+                                        )}
+
+                                        {!hasProxyRoutes && manifest.length === 0 && (
                                             <p className="text-sm text-green-600 dark:text-green-400 font-medium">
                                                 Stack installation complete.
                                             </p>
