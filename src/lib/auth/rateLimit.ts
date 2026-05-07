@@ -1,33 +1,110 @@
-// In-memory sliding-window login rate limiter, keyed by client IP.
-// Single-process custom server → no shared store needed. Resets on success.
+// Sliding-window login rate limiter, persisted to SQLite so failed attempts
+// survive process restarts (the agent updater restarts the server nightly,
+// which would otherwise zero a brute-forcer's progress).
+//
+// Storage is opt-in: in environments where SQLite cannot be initialized
+// (e.g. unit tests with no writable DATA_DIR) the limiter falls back to a
+// process-local Map so its behavior is unchanged from the v1 implementation.
+
+import path from 'path';
+import { DATA_DIR } from '../dirs';
 
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 5;
 
-interface Bucket {
-  failures: number[]; // unix-ms timestamps of recent failed attempts
+interface BucketRow { ts: number }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Stmt = { all: (...args: any[]) => unknown[]; run: (...args: any[]) => unknown };
+interface DBLike {
+  prepare: (sql: string) => Stmt;
+  exec: (sql: string) => void;
+  pragma: (sql: string) => unknown;
 }
 
-const buckets = new Map<string, Bucket>();
+let db: DBLike | null = null;
+const memoryFallback = new Map<string, number[]>();
 
-function pruneOlderThan(b: Bucket, cutoff: number) {
-  if (b.failures.length === 0) return;
-  let i = 0;
-  while (i < b.failures.length && b.failures[i] < cutoff) i++;
-  if (i > 0) b.failures.splice(0, i);
+function tryOpenDb(): DBLike | null {
+  if (db) return db;
+  if (typeof window !== 'undefined') return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs');
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require('better-sqlite3');
+    const inst = new Database(path.join(DATA_DIR, 'auth.db')) as DBLike;
+    inst.pragma('journal_mode = WAL');
+    inst.exec(`
+      CREATE TABLE IF NOT EXISTS rate_limit_attempts (
+        key TEXT NOT NULL,
+        ts  INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_rl_key ON rate_limit_attempts(key);
+      CREATE INDEX IF NOT EXISTS idx_rl_ts  ON rate_limit_attempts(ts);
+    `);
+    db = inst;
+    return db;
+  } catch {
+    return null;
+  }
+}
+
+function getFailuresFromStore(key: string, cutoff: number): number[] {
+  const inst = tryOpenDb();
+  if (!inst) {
+    const arr = memoryFallback.get(key) ?? [];
+    return arr.filter(t => t >= cutoff);
+  }
+  const rows = inst
+    .prepare('SELECT ts FROM rate_limit_attempts WHERE key = ? AND ts >= ? ORDER BY ts ASC')
+    .all(key, cutoff) as BucketRow[];
+  return rows.map(r => r.ts);
+}
+
+function addFailureToStore(key: string, ts: number) {
+  const inst = tryOpenDb();
+  if (!inst) {
+    const arr = memoryFallback.get(key) ?? [];
+    arr.push(ts);
+    memoryFallback.set(key, arr);
+    return;
+  }
+  inst.prepare('INSERT INTO rate_limit_attempts (key, ts) VALUES (?, ?)').run(key, ts);
+}
+
+function clearStoreKey(key: string) {
+  const inst = tryOpenDb();
+  if (!inst) {
+    memoryFallback.delete(key);
+    return;
+  }
+  inst.prepare('DELETE FROM rate_limit_attempts WHERE key = ?').run(key);
+}
+
+function pruneOldStore(cutoff: number) {
+  const inst = tryOpenDb();
+  if (!inst) {
+    for (const [k, arr] of memoryFallback) {
+      const kept = arr.filter(t => t >= cutoff);
+      if (kept.length === 0) memoryFallback.delete(k);
+      else memoryFallback.set(k, kept);
+    }
+    return;
+  }
+  inst.prepare('DELETE FROM rate_limit_attempts WHERE ts < ?').run(cutoff);
 }
 
 export interface RateLimitDecision {
   allowed: boolean;
-  /** Seconds until the next attempt is allowed (only set when blocked). */
   retryAfterSec?: number;
-  /** Failures recorded in the current window — useful for logging. */
   recentFailures: number;
 }
 
 /**
- * Check whether a login attempt from `key` is currently allowed.
- * Does NOT mutate state — call recordFailure / clear after handling the attempt.
+ * Check whether an attempt from `key` is currently allowed.
+ * Does NOT mutate state — call recordFailure / clearAttempts after handling.
  */
 export function checkRateLimit(
   key: string,
@@ -35,37 +112,35 @@ export function checkRateLimit(
   windowMs: number = WINDOW_MS,
   maxFailures: number = MAX_FAILURES,
 ): RateLimitDecision {
-  const b = buckets.get(key);
-  if (!b) return { allowed: true, recentFailures: 0 };
-  pruneOlderThan(b, now - windowMs);
-  if (b.failures.length >= maxFailures) {
-    const oldest = b.failures[0];
+  const cutoff = now - windowMs;
+  // Opportunistic prune: cheap when the table is small.
+  pruneOldStore(cutoff);
+  const failures = getFailuresFromStore(key, cutoff);
+  if (failures.length >= maxFailures) {
+    const oldest = failures[0];
     const retryAfterMs = (oldest + windowMs) - now;
     return {
       allowed: false,
       retryAfterSec: Math.max(1, Math.ceil(retryAfterMs / 1000)),
-      recentFailures: b.failures.length,
+      recentFailures: failures.length,
     };
   }
-  return { allowed: true, recentFailures: b.failures.length };
+  return { allowed: true, recentFailures: failures.length };
 }
 
 export function recordFailure(key: string, now: number = Date.now()) {
-  let b = buckets.get(key);
-  if (!b) {
-    b = { failures: [] };
-    buckets.set(key, b);
-  }
-  b.failures.push(now);
+  addFailureToStore(key, now);
 }
 
 export function clearAttempts(key: string) {
-  buckets.delete(key);
+  clearStoreKey(key);
 }
 
 /** Test-only: nuke all state. */
 export function _resetForTests() {
-  buckets.clear();
+  memoryFallback.clear();
+  const inst = tryOpenDb();
+  if (inst) inst.exec('DELETE FROM rate_limit_attempts');
 }
 
 /**
