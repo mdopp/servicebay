@@ -1,8 +1,77 @@
 # ServiceBay
 
-> **Web-First Container Management for Podman Quadlet**
+> **A private cloud for your family. With an AI that runs it.**
 
-ServiceBay is a web interface for managing containerized applications using Podman and Quadlet (systemd integration). It provides a visual dashboard, network topology, one-click deployments, real-time monitoring, and multi-node management over SSH.
+ServiceBay turns a USB stick + a spare PC into a self-hosted personal cloud — twelve services pre-wired with single sign-on, automatic backups, and TLS — plus an MCP endpoint so Claude (or any LLM) can administer the box for you in plain English.
+
+Underneath it's a web-first management plane for Podman Quadlet on Fedora CoreOS. But the point isn't that. The point is: your photos, passwords, calendar, files, audiobooks, music, smart home, and ad-blocker all live on one machine you own, and you don't need to become a sysadmin to keep it running.
+
+## What you get out of the box
+
+| Replaces | With |
+|---|---|
+| Google Photos / iCloud | **Immich** — photo & video library with face recognition |
+| Audible | **Audiobookshelf** — audiobook server with phone & tablet apps |
+| Spotify | **Navidrome** — music server (Subsonic-compatible) |
+| Bitwarden cloud / 1Password | **Vaultwarden** — password manager |
+| Dropbox / Google Drive | **Syncthing** + **Filebrowser** + **Samba** |
+| Google Calendar / Contacts | **Radicale** (CalDAV / CardDAV) |
+| Pi-hole / NextDNS | **AdGuard Home** — network-wide ad blocking + custom DNS |
+| Home Assistant Cloud | **Home Assistant** + **Z-Wave-JS** + **Matter Server** + voice |
+| One login per service | **Authelia + LLDAP** — SSO across everything |
+| A wall of separate certs | **Nginx Proxy Manager** — TLS + Let's Encrypt per subdomain |
+| **A part-time sysadmin job** | **An LLM that uses MCP to keep the lights on** |
+
+## Why it's different
+
+### An LLM-native admin surface
+
+The control plane is exposed as ~37 MCP tools. Hand Claude (or Claude Desktop, or any MCP client) a scoped API token and you can administer the box in plain English:
+
+- *"Why is photos.dopp.cloud loading slow?"* → Claude pulls Immich logs, spots the OOM, restarts the container.
+- *"Add a Jellyfin instance for the kids."* → Claude lists templates, deploys it, creates the Authelia OIDC client, configures the proxy subdomain.
+- *"My mom should have access to Vaultwarden and Immich, nothing else."* → Claude creates the LLDAP user and assigns the right groups.
+- *"Anything broken?"* → Claude runs the self-test, summarizes the warnings, fixes the easy ones, asks before the risky ones.
+- *"Back everything up before I do something dumb."* → `run_backup`, then "go ahead."
+
+You describe what you want; the LLM translates it into ServiceBay calls. No more "what's a Quadlet file?"
+
+### A network map that shows what's actually happening
+
+ServiceBay maintains a real-time **Digital Twin** of every container, service, proxy route, port, and DNS rewrite on your network — and renders it as an interactive [topology graph](docs/screenshots/network-map.png). At a glance:
+
+- Every service, color-coded by live health.
+- Every NPM proxy route drawn as an edge to its actual target.
+- Every published port, every verified public domain.
+- Internet → router → host → container chain shown end-to-end.
+- Dangling routes (a `proxy_pass` that points at nothing managed) surfaced as ghost nodes so you find them before your users do.
+
+Click any node → live logs, restart, view-config, or jump to the matching service page. When something breaks and you don't know which piece is at fault — DNS? proxy? service? container? — the map shows you exactly where the chain falls apart.
+
+### A catalog you can extend
+
+The twelve stacks that ship are just YAML + Mustache templates in a Git repo. Want to run something we don't ship?
+
+1. Write a `template.yml` (Kubernetes Pod manifest) and `variables.json` (operator-tunable inputs).
+2. Push them to a GitHub repo.
+3. Add the repo as a registry under **Settings → Integrations → Template Registries**.
+
+Your stack now shows up in the install wizard alongside the built-ins, with the same SSO + DNS + reverse-proxy + auto-backup wiring. No code changes to ServiceBay required.
+
+Or skip the manual step entirely: *"Claude, write a template for Paperless-ngx based on the Vaultwarden one and deploy it."* The LLM has full read access to the existing templates as references and can submit the new one through the same MCP path.
+
+### Safety rails so the AI can't trash your data
+
+Letting an LLM into your homelab is irresponsible without guardrails. ServiceBay has:
+
+- **Scoped API tokens** — `read` / `lifecycle` / `mutate` / `destroy`. Per-client, revocable, hashed-at-rest.
+- **`exec_command` denylist** — `rm -rf /`, `mkfs`, `dd of=/dev/sd*`, partition editors, fork bombs — refused unless explicitly enabled.
+- **Auto-snapshot before destructive ops** — every `delete_service` / `update_config` / `exec_command` triggers a labelled `pre-mutation:` system backup. One-click rewind.
+- **Soft-delete trash** — `delete_service` moves files to a 7-day trash bucket; restore in one click.
+- **Audit log** — every tool call recorded with timestamp, caller, args (sensitive fields redacted), outcome.
+- **Email on destructive ops** — if a token is exfiltrated, you find out in minutes.
+
+Combined: any stolen token has a bounded blast radius; everything is reversible; you'll always know what happened.
 
 ## Screenshots
 
@@ -18,21 +87,22 @@ ServiceBay runs on **Fedora CoreOS** as an immutable, self-updating appliance. S
 ./install-fedora-coreos.sh
 ```
 
-The installer creates a bootable USB that provisions the entire system: OS, networking, ServiceBay container, SSH keys, and an admin account.
+The installer creates a bootable USB that provisions the entire system: OS, networking, ServiceBay container, SSH keys, and an admin account. First boot drops you into a wizard that deploys the stacks you select, sets up SSO, configures DNS + proxy routes, and hands you the credentials manifest as a Bitwarden-importable CSV.
 
-## Features
+## Technical features
 
-- **Service Dashboard** — manage Quadlet services in `~/.config/containers/systemd/` with real-time status
-- **Network Visualization** — interactive topology diagram of services, containers, and proxy routes
-- **Health Checks** — HTTP/TCP checks with history graphs and email alerts
-- **Template Registry** — deploy Nginx, Redis, Home Assistant, Immich, etc. from GitHub-hosted templates
-- **YAML Editor** — create/edit services with validation and hot-reload
+- **Service Dashboard** — manage Quadlet services in `~/.config/containers/systemd/` with real-time status, three-state health indicator (healthy / transitioning / failed)
+- **Network Visualization** — interactive topology of services, containers, proxy routes, ports, and DNS rewrites; click any node for actions
+- **Health Checks** — HTTP / ping / podman / systemd / agent checks with history graphs and email alerts; per-service checks auto-created on stack deploy
+- **Template Registries** — deploy from one or more GitHub-hosted catalogs; built-ins are just templates themselves
+- **YAML Editor** — Monaco-powered create/edit with validation, version history, and hot-reload
 - **Web Terminal** — SSH into any managed node from the browser
 - **Multi-Node** — manage containers across machines via SSH from a single UI
-- **System Backups** — snapshot all configs across nodes, restore in seconds
-- **Auto-Updates** — keep ServiceBay and containers current automatically (on by default for new installs)
+- **System Backups** — snapshot all configs across nodes (auto-snapshot before destructive ops); restore in seconds
+- **Auto-Updates** — keep ServiceBay and containers current automatically; email notification on each new release
+- **Self-Diagnose** — built-in probe battery (containers stable / health-check coverage / dangling proxy routes / disk / failed units / first-boot units); auto-runs at end of install
 - **Mobile-Responsive** — full UI with dedicated mobile navigation
-- **MCP Server** — programmatic API with 37 tools so an LLM (Claude, OpenAI, etc.) can drive ServiceBay directly: list/start/stop/restart services, edit Quadlet YAML, manage proxy routes, run backups, change settings
+- **MCP Server** — 37+ MCP tools, scoped tokens, audit log, soft-delete, auto-snapshot, exec denylist, destructive-op email alerts
 
 ## Architecture
 
