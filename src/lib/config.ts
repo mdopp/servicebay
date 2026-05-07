@@ -106,6 +106,12 @@ export interface AppConfig {
     enabled: boolean;
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight
     channel: 'stable' | 'test' | 'dev';
+    /**
+     * Last version we emailed the operator about. Used to dedupe so the
+     * update notifier sends one email per release, not one per check tick.
+     * Written by the in-process notifier; read on every check.
+     */
+    lastNotifiedVersion?: string;
   };
   registries?: RegistriesSettings;
   externalLinks?: ExternalLink[];

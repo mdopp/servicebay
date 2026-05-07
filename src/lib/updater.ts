@@ -3,6 +3,9 @@ import path from 'path';
 import semver from 'semver';
 import { Server } from 'socket.io';
 import { getExecutor } from '@/lib/executor';
+import { getConfig, updateConfig } from '@/lib/config';
+import { sendEmailAlert } from '@/lib/email';
+import { logger } from '@/lib/logger';
 
 declare global {
    
@@ -88,6 +91,70 @@ export async function checkForUpdates() {
       notes: latest.body
     }
   };
+}
+
+/**
+ * Check for an update and email the operator if a new version is available.
+ * Deduped via `autoUpdate.lastNotifiedVersion` in config so we send one mail
+ * per release, not one per tick. No-op when email isn't configured/enabled
+ * (sendEmailAlert handles that — we just skip the work).
+ */
+async function notifyOnUpdate(): Promise<void> {
+  try {
+    const config = await getConfig();
+    if (!config.notifications?.email?.enabled) return;
+
+    const status = await checkForUpdates();
+    if (!status.hasUpdate || !status.latest) return;
+
+    const latestVersion = status.latest.version;
+    if (config.autoUpdate.lastNotifiedVersion === latestVersion) return;
+
+    const subject = `ServiceBay update available: ${latestVersion}`;
+    const message = [
+      `A new ServiceBay release is available.`,
+      ``,
+      `  Current: ${status.current}`,
+      `  Latest:  ${latestVersion}`,
+      `  Released: ${status.latest.date}`,
+      `  Details: ${status.latest.url}`,
+      ``,
+      `Release notes:`,
+      status.latest.notes || '(no notes provided)',
+      ``,
+      config.autoUpdate.enabled
+        ? `Auto-update is ON — your appliance will install this on its next scheduled run.`
+        : `Auto-update is OFF — install from Settings → System → Check for Updates when you're ready.`,
+    ].join('\n');
+
+    await sendEmailAlert(subject, message);
+
+    // Persist after the send so a transient SMTP failure doesn't suppress the
+    // next attempt. Worst case: a duplicate email if we crash between send
+    // and persist — preferable to dropping the notification entirely.
+    await updateConfig({
+      autoUpdate: { ...config.autoUpdate, lastNotifiedVersion: latestVersion },
+    });
+
+    logger.info('Updater', `Notified operator about new release ${latestVersion}`);
+  } catch (e) {
+    logger.warn('Updater', `notifyOnUpdate failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+const NOTIFY_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+const NOTIFY_INITIAL_DELAY_MS = 60 * 1000; // 1 min after boot — let everything settle first
+let notifyTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Kick off the periodic update-availability email notifier. Safe to call
+ * multiple times — second call clears the existing timer first. Idempotent.
+ */
+export function scheduleUpdateNotifier(): void {
+  if (notifyTimer) clearInterval(notifyTimer);
+  setTimeout(() => { void notifyOnUpdate(); }, NOTIFY_INITIAL_DELAY_MS);
+  notifyTimer = setInterval(() => { void notifyOnUpdate(); }, NOTIFY_INTERVAL_MS);
+  logger.info('Updater', `Update-notification poll scheduled every ${NOTIFY_INTERVAL_MS / 3600000}h`);
 }
 
 export async function performUpdate(version: string) {

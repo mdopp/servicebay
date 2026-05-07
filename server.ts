@@ -17,7 +17,7 @@ import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';
 import { Server } from 'socket.io';
-import { setUpdaterIO } from './src/lib/updater';
+import { setUpdaterIO, scheduleUpdateNotifier } from './src/lib/updater';
 import crypto from 'crypto';
 // Monitoring init moved to Agent logic in V4
 import { HealthService } from './src/lib/health/service';
@@ -363,6 +363,10 @@ app.prepare().then(() => {
 
     // Schedule backup sync based on config
     scheduleBackup();
+
+    // Email the operator when a new ServiceBay release lands. No-op when
+    // email isn't configured. Deduped per-release via config.autoUpdate.
+    scheduleUpdateNotifier();
 
   // Periodic Agent Health Sync (every 30 seconds)
   setInterval(() => {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Clock, Download, Loader2, RefreshCw, XCircle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import type { AppUpdateStatus } from '../helpers';
@@ -239,7 +240,9 @@ export default function UpdatesSection() {
           {appUpdate.hasUpdate && appUpdate.latest && appUpdate.latest.notes && (
             <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
               <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-2">Release Notes</h4>
-              <p className="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{appUpdate.latest.notes}</p>
+              <div className="prose prose-sm dark:prose-invert max-w-none text-gray-600 dark:text-gray-300">
+                <ReactMarkdown>{appUpdate.latest.notes}</ReactMarkdown>
+              </div>
             </div>
           )}
         </div>
