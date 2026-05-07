@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.1.0...servicebay-v3.1.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* **installer:** bootstrap NPM admin credentials on first install ([#160](https://github.com/mdopp/servicebay/issues/160)) ([184b3ca](https://github.com/mdopp/servicebay/commit/184b3ca64b1afa89db835c9c7c7aca967ca267cb))
+
 ## [3.1.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.0.1...servicebay-v3.1.0) (2026-05-07)
 
 
