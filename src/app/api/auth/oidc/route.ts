@@ -25,10 +25,13 @@ export async function GET() {
     authUrl.searchParams.set('state', state);
 
     const response = NextResponse.redirect(authUrl.toString());
-    // Store state in a short-lived cookie for verification
+    // Store state in a short-lived cookie for verification.
+    // sameSite must stay 'lax' so the cookie survives the issuer's top-level
+    // GET redirect back to /api/auth/oidc/callback.
     response.cookies.set('oidc_state', state, {
       httpOnly: true,
       sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
       maxAge: 600, // 10 minutes
       path: '/',
     });

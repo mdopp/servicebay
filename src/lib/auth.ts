@@ -16,5 +16,12 @@ export async function login(username: string) {
   const session = await encryptSession({ user: username, expires });
 
   const cookieStore = await cookies();
-  cookieStore.set('session', session, { expires, httpOnly: true, sameSite: 'lax' });
+  cookieStore.set('session', session, {
+    expires,
+    httpOnly: true,
+    sameSite: 'lax',
+    // Require HTTPS in production. Dev runs over plain HTTP on localhost.
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+  });
 }
