@@ -293,21 +293,52 @@ function logNavidromeCredentials(opts: { variables: StackVariable[]; onLog: (msg
   opts.onLog(`🔑 Navidrome admin (user: ${user}, password: ${password}) — open http://<server-ip>:${port}. Subsonic clients (Symfonium etc.) use the same credentials.`);
 }
 
-/** Persist NPM admin credentials so subsequent proxy-host operations
- *  authenticate without prompting. */
-async function persistNpmCredentials(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): Promise<void> {
+/** Bootstrap a freshly-deployed NPM: log it in with built-in defaults
+ *  (admin@example.com / changeme), apply the wizard's chosen email + password
+ *  via NPM's REST API, then persist them on our side. NPM does not read env
+ *  vars for admin credentials — without this step it stays on defaults forever
+ *  and our subsequent proxy-host calls authenticate against credentials NPM
+ *  has never heard of, surfacing the dreaded "NPM Admin Login" prompt.
+ *
+ *  Idempotent: if NPM already accepts the target credentials, the endpoint
+ *  short-circuits to "already_using_target" and we just persist locally.
+ *  If NPM is locked to something else (stale data volume), we report the
+ *  problem so the caller can hand control to the user. */
+async function bootstrapNpmAdmin(opts: {
+  variables: StackVariable[];
+  node?: string;
+  onLog: (msg: string) => void;
+}): Promise<'ok' | 'needs_credentials' | 'skipped'> {
   const email = opts.variables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value;
   const password = opts.variables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value;
-  if (!email || !password) return;
+  const fullName = opts.variables.find(v => v.name === 'NGINX_ADMIN_NAME')?.value;
+  if (!email || !password) return 'skipped';
+
   try {
-    await fetch('/api/system/nginx/credentials', {
+    const res = await fetch('/api/system/nginx/bootstrap', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, fullName, node: opts.node }),
     });
-    opts.onLog('✅ Saved NPM admin credentials for auto-sync.');
-  } catch {
-    opts.onLog('⚠️ Could not persist NPM credentials — set them later in Settings → Integrations.');
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+
+    if (res.ok && data.ok && data.bootstrapped === true) {
+      opts.onLog(`✅ NPM admin set to ${email} (default credentials disabled).`);
+      return 'ok';
+    }
+    if (res.ok && data.ok && data.reason === 'already_using_target') {
+      opts.onLog('✅ NPM admin already on the wizard credentials — nothing to do.');
+      return 'ok';
+    }
+    if (res.ok && data.ok && data.reason === 'defaults_rejected') {
+      opts.onLog('⚠️ NPM is not on default credentials (stale data volume from a previous install?). You will need to enter the existing NPM admin password manually.');
+      return 'needs_credentials';
+    }
+    opts.onLog(`⚠️ NPM bootstrap failed: ${typeof data.error === 'string' ? data.error : `HTTP ${res.status}`}. You may need to set NPM credentials manually in Settings → Integrations.`);
+    return 'needs_credentials';
+  } catch (e) {
+    opts.onLog(`⚠️ Could not reach the NPM bootstrap endpoint: ${e instanceof Error ? e.message : String(e)}`);
+    return 'needs_credentials';
   }
 }
 
@@ -504,8 +535,18 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   // Surface OIDC client secrets (one log line per service that needs UI
   // configuration or has an env-flag to flip).
   logOidcClientSecrets({ selected, variables, onLog });
+  // NPM bootstrap is best-effort: if it fails we still want to run the rest
+  // of the post-install pipeline (LLDAP seeding, OIDC client creation, proxy
+  // routes) — the user can finish the NPM piece via the credentials prompt.
+  let npmBootstrap: 'ok' | 'needs_credentials' | 'skipped' = 'skipped';
   if (isSelected('nginx-web')) {
-    await persistNpmCredentials({ variables, onLog });
+    // NPM cold-starts the SQLite schema after the container is ready, so the
+    // very first /api/tokens call sometimes 502s. Wait until it's reachable
+    // before bootstrapping; configureProxyRoutes below would do the same wait
+    // anyway, just less informatively.
+    onLog('Waiting for Nginx Proxy Manager to start (image pull / DB schema init can take a while)...');
+    await waitForNpm(node, onLog);
+    npmBootstrap = await bootstrapNpmAdmin({ variables, node, onLog });
   }
 
   // Kick off all "wait + initialize" tasks in the background. Their logs
@@ -524,7 +565,15 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
     void seedFileBrowserAdmin({ variables, node, onLog }).catch(() => { /* logged inline */ });
   }
 
-  const proxyResult = await configureProxyRoutes({ variables, node, onLog });
+  // If we just bootstrapped NPM (or determined it's locked to other creds),
+  // we already waited for it to be reachable — skip the second wait inside
+  // configureProxyRoutes so the install log doesn't repeat the heartbeat.
+  const proxyResult = await configureProxyRoutes({
+    variables,
+    node,
+    onLog,
+    skipWait: npmBootstrap !== 'skipped',
+  });
 
   // Final banner — single block where every credential the user might
   // have to remember is collected. Same data is exposed to the wizard's

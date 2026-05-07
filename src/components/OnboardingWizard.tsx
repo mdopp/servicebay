@@ -1277,9 +1277,9 @@ export default function OnboardingWizard() {
                             </div>
                             {npmCredPrompt && (
                                 <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                                    <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">NPM Admin Login</p>
+                                    <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">NPM admin login required</p>
                                     <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">
-                                        The default NPM password was changed. Enter your NPM admin credentials to configure proxy routes.
+                                        We pre-filled the credentials this wizard generated, but Nginx Proxy Manager rejected them — usually because the data volume on this host carries an admin password from a previous install. Either click <span className="font-semibold">Authenticate &amp; Retry</span> with the values below, or paste the existing NPM admin password if you remember it. Skip to configure proxy routes manually later.
                                     </p>
                                     <div className="space-y-2">
                                         <input
