@@ -2,9 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { login } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { hashPassword, isPasswordHash, verifyPassword } from '@/lib/auth/password';
+import { checkRateLimit, recordFailure, clearAttempts, clientKeyFromHeaders } from '@/lib/auth/rateLimit';
 
 export async function POST(request: NextRequest) {
   try {
+    const clientKey = clientKeyFromHeaders(request.headers);
+    const decision = checkRateLimit(clientKey);
+    if (!decision.allowed) {
+      return NextResponse.json(
+        { error: 'Too many failed attempts. Try again later.' },
+        { status: 429, headers: { 'Retry-After': String(decision.retryAfterSec ?? 60) } },
+      );
+    }
+
     const body = await request.json();
     const { username, password } = body ?? {};
 
@@ -34,6 +44,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (username !== configUsername) {
+      recordFailure(clientKey);
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
@@ -51,9 +62,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (!ok) {
+      recordFailure(clientKey);
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
+    clearAttempts(clientKey);
     await login(username);
     return NextResponse.json({ success: true });
   } catch (error) {
