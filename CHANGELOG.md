@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.3.0...servicebay-v3.4.0) (2026-05-07)
+
+
+### Features
+
+* **security:** MCP audit log + Recent activity panel in settings ([#173](https://github.com/mdopp/servicebay/issues/173)) ([90b49e1](https://github.com/mdopp/servicebay/commit/90b49e1de8f135ddd2616fb7262e0eac64a216bc))
+* **security:** scoped API tokens for MCP — named, revocable, with explicit scopes ([#174](https://github.com/mdopp/servicebay/issues/174)) ([97e6939](https://github.com/mdopp/servicebay/commit/97e69395f8b8b8aaf9a91bbdc151c8b38ca96673))
+* **security:** soft-delete services to a trash bucket, restorable for 7 days ([#171](https://github.com/mdopp/servicebay/issues/171)) ([4ed3798](https://github.com/mdopp/servicebay/commit/4ed37983984c940ef42424866217fb836285df02))
+
 ## [3.3.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.2.0...servicebay-v3.3.0) (2026-05-07)
 
 
