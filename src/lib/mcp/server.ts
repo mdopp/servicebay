@@ -19,6 +19,7 @@ import {
   isBackupRunning,
 } from '@/lib/backup/service';
 import { restoreSystemBackup } from '@/lib/systemBackup';
+import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
 
 const nodeParam = z.string().optional().describe('Node name (defaults to first available node)');
 
@@ -37,11 +38,82 @@ function errorResult(msg: string) {
   return { content: [{ type: 'text' as const, text: msg }], isError: true as const };
 }
 
+/**
+ * Tools that mutate state. Calls are gated on `config.mcp.allowMutations`
+ * (true | absent ⇒ allowed; false ⇒ blocked).
+ */
+const MUTATING_TOOLS = new Set([
+  'start_service', 'stop_service', 'restart_service',
+  'deploy_service', 'delete_service', 'rename_service', 'update_service_yaml',
+  'add_proxy_route', 'remove_proxy_route',
+  'create_health_check', 'delete_health_check', 'run_check_now',
+  'run_backup', 'restore_backup',
+  'update_config', 'exec_command', 'refresh_agent',
+]);
+
+/**
+ * Subset of MUTATING_TOOLS that can lose data or change config in
+ * non-trivially-reversible ways. These trigger an automatic
+ * pre-mutation system snapshot so the operator always has a one-click
+ * rewind point.
+ */
+const DESTRUCTIVE_TOOLS = new Set([
+  'deploy_service', 'delete_service', 'rename_service', 'update_service_yaml',
+  'remove_proxy_route', 'restore_backup',
+  'update_config', 'exec_command',
+]);
+
+/**
+ * Wrap an MCP tool handler in the safety layer:
+ *   - read-only tools pass through unchanged.
+ *   - mutating tools first call `guardMutation` (blocks when
+ *     `config.mcp.allowMutations` is false).
+ *   - `exec_command` additionally goes through `guardExec` (refuses
+ *     dangerous shell patterns unless `allowDangerousExec` is set).
+ *   - destructive tools trigger a labelled `createSystemBackup` so the
+ *     operator always has a one-click rewind point.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ToolResult = any;
+function safeHandler(
+  toolName: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handler: (...handlerArgs: any[]) => Promise<ToolResult>,
+) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return async (...handlerArgs: any[]): Promise<ToolResult> => {
+    const args = (handlerArgs[0] && typeof handlerArgs[0] === 'object') ? handlerArgs[0] : {};
+    if (MUTATING_TOOLS.has(toolName)) {
+      const blocked = await guardMutation(toolName);
+      if (blocked) return blocked;
+    }
+    if (toolName === 'exec_command' && typeof args.command === 'string') {
+      const denied = await guardExec(args.command);
+      if (denied) return denied;
+    }
+    if (DESTRUCTIVE_TOOLS.has(toolName)) {
+      // Best-effort: don't block the mutation if the snapshot fails.
+      await snapshotBeforeMutation(toolName, args);
+    }
+    return handler(...handlerArgs);
+  };
+}
+
 export function createMcpServer() {
-  const server = new McpServer({
+  const baseServer = new McpServer({
     name: 'servicebay',
     version: '1.0.0',
   });
+  // Wrap every tool registration so the safety layer applies uniformly.
+  // Read-only tools pass through unchanged; mutating tools land in the
+  // gates defined above.
+  const server = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tool: (name: string, desc: string, schema: any, handler: (...args: any[]) => Promise<ToolResult>) =>
+      baseServer.tool(name, desc, schema, safeHandler(name, handler)),
+    connect: baseServer.connect.bind(baseServer),
+    close: baseServer.close.bind(baseServer),
+  };
 
   // --- List Nodes ---
   server.tool('list_nodes', 'List all registered nodes with connection status and resources', {}, async () => {

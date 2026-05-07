@@ -64,6 +64,31 @@ For Claude Desktop or `~/.claude.json` / `.mcp.json` direct edits:
 - **TLS:** if you reach this UI via `https://…`, use that URL. The cookie is
   marked `Secure` and won't travel over plain HTTP.
 
+## Safety toggles
+
+Two switches on this card control how much of ServiceBay an MCP client can
+touch. Fresh installs default to **read-only** — flip the switches only for
+trusted clients.
+
+- **Allow MCP clients to mutate state.** Off by default. When off, MCP can
+  read services / logs / health / config but cannot start/stop/restart,
+  deploy, delete, exec, or restore. Read-only mode covers the most common
+  use case (Claude advising you on what's running) without any risk.
+- **Allow dangerous `exec_command` patterns.** Off by default and can only
+  be flipped on after mutations are enabled. The denylist refuses
+  `rm -rf /`, `mkfs`, `dd of=/dev/sd*`, partition editors, redirects to
+  raw block devices, and a few other foot-guns. If your workflow genuinely
+  needs one of these through MCP, lift the switch (and reach for it
+  carefully).
+
+## Auto-snapshot before destructive ops
+
+When mutations are enabled, ServiceBay takes a labelled system-config
+snapshot **before** any destructive MCP call (`delete_service`,
+`update_service_yaml`, `update_config`, `restore_backup`, `exec_command`).
+You'll find the snapshots in **Settings → Backups** with a
+`pre-mutation:<tool>` timestamp; one click rewinds the change.
+
 ## What's documented in full
 
 The complete reference (env-var setup, dynamic refresh scripts, full tool

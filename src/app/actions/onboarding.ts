@@ -142,11 +142,30 @@ export async function skipOnboarding() {
     // If user wants to skip, we should mark it as "seen"
     const config = await getConfig();
     config.setupCompleted = true;
+    setSafeMcpDefaults(config);
     await saveConfig(config);
 }
 
 export async function completeStackSetup() {
     const config = await getConfig();
     delete config.stackSetupPending;
+    setSafeMcpDefaults(config);
     await saveConfig(config);
+}
+
+/**
+ * Lock down MCP for fresh installs: read-only by default, dangerous-exec
+ * patterns blocked. The operator opts into mutations from
+ * Settings → Integrations → MCP Server. Existing installs (where the
+ * field is already set) are left alone — only fields not yet present in
+ * the persisted config get the safe defaults.
+ */
+function setSafeMcpDefaults(config: { mcp?: { allowMutations?: boolean; allowDangerousExec?: boolean } }) {
+    if (!config.mcp) config.mcp = {};
+    if (config.mcp.allowMutations === undefined) {
+        config.mcp.allowMutations = false;
+    }
+    if (config.mcp.allowDangerousExec === undefined) {
+        config.mcp.allowDangerousExec = false;
+    }
 }
