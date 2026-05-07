@@ -1149,6 +1149,10 @@ else
   prompt_secret SERVICEBAY_ADMIN_PASSWORD "ServiceBay admin password"
   prompt_secret HOST_PASSWORD "Host user console password (will be hashed)"
 
+  # --- Public domain (used by Authelia, NPM, all OIDC clients) ---
+  echo ""
+  prompt PUBLIC_DOMAIN "Public domain (e.g. dopp.cloud) — leave empty to set later in the wizard" "$(prev PUBLIC_DOMAIN "")"
+
   # --- Gateway (FRITZ!Box) ---
 
   echo ""
@@ -1223,6 +1227,15 @@ SERVICEBAY_CONFIG='{
   "templateSettings": {
     "DATA_DIR": "'"$DATA_ROOT/stacks"'"
   }'
+
+# Add reverseProxy.publicDomain if user supplied one — wizard reads this
+# as the default for PUBLIC_DOMAIN so they don't have to type it again.
+if [[ -n "$PUBLIC_DOMAIN" ]]; then
+  SERVICEBAY_CONFIG+=',
+  "reverseProxy": {
+    "publicDomain": "'"$PUBLIC_DOMAIN"'"
+  }'
+fi
 
 # Add gateway config if provided
 if [[ -n "$GW_USER" ]]; then

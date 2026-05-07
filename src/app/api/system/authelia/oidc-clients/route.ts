@@ -54,13 +54,20 @@ export async function POST(request: NextRequest) {
           uri.startsWith('http') || uri.includes(':/') ? uri : `https://${fqdn}${uri}`
         );
 
+        // If the template references an env-var-pinned secret (`clientSecretVar`),
+        // use the wizard-provided value so the SAME secret is in both the
+        // service's env and Authelia's clients[]. Otherwise auto-generate.
+        const sharedSecret = oidc.clientSecretVar
+          ? body.variables[oidc.clientSecretVar]
+          : undefined;
+
         clients.push({
           client_id: oidc.client_id,
           client_name: oidc.client_name,
           authorization_policy: oidc.authorization_policy,
           redirect_uris: redirectUris,
           scopes: oidc.scopes,
-          client_secret: generateSecret(),
+          client_secret: sharedSecret || generateSecret(),
         });
       }
     }

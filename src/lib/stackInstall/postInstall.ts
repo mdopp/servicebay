@@ -229,6 +229,31 @@ function logFileShareCredentials(opts: { variables: StackVariable[]; onLog: (msg
   opts.onLog(`🔑 Samba share (user: ${user}, password: ${password}) — mount via \\\\<server-ip>\\data on Windows or smb://<server-ip>/data on macOS. Note now, only shown once.`);
 }
 
+/** Surface OIDC client secrets that the user has to paste into a service's
+ *  Settings UI (e.g. Audiobookshelf). Vaultwarden picks up its secret via
+ *  env so it doesn't need a paste — only a note about how to flip the
+ *  feature on. */
+function logOidcClientSecrets(opts: { selected: StackItem[]; variables: StackVariable[]; onLog: (msg: string) => void }): void {
+  const isSelected = (name: string) => opts.selected.some(i => i.name === name);
+  const domain = opts.variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+
+  if (isSelected('audiobookshelf')) {
+    const secret = opts.variables.find(v => v.name === 'ABS_OIDC_SECRET')?.value;
+    if (secret && domain) {
+      opts.onLog(`🔐 Audiobookshelf OIDC: issuer=https://auth.${domain}, client_id=audiobookshelf, client_secret=${secret} — paste into ABS Settings → Authentication → OIDC.`);
+    }
+  }
+
+  if (isSelected('vaultwarden')) {
+    const secret = opts.variables.find(v => v.name === 'VAULTWARDEN_SSO_SECRET')?.value;
+    const enabled = opts.variables.find(v => v.name === 'VAULTWARDEN_SSO_ENABLED')?.value;
+    if (secret) {
+      const status = enabled === 'true' ? 'SSO is ENABLED via env (test login then keep)' : 'SSO is OFF — flip VAULTWARDEN_SSO_ENABLED=true to enable';
+      opts.onLog(`🔐 Vaultwarden OIDC: client_secret=${secret} (${status}).`);
+    }
+  }
+}
+
 function logNavidromeCredentials(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): void {
   const user = opts.variables.find(v => v.name === 'NAVIDROME_ADMIN_USER')?.value || 'admin';
   const password = opts.variables.find(v => v.name === 'NAVIDROME_ADMIN_PASSWORD')?.value;
@@ -416,6 +441,9 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   if (isSelected('file-share')) {
     logFileShareCredentials({ variables, onLog });
   }
+  // Surface OIDC client secrets (one log line per service that needs UI
+  // configuration or has an env-flag to flip).
+  logOidcClientSecrets({ selected, variables, onLog });
   if (isSelected('nginx-web')) {
     await persistNpmCredentials({ variables, onLog });
   }

@@ -15,6 +15,21 @@
     "options": ["true", "false"],
     "default": "true"
   },
+  "VAULTWARDEN_SSO_ENABLED": {
+    "type": "select",
+    "description": "Enable Vaultwarden ↔ Authelia SSO. Off by default — Vaultwarden's SSO is still experimental upstream. Flip to true once you've tested local login.",
+    "options": ["true", "false"],
+    "default": "false"
+  },
+  "VAULTWARDEN_SSO_SECRET": {
+    "type": "secret",
+    "description": "OIDC client secret for Vaultwarden ↔ Authelia. Auto-generated; the wizard wires it into both the SSO_CLIENT_SECRET env and Authelia's clients[] entry."
+  },
+  "PUBLIC_DOMAIN": {
+    "type": "text",
+    "description": "Public domain (used to build the SSO authority URL https://auth.<domain>)",
+    "default": "dopp.cloud"
+  },
   "VAULTWARDEN_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for Vaultwarden",
@@ -30,8 +45,9 @@
       "client_id": "vaultwarden",
       "client_name": "Vaultwarden",
       "authorization_policy": "one_factor",
-      "redirect_uris": ["/identity/connect/authorize"],
-      "scopes": ["openid", "profile", "email", "groups"]
+      "redirect_uris": ["/identity/connect/oidc-signin"],
+      "scopes": ["openid", "profile", "email", "groups"],
+      "clientSecretVar": "VAULTWARDEN_SSO_SECRET"
     }
   }
 }
