@@ -45,6 +45,7 @@ function errorResult(msg: string) {
 const MUTATING_TOOLS = new Set([
   'start_service', 'stop_service', 'restart_service',
   'deploy_service', 'delete_service', 'rename_service', 'update_service_yaml',
+  'restore_trashed_service', 'purge_trashed_service',
   'add_proxy_route', 'remove_proxy_route',
   'create_health_check', 'delete_health_check', 'run_check_now',
   'run_backup', 'restore_backup',
@@ -56,9 +57,14 @@ const MUTATING_TOOLS = new Set([
  * non-trivially-reversible ways. These trigger an automatic
  * pre-mutation system snapshot so the operator always has a one-click
  * rewind point.
+ *
+ * Note: `delete_service` is now soft (moves to trash, recoverable for 7d
+ * via restore_trashed_service), so it doesn't need an extra snapshot.
+ * `purge_trashed_service`, by contrast, IS the irreversible step.
  */
 const DESTRUCTIVE_TOOLS = new Set([
-  'deploy_service', 'delete_service', 'rename_service', 'update_service_yaml',
+  'deploy_service', 'rename_service', 'update_service_yaml',
+  'purge_trashed_service',
   'remove_proxy_route', 'restore_backup',
   'update_config', 'exec_command',
 ]);
@@ -278,15 +284,51 @@ export function createMcpServer() {
     },
   );
 
-  // --- Delete Service ---
+  // --- Delete Service (soft) ---
   server.tool(
     'delete_service',
-    'Delete a service and its associated files',
+    'Soft-delete a service: stops the unit and moves its files to the trash bucket. Restorable via restore_trashed_service for 7 days; then auto-purged. Use purge_trashed_service to delete immediately.',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
       await ServiceManager.deleteService(nodeName, name);
-      return textResult(`Service "${name}" deleted successfully`);
+      return textResult(`Service "${name}" moved to trash. Use list_trashed_services / restore_trashed_service to recover.`);
+    },
+  );
+
+  // --- List Trashed Services ---
+  server.tool(
+    'list_trashed_services',
+    'List soft-deleted services available to restore. Each entry has an `id` you can pass to restore_trashed_service or purge_trashed_service.',
+    { node: nodeParam },
+    async ({ node }) => {
+      const nodeName = await resolveNode(node);
+      const items = await ServiceManager.listTrashedServices(nodeName);
+      return textResult(items);
+    },
+  );
+
+  // --- Restore From Trash ---
+  server.tool(
+    'restore_trashed_service',
+    'Restore a soft-deleted service from trash. Use list_trashed_services to find the id.',
+    { id: z.string().describe('Trash entry id'), node: nodeParam },
+    async ({ id, node }) => {
+      const nodeName = await resolveNode(node);
+      const result = await ServiceManager.restoreTrashedService(nodeName, id);
+      return textResult(`Service "${result.service}" restored from trash on ${nodeName}.`);
+    },
+  );
+
+  // --- Purge Trash (permanent delete) ---
+  server.tool(
+    'purge_trashed_service',
+    'Permanently delete a trash entry. Use list_trashed_services to find the id. Counts as a destructive op (snapshotted).',
+    { id: z.string().describe('Trash entry id'), node: nodeParam },
+    async ({ id, node }) => {
+      const nodeName = await resolveNode(node);
+      const result = await ServiceManager.purgeTrash(nodeName, { trashId: id });
+      return textResult(`Purged ${result.purged.length} trash entr${result.purged.length === 1 ? 'y' : 'ies'} on ${nodeName}.`);
     },
   );
 

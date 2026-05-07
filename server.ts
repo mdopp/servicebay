@@ -368,6 +368,30 @@ app.prepare().then(() => {
     // email isn't configured. Deduped per-release via config.autoUpdate.
     scheduleUpdateNotifier();
 
+    // Auto-purge soft-deleted services older than 7 days. Runs once at
+    // boot, then every 12 hours — the deletion latency target is "you have
+    // a week to undo", not "we delete on the dot".
+    const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+    const TRASH_PURGE_INTERVAL_MS = 12 * 60 * 60 * 1000;
+    const purgeTrashAcrossNodes = async () => {
+      try {
+        const { listNodes: lN } = await import('./src/lib/nodes');
+        const { ServiceManager: SM } = await import('./src/lib/services/ServiceManager');
+        const nodes = await lN();
+        for (const n of nodes) {
+          try {
+            await SM.purgeTrash(n.Name, { olderThanMs: TRASH_RETENTION_MS });
+          } catch (e) {
+            logger.warn('Server', `Trash purge failed for ${n.Name}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      } catch (e) {
+        logger.warn('Server', `Trash purge sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
+    setTimeout(() => { void purgeTrashAcrossNodes(); }, 60_000);
+    setInterval(() => { void purgeTrashAcrossNodes(); }, TRASH_PURGE_INTERVAL_MS);
+
   // Periodic Agent Health Sync (every 30 seconds)
   setInterval(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

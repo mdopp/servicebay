@@ -1006,6 +1006,18 @@ export class ServiceManager {
         this.backupQuadlets(nodeName);
     }
 
+    /**
+     * Soft-delete a service: stop the unit, then *move* its .kube and .yml
+     * files into ~/.config/containers/systemd/.trash/<ts>-<name>/ instead
+     * of deleting them. The operator (or an MCP client) can `restore_from_trash`
+     * to undo within 7 days; `purge_trash` actually removes them. Auto-purge
+     * older than 7 days runs on server startup.
+     *
+     * Why "move, don't rm": delete-by-mistake is the easiest way to lose
+     * service config, and the existing system-backup mechanism only takes
+     * snapshots periodically. A trash bucket gives an immediate one-step
+     * recovery without restoring from a backup tarball.
+     */
     static async deleteService(nodeName: string, serviceName: string) {
         const { yamlPath } = await this.getServiceFiles(nodeName, serviceName);
         const agent = await agentManager.ensureAgent(nodeName);
@@ -1015,16 +1027,37 @@ export class ServiceManager {
             await agent.sendCommand('exec', { command: `systemctl --user stop ${serviceName}.service` });
         } catch { /* ignore if already stopped */ }
 
-        // Remove kube file
+        // Move the files into the trash bucket. ISO-8601 with no colons in
+        // the name so it sorts by timestamp and survives shells that hate
+        // colons in paths.
+        const trashStamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const trashDir = `~/${SYSTEMD_DIR}/.trash/${trashStamp}-${serviceName}`;
+        await agent.sendCommand('exec', { command: `mkdir -p '${trashDir}'` });
+
+        // Move kube file
         await agent.sendCommand('exec', {
-            command: `rm -f ~/${SYSTEMD_DIR}/${serviceName}.kube`
+            command: `mv -f ~/${SYSTEMD_DIR}/${serviceName}.kube '${trashDir}/' 2>/dev/null || true`
         });
 
-        // Remove yaml file
+        // Move yaml file
         if (yamlPath) {
             const resolvedYaml = yamlPath.startsWith('/') ? yamlPath : `~/${yamlPath}`;
-            await agent.sendCommand('exec', { command: `rm -f ${resolvedYaml}` });
+            await agent.sendCommand('exec', {
+                command: `mv -f ${resolvedYaml} '${trashDir}/' 2>/dev/null || true`,
+            });
         }
+
+        // Stash a small manifest so restore knows the original yaml path
+        // even if it lived outside the systemd dir (legacy migrations did).
+        const manifest = JSON.stringify({
+            service: serviceName,
+            deletedAt: new Date().toISOString(),
+            originalYamlPath: yamlPath || null,
+            originalKubePath: `~/${SYSTEMD_DIR}/${serviceName}.kube`,
+        });
+        await agent.sendCommand('exec', {
+            command: `printf '%s' ${JSON.stringify(manifest)} > '${trashDir}/.manifest.json'`,
+        });
 
         await this.reloadDaemon(nodeName);
 
@@ -1035,6 +1068,132 @@ export class ServiceManager {
 
         await this.refreshAgent(nodeName);
         this.backupQuadlets(nodeName);
+
+        logger.info('ServiceManager', `Soft-deleted ${serviceName} on ${nodeName} → ${trashDir}`);
+    }
+
+    /** Recursive listing of the trash bucket for one node. Each entry maps
+     *  to a single soft-deleted service. */
+    static async listTrashedServices(nodeName: string): Promise<Array<{
+        id: string;
+        service: string;
+        deletedAt: string;
+        path: string;
+    }>> {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const trashRoot = `~/${SYSTEMD_DIR}/.trash`;
+        try {
+            const res = await agent.sendCommand('exec', {
+                command: `ls -1 ${trashRoot} 2>/dev/null`,
+            });
+            const out = (res?.stdout ?? '') as string;
+            const entries = out.trim().split('\n').filter(Boolean);
+            const results = [];
+            for (const entry of entries) {
+                let manifest: { service?: string; deletedAt?: string } = {};
+                try {
+                    const m = await agent.sendCommand('exec', {
+                        command: `cat '${trashRoot}/${entry}/.manifest.json' 2>/dev/null`,
+                    });
+                    manifest = JSON.parse(((m?.stdout ?? '') as string) || '{}');
+                } catch { /* fall back to filename parse */ }
+                // Fallback: derive from directory name "<iso-stamp>-<service>"
+                const fallback = entry.match(/^(\d{4}-\d{2}-\d{2}T[\d-]+Z)-(.+)$/);
+                results.push({
+                    id: entry,
+                    service: manifest.service || fallback?.[2] || entry,
+                    deletedAt: manifest.deletedAt || (fallback ? fallback[1].replace(/-(\d\d)-(\d\d)Z$/, ':$1:$2Z') : ''),
+                    path: `${trashRoot}/${entry}`,
+                });
+            }
+            return results.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+        } catch {
+            return [];
+        }
+    }
+
+    /** Restore a soft-deleted service from trash. Moves the files back to
+     *  their original locations and reloads systemd. */
+    static async restoreTrashedService(nodeName: string, trashId: string): Promise<{ service: string }> {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const trashRoot = `~/${SYSTEMD_DIR}/.trash`;
+        const trashDir = `${trashRoot}/${trashId}`;
+
+        // Read manifest. Manifest is the source of truth for original
+        // paths because the service may have referenced a yaml file
+        // outside SYSTEMD_DIR.
+        const m = await agent.sendCommand('exec', {
+            command: `cat '${trashDir}/.manifest.json' 2>/dev/null`,
+        });
+        let manifest: { service?: string; originalYamlPath?: string | null; originalKubePath?: string };
+        try {
+            manifest = JSON.parse(((m?.stdout ?? '') as string) || '{}');
+        } catch {
+            throw new Error(`Trash entry ${trashId} is missing or has a corrupt manifest — restore manually`);
+        }
+        if (!manifest.service) {
+            throw new Error(`Trash entry ${trashId} has no service name in manifest`);
+        }
+
+        const kubePath = manifest.originalKubePath || `~/${SYSTEMD_DIR}/${manifest.service}.kube`;
+        const yamlPath = manifest.originalYamlPath
+            ? (manifest.originalYamlPath.startsWith('/') ? manifest.originalYamlPath : `~/${manifest.originalYamlPath}`)
+            : null;
+
+        await agent.sendCommand('exec', {
+            command: `mv '${trashDir}/${manifest.service}.kube' ${kubePath} 2>/dev/null || true`,
+        });
+        if (yamlPath) {
+            // The yaml lives in the trash dir under its basename.
+            const yamlBasename = manifest.originalYamlPath?.split('/').pop();
+            if (yamlBasename) {
+                await agent.sendCommand('exec', {
+                    command: `mv '${trashDir}/${yamlBasename}' ${yamlPath} 2>/dev/null || true`,
+                });
+            }
+        }
+        // Wipe the now-empty trash dir.
+        await agent.sendCommand('exec', { command: `rm -rf '${trashDir}'` });
+
+        await this.reloadDaemon(nodeName);
+        await this.refreshAgent(nodeName);
+        this.backupQuadlets(nodeName);
+
+        logger.info('ServiceManager', `Restored ${manifest.service} from trash on ${nodeName}`);
+        return { service: manifest.service };
+    }
+
+    /** Permanently delete one trash entry, or all entries older than the
+     *  given retention (in milliseconds). */
+    static async purgeTrash(nodeName: string, opts: { trashId?: string; olderThanMs?: number }): Promise<{ purged: string[] }> {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const trashRoot = `~/${SYSTEMD_DIR}/.trash`;
+        if (opts.trashId) {
+            // Strict basename — no traversal allowed.
+            if (!/^[a-zA-Z0-9._-]+$/.test(opts.trashId)) {
+                throw new Error(`Invalid trash id: ${opts.trashId}`);
+            }
+            await agent.sendCommand('exec', { command: `rm -rf '${trashRoot}/${opts.trashId}'` });
+            logger.info('ServiceManager', `Purged trash entry ${opts.trashId} on ${nodeName}`);
+            return { purged: [opts.trashId] };
+        }
+        if (opts.olderThanMs !== undefined) {
+            const list = await this.listTrashedServices(nodeName);
+            const now = Date.now();
+            const toPurge = list.filter(e => {
+                const ts = Date.parse(e.deletedAt);
+                if (!isFinite(ts)) return false;
+                return (now - ts) > opts.olderThanMs!;
+            });
+            for (const entry of toPurge) {
+                await agent.sendCommand('exec', { command: `rm -rf '${trashRoot}/${entry.id}'` });
+            }
+            if (toPurge.length > 0) {
+                logger.info('ServiceManager', `Purged ${toPurge.length} trash entr${toPurge.length === 1 ? 'y' : 'ies'} older than ${Math.round(opts.olderThanMs / 86_400_000)}d on ${nodeName}`);
+            }
+            return { purged: toPurge.map(e => e.id) };
+        }
+        return { purged: [] };
     }
 
     static async getServiceLogs(nodeName: string, serviceName: string) {
