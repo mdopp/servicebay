@@ -26,9 +26,9 @@ export const HostString = z.string()
   .max(253)
   .regex(/^[A-Za-z0-9._\-:[\]]+$/, 'invalid host');
 
-// A monitoring check target. Reject anything that could escape into a shell.
+// A health check target. Reject anything that could escape into a shell.
 const SHELL_META = /[;&|`$<>(){}\\\n\r\t"'*?]/;
-export const MonitoringCheckTarget = z.string()
+export const HealthCheckTarget = z.string()
   .min(1)
   .max(2048)
   .refine(s => !SHELL_META.test(s), 'target contains shell metacharacters');
@@ -41,6 +41,6 @@ export const BackupFileName = z.string()
   .refine(s => !s.startsWith('.'), 'leading dot not allowed')
   .refine(s => !s.includes('..'), 'parent traversal not allowed');
 
-// Generic UUID (v1–v5). MonitoringStore uses crypto.randomUUID().
+// Generic UUID (v1–v5). HealthStore uses crypto.randomUUID().
 export const UuidString = z.string().uuid();
 

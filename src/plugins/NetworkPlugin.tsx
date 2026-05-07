@@ -95,7 +95,7 @@ interface LegacyPortMapping extends PortMapping {
     container?: number;
 }
 
-interface MonitoringData {
+interface HealthData {
     connected?: boolean;
     externalIP?: string;
     uptime?: number;
@@ -778,9 +778,9 @@ export default function NetworkPlugin() {
       activeToastRef.current = null;
   }, [removeToast, updateToast]);
 
-  // Monitoring Modal State
-  const [showMonitoringModal, setShowMonitoringModal] = useState(false);
-  const [monitoringData, setMonitoringData] = useState<MonitoringData | null>(null);
+  // Health Modal State
+  const [showHealthModal, setShowHealthModal] = useState(false);
+  const [healthData, setHealthData] = useState<HealthData | null>(null);
 
   // Link Modal State
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -1502,6 +1502,7 @@ export default function NetworkPlugin() {
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             fitView
+            fitViewOptions={{ padding: 0.18, minZoom: 0.7, maxZoom: 1.2 }}
             minZoom={0.1}
             maxZoom={2}
             defaultEdgeOptions={{
@@ -1579,19 +1580,19 @@ export default function NetworkPlugin() {
 
       </div>
       
-      {/* Monitoring Modal */}
-      {showMonitoringModal && monitoringData && (
+      {/* Health Modal */}
+      {showHealthModal && healthData && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
                 <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
                     <div className="flex items-center gap-3">
                         <Activity className="text-blue-500" />
                         <div>
-                            <h3 className="text-lg font-bold">Device Monitoring</h3>
+                            <h3 className="text-lg font-bold">Device Health</h3>
                             <div className="text-xs text-gray-500">Fritz!Box Gateway</div>
                         </div>
                     </div>
-                    <button onClick={() => setShowMonitoringModal(false)} className="text-gray-500 hover:text-gray-700">
+                    <button onClick={() => setShowHealthModal(false)} className="text-gray-500 hover:text-gray-700">
                         <X size={20} />
                     </button>
                 </div>
@@ -1602,18 +1603,18 @@ export default function NetworkPlugin() {
                         <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
                             <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">Connection</div>
                             <div className="flex items-center gap-2">
-                                <div className={`w-2.5 h-2.5 rounded-full ${monitoringData.connected ? 'bg-green-500' : 'bg-red-500'}`} />
-                                <span className="font-bold text-lg">{monitoringData.connected ? 'Connected' : 'Disconnected'}</span>
+                                <div className={`w-2.5 h-2.5 rounded-full ${healthData.connected ? 'bg-green-500' : 'bg-red-500'}`} />
+                                <span className="font-bold text-lg">{healthData.connected ? 'Connected' : 'Disconnected'}</span>
                             </div>
                         </div>
                         <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
                             <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">External IP</div>
-                            <div className="font-mono text-lg">{monitoringData.externalIP || 'N/A'}</div>
+                            <div className="font-mono text-lg">{healthData.externalIP || 'N/A'}</div>
                         </div>
                         <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
                             <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">Uptime</div>
                             <div className="font-mono text-lg">
-                                {monitoringData.uptime ? `${Math.floor(monitoringData.uptime / 3600)}h ${Math.floor((monitoringData.uptime % 3600) / 60)}m` : 'N/A'}
+                                {healthData.uptime ? `${Math.floor(healthData.uptime / 3600)}h ${Math.floor((healthData.uptime % 3600) / 60)}m` : 'N/A'}
                             </div>
                         </div>
                     </div>
@@ -1625,9 +1626,9 @@ export default function NetworkPlugin() {
                             DNS Configuration
                         </h4>
                         <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-                            {monitoringData.dnsServers && monitoringData.dnsServers.length > 0 ? (
+                            {healthData.dnsServers && healthData.dnsServers.length > 0 ? (
                                 <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                                    {monitoringData.dnsServers.map((dns: string, i: number) => {
+                                    {healthData.dnsServers.map((dns: string, i: number) => {
                                         const isInternal = dns.startsWith('192.168.') || dns.startsWith('10.') || dns.startsWith('127.');
                                         return (
                                             <div key={i} className="p-3 flex items-center justify-between">
@@ -1661,7 +1662,7 @@ export default function NetworkPlugin() {
                             Device Logs
                         </h4>
                         <div className="bg-gray-900 text-gray-300 rounded-lg border border-gray-700 p-4 font-mono text-xs overflow-auto max-h-[400px] whitespace-pre-wrap">
-                            {monitoringData.deviceLog || 'No logs available.'}
+                            {healthData.deviceLog || 'No logs available.'}
                         </div>
                     </div>
                 </div>
@@ -1858,13 +1859,13 @@ export default function NetworkPlugin() {
                         {selectedNodeData.type === 'router' && (
                             <button 
                                 onClick={() => {
-                                    setMonitoringData((selectedNodeData.rawData as MonitoringData) || null);
-                                    setShowMonitoringModal(true);
+                                    setHealthData((selectedNodeData.rawData as HealthData) || null);
+                                    setShowHealthModal(true);
                                 }}
                                 className="w-full flex items-center justify-center gap-2 p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm font-medium"
                             >
                                 <Activity size={14} />
-                                Device Monitoring
+                                Device Health
                             </button>
                         )}
 

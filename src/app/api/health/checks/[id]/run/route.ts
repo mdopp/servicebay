@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { MonitoringStore } from '@/lib/monitoring/store';
-import { CheckRunner } from '@/lib/monitoring/runner';
+import { HealthStore } from '@/lib/health/store';
+import { CheckRunner } from '@/lib/health/runner';
 import { UuidString } from '@/lib/api/schemas';
 import { parseRouteParam } from '@/lib/api/validate';
 import { apiError } from '@/lib/api/errors';
@@ -9,7 +9,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const parsed = await parseRouteParam(params, 'id', UuidString);
   if (!parsed.ok) return parsed.response;
   const id = parsed.value;
-  const checks = MonitoringStore.getChecks();
+  const checks = HealthStore.getChecks();
   const check = checks.find(c => c.id === id);
 
   if (!check) {
@@ -20,6 +20,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const result = await CheckRunner.run(check);
     return NextResponse.json(result);
   } catch (e: unknown) {
-    return apiError(e, { tag: 'api:monitoring:run', status: 500 });
+    return apiError(e, { tag: 'api:health:run', status: 500 });
   }
 }

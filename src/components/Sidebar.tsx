@@ -10,7 +10,7 @@ export const plugins = [
     { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },
     { id: 'containers', name: 'Container Engine', shortLabel: 'Containers', icon: LayoutDashboard, path: '/containers' },
     { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
-    { id: 'monitoring', name: 'Monitoring', shortLabel: 'Monitor', icon: Activity, path: '/monitoring' },
+    { id: 'health', name: 'Health', shortLabel: 'Health', icon: Activity, path: '/health' },
     { id: 'terminal', name: 'SSH Terminal', shortLabel: 'Terminal', icon: Terminal, path: '/terminal' },
     { id: 'settings', name: 'Settings', shortLabel: 'Settings', icon: Settings, path: '/settings' },
 ];

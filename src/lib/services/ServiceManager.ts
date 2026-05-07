@@ -595,17 +595,17 @@ export class ServiceManager {
         }
         this.backupQuadlets(nodeName);
 
-        // Create monitoring check for the new service if one doesn't exist
+        // Create health check for the new service if one doesn't exist
         try {
-            const { MonitoringStore } = await import('../monitoring/store');
-            const checks = MonitoringStore.getChecks();
+            const { HealthStore } = await import('../health/store');
+            const checks = HealthStore.getChecks();
             const alreadyMonitored = checks.some(c =>
                 (c.type === 'service' && c.target === name) ||
                 (c.name === `Service: ${name}`)
             );
             if (!alreadyMonitored) {
                 const crypto = await import('crypto');
-                MonitoringStore.saveCheck({
+                HealthStore.saveCheck({
                     id: crypto.randomUUID(),
                     name: `Service: ${name}`,
                     type: 'service',
@@ -615,10 +615,10 @@ export class ServiceManager {
                     created_at: new Date().toISOString(),
                     nodeName: nodeName !== 'Local' ? nodeName : undefined,
                 });
-                logger.info('ServiceManager', `Created monitoring check for ${name}`);
+                logger.info('ServiceManager', `Created health check for ${name}`);
             }
         } catch (e) {
-            logger.warn('ServiceManager', `Failed to create monitoring check for ${name}:`, e);
+            logger.warn('ServiceManager', `Failed to create health check for ${name}:`, e);
         }
     }
 

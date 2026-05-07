@@ -1,4 +1,4 @@
-import { MonitoringStore } from './store';
+import { HealthStore } from './store';
 import { ServiceManager } from '../services/ServiceManager';
 import { getConfig } from '../config';
 import { listNodes } from '../nodes';
@@ -6,19 +6,19 @@ import crypto from 'crypto';
 import { logger } from '@/lib/logger';
 
 export async function initializeDefaultChecks() {
-  logger.info('Monitoring', 'Initializing default checks...');
-  const existingChecks = MonitoringStore.getChecks();
+  logger.info('Health', 'Initializing default checks...');
+  const existingChecks = HealthStore.getChecks();
 
   // Migrate: podman.socket was incorrectly registered as systemd (system-level),
   // but it's a user unit and should be type "service" (systemctl --user)
   const staleSystemdSocket = existingChecks.find(c => c.type === 'systemd' && c.target === 'podman.socket');
   if (staleSystemdSocket) {
-    MonitoringStore.deleteCheck(staleSystemdSocket.id);
-    logger.info('Monitoring', 'Removed stale systemd check for podman.socket (migrating to service type)');
+    HealthStore.deleteCheck(staleSystemdSocket.id);
+    logger.info('Health', 'Removed stale systemd check for podman.socket (migrating to service type)');
   }
 
   // Re-read after migration
-  const checks = MonitoringStore.getChecks();
+  const checks = HealthStore.getChecks();
 
   // Helper to check if exists
   const exists = (type: string, target: string) =>
@@ -29,8 +29,8 @@ export async function initializeDefaultChecks() {
     const config = await getConfig();
     if (config.gateway?.host) {
         if (!exists('ping', config.gateway.host)) {
-            logger.info('Monitoring', `Adding Configured Gateway check for ${config.gateway.host}`);
-            MonitoringStore.saveCheck({
+            logger.info('Health', `Adding Configured Gateway check for ${config.gateway.host}`);
+            HealthStore.saveCheck({
                 id: crypto.randomUUID(),
                 name: 'Internet Gateway',
                 type: 'ping',
@@ -42,15 +42,15 @@ export async function initializeDefaultChecks() {
         }
     }
   } catch (e) {
-    logger.error('Monitoring', 'Failed to add configured gateway check', e);
+    logger.error('Health', 'Failed to add configured gateway check', e);
   }
 
   // 1. Auto-detected Gateway Check - REMOVED (Redundant with Configured Gateway & Agent Checks)
 
   // 2. Podman Socket (user-level unit, checked via systemctl --user)
   if (!exists('service', 'podman.socket')) {
-    logger.info('Monitoring', 'Adding Podman Socket check');
-    MonitoringStore.saveCheck({
+    logger.info('Health', 'Adding Podman Socket check');
+    HealthStore.saveCheck({
         id: crypto.randomUUID(),
         name: 'Podman Socket',
         type: 'service',
@@ -72,8 +72,8 @@ export async function initializeDefaultChecks() {
         );
 
         if (!alreadyMonitored) {
-            logger.info('Monitoring', `Adding Managed Service check for ${service.name}`);
-            MonitoringStore.saveCheck({
+            logger.info('Health', `Adding Managed Service check for ${service.name}`);
+            HealthStore.saveCheck({
                 id: crypto.randomUUID(),
                 name: `Service: ${service.name}`,
                 type: 'service',
@@ -97,8 +97,8 @@ export async function initializeDefaultChecks() {
 
       for (const nodeName of nodeNames) {
           if (!exists('agent', nodeName)) {
-              logger.info('Monitoring', `Adding Agent Health check for ${nodeName}`);
-              MonitoringStore.saveCheck({
+              logger.info('Health', `Adding Agent Health check for ${nodeName}`);
+              HealthStore.saveCheck({
                   id: crypto.randomUUID(),
                   name: `Agent: ${nodeName}`,
                   type: 'agent',
@@ -111,6 +111,6 @@ export async function initializeDefaultChecks() {
           }
       }
   } catch (e) {
-      logger.error('Monitoring', 'Failed to add agent checks', e);
+      logger.error('Health', 'Failed to add agent checks', e);
   }
 }

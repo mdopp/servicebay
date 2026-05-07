@@ -9,9 +9,9 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
 import { listNodes, getNodeConnection, verifyNodeConnection } from '@/lib/nodes';
 import { agentManager } from '@/lib/agent/manager';
-import { MonitoringStore } from '@/lib/monitoring/store';
-import { CheckRunner } from '@/lib/monitoring/runner';
-import type { CheckConfig, CheckType } from '@/lib/monitoring/types';
+import { HealthStore } from '@/lib/health/store';
+import { CheckRunner } from '@/lib/health/runner';
+import type { CheckConfig, CheckType } from '@/lib/health/types';
 import { getConfig, updateConfig, type AppConfig, type ProxyHostEntry } from '@/lib/config';
 import {
   getBackupHistory,
@@ -363,12 +363,12 @@ export function createMcpServer() {
     return textResult({ nodes: graphNodes, edges });
   });
 
-  // --- Get Monitoring Checks ---
-  server.tool('get_monitoring_checks', 'List all monitoring health checks with their latest results', {}, async () => {
-    const checks = MonitoringStore.getChecks();
+  // --- Get Health Checks ---
+  server.tool('get_health_checks', 'List all health checks with their latest results', {}, async () => {
+    const checks = HealthStore.getChecks();
     const result = checks.map(check => ({
       ...check,
-      lastResult: MonitoringStore.getLastResult(check.id),
+      lastResult: HealthStore.getLastResult(check.id),
     }));
     return textResult(result);
   });
@@ -604,15 +604,15 @@ export function createMcpServer() {
     },
   );
 
-  // --- Monitoring checks ---
+  // --- Health checks ---
 
   const checkTypeSchema = z.enum([
     'http', 'ping', 'script', 'podman', 'service', 'systemd', 'fritzbox', 'node', 'agent', 'backup',
   ]);
 
   server.tool(
-    'create_monitoring_check',
-    'Create a new monitoring check (HTTP, ping, container, service, …). Returns the created check including generated id.',
+    'create_health_check',
+    'Create a new health check (HTTP, ping, container, service, …). Returns the created check including generated id.',
     {
       name: z.string().min(1).describe('Display name'),
       type: checkTypeSchema.describe('Check type'),
@@ -643,19 +643,19 @@ export function createMcpServer() {
             }
           : {}),
       };
-      MonitoringStore.saveCheck(check);
+      HealthStore.saveCheck(check);
       return textResult(check);
     },
   );
 
   server.tool(
-    'delete_monitoring_check',
-    'Delete a monitoring check by id (use list_monitoring_checks/get_monitoring_checks to find ids).',
+    'delete_health_check',
+    'Delete a health check by id (use get_health_checks to find ids).',
     { id: z.string().min(1).describe('Check id') },
     async ({ id }) => {
-      const before = MonitoringStore.getChecks().length;
-      MonitoringStore.deleteCheck(id);
-      const after = MonitoringStore.getChecks().length;
+      const before = HealthStore.getChecks().length;
+      HealthStore.deleteCheck(id);
+      const after = HealthStore.getChecks().length;
       if (before === after) return errorResult(`No check with id "${id}" found`);
       return textResult({ deleted: id });
     },
@@ -663,14 +663,14 @@ export function createMcpServer() {
 
   server.tool(
     'run_check_now',
-    'Run a monitoring check immediately and persist the result. Returns the result.',
+    'Run a health check immediately and persist the result. Returns the result.',
     { id: z.string().min(1).describe('Check id') },
     async ({ id }) => {
-      const check = MonitoringStore.getChecks().find(c => c.id === id);
+      const check = HealthStore.getChecks().find(c => c.id === id);
       if (!check) return errorResult(`No check with id "${id}" found`);
       try {
         const result = await CheckRunner.run(check);
-        MonitoringStore.saveResult(result);
+        HealthStore.saveResult(result);
         return textResult(result);
       } catch (err) {
         return errorResult(`Check run failed: ${err instanceof Error ? err.message : String(err)}`);

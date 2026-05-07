@@ -4,7 +4,7 @@ import {
   ServiceName,
   NodeName,
   HostString,
-  MonitoringCheckTarget,
+  HealthCheckTarget,
   BackupFileName,
 } from '../../src/lib/api/schemas';
 
@@ -54,14 +54,14 @@ describe('HostString', () => {
   });
 });
 
-describe('MonitoringCheckTarget', () => {
+describe('HealthCheckTarget', () => {
   it('accepts URLs and plain strings', () => {
-    expect(MonitoringCheckTarget.safeParse('https://example.com/health').success).toBe(true);
-    expect(MonitoringCheckTarget.safeParse('podman-name').success).toBe(true);
+    expect(HealthCheckTarget.safeParse('https://example.com/health').success).toBe(true);
+    expect(HealthCheckTarget.safeParse('podman-name').success).toBe(true);
   });
   it('rejects shell metacharacters', () => {
     for (const bad of ['x; ls', 'a $(b)', '`cat /etc/passwd`', 'a|b', 'a&b', 'a\nb']) {
-      expect(MonitoringCheckTarget.safeParse(bad).success, bad).toBe(false);
+      expect(HealthCheckTarget.safeParse(bad).success, bad).toBe(false);
     }
   });
 });

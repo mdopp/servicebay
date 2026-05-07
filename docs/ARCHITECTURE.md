@@ -311,9 +311,9 @@ sequenceDiagram
     *   **Logic**: Merges systemd units (from Agent) with Configured Links and Gateway status.
     *   **Special Types**: `gateway` (Internet Router), `link` (External Dashboard), `service` (Quadlet).
 
-#### 3. Monitoring
-*   `GET /api/monitoring`: Returns health check results.
-    *   **Source**: Monitoring Store (In-Memory Ring Buffer).
+#### 3. Health
+*   `GET /api/health`: Returns health check results.
+    *   **Source**: Health Store (In-Memory Ring Buffer).
 
 ### 4. Terminal (SSH Passthrough)
 *   **Goal**: Provide a fully functional shell interface to the target node directly in the browser.
@@ -328,9 +328,9 @@ sequenceDiagram
 *   **Endpoint**: `POST /mcp` — handled directly in `server.ts` (intercepts the request before the Next.js handler) and bridged to `@modelcontextprotocol/sdk`'s `StreamableHTTPServerTransport`. Authentication is the same `session` cookie the UI uses, decoded via `getSessionFromCookieHeader`. No additional token surface.
 *   **Stateless**: a fresh `McpServer` + transport are created per request, both closed when the response stream ends. No long-lived sessions.
 *   **Tool surface** (`src/lib/mcp/server.ts`, 37 tools):
-    *   *Read*: `list_nodes`, `list_services`, `list_containers`, `get_container_logs`, `get_service_logs`, `get_system_info`, `get_network_graph`, `get_monitoring_checks`, `get_gateway_status`, `get_proxy_routes`, `list_templates`, `get_template_readme`/`yaml`/`variables`, `verify_node_connection`, `get_podman_logs`, `list_system_services`, `get_config`.
-    *   *Mutate*: `start_service`/`stop_service`/`restart_service`, `deploy_service`/`update_service_yaml`/`delete_service`/`rename_service`, `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`/`list_backups`, `create_monitoring_check`/`delete_monitoring_check`/`run_check_now`, `update_config`, `exec_command`, `refresh_agent`.
-*   **SoT alignment**: all tools route through the same Digital Twin / `ServiceManager` / `MonitoringStore` paths the UI uses — no parallel mutation surface. `update_config` is allow-listed (`logLevel`, `serverName`, `domain`, `autoUpdate`, `templateSettings`); auth/OIDC/SMTP credentials are intentionally excluded so they always need a human in the loop.
+    *   *Read*: `list_nodes`, `list_services`, `list_containers`, `get_container_logs`, `get_service_logs`, `get_system_info`, `get_network_graph`, `get_health_checks`, `get_gateway_status`, `get_proxy_routes`, `list_templates`, `get_template_readme`/`yaml`/`variables`, `verify_node_connection`, `get_podman_logs`, `list_system_services`, `get_config`.
+    *   *Mutate*: `start_service`/`stop_service`/`restart_service`, `deploy_service`/`update_service_yaml`/`delete_service`/`rename_service`, `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`/`list_backups`, `create_health_check`/`delete_health_check`/`run_check_now`, `update_config`, `exec_command`, `refresh_agent`.
+*   **SoT alignment**: all tools route through the same Digital Twin / `ServiceManager` / `HealthStore` paths the UI uses — no parallel mutation surface. `update_config` is allow-listed (`logLevel`, `serverName`, `domain`, `autoUpdate`, `templateSettings`); auth/OIDC/SMTP credentials are intentionally excluded so they always need a human in the loop.
 *   **Secret hygiene**: `get_config` redacts `auth.passwordHash`, `oidc.clientSecret`, `notifications.email.pass`. Inputs that flow into a shell command (container id, service name, domain) are constrained with regex schemas to prevent command injection through the `exec_command` / `get_container_logs` / `get_service_logs` paths.
 
 ### 5. Network Graph Aggregation

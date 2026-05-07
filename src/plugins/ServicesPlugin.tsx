@@ -590,7 +590,21 @@ export default function ServicesPlugin() {
             <div className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden flex flex-col h-full min-w-0">
                 <div className="flex items-start gap-4 justify-between mb-4">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <div className={`mt-1.5 w-3 h-3 shrink-0 rounded-full ${service.active ? 'bg-green-500' : 'bg-red-500'}`} title={service.status} />
+                        {(() => {
+                            // 3-state status indicator. systemd transitional states ("activating",
+                            // "reloading", "deactivating") and crash-loop subState "auto-restart"
+                            // mean the service isn't healthy *yet* but isn't a hard failure either.
+                            const transitional = ['activating', 'reloading', 'deactivating'].includes(service.activeState ?? '') || service.subState === 'auto-restart';
+                            const dotClass = transitional
+                                ? 'bg-amber-500 animate-pulse'
+                                : service.active
+                                    ? 'bg-green-500'
+                                    : 'bg-red-500';
+                            const dotTitle = transitional
+                                ? `${service.activeState ?? 'transitioning'}${service.subState ? ` (${service.subState})` : ''}`
+                                : service.status;
+                            return <div className={`mt-1.5 w-3 h-3 shrink-0 rounded-full ${dotClass}`} title={dotTitle} />;
+                        })()}
                         <div className="flex-1 min-w-0">
                             <div className="flex flex-wrap items-center gap-2 mb-1">
                                 <h3
@@ -1012,22 +1026,35 @@ export default function ServicesPlugin() {
 
         return (
             <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-4 py-3">
-                    <div>
-                        <p className="text-xs uppercase tracking-widest text-orange-500 dark:text-orange-300">Unmanaged Bundles</p>
-                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 ${
+                    hasBundles
+                        ? 'border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20'
+                        : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40'
+                }`}>
+                    <div className="min-w-0">
+                        <p className={`text-xs uppercase tracking-widest font-semibold ${
+                            hasBundles ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-gray-400'
+                        }`}>
+                            {hasBundles ? 'Containers running outside ServiceBay' : 'Unmanaged Bundles'}
+                        </p>
+                        <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
                             {hasBundles
-                                ? `${serviceBundles.length} bundle${serviceBundles.length === 1 ? '' : 's'} awaiting migration.`
-                                : 'These containers are running but not managed by ServiceBay. Merge them to take control of their lifecycle, updates, and monitoring.'}
+                                ? `${serviceBundles.length} container ${serviceBundles.length === 1 ? 'group is' : 'groups are'} running on this host but not tracked by ServiceBay. Adopt ${serviceBundles.length === 1 ? 'it' : 'them'} below to manage updates, restarts and health checks from here — or dismiss to ignore.`
+                                : 'No untracked container groups detected. ServiceBay scans the host periodically; click rescan if you just imported a stack.'}
                         </p>
                     </div>
-                    <button 
+                    <button
                         onClick={discoverUnmanaged}
                         disabled={discoveryLoading}
-                        className="px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-sm rounded-lg flex items-center gap-2 transition-colors disabled:opacity-60"
+                        className={`px-4 py-2 text-sm rounded-lg flex items-center gap-2 transition-colors disabled:opacity-60 shrink-0 ${
+                            hasBundles
+                                ? 'bg-amber-600 hover:bg-amber-700 text-white border border-amber-600'
+                                : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200'
+                        }`}
+                        title={hasBundles ? 'Re-scan the host for new or removed unmanaged container groups' : 'Scan the host for container groups not yet managed by ServiceBay'}
                     >
-                        {discoveryLoading ? <RefreshCw size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                        {discoveryLoading ? 'Scanning...' : hasBundles ? 'Refresh Bundles' : 'Discover Bundles'}
+                        <RefreshCw size={16} className={discoveryLoading ? 'animate-spin' : ''} />
+                        {discoveryLoading ? 'Scanning…' : hasBundles ? 'Rescan now' : 'Scan for bundles'}
                     </button>
                 </div>
 

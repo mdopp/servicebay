@@ -33,7 +33,7 @@ interface NetworkAddr {
 /**
  * SystemInfoContent
  * Core system info display (CPU, RAM, Disk, Network, Updates).
- * Used as a tab inside MonitoringPlugin.
+ * Used as a tab inside HealthPlugin.
  */
 export function SystemInfoContent() {
   const [copied, setCopied] = useState(false);

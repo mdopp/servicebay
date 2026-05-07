@@ -1,5 +1,5 @@
 import { CheckConfig, CheckResult } from './types';
-import { MonitoringStore } from './store';
+import { HealthStore } from './store';
 import vm from 'vm';
 import { getExecutor, Executor } from '../executor';
 import { listNodes, verifyNodeConnection } from '../nodes';
@@ -81,7 +81,7 @@ export class CheckRunner {
       message
     };
 
-    MonitoringStore.saveResult(result);
+    HealthStore.saveResult(result);
     return result;
   }
 

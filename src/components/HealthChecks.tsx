@@ -1,9 +1,9 @@
 'use client';
 
 import { Activity, CheckCircle, XCircle, AlertTriangle, Play, Edit, Trash2, History, Search } from 'lucide-react';
-import { Check } from '@/lib/monitoring/types';
+import { Check } from '@/lib/health/types';
 
-interface MonitoringChecksProps {
+interface HealthChecksProps {
   checks: Check[];
   containers: { Id: string; Names: string[]; Image: string }[];
   searchQuery: string;
@@ -15,7 +15,7 @@ interface MonitoringChecksProps {
   handleViewHistory: (check: Check) => void;
 }
 
-export default function MonitoringChecks({
+export default function HealthChecks({
   checks,
   containers,
   searchQuery,
@@ -25,7 +25,7 @@ export default function MonitoringChecks({
   handleOpenModal,
   handleOpenDeleteModal,
   handleViewHistory
-}: MonitoringChecksProps) {
+}: HealthChecksProps) {
   
   const filteredChecks = checks.filter(c => {
     const matchesSearch = searchQuery === '' || 
@@ -120,7 +120,7 @@ export default function MonitoringChecks({
             ) : (
                 <>
                     <Activity className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                    <p>No monitoring checks configured.</p>
+                    <p>No health checks configured.</p>
                     <button onClick={() => handleOpenModal()} className="mt-4 text-blue-600 dark:text-blue-400 hover:underline text-sm">
                     Create your first check
                     </button>

@@ -1,6 +1,6 @@
 import { Server } from 'socket.io';
 import { logger } from '@/lib/logger';
-import { MonitoringStore } from './store';
+import { HealthStore } from './store';
 import { CheckRunner } from './runner';
 import { CheckConfig, CheckResult } from './types';
 import { initializeDefaultChecks } from './init';
@@ -9,7 +9,7 @@ import { sendEmailAlert } from '@/lib/email';
 // In-memory interval tracking
 const intervals = new Map<string, NodeJS.Timeout>();
 
-export class MonitoringService {
+export class HealthService {
   private static io: Server | null = null;
 
   static async init(io: Server) {
@@ -23,19 +23,19 @@ export class MonitoringService {
   }
 
   static getChecks() {
-      return MonitoringStore.getChecks();
+      return HealthStore.getChecks();
   }
 
   static restartAll() {
     // Clear existing
     this.stopAll();
 
-    const checks = MonitoringStore.getChecks();
+    const checks = HealthStore.getChecks();
     checks.filter(c => c.enabled).forEach(check => {
       this.scheduleCheck(check);
     });
 
-    logger.info('Monitoring', `Started ${intervals.size} checks.`);
+    logger.info('Health', `Started ${intervals.size} checks.`);
   }
 
   static stopAll() {
@@ -59,7 +59,7 @@ export class MonitoringService {
   private static async runAndEmit(check: CheckConfig) {
     try {
       const result = await CheckRunner.run(check);
-      const history = MonitoringStore.getResults(check.id);
+      const history = HealthStore.getResults(check.id);
       const prev = history[1]; // [0] is current
       const failed = result.status === 'fail';
       const recovered = result.status === 'ok';
@@ -69,10 +69,10 @@ export class MonitoringService {
       // Emit if we have IO
       if (this.io) {
       // Broadcast update event (silent refresh)
-      this.io.emit('monitoring:update', { checkId: check.id, result });
+      this.io.emit('health:update', { checkId: check.id, result });
         
       if (enteredFailure) {
-         this.io.emit('monitoring:alert', {
+         this.io.emit('health:alert', {
            type: 'error',
            title: `Check Failed: ${check.name}`,
            message: result.message || 'Service is down'
@@ -80,7 +80,7 @@ export class MonitoringService {
       }
         
       if (recoveredNow) {
-        this.io.emit('monitoring:alert', {
+        this.io.emit('health:alert', {
           type: 'success',
           title: `Service Recovered: ${check.name}`,
           message: 'Service is back online'
@@ -102,7 +102,7 @@ export class MonitoringService {
         );
       }
     } catch (e) {
-      logger.error('Monitoring', `Error running check ${check.name}:`, e);
+      logger.error('Health', `Error running check ${check.name}:`, e);
     }
   }
 }
@@ -113,8 +113,8 @@ function formatAlertMessage(
     result: CheckResult
 ): string {
     const header = reason === 'fail'
-        ? 'ServiceBay Monitoring detected a failure.'
-        : 'ServiceBay Monitoring detected a recovery.';
+        ? 'ServiceBay Health detected a failure.'
+        : 'ServiceBay Health detected a recovery.';
 
     const lines = [
       `Check: ${check.name}`,

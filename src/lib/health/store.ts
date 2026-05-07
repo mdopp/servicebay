@@ -16,7 +16,7 @@ function ensureDirs() {
   }
 }
 
-export class MonitoringStore {
+export class HealthStore {
   static getChecks(): CheckConfig[] {
     if (!fs.existsSync(CHECKS_FILE)) return [];
     try {
@@ -64,7 +64,7 @@ export class MonitoringStore {
     try {
         fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
     } catch (e) {
-        console.error(`[MonitoringStore] Failed to save result for ${result.check_id}:`, e);
+        console.error(`[HealthStore] Failed to save result for ${result.check_id}:`, e);
     }
   }
 
