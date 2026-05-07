@@ -180,6 +180,16 @@ export default function OnboardingWizard() {
   const [npmEmail, setNpmEmail] = useState('');
   const [npmPassword, setNpmPassword] = useState('');
 
+  // Post-install self-test — auto-runs once the install pipeline reaches
+  // 'done' so the user immediately sees a green/yellow/red verdict on
+  // their fresh deployment instead of having to navigate to Settings.
+  type ProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
+  interface DiagnoseProbe { id: string; label: string; status: ProbeStatus; detail: string; hint?: string }
+  const [diagnoseProbes, setDiagnoseProbes] = useState<DiagnoseProbe[] | null>(null);
+  const [diagnoseRunning, setDiagnoseRunning] = useState(false);
+  const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
+  const [diagnoseRanOnce, setDiagnoseRanOnce] = useState(false);
+
   // Clean install — wipe existing service data before deploying.
   const [cleanInstall, setCleanInstall] = useState(false);
   const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
@@ -259,6 +269,29 @@ export default function OnboardingWizard() {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [isOpen, currentStep, stackInstallStep]);
+
+  // Auto-run the self-diagnose once the install pipeline lands on 'done'.
+  // Gated by `diagnoseRanOnce` so reopening the panel doesn't re-fire and
+  // a manual "Run again" can override the auto-run.
+  useEffect(() => {
+    if (stackInstallStep !== 'done') return;
+    if (diagnoseRanOnce) return;
+     
+    setDiagnoseRanOnce(true);
+    setDiagnoseRunning(true);
+    setDiagnoseError(null);
+    fetch('/api/system/diagnose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(async r => {
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((data: { probes: DiagnoseProbe[] }) => setDiagnoseProbes(data.probes))
+      .catch(e => setDiagnoseError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setDiagnoseRunning(false));
+  }, [stackInstallStep, diagnoseRanOnce]);
 
   // Load stacks when entering the stacks step
   const loadStacks = useCallback(async () => {
@@ -1331,8 +1364,63 @@ export default function OnboardingWizard() {
                                     a.click();
                                     URL.revokeObjectURL(a.href);
                                 };
+                                const counts = (diagnoseProbes ?? []).reduce<Record<ProbeStatus, number>>(
+                                    (a, p) => { a[p.status] = (a[p.status] ?? 0) + 1; return a; },
+                                    { ok: 0, warn: 0, fail: 0, info: 0 },
+                                );
+                                const overall: ProbeStatus = counts.fail > 0 ? 'fail' : counts.warn > 0 ? 'warn' : counts.ok > 0 ? 'ok' : 'info';
+                                const overallStyle = {
+                                    ok:   { bg: 'bg-emerald-50 dark:bg-emerald-900/20', border: 'border-emerald-200 dark:border-emerald-800', text: 'text-emerald-800 dark:text-emerald-200', label: 'Self-test passed' },
+                                    warn: { bg: 'bg-amber-50 dark:bg-amber-900/20',     border: 'border-amber-200 dark:border-amber-800',     text: 'text-amber-800 dark:text-amber-200',     label: 'Self-test: warnings' },
+                                    fail: { bg: 'bg-red-50 dark:bg-red-900/20',         border: 'border-red-200 dark:border-red-800',         text: 'text-red-800 dark:text-red-200',         label: 'Self-test: failures' },
+                                    info: { bg: 'bg-gray-50 dark:bg-gray-900/40',       border: 'border-gray-200 dark:border-gray-800',       text: 'text-gray-700 dark:text-gray-200',       label: 'Self-test: indeterminate' },
+                                }[overall];
                                 return (
                                     <div className="mt-3 space-y-3 max-h-[60vh] overflow-y-auto">
+                                        {/* Auto self-test verdict — first thing the operator
+                                            sees on the Done screen. Same probes as
+                                            Settings → Self-Diagnose, run automatically against
+                                            the just-deployed install. */}
+                                        <div className={`p-3 rounded border text-sm ${overallStyle.bg} ${overallStyle.border}`}>
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <p className={`font-medium ${overallStyle.text}`}>
+                                                    {diagnoseRunning
+                                                        ? '⏳ Running self-test…'
+                                                        : diagnoseError
+                                                            ? '⚠️ Self-test failed to run'
+                                                            : `${overall === 'ok' ? '✅' : overall === 'warn' ? '⚠️' : overall === 'fail' ? '❌' : 'ℹ️'} ${overallStyle.label}${diagnoseProbes ? ` — ${counts.ok} ok · ${counts.warn} warn · ${counts.fail} fail` : ''}`}
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setDiagnoseRanOnce(false); }}
+                                                    disabled={diagnoseRunning}
+                                                    className="text-xs px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                                                    title="Re-run self-test"
+                                                >
+                                                    {diagnoseRunning ? 'Running…' : 'Run again'}
+                                                </button>
+                                            </div>
+                                            {diagnoseError && (
+                                                <p className="text-xs text-red-700 dark:text-red-300">{diagnoseError}</p>
+                                            )}
+                                            {diagnoseProbes && (counts.warn > 0 || counts.fail > 0) && (
+                                                <details className="mt-1 text-xs">
+                                                    <summary className={`cursor-pointer ${overallStyle.text}`}>Details ({counts.warn + counts.fail} issue{counts.warn + counts.fail === 1 ? '' : 's'})</summary>
+                                                    <ul className="mt-1 space-y-1.5">
+                                                        {diagnoseProbes.filter(p => p.status === 'warn' || p.status === 'fail').map(p => (
+                                                            <li key={p.id} className="border-l-2 border-current pl-2 opacity-90">
+                                                                <div className="font-semibold">{p.status === 'fail' ? '❌' : '⚠️'} {p.label}</div>
+                                                                <div className="font-mono whitespace-pre-wrap break-words">{p.detail}</div>
+                                                                {p.hint && <div className="italic mt-0.5 opacity-90">💡 {p.hint}</div>}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </details>
+                                            )}
+                                            <p className={`text-xs mt-1 ${overallStyle.text} opacity-70`}>
+                                                Re-run any time at <span className="font-mono">Settings → Self-Diagnose</span>.
+                                            </p>
+                                        </div>
                                         {manifest.length > 0 && (
                                             <div className="p-3 bg-rose-50 dark:bg-rose-900/20 rounded border border-rose-200 dark:border-rose-800 text-sm">
                                                 <div className="flex items-center justify-between mb-2">

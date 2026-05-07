@@ -3,6 +3,7 @@ import { getExecutor, Executor } from './executor';
 import { PodmanConnection } from './nodes';
 import path from 'path';
 import yaml from 'js-yaml';
+import { injectServiceDirectives } from './services/quadletDirectives';
 import { randomUUID } from 'crypto';
 import { saveSnapshot } from './history';
 import { DigitalTwinStore, MigrationHistoryEntry } from './store/twin';
@@ -1172,7 +1173,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
             }
         }
 
-        const kubeContent = `[Unit]
+        const kubeBase = `[Unit]
 Description=Migrated service ${cleanName}
 After=network-online.target
 
@@ -1183,6 +1184,10 @@ AutoUpdate=registry
 [Install]
 WantedBy=default.target
 `;
+        // Apply the shared restart-backoff + start-timeout directives so a
+        // migrated service gets the same crash-loop behaviour as a freshly-
+        // deployed one (see services/quadletDirectives.ts for the values).
+        const kubeContent = injectServiceDirectives(kubeBase);
         await executor.writeFile(targetKubePath, kubeContent);
     } else {
         throw new Error('Cannot migrate: No source file and no Pod/Container ID found');
