@@ -15,6 +15,8 @@ Passwort-Manager, Foto-Verwaltung, Dateifreigabe und Smart-Home.
 - [x] home-assistant-stack — Smart-Home-Hub, lokaler Sprachassistent, Z-Wave-/Matter-Bridges
 - [x] navidrome — Musik-Server mit Subsonic-API (Symfonium / DSub / ähnliches)
 - [x] audiobookshelf — Hörbücher und Podcasts mit eigenen iOS/Android-Apps
+- [x] filebrowser — Web-UI für die Samba-Freigabe (SSO via Authelia, kein eigener Login nötig)
+- [x] radicale — CalDAV/CardDAV-Server, authentifiziert direkt gegen LLDAP (DAVx⁵, iOS, Thunderbird)
 
 ## Reverse Proxy
 
@@ -33,6 +35,8 @@ Domain und Subdomains sind bei der Installation anpassbar.
 | drive.{domain} | File Share (WebDAV) | 8090 | — | Unbegrenzter Upload |
 | music.{domain} | Navidrome | 4533 | Ja | Subsonic-API für Mobile-Apps (siehe Template-README für Authelia-Bypass) |
 | books.{domain} | Audiobookshelf | 13378 | Ja | Hörbücher + Podcasts, eigene Mobile-Apps |
+| files.{domain} | FileBrowser | 8088 | — | Web-UI für die Samba-Freigabe; Authelia-SSO via auth_request (kein eigener Login) |
+| caldav.{domain} | Radicale | 5232 | — | CalDAV/CardDAV; auth direkt gegen LLDAP, kein Authelia (Mobile-Clients = Basic-Auth) |
 
 ## Nach der Installation
 

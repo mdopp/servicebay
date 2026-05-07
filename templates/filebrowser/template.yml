@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: filebrowser
+  labels:
+    app: filebrowser
+  annotations:
+    servicebay.ports: "{{FILEBROWSER_PORT}}/tcp"
+    servicebay.config-mount: /config
+spec:
+  hostNetwork: true
+  containers:
+  - name: filebrowser
+    image: docker.io/filebrowser/filebrowser:latest
+    # Bind to loopback only — Authelia forward-auth at the NPM layer is
+    # the gate. Direct host-IP access on this port is intentionally
+    # unreachable so a misconfigured proxy can't accidentally expose an
+    # unauth-allowing service.
+    args:
+      - "--config=/config/.filebrowser.json"
+      - "--database=/database/filebrowser.db"
+      - "--root=/srv"
+      - "--address=127.0.0.1"
+      - "--port={{FILEBROWSER_PORT}}"
+    volumeMounts:
+      - mountPath: /srv
+        name: shared-data
+      - mountPath: /database
+        name: filebrowser-db
+      - mountPath: /config
+        name: filebrowser-config
+  volumes:
+  - name: shared-data
+    hostPath:
+      path: {{DATA_DIR}}/file-share/data
+      type: DirectoryOrCreate
+  - name: filebrowser-db
+    hostPath:
+      path: {{DATA_DIR}}/filebrowser/db
+      type: DirectoryOrCreate
+  - name: filebrowser-config
+    hostPath:
+      path: {{DATA_DIR}}/filebrowser/config
+      type: DirectoryOrCreate

@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: radicale
+  labels:
+    app: radicale
+  annotations:
+    servicebay.ports: "{{RADICALE_PORT}}/tcp"
+    servicebay.config-mount: /config
+spec:
+  hostNetwork: true
+  containers:
+  - name: radicale
+    image: docker.io/tomsquest/docker-radicale:latest
+    args:
+      - "--config=/config/config"
+    ports:
+      - containerPort: {{RADICALE_PORT}}
+    volumeMounts:
+      - mountPath: /data
+        name: radicale-data
+      - mountPath: /config
+        name: radicale-config
+  volumes:
+  - name: radicale-data
+    hostPath:
+      path: {{DATA_DIR}}/radicale/data
+      type: DirectoryOrCreate
+  - name: radicale-config
+    hostPath:
+      path: {{DATA_DIR}}/radicale/config
+      type: DirectoryOrCreate
