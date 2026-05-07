@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getConfig, updateConfig } from '@/lib/config';
 import { runBackup, getBackupHistory, isBackupRunning, testBackupTarget, scheduleBackup } from '@/lib/backup/service';
 import type { BackupConfig, BackupTarget } from '@/lib/backup/types';
-import { MonitoringStore } from '@/lib/monitoring/store';
+import { HealthStore } from '@/lib/health/store';
 import { apiError } from '@/lib/api/errors';
 import crypto from 'crypto';
 
@@ -10,12 +10,12 @@ export const dynamic = 'force-dynamic';
 
 const BACKUP_CHECK_NAME = 'Backup Sync';
 
-function ensureBackupMonitoringCheck(enabled: boolean) {
-    const checks = MonitoringStore.getChecks();
+function ensureBackupHealthCheck(enabled: boolean) {
+    const checks = HealthStore.getChecks();
     const existing = checks.find(c => c.type === 'backup' && c.name === BACKUP_CHECK_NAME);
 
     if (enabled && !existing) {
-        MonitoringStore.saveCheck({
+        HealthStore.saveCheck({
             id: crypto.randomUUID(),
             name: BACKUP_CHECK_NAME,
             type: 'backup',
@@ -25,7 +25,7 @@ function ensureBackupMonitoringCheck(enabled: boolean) {
             created_at: new Date().toISOString(),
         });
     } else if (!enabled && existing) {
-        MonitoringStore.deleteCheck(existing.id);
+        HealthStore.deleteCheck(existing.id);
     }
 }
 
@@ -57,8 +57,8 @@ export async function POST(request: Request) {
                     return NextResponse.json({ error: 'config is required' }, { status: 400 });
                 }
                 await updateConfig({ backup: backupConfig });
-                // Create or remove monitoring check
-                ensureBackupMonitoringCheck(backupConfig.enabled);
+                // Create or remove health check
+                ensureBackupHealthCheck(backupConfig.enabled);
                 // Reschedule
                 scheduleBackup();
                 return NextResponse.json({ success: true });

@@ -203,7 +203,7 @@ flowchart TD
 
     subgraph "Phase 4 — Background"
         D1[Init PTY sessions]
-        D2[Start MonitoringService<br/>gateway · podman.socket · services · agents]
+        D2[Start HealthService<br/>gateway · podman.socket · services · agents]
         D3[Start GatewayPoller<br/>every 60s]
         D4[Agent health sync<br/>every 30s]
         D5[Registry sync]

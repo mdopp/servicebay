@@ -1,7 +1,7 @@
 'use server';
 
 import { listNodes, addNode, updateNode, removeNode, setDefaultNode, verifyNodeConnection, PodmanConnection } from '@/lib/nodes';
-import { MonitoringStore } from '@/lib/monitoring/store';
+import { HealthStore } from '@/lib/health/store';
 import { revalidatePath } from 'next/cache';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -34,7 +34,7 @@ export async function createNode(name: string, destination: string, identity: st
     }
 
     // Create Health Check
-    MonitoringStore.saveCheck({
+    HealthStore.saveCheck({
         id: crypto.randomUUID(),
         name: `Node Health: ${name}`,
         type: 'node',
@@ -45,7 +45,7 @@ export async function createNode(name: string, destination: string, identity: st
     });
 
     // Create Agent Check
-    MonitoringStore.saveCheck({
+    HealthStore.saveCheck({
         id: crypto.randomUUID(),
         name: `Agent: ${name}`,
         type: 'agent',
@@ -103,13 +103,13 @@ export async function deleteNode(name: string) {
     await removeNode(name);
     
     // Remove associated health checks
-    const checks = MonitoringStore.getChecks();
+    const checks = HealthStore.getChecks();
     const nodeChecks = checks.filter(c => 
         c.nodeName === name || 
         c.name === `Node Health: ${name}` ||
         c.name === `Agent: ${name}`
     );
-    nodeChecks.forEach(c => MonitoringStore.deleteCheck(c.id));
+    nodeChecks.forEach(c => HealthStore.deleteCheck(c.id));
 
     revalidatePath('/settings');
     return { success: true };

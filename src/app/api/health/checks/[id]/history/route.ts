@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { MonitoringStore } from '@/lib/monitoring/store';
+import { HealthStore } from '@/lib/health/store';
 import { UuidString } from '@/lib/api/schemas';
 import { parseRouteParam } from '@/lib/api/validate';
 
@@ -9,6 +9,6 @@ export async function GET(
 ) {
   const parsed = await parseRouteParam(params, 'id', UuidString);
   if (!parsed.ok) return parsed.response;
-  const results = MonitoringStore.getResults(parsed.value);
+  const results = HealthStore.getResults(parsed.value);
   return NextResponse.json(results);
 }

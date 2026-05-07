@@ -1,4 +1,4 @@
-# Monitoring
+# Health
 
 ## Goal
 Track the health and uptime of your services.

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
-import { MonitoringStore } from '@/lib/monitoring/store';
+import { HealthStore } from '@/lib/health/store';
 import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
 import { ServiceName } from '@/lib/api/schemas';
 import { apiError } from '@/lib/api/errors';
@@ -68,10 +68,10 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
         await saveConfig(config);
 
         // Remove monitor check if exists
-        const checks = MonitoringStore.getChecks();
+        const checks = HealthStore.getChecks();
         const check = checks.find(c => c.name === `Link: ${link.name}`);
         if (check) {
-            MonitoringStore.deleteCheck(check.id);
+            HealthStore.deleteCheck(check.id);
         }
 
         return NextResponse.json({ success: true });
@@ -122,14 +122,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
 
         // Update monitor if needed
         if (body.monitor !== undefined) {
-             const checks = MonitoringStore.getChecks();
+             const checks = HealthStore.getChecks();
              const checkName = `Link: ${oldLink.name}`; // Use old name to find
              const check = checks.find(c => c.name === checkName);
 
              if (body.monitor) {
                  if (check) {
                      // Update check
-                     MonitoringStore.saveCheck({
+                     HealthStore.saveCheck({
                          ...check,
                          name: `Link: ${newName}`,
                          target: body.url,
@@ -137,7 +137,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
                      });
                  } else {
                      // Create check
-                     MonitoringStore.saveCheck({
+                     HealthStore.saveCheck({
                          id: crypto.randomUUID(),
                          name: `Link: ${newName}`,
                          type: 'http',
@@ -150,7 +150,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
                  }
              } else {
                  if (check) {
-                     MonitoringStore.deleteCheck(check.id);
+                     HealthStore.deleteCheck(check.id);
                  }
              }
         }
@@ -178,7 +178,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
 
         // Add monitor if requested
         if (body.monitor) {
-             MonitoringStore.saveCheck({
+             HealthStore.saveCheck({
                  id: crypto.randomUUID(),
                  name: `Link: ${name}`,
                  type: 'http',

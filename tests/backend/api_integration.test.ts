@@ -32,8 +32,8 @@ vi.mock('../../src/lib/services/ServiceManager', () => ({
 }));
 
 // Mock Monitoring Store
-vi.mock('../../src/lib/monitoring/store', () => ({
-    MonitoringStore: {
+vi.mock('../../src/lib/health/store', () => ({
+    HealthStore: {
         getChecks: vi.fn().mockReturnValue([]),
         getLastResult: vi.fn()
     }

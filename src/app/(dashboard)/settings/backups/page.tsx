@@ -1354,7 +1354,7 @@ export default function BackupsSettingsPage() {
                       {restoreExpandedSections.infrastructure ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
                       <Activity size={16} className="text-gray-400 shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Nodes & Monitoring</span>
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Nodes & Health</span>
                         <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
                           {Object.values(restoreSelectionState.nodes).filter(Boolean).length} node{Object.values(restoreSelectionState.nodes).filter(Boolean).length !== 1 ? 's' : ''},
                           {' '}{Object.values(restoreSelectionState.checks).filter(Boolean).length} check{Object.values(restoreSelectionState.checks).filter(Boolean).length !== 1 ? 's' : ''}
@@ -1380,7 +1380,7 @@ export default function BackupsSettingsPage() {
                         )}
                         {restorePreview.config.checks.length > 0 && (
                           <div>
-                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Monitoring Checks</p>
+                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Health Checks</p>
                             <div className="grid gap-2">
                               {restorePreview.config.checks.map(check => (
                                 <label key={check.id} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { CheckRunner } from '../../src/lib/monitoring/runner';
-import { MonitoringStore } from '../../src/lib/monitoring/store';
-import { CheckConfig } from '../../src/lib/monitoring/types';
+import { CheckRunner } from '../../src/lib/health/runner';
+import { HealthStore } from '../../src/lib/health/store';
+import { CheckConfig } from '../../src/lib/health/types';
 
 // Mock dependencies
-vi.mock('../../src/lib/monitoring/store');
+vi.mock('../../src/lib/health/store');
 vi.mock('../../src/lib/executor', () => {
     const dispatch = (cmd: string) => {
         if (cmd.includes('failhost')) {
@@ -84,7 +84,7 @@ describe('CheckRunner', () => {
 
         expect(result.status).toBe('ok');
         expect(result.check_id).toBe('test-http');
-        expect(MonitoringStore.saveResult).toHaveBeenCalledWith(expect.objectContaining({
+        expect(HealthStore.saveResult).toHaveBeenCalledWith(expect.objectContaining({
             check_id: 'test-http',
             status: 'ok'
         }));

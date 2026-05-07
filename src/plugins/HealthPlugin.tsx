@@ -9,8 +9,8 @@ import PageHeader from '@/components/PageHeader';
 import { Autocomplete } from '@/components/Autocomplete';
 import ConfirmModal from '@/components/ConfirmModal';
 import LogViewer from '@/components/LogViewer';
-import MonitoringChecks from '@/components/MonitoringChecks';
-import { CheckConfig, CheckType, Check } from '@/lib/monitoring/types';
+import HealthChecks from '@/components/HealthChecks';
+import { CheckConfig, CheckType, Check } from '@/lib/health/types';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -29,9 +29,9 @@ interface HistoryItem {
   message?: string;
 }
 
-type MonitoringTab = 'checks' | 'logs' | 'system';
+type HealthTab = 'checks' | 'logs' | 'system';
 
-export default function MonitoringPlugin() {
+export default function HealthPlugin() {
   const [checks, setChecks] = useState<Check[]>([]);
   const [containers, setContainers] = useState<Container[]>([]);
   const [systemServices, setSystemServices] = useState<string[]>([]);
@@ -49,7 +49,7 @@ export default function MonitoringPlugin() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'fail' | 'unknown'>('all');
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<MonitoringTab>('checks');
+  const [activeTab, setActiveTab] = useState<HealthTab>('checks');
   const isFetchingRef = useRef(false);
   const { addToast, updateToast } = useToast();
   const { socket } = useSocket();
@@ -58,7 +58,7 @@ export default function MonitoringPlugin() {
   const searchParams = useSearchParams();
   const searchString = searchParams?.toString() ?? '';
   const tabParam = searchParams?.get('tab');
-  const normalizedTab: MonitoringTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' ? (tabParam as MonitoringTab) : null;
+  const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' ? (tabParam as HealthTab) : null;
 
   const closeOverlaysOnEscape = useCallback(() => {
     if (isDeleteModalOpen) return;
@@ -80,7 +80,7 @@ export default function MonitoringPlugin() {
     setActiveTab(prev => (prev === normalizedTab ? prev : normalizedTab));
   }, [normalizedTab]);
 
-  const handleTabChange = useCallback((nextTab: MonitoringTab) => {
+  const handleTabChange = useCallback((nextTab: HealthTab) => {
     if (nextTab === activeTab) return;
     setActiveTab(nextTab);
     const params = new URLSearchParams(searchString);
@@ -93,11 +93,11 @@ export default function MonitoringPlugin() {
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
   }, [activeTab, pathname, router, searchString]);
   // Using Digital Twin hook to trigger re-fetches when state changes?
-  // Monitoring data is stored in `data/checks.json` in backend, NOT in twin directly.
+  // Health-check data is stored in `data/checks.json` in backend, NOT in twin directly.
   // HOWEVER, the backend runs the checks and emits events.
   // The original implementation used sockets directly.
   // 
-  // Let's keep the manual `fetchData` but trigger it on 'monitoring:update' socket event which is still valid.
+  // Let's keep the manual `fetchData` but trigger it on 'health:update' socket event which is still valid.
   // The user asked to remove "Updating data" notifications and refresh buttons.
   
   // Clean up socket listener logic to use the global socket hook if possible? 
@@ -114,7 +114,7 @@ export default function MonitoringPlugin() {
     
     try {
       const [checksRes, nodeList] = await Promise.all([
-        fetch('/api/monitoring/checks'),
+        fetch('/api/health/checks'),
         getNodes()
       ]);
       
@@ -122,7 +122,7 @@ export default function MonitoringPlugin() {
       setNodes(nodeList);
     } catch (error) {
       console.error('Failed to fetch data', error);
-      // addToast('error', 'Failed to fetch monitoring data'); // Suppress error toast on bg sync?
+      // addToast('error', 'Failed to fetch health data'); // Suppress error toast on bg sync?
     } finally {
       // if (!silent) setLoading(false);
       isFetchingRef.current = false;
@@ -205,12 +205,12 @@ export default function MonitoringPlugin() {
         fetchData();
     };
 
-    socket.on('monitoring:alert', onAlert);
-    socket.on('monitoring:update', onUpdate);
+    socket.on('health:alert', onAlert);
+    socket.on('health:update', onUpdate);
 
     return () => {
-        socket.off('monitoring:alert', onAlert);
-        socket.off('monitoring:update', onUpdate);
+        socket.off('health:alert', onAlert);
+        socket.off('health:update', onUpdate);
     };
   }, [fetchData, addToast, socket]);
 
@@ -248,7 +248,7 @@ export default function MonitoringPlugin() {
 
   const handleSave = async () => {
     try {
-      const url = '/api/monitoring/checks';
+      const url = '/api/health/checks';
       // const method = editingCheck ? 'PUT' : 'POST'; // Note: PUT not implemented in API yet, need to fix that
       const body = editingCheck ? { ...formData, id: editingCheck.id } : formData;
 
@@ -284,7 +284,7 @@ export default function MonitoringPlugin() {
     
     try {
         // We need a DELETE endpoint
-        const res = await fetch(`/api/monitoring/checks?id=${checkToDelete}`, { method: 'DELETE' });
+        const res = await fetch(`/api/health/checks?id=${checkToDelete}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Failed to delete');
         addToast('success', 'Check deleted');
         fetchData();
@@ -299,7 +299,7 @@ export default function MonitoringPlugin() {
   const handleRun = async (id: string) => {
     const toastId = addToast('loading', 'Running check...', 'Executing check immediately', 0);
     try {
-        const res = await fetch(`/api/monitoring/checks/${id}/run`, { method: 'POST' });
+        const res = await fetch(`/api/health/checks/${id}/run`, { method: 'POST' });
         if (!res.ok) throw new Error('Failed to run check');
         const result = await res.json();
         
@@ -318,7 +318,7 @@ export default function MonitoringPlugin() {
     setHistoryData([]);
     setHistoryLoading(true);
     try {
-      const res = await fetch(`/api/monitoring/checks/${check.id}/history`);
+      const res = await fetch(`/api/health/checks/${check.id}/history`);
       if (res.ok) {
         setHistoryData(await res.json());
       }
@@ -335,10 +335,10 @@ export default function MonitoringPlugin() {
   return (
     <div className="h-full flex flex-col">
       <div className="shrink-0">
-      <PageHeader 
-        title="Monitoring" 
-        showBack={false} 
-        helpId="monitoring"
+      <PageHeader
+        title="Health"
+        showBack={false}
+        helpId="health"
         actions={activeTab === 'checks' ? (
             <div className="flex gap-2 shrink-0">
                 <button
@@ -369,7 +369,7 @@ export default function MonitoringPlugin() {
       {/* Tab Navigation */}
       <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 px-2 shrink-0 overflow-x-auto">
         {([
-          { id: 'checks' as const, label: 'Monitoring' },
+          { id: 'checks' as const, label: 'Checks' },
           { id: 'logs' as const, label: 'Logs' },
           { id: 'system' as const, label: 'System' },
         ]).map(tab => (
@@ -389,7 +389,7 @@ export default function MonitoringPlugin() {
 
       <div className="flex-1 overflow-y-auto space-y-6 pb-6">
       {activeTab === 'checks' && (
-        <MonitoringChecks
+        <HealthChecks
           checks={checks}
           containers={containers}
           searchQuery={searchQuery}
@@ -631,7 +631,7 @@ export default function MonitoringPlugin() {
               <div>
                 <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">{editingCheck ? (isSystemCheck() ? 'View Check' : 'Edit Check') : 'New Check'}</p>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                  {editingCheck ? editingCheck.name : 'Create Monitoring Check'}
+                  {editingCheck ? editingCheck.name : 'Create Health Check'}
                 </h3>
               </div>
               <button onClick={() => setIsModalOpen(false)} className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors">
@@ -867,7 +867,7 @@ export default function MonitoringPlugin() {
       <ConfirmModal
         isOpen={isDeleteModalOpen}
         title="Delete Check"
-        message="Are you sure you want to delete this monitoring check? This action cannot be undone."
+        message="Are you sure you want to delete this health check? This action cannot be undone."
         confirmText="Delete"
         isDestructive={true}
         onConfirm={confirmDelete}

@@ -105,7 +105,7 @@ export default function ExternalLinkConfig() {
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Monitoring</label>
+                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Health</label>
                             <div className="md:col-span-2 flex items-center gap-2">
                                 <input 
                                     type="checkbox" 

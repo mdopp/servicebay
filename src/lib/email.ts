@@ -29,7 +29,7 @@ export async function sendEmailAlert(subject: string, message: string) {
         <h2 style="color: #e53e3e;">${subject}</h2>
         <p style="font-size: 16px; line-height: 1.5;">${message.replace(/\n/g, '<br>')}</p>
         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #718096; font-size: 12px;">Sent by ServiceBay Monitoring</p>
+        <p style="color: #718096; font-size: 12px;">Sent by ServiceBay Health</p>
       </div>`
     });
 

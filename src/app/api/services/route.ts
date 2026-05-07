@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
-import { MonitoringStore } from '@/lib/monitoring/store';
+import { HealthStore } from '@/lib/health/store';
 import { listNodes } from '@/lib/nodes';
 import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
 import { logger } from '@/lib/logger';
@@ -20,13 +20,13 @@ const parseIpTargets = (input: unknown, fallback: string[] = []) => {
 
 
 const mapExternalLinks = (links: ExternalLink[]) => {
-    const checks = MonitoringStore.getChecks();
+    const checks = HealthStore.getChecks();
 
     type LinkStatus = 'ok' | 'fail' | 'external';
 
     return links.map(link => {
         const check = checks.find(c => c.name === `Link: ${link.name}`);
-        const lastResult = check ? MonitoringStore.getLastResult(check.id) : null;
+        const lastResult = check ? HealthStore.getLastResult(check.id) : null;
         const statusLabel: LinkStatus = lastResult ? lastResult.status : 'external';
         const isActive = statusLabel === 'ok' || statusLabel === 'external';
         const activeState = isActive ? 'active' : 'inactive';
@@ -285,7 +285,7 @@ export async function POST(request: Request) {
             created_at: new Date().toISOString(),
             httpConfig: { expectedStatus: 200 }
         };
-        MonitoringStore.saveCheck(check);
+        HealthStore.saveCheck(check);
     }
 
     return NextResponse.json({ success: true });

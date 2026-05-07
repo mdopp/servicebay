@@ -45,9 +45,9 @@ This directory contains screenshots for the main README.md. Follow these instruc
 
 ---
 
-### 4. Monitoring Dashboard (`monitoring.png`)
+### 4. Health Dashboard (`monitoring.png`)
 **URL**: `http://localhost:3000/`  
-**Plugin**: Click "Monitoring" in the sidebar
+**Plugin**: Click "Health" in the sidebar
 **What to capture**: Health checks panel showing:
 - Health check configuration cards
 - Status indicators (checkmarks, X marks)
@@ -126,8 +126,8 @@ const { chromium } = require('playwright');
   await page.waitForTimeout(2000);
   await page.screenshot({ path: 'docs/screenshots/services-plugin.png' });
 
-  // Monitoring
-  await page.click('text=Monitoring');
+  // Health
+  await page.click('text=Health');
   await page.waitForTimeout(2000);
   await page.screenshot({ path: 'docs/screenshots/monitoring.png' });
 

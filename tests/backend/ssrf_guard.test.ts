@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach } from 'vitest';
-import { isPrivateAddress } from '../../src/lib/monitoring/ssrfGuard';
+import { isPrivateAddress } from '../../src/lib/health/ssrfGuard';
 
 describe('isPrivateAddress', () => {
   const cases: Array<[string, boolean]> = [
@@ -36,33 +36,33 @@ describe('assertHttpTargetAllowed', () => {
   });
 
   it('rejects literal IPv4 loopback', async () => {
-    const { assertHttpTargetAllowed } = await import('../../src/lib/monitoring/ssrfGuard');
+    const { assertHttpTargetAllowed } = await import('../../src/lib/health/ssrfGuard');
     await expect(assertHttpTargetAllowed('http://127.0.0.1/')).rejects.toThrow();
   });
 
   it('rejects literal RFC1918', async () => {
-    const { assertHttpTargetAllowed } = await import('../../src/lib/monitoring/ssrfGuard');
+    const { assertHttpTargetAllowed } = await import('../../src/lib/health/ssrfGuard');
     await expect(assertHttpTargetAllowed('http://10.0.0.5:8080/')).rejects.toThrow();
   });
 
   it('rejects literal AWS metadata IP', async () => {
-    const { assertHttpTargetAllowed } = await import('../../src/lib/monitoring/ssrfGuard');
+    const { assertHttpTargetAllowed } = await import('../../src/lib/health/ssrfGuard');
     await expect(assertHttpTargetAllowed('http://169.254.169.254/latest/meta-data/')).rejects.toThrow();
   });
 
   it('rejects bare localhost hostname without DNS', async () => {
-    const { assertHttpTargetAllowed } = await import('../../src/lib/monitoring/ssrfGuard');
+    const { assertHttpTargetAllowed } = await import('../../src/lib/health/ssrfGuard');
     await expect(assertHttpTargetAllowed('http://localhost:6379/')).rejects.toThrow();
   });
 
   it('rejects unsupported protocols', async () => {
-    const { assertHttpTargetAllowed } = await import('../../src/lib/monitoring/ssrfGuard');
+    const { assertHttpTargetAllowed } = await import('../../src/lib/health/ssrfGuard');
     await expect(assertHttpTargetAllowed('file:///etc/passwd')).rejects.toThrow(/protocol/);
   });
 
   it('opt-in via MONITORING_ALLOW_INTERNAL=1', async () => {
     process.env.MONITORING_ALLOW_INTERNAL = '1';
-    const { assertHttpTargetAllowed } = await import('../../src/lib/monitoring/ssrfGuard');
+    const { assertHttpTargetAllowed } = await import('../../src/lib/health/ssrfGuard');
     await expect(assertHttpTargetAllowed('http://192.168.1.1/')).resolves.toBeUndefined();
   });
 });

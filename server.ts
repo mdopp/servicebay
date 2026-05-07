@@ -20,7 +20,7 @@ import { Server } from 'socket.io';
 import { setUpdaterIO } from './src/lib/updater';
 import crypto from 'crypto';
 // Monitoring init moved to Agent logic in V4
-import { MonitoringService } from './src/lib/monitoring/service';
+import { HealthService } from './src/lib/health/service';
 import { agentManager } from './src/lib/agent/manager';
 import { AgentHandler } from './src/lib/agent/handler';
 import { listNodes } from './src/lib/nodes';
@@ -35,7 +35,7 @@ import { createMcpServer } from './src/lib/mcp/server';
 import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { TerminalSessionManager } from './src/lib/terminal/sessionManager';
-import { ResourceBroadcast } from './src/lib/monitoring/resourceBroadcast';
+import { ResourceBroadcast } from './src/lib/health/resourceBroadcast';
 import { CharRingBuffer } from './src/lib/util/ringBuffer';
 import { SSHConnectionPool } from './src/lib/ssh/pool';
 import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './src/lib/auth/session';
@@ -86,7 +86,7 @@ logger.info('Server', `Session ID: ${sessionId}`);
 
 
 // Terminal sessions and resource broadcast moved into dedicated modules
-// (src/lib/terminal/sessionManager.ts, src/lib/monitoring/resourceBroadcast.ts).
+// (src/lib/terminal/sessionManager.ts, src/lib/health/resourceBroadcast.ts).
 // CharRingBuffer is wired in below via TerminalSessionManager's createHistory
 // option to keep PR 3's bounded scrollback behavior.
 
@@ -349,7 +349,7 @@ app.prepare().then(() => {
   setUpdaterIO(io);
 
   // Initialize Monitoring Service (V4 Legacy Bridge)
-  MonitoringService.init(io).catch(err => {
+  HealthService.init(io).catch(err => {
       logger.error('Server', 'Failed to start monitoring service:', err);
   });
   

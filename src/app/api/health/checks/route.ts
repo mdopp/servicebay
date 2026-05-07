@@ -1,16 +1,16 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { MonitoringStore } from '@/lib/monitoring/store';
-import { CheckConfig } from '@/lib/monitoring/types';
+import { HealthStore } from '@/lib/health/store';
+import { CheckConfig } from '@/lib/health/types';
 import { v4 as uuidv4 } from 'uuid';
 import { withApiHandler } from '@/lib/api/handler';
-import { MonitoringCheckTarget, NodeName } from '@/lib/api/schemas';
+import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
 
 export async function GET() {
-  const checks = MonitoringStore.getChecks();
+  const checks = HealthStore.getChecks();
   // Enrich with last result
   const enrichedChecks = checks.map(check => {
-    const results = MonitoringStore.getResults(check.id);
+    const results = HealthStore.getResults(check.id);
     const lastResult = results[0];
 
     // Get last 20 results for sparkline/heartbeat
@@ -37,7 +37,7 @@ const CheckPostBody = z.object({
   enabled: z.boolean().optional(),
   name: z.string().min(1).max(255),
   type: z.enum(['http', 'ping', 'script', 'podman', 'service', 'systemd', 'node', 'agent', 'fritzbox', 'backup']),
-  target: MonitoringCheckTarget,
+  target: HealthCheckTarget,
   interval: z.number().int().min(5).max(86400).optional(),
   nodeName: NodeName.optional(),
   httpConfig: z.object({
@@ -60,13 +60,13 @@ export const POST = withApiHandler({ body: CheckPostBody }, async ({ body }) => 
     httpConfig: body.httpConfig,
   };
 
-  MonitoringStore.saveCheck(check);
+  HealthStore.saveCheck(check);
   return check;
 });
 
 const CheckDeleteQuery = z.object({ id: z.string().min(1).max(64) });
 
 export const DELETE = withApiHandler({ query: CheckDeleteQuery }, async ({ query }) => {
-  MonitoringStore.deleteCheck(query.id);
+  HealthStore.deleteCheck(query.id);
   return { success: true };
 });

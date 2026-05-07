@@ -6,9 +6,9 @@ ServiceBay is a web interface for managing containerized applications using Podm
 
 ## Screenshots
 
-| Dashboard | Network Map | Monitoring |
-|-----------|------------|------------|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Network Map](docs/screenshots/network-map.png) | ![Monitoring](docs/screenshots/monitoring.png) |
+| Dashboard | Network Map | Health |
+|-----------|------------|--------|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Network Map](docs/screenshots/network-map.png) | ![Health](docs/screenshots/monitoring.png) |
 
 ## Quick Start
 
@@ -24,7 +24,7 @@ The installer creates a bootable USB that provisions the entire system: OS, netw
 
 - **Service Dashboard** — manage Quadlet services in `~/.config/containers/systemd/` with real-time status
 - **Network Visualization** — interactive topology diagram of services, containers, and proxy routes
-- **Health Monitoring** — HTTP/TCP checks with history graphs and email alerts
+- **Health Checks** — HTTP/TCP checks with history graphs and email alerts
 - **Template Registry** — deploy Nginx, Redis, Home Assistant, Immich, etc. from GitHub-hosted templates
 - **YAML Editor** — create/edit services with validation and hot-reload
 - **Web Terminal** — SSH into any managed node from the browser
@@ -106,10 +106,10 @@ at `/mcp` (session-cookie auth — same as the UI).
 
 The MCP server publishes 37 tools across read paths
 (`list_nodes`, `list_services`, `get_container_logs`,
-`get_network_graph`, `get_monitoring_checks`, …) and write paths
+`get_network_graph`, `get_health_checks`, …) and write paths
 (`start_service`/`stop_service`/`restart_service`, `update_service_yaml`,
 `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`,
-`create_monitoring_check`/`run_check_now`, `get_config`/`update_config`,
+`create_health_check`/`run_check_now`, `get_config`/`update_config`,
 `exec_command`). Sensitive fields (`auth.passwordHash`,
 `oidc.clientSecret`, SMTP/NPM passwords) are redacted in `get_config`
 and write-allowlisted in `update_config`.
@@ -188,7 +188,7 @@ Settings → System → Check for Updates → Update. Your service containers ar
 | Podman Quadlet native | **Yes** | Via API | Systemd | No |
 | Multi-Node (SSH) | **Yes** | Agent-based | Cockpit instances | Local only |
 | Network Visualization | **Yes** | No | No | No |
-| Health Monitoring | **Yes** | Basic | System metrics | Container logs |
+| Health Checks | **Yes** | Basic | System metrics | Container logs |
 | Template Registry | **Yes** | Built-in | Limited | Docker Compose |
 | Open Source | **Yes** | Yes + paid | Yes | Free for personal |
 

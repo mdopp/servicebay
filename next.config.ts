@@ -14,6 +14,12 @@ import type { NextConfig } from "next";
 //   undefined. Avoided entirely by running compiled CJS through node.
 const nextConfig: NextConfig = {
   serverExternalPackages: ['socket.io', 'node-pty', 'ssh2', 'better-sqlite3'],
+  // The dev-only "Issues" indicator defaults to bottom-left, where it overlaps
+  // the sidebar's GitHub link. Move it to bottom-right so it sits in empty
+  // canvas space. Production builds never render the indicator.
+  devIndicators: {
+    position: 'bottom-right',
+  },
   async redirects() {
     return [
       {
