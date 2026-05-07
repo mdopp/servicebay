@@ -4,6 +4,11 @@
     "description": "FileBrowser HTTP port — bound to 127.0.0.1 so it's only reachable through NPM (which terminates Authelia SSO).",
     "default": "8088"
   },
+  "FILEBROWSER_ADMIN_USER": {
+    "type": "text",
+    "description": "LLDAP username that gets pre-promoted to FileBrowser admin. Defaults to the LLDAP admin so the wizard's only auto-created user lands as the FB admin too — when they first log in via SSO, FB matches the existing admin record.",
+    "default": "admin"
+  },
   "FILEBROWSER_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for FileBrowser. Authelia forward-auth in the proxy snippet means SSO login → FileBrowser session in one step.",

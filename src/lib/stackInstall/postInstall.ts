@@ -351,6 +351,35 @@ async function seedAudiobookshelf(opts: { variables: StackVariable[]; onLog: (ms
   });
 }
 
+/** FileBrowser proxy-auth mode auto-creates user records on first SSO
+ *  request, but the new account inherits non-admin defaults. Without an
+ *  admin nobody can manage settings or other users — chicken-and-egg.
+ *  Pre-promote one LLDAP user (default 'admin') to FileBrowser admin
+ *  via the dedicated /api/system/filebrowser/init endpoint, which execs
+ *  the FileBrowser CLI inside the running container. Idempotent. */
+async function seedFileBrowserAdmin(opts: { variables: StackVariable[]; node?: string; onLog: (msg: string) => void }): Promise<void> {
+  const username = opts.variables.find(v => v.name === 'FILEBROWSER_ADMIN_USER')?.value || 'admin';
+  // Give the pod ~30s to come up before we exec into it.
+  await new Promise(r => setTimeout(r, 8000));
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const res = await fetch('/api/system/filebrowser/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, node: opts.node }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        opts.onLog(`✅ FileBrowser admin: ${username} (${data.action}) — log in via Authelia at https://files.<your-domain> to manage shares.`);
+        return;
+      }
+      // Container probably not ready yet — retry with backoff.
+    } catch { /* retry */ }
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  opts.onLog('⚠️ Could not pre-seed FileBrowser admin. Run `podman exec filebrowser-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db` once the pod is up.');
+}
+
 async function seedNavidrome(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): Promise<void> {
   return seedMediaServer({
     service: 'navidrome',
@@ -460,6 +489,9 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   }
   if (isSelected('navidrome')) {
     void seedNavidrome({ variables, onLog }).catch(() => { /* logged inline */ });
+  }
+  if (isSelected('filebrowser')) {
+    void seedFileBrowserAdmin({ variables, node, onLog }).catch(() => { /* logged inline */ });
   }
 
   const proxyResult = await configureProxyRoutes({ variables, node, onLog });
