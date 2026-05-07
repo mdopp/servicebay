@@ -7,26 +7,35 @@ YAML, manage proxy routes, run backups, configure health checks, and more.
 
 ## Setup (Claude Code)
 
-### 1. Copy your session cookie
+### 1. Create an API token (recommended)
 
-The MCP endpoint uses the same auth as this UI. The session cookie is
-`HttpOnly`, so it has to come from DevTools — one-time:
+Open **Settings → Integrations → MCP Server → API tokens → New token**.
+Pick a name (e.g. `Claude Code on workstation`) and the scopes you want
+this client to have:
 
-1. Open DevTools (F12) on this tab.
-2. **Application → Storage → Cookies → (your ServiceBay origin)**.
-3. Copy the value of the `session` cookie. It looks like
-   `eyJhbGciOiJIUzI1NiJ9.eyJ1c2Vy…`.
+- **read** — list/get only. The safest default.
+- **lifecycle** — adds start/stop/restart, run-check-now, refresh-agent.
+- **mutate** — adds deploy/update/add-route/create-check.
+- **destroy** — adds delete/exec/restore/purge. Use sparingly.
+
+The token is shown **once** when you create it — copy it now. Format:
+`sb_<id>_<secret>`. Revoke any time without affecting other clients.
 
 ### 2. Register the server
 
 ```bash
 claude mcp add --transport http servicebay \
   <YOUR_SERVICEBAY_URL>/mcp \
-  --header "Cookie: session=PASTE_THE_JWT_HERE"
+  --header "Authorization: Bearer sb_xxxxxxxx_YOUR_TOKEN_HERE"
 ```
 
-Replace `<YOUR_SERVICEBAY_URL>` with the URL you used to log in (the same one
-shown in the **MCP Server** card on Settings → Integrations).
+Replace `<YOUR_SERVICEBAY_URL>` with the URL you used to log in (the same
+one shown in the **MCP Server** card on Settings → Integrations).
+
+> **Legacy: session cookie.** Pre-existing MCP setups that pass
+> `Cookie: session=<JWT>` still work and have full scopes. New clients
+> should use Bearer tokens — they're per-client, scope-able, and
+> revocable.
 
 ### 3. Verify
 

@@ -1,0 +1,52 @@
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
+import { listTokens, createToken, revokeToken, ALL_SCOPES, type ApiScope } from '@/lib/mcp/tokens';
+import { requireSession } from '@/lib/api/requireSession';
+import { apiError } from '@/lib/api/errors';
+
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
+  const auth = await requireSession(request);
+  if (auth instanceof NextResponse) return auth;
+  const tokens = await listTokens();
+  return NextResponse.json({ tokens });
+}
+
+const CreateBody = z.object({
+  name: z.string().min(1).max(100),
+  scopes: z.array(z.enum(ALL_SCOPES as [ApiScope, ...ApiScope[]])).min(1),
+  expiresAt: z.string().datetime().optional(),
+});
+
+export async function POST(request: Request) {
+  const auth = await requireSession(request);
+  if (auth instanceof NextResponse) return auth;
+  try {
+    const body = CreateBody.parse(await request.json());
+    const result = await createToken({
+      name: body.name,
+      scopes: body.scopes,
+      expiresAt: body.expiresAt,
+      createdBy: auth.user,
+    });
+    // The clear-text secret is returned ONCE, here. The client must show
+    // it to the operator and let them copy it before it's gone.
+    return NextResponse.json({ token: result.token, secret: result.secret });
+  } catch (e) {
+    return apiError(e, { tag: 'api:system:mcp-tokens:post', status: 400 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const auth = await requireSession(request);
+  if (auth instanceof NextResponse) return auth;
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id');
+  if (!id || !/^[0-9a-f]{8}$/.test(id)) {
+    return NextResponse.json({ error: 'invalid token id' }, { status: 400 });
+  }
+  const ok = await revokeToken(id);
+  if (!ok) return NextResponse.json({ error: 'token not found' }, { status: 404 });
+  return NextResponse.json({ ok: true });
+}
