@@ -519,6 +519,19 @@ export class ServiceManager {
     }
 
     static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string, extraFiles?: { path: string; content: string }[], onProgress?: (message: string) => void) {
+        // Pre-flight: refuse to deploy if the YAML claims a host port that
+        // another service on the same node already owns. Without this check,
+        // the second deploy "succeeds" but the unit fails to start because the
+        // bind() races; users only notice when the new service stays
+        // permanently inactive in the dashboard.
+        const collisions = await this.findHostPortCollisions(nodeName, name, yamlContent);
+        if (collisions.length > 0) {
+            const detail = collisions
+                .map(c => `port ${c.hostPort} already in use by ${c.serviceName}`)
+                .join('; ');
+            throw new Error(`Port collision on node "${nodeName}": ${detail}. Change the host port and retry.`);
+        }
+
         // Ensure TimeoutStartSec for multi-image pods so image pulls don't cause systemd timeout
         const images = this.extractImages(yamlContent);
         if (images.length > 1 && !kubeContent.includes('TimeoutStartSec')) {
@@ -607,6 +620,78 @@ export class ServiceManager {
         } catch (e) {
             logger.warn('ServiceManager', `Failed to create monitoring check for ${name}:`, e);
         }
+    }
+
+    /**
+     * Pull every hostPort declared in a kube YAML. Tolerates malformed YAML
+     * (returns empty rather than throwing) so a parse error never blocks a
+     * deploy via the collision check.
+     */
+    static extractHostPorts(yamlContent: string): number[] {
+        const ports = new Set<number>();
+        try {
+            const docs = yaml.loadAll(yamlContent) as unknown[];
+            for (const doc of docs) {
+                if (!doc || typeof doc !== 'object') continue;
+                const spec = (doc as { spec?: unknown }).spec as { containers?: unknown } | undefined;
+                const containers = Array.isArray(spec?.containers) ? spec.containers : [];
+                for (const c of containers) {
+                    if (!c || typeof c !== 'object') continue;
+                    const portsField = (c as { ports?: unknown }).ports;
+                    if (!Array.isArray(portsField)) continue;
+                    for (const p of portsField) {
+                        if (!p || typeof p !== 'object') continue;
+                        const hp = (p as { hostPort?: unknown }).hostPort;
+                        if (typeof hp === 'number' && Number.isFinite(hp) && hp > 0) {
+                            ports.add(hp);
+                        } else if (typeof hp === 'string') {
+                            const n = parseInt(hp, 10);
+                            if (Number.isFinite(n) && n > 0) ports.add(n);
+                        }
+                    }
+                }
+            }
+        } catch {
+            // Fallback: regex out hostPort: <num>. Better to under-detect than crash.
+            const regex = /hostPort:\s*["']?(\d+)["']?/g;
+            let m: RegExpExecArray | null;
+            while ((m = regex.exec(yamlContent)) !== null) {
+                const n = parseInt(m[1], 10);
+                if (Number.isFinite(n) && n > 0) ports.add(n);
+            }
+        }
+        return [...ports];
+    }
+
+    /**
+     * Look for hostPort conflicts between a yaml-being-deployed and the
+     * services currently registered on `nodeName`. The service being
+     * (re)deployed under `selfName` is excluded so an upgrade in place is
+     * never blocked by its own already-registered ports.
+     */
+    static async findHostPortCollisions(
+        nodeName: string,
+        selfName: string,
+        yamlContent: string,
+    ): Promise<{ hostPort: number; serviceName: string }[]> {
+        const wanted = this.extractHostPorts(yamlContent);
+        if (wanted.length === 0) return [];
+        const services = await this.listServices(nodeName);
+        const collisions: { hostPort: number; serviceName: string }[] = [];
+        for (const port of wanted) {
+            for (const svc of services) {
+                if (svc.name === selfName) continue;
+                const hit = svc.ports?.some(p => {
+                    if (!p?.host) return false;
+                    return parseInt(p.host, 10) === port;
+                });
+                if (hit) {
+                    collisions.push({ hostPort: port, serviceName: svc.name });
+                    break;
+                }
+            }
+        }
+        return collisions;
     }
 
     /** Extract all container image references from a kube YAML */
