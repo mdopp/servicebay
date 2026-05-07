@@ -5,8 +5,8 @@
     "default": "samba"
   },
   "SHARE_PASSWORD": {
-    "type": "password",
-    "description": "Samba password for file share access"
+    "type": "secret",
+    "description": "Samba password — auto-generated. Note it during install: you'll type it once per Windows/macOS machine when mounting the share. Use the regenerate icon if you want a custom value before deploy."
   },
   "SYNCTHING_SUBDOMAIN": {
     "type": "subdomain",

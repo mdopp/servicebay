@@ -51,8 +51,8 @@
     "default": "dc=dopp,dc=cloud"
   },
   "LLDAP_ADMIN_PASSWORD": {
-    "type": "password",
-    "description": "LLDAP admin password"
+    "type": "secret",
+    "description": "LLDAP admin password — auto-generated when LLDAP is installed alongside, inherited from lldap/variables.json. Standalone Authelia installs use this for the LDAP bind that is not actually wired up."
   },
   "PUBLIC_DOMAIN": {
     "type": "text",
