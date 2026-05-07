@@ -314,6 +314,14 @@ async function bootstrapNpmAdmin(opts: {
   const fullName = opts.variables.find(v => v.name === 'NGINX_ADMIN_NAME')?.value;
   if (!email || !password) return 'skipped';
 
+  // The pod template sets INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD env
+  // vars, so on first init NPM seeds the user table with these exact
+  // credentials — but the seed step lands ~30-60 s after `/status` reports
+  // the API is up. The bootstrap endpoint retries the target-creds login
+  // for 90 s server-side; preview that to the operator so the wait isn't
+  // a black box.
+  opts.onLog('Verifying NPM admin credentials (waiting up to 90s for the user table to seed)...');
+
   try {
     const res = await fetch('/api/system/nginx/bootstrap', {
       method: 'POST',
@@ -331,7 +339,10 @@ async function bootstrapNpmAdmin(opts: {
       return 'ok';
     }
     if (res.ok && data.ok && data.reason === 'defaults_rejected') {
-      opts.onLog('⚠️ NPM is not on default credentials (stale data volume from a previous install?). You will need to enter the existing NPM admin password manually.');
+      // Server includes a `detail` string with the most likely cause from
+      // its perspective (90 s retry exhausted, defaults also rejected).
+      const detail = typeof data.detail === 'string' ? data.detail : 'NPM did not accept the wizard credentials and is not on legacy defaults.';
+      opts.onLog(`⚠️ ${detail}`);
       return 'needs_credentials';
     }
     opts.onLog(`⚠️ NPM bootstrap failed: ${typeof data.error === 'string' ? data.error : `HTTP ${res.status}`}. You may need to set NPM credentials manually in Settings → Integrations.`);

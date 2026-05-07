@@ -144,21 +144,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'Nginx Proxy Manager not found or not running' }, { status: 404 });
     }
 
-    // Idempotency: if the target credentials already authenticate, NPM is
-    // already on these creds — just persist on our side and return.
-    const targetToken = await npmLogin(npm.apiUrl, email, password);
+    // The nginx-web pod sets INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD
+    // env vars, which NPM honours on first init: it seeds the admin user
+    // with the wizard's chosen credentials, NOT admin@example.com/changeme.
+    // So the happy path on a fresh install is "wait for NPM to finish
+    // seeding the user table, then target creds work directly". The DB
+    // schema migrations + user seed reliably take 30-60 s after the API
+    // first reports "running" — so retry for 90 s before giving up.
+    //
+    // The defaults fallback below remains as a safety net for older NPM
+    // versions that ignored the INITIAL_ADMIN_* env vars, or for installs
+    // that somehow lost them.
+    const TARGET_RETRY_BUDGET_MS = 90_000;
+    const RETRY_INTERVAL_MS = 3_000;
+    const start = Date.now();
+    let targetToken: string | null = null;
+    while (Date.now() - start < TARGET_RETRY_BUDGET_MS) {
+      targetToken = await npmLogin(npm.apiUrl, email, password);
+      if (targetToken) break;
+      await new Promise(r => setTimeout(r, RETRY_INTERVAL_MS));
+    }
     if (targetToken) {
       const config = await getConfig();
       await updateConfig({ reverseProxy: { ...config.reverseProxy, npm: { email, password } } });
       return NextResponse.json({ ok: true, bootstrapped: false, reason: 'already_using_target' });
     }
 
-    // Defaults — only valid on a brand-new NPM data volume. If NPM was
-    // previously bootstrapped with a different password, this returns null
-    // and we surface that to the caller so the user can intervene.
+    // Target creds didn't work even after waiting. Fall back to NPM's
+    // pre-INITIAL_ADMIN built-in defaults. This succeeds only on legacy
+    // NPM versions or on installs whose data volume was preserved while
+    // the env vars in the new pod manifest don't match the existing user.
     const defaultsToken = await npmLogin(npm.apiUrl, NPM_DEFAULT_EMAIL, NPM_DEFAULT_PASSWORD);
     if (!defaultsToken) {
-      return NextResponse.json({ ok: true, bootstrapped: false, reason: 'defaults_rejected' });
+      return NextResponse.json({
+        ok: true,
+        bootstrapped: false,
+        reason: 'defaults_rejected',
+        // Caller renders this verbatim; honest about the most likely cause.
+        detail: `NPM did not accept the wizard's INITIAL_ADMIN_* credentials within ${TARGET_RETRY_BUDGET_MS / 1000}s, and the legacy admin@example.com fallback was also rejected. Most likely the data volume holds an admin password from a previous install — reset NPM's data dir, or paste the existing password into the prompt.`,
+      });
     }
 
     // Order matters: change user fields first (email is the login identity),
