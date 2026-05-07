@@ -13,6 +13,8 @@ vi.mock('@/app/actions/onboarding', () => ({
   saveRegistriesConfig: vi.fn(),
   saveEmailConfig: vi.fn(),
   completeStackSetup: vi.fn(),
+  markInstallStarted: vi.fn(),
+  forceClearInstallLock: vi.fn(),
 }));
 
 import { checkOnboardingStatus, saveGatewayConfig, completeStackSetup } from '@/app/actions/onboarding';
