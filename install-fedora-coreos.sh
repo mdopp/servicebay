@@ -543,38 +543,56 @@ ${SERVICEBAY_SSH_PRIV}
           set -euo pipefail
           PORT="${SERVICEBAY_PORT:-3000}"
           API="http://localhost:$PORT"
-          MAX_WAIT=180
+          API_WAIT=300        # 5 min for ServiceBay API + agent — long
+                              # enough to cover slow image pulls / first boot.
+          INSTALLED_WAIT=1800 # 30 min for nginx to appear via the onboarding
+                              # wizard before we step in. Avoids racing the
+                              # interactive install which can take a while
+                              # to reach the "Reverse Proxy" step.
           WAITED=0
+
           echo "install-nginx: waiting for ServiceBay API on port $PORT..."
           while ! curl -sf "$API/api/system/nginx/status" >/dev/null 2>&1; do
             sleep 5
             WAITED=$((WAITED + 5))
-            if (( WAITED >= MAX_WAIT )); then
+            if (( WAITED >= API_WAIT )); then
               echo "install-nginx: timeout waiting for ServiceBay API" >&2
               exit 1
             fi
           done
-          # Wait for at least one agent to be connected (needs python3 installed first)
+
+          # Wait for at least one agent to be connected (needs python3 installed first).
           echo "install-nginx: waiting for agent to connect..."
           while true; do
             CONNECTED=$(curl -sf "$API/api/system/health" | grep -o '"isConnected":true' || true)
             if [[ -n "$CONNECTED" ]]; then break; fi
             sleep 5
             WAITED=$((WAITED + 5))
-            if (( WAITED >= MAX_WAIT )); then
+            if (( WAITED >= API_WAIT )); then
               echo "install-nginx: timeout waiting for agent" >&2
               exit 1
             fi
           done
           echo "install-nginx: agent connected"
-          # Check if nginx is already installed (e.g. restored from Quadlet backup)
-          INSTALLED=$(curl -sf "$API/api/system/nginx/status" | grep -o '"installed":true' || true)
-          if [[ -n "$INSTALLED" ]]; then
-            echo "install-nginx: nginx already installed, skipping"
-            exit 0
-          fi
-          echo "install-nginx: installing nginx..."
-          # Retry install up to 3 times (agent may need a moment to stabilize)
+
+          # Poll for installed=true. The user may install nginx via the
+          # onboarding wizard concurrently — we should *not* race it. If
+          # that's in progress we'd see installed=false here and our own
+          # POST /install would collide with the wizard's POST. So just
+          # wait it out.
+          echo "install-nginx: polling for nginx-web service (up to ${INSTALLED_WAIT}s for the wizard to finish)..."
+          POLL_WAITED=0
+          while (( POLL_WAITED < INSTALLED_WAIT )); do
+            INSTALLED=$(curl -sf "$API/api/system/nginx/status" | grep -o '"installed":true' || true)
+            if [[ -n "$INSTALLED" ]]; then
+              echo "install-nginx: nginx is installed, nothing to do"
+              exit 0
+            fi
+            sleep 30
+            POLL_WAITED=$((POLL_WAITED + 30))
+          done
+
+          echo "install-nginx: wizard didn't install nginx in ${INSTALLED_WAIT}s, attempting install ourselves..."
           for attempt in 1 2 3; do
             if curl -sf -X POST "$API/api/system/nginx/install"; then
               echo "install-nginx: done"
@@ -583,7 +601,7 @@ ${SERVICEBAY_SSH_PRIV}
             echo "install-nginx: attempt $attempt failed, retrying in 10s..."
             sleep 10
           done
-          echo "install-nginx: all attempts failed" >&2
+          echo "install-nginx: all attempts failed — install nginx manually from Settings → Reverse Proxy" >&2
           exit 1
 
     # Systemd user unit to install Nginx on first boot

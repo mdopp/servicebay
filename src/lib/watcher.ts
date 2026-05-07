@@ -118,6 +118,15 @@ class ServiceWatcher extends EventEmitter {
     });
   }
 
+  // Crash-looping containers can emit a `start` (or pair of `start`/`die`)
+  // every ~50 ms, which floods the journal with hundreds of identical
+  // [Watcher] log lines per second. Coalesce by (status, name) over a
+  // short window: log the first event immediately, then suppress duplicates
+  // and emit a single summary line at the end of the window.
+  private readonly EVENT_COALESCE_MS = 5000;
+  private eventCounts = new Map<string, number>();
+  private eventFlushTimers = new Map<string, NodeJS.Timeout>();
+
   private processPodmanChunk(source: string, data: Buffer) {
     const lines = data.toString().split('\n');
     for (const line of lines) {
@@ -125,8 +134,28 @@ class ServiceWatcher extends EventEmitter {
       try {
         const event = JSON.parse(line);
         if (['start', 'stop', 'die', 'remove', 'create'].includes(event.Status)) {
-          console.log(`[Watcher] Podman event (${source}): ${event.Status} on ${event.Name}`);
-          this.emit('change', { type: 'container', message: `Container ${event.Name} ${event.Status}` });
+          const key = `${source}|${event.Status}|${event.Name}`;
+          const count = (this.eventCounts.get(key) ?? 0) + 1;
+          this.eventCounts.set(key, count);
+
+          // First occurrence in the window: log + emit immediately.
+          if (count === 1) {
+            console.log(`[Watcher] Podman event (${source}): ${event.Status} on ${event.Name}`);
+            this.emit('change', { type: 'container', message: `Container ${event.Name} ${event.Status}` });
+
+            const timer = setTimeout(() => {
+              const total = this.eventCounts.get(key) ?? 1;
+              this.eventCounts.delete(key);
+              this.eventFlushTimers.delete(key);
+              if (total > 1) {
+                console.log(`[Watcher] Podman event (${source}): ${event.Status} on ${event.Name} ×${total} (coalesced over ${this.EVENT_COALESCE_MS / 1000}s)`);
+              }
+            }, this.EVENT_COALESCE_MS);
+            this.eventFlushTimers.set(key, timer);
+          }
+          // Subsequent occurrences in the window are silently counted; the
+          // flush timer above logs the total and re-emits a single change
+          // event downstream consumers can act on.
         }
       } catch {
         // Ignore parse errors

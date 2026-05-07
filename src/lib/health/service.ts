@@ -14,12 +14,42 @@ export class HealthService {
 
   static async init(io: Server) {
     this.io = io;
-    
+
+    // Re-schedule whenever a check is added/edited/removed via the API,
+    // ServiceManager auto-add, the wizard, or any other store mutation.
+    // Without this, only the checks present at init time ever ran — checks
+    // added later (e.g. the per-service `Service: <name>` checks created
+    // when a stack deploys) sat dormant with lastResult=null forever.
+    HealthStore.subscribe({
+      onSave: (check) => this.scheduleOne(check),
+      onDelete: (id) => this.unscheduleOne(id),
+    });
+
     // 1. Ensure defaults
     await initializeDefaultChecks();
 
     // 2. Start initial scheduling
     this.restartAll();
+  }
+
+  /** Schedule (or re-schedule) a single check. Idempotent. */
+  private static scheduleOne(check: CheckConfig) {
+    const existing = intervals.get(check.id);
+    if (existing) clearInterval(existing);
+    if (!check.enabled) {
+      intervals.delete(check.id);
+      return;
+    }
+    this.scheduleCheck(check);
+  }
+
+  /** Stop a single check's interval. */
+  private static unscheduleOne(id: string) {
+    const t = intervals.get(id);
+    if (t) {
+      clearInterval(t);
+      intervals.delete(id);
+    }
   }
 
   static getChecks() {
