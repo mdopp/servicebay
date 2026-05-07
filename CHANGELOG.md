@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.4.1...servicebay-v3.4.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* health checks tick across bundle boundaries + radicale dumb-init + SELinux on bind mounts ([#178](https://github.com/mdopp/servicebay/issues/178)) ([69b59ac](https://github.com/mdopp/servicebay/commit/69b59ac31aab9aa5721c238aa783b617fcce2926))
+
 ## [3.4.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.4.0...servicebay-v3.4.1) (2026-05-07)
 
 
