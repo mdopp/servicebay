@@ -20,6 +20,7 @@ import {
 } from '@/lib/backup/service';
 import { restoreSystemBackup } from '@/lib/systemBackup';
 import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
+import { recordAudit } from './audit';
 
 const nodeParam = z.string().optional().describe('Node name (defaults to first available node)');
 
@@ -89,19 +90,53 @@ function safeHandler(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...handlerArgs: any[]): Promise<ToolResult> => {
     const args = (handlerArgs[0] && typeof handlerArgs[0] === 'object') ? handlerArgs[0] : {};
-    if (MUTATING_TOOLS.has(toolName)) {
-      const blocked = await guardMutation(toolName);
-      if (blocked) return blocked;
+    const start = Date.now();
+    let outcome: 'ok' | 'error' | 'blocked' = 'ok';
+    let errorMessage: string | undefined;
+    try {
+      if (MUTATING_TOOLS.has(toolName)) {
+        const blocked = await guardMutation(toolName);
+        if (blocked) {
+          outcome = 'blocked';
+          errorMessage = blocked.content[0]?.text;
+          return blocked;
+        }
+      }
+      if (toolName === 'exec_command' && typeof args.command === 'string') {
+        const denied = await guardExec(args.command);
+        if (denied) {
+          outcome = 'blocked';
+          errorMessage = denied.content[0]?.text;
+          return denied;
+        }
+      }
+      if (DESTRUCTIVE_TOOLS.has(toolName)) {
+        // Best-effort: don't block the mutation if the snapshot fails.
+        await snapshotBeforeMutation(toolName, args);
+      }
+      const result = await handler(...handlerArgs);
+      // Result is `isError: true` when a tool reports a logical error.
+      if (result && typeof result === 'object' && (result as { isError?: boolean }).isError) {
+        outcome = 'error';
+        errorMessage = (result as { content?: { text?: string }[] }).content?.[0]?.text;
+      }
+      return result;
+    } catch (e) {
+      outcome = 'error';
+      errorMessage = e instanceof Error ? e.message : String(e);
+      throw e;
+    } finally {
+      // Audit fire-and-forget — never block the tool response on the log
+      // write. Tracked separately by mcp:audit logger.
+      void recordAudit({
+        ts: new Date().toISOString(),
+        tool: toolName,
+        outcome,
+        durationMs: Date.now() - start,
+        args,
+        errorMessage,
+      });
     }
-    if (toolName === 'exec_command' && typeof args.command === 'string') {
-      const denied = await guardExec(args.command);
-      if (denied) return denied;
-    }
-    if (DESTRUCTIVE_TOOLS.has(toolName)) {
-      // Best-effort: don't block the mutation if the snapshot fails.
-      await snapshotBeforeMutation(toolName, args);
-    }
-    return handler(...handlerArgs);
   };
 }
 
