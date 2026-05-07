@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.2.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.1.3...servicebay-v3.2.0) (2026-05-07)
+
+
+### Features
+
+* exponential restart backoff for crash-loops + auto self-test on install ([#167](https://github.com/mdopp/servicebay/issues/167)) ([f75a261](https://github.com/mdopp/servicebay/commit/f75a261a1bb679092a65f3cc9f685c2ec1a51ff2))
+
 ## [3.1.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.1.2...servicebay-v3.1.3) (2026-05-07)
 
 
