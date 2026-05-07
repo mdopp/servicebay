@@ -1,10 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/config';
 import { getOidcCallbackUrl } from '@/lib/config';
+import { isRequestSecure } from '@/lib/auth/requestSecurity';
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const config = await getConfig();
 
@@ -32,7 +33,7 @@ export async function GET() {
     response.cookies.set('oidc_state', state, {
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: isRequestSecure(request),
       maxAge: 600, // 10 minutes
       path: '/',
     });
