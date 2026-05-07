@@ -12,6 +12,7 @@
  */
 
 import type { VariableMeta } from '@/lib/registry';
+import { buildCredentialsManifest, formatCredentialsBanner } from './credentialsManifest';
 
 /** Variable shape shared between wizard and modal. */
 export interface StackVariable {
@@ -461,5 +462,14 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
     void seedNavidrome({ variables, onLog }).catch(() => { /* logged inline */ });
   }
 
-  return configureProxyRoutes({ variables, node, onLog });
+  const proxyResult = await configureProxyRoutes({ variables, node, onLog });
+
+  // Final banner — single block where every credential the user might
+  // have to remember is collected. Same data is exposed to the wizard's
+  // Done view + a Bitwarden CSV download via buildCredentialsManifest().
+  const host = typeof window !== 'undefined' ? window.location.hostname : '';
+  const manifest = buildCredentialsManifest({ selected, variables, host });
+  formatCredentialsBanner(manifest).forEach(onLog);
+
+  return proxyResult;
 }
