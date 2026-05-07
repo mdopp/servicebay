@@ -21,6 +21,13 @@ import {
 import { restoreSystemBackup } from '@/lib/systemBackup';
 import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
 import { recordAudit } from './audit';
+import type { ApiScope } from './tokens';
+
+interface McpAuthContext {
+  user: string;
+  scopes: ApiScope[];
+  tokenId?: string;
+}
 
 const nodeParam = z.string().optional().describe('Node name (defaults to first available node)');
 
@@ -52,6 +59,41 @@ const MUTATING_TOOLS = new Set([
   'run_backup', 'restore_backup',
   'update_config', 'exec_command', 'refresh_agent',
 ]);
+
+/**
+ * Per-tool required scope. Bearer-token auth refuses any tool whose scope
+ * isn't in the token's set. Cookie auth has all scopes for back-compat.
+ *
+ *   read       lookups + diagnose + log readers
+ *   lifecycle  start/stop/restart + run_check_now + refresh + run_backup
+ *   mutate     create/update/add — additive changes
+ *   destroy    delete/exec/restore/purge — irreversible
+ */
+const TOOL_SCOPES: Record<string, ApiScope> = {
+  // read
+  list_nodes: 'read', list_services: 'read', list_containers: 'read',
+  get_service_logs: 'read', get_container_logs: 'read', get_service_files: 'read',
+  list_templates: 'read', get_template_readme: 'read', get_template_yaml: 'read',
+  get_template_variables: 'read',
+  get_system_info: 'read', get_network_graph: 'read', get_health_checks: 'read',
+  get_gateway_status: 'read', get_proxy_routes: 'read', get_config: 'read',
+  get_podman_logs: 'read', list_system_services: 'read',
+  list_backups: 'read', diagnose: 'read', verify_node_connection: 'read',
+  list_trashed_services: 'read',
+  // lifecycle
+  start_service: 'lifecycle', stop_service: 'lifecycle', restart_service: 'lifecycle',
+  run_check_now: 'lifecycle', refresh_agent: 'lifecycle',
+  run_backup: 'lifecycle',
+  // mutate
+  deploy_service: 'mutate', update_service_yaml: 'mutate', rename_service: 'mutate',
+  add_proxy_route: 'mutate', create_health_check: 'mutate',
+  restore_trashed_service: 'mutate',
+  // destroy
+  delete_service: 'destroy', delete_health_check: 'destroy',
+  remove_proxy_route: 'destroy', restore_backup: 'destroy',
+  purge_trashed_service: 'destroy', update_config: 'destroy',
+  exec_command: 'destroy',
+};
 
 /**
  * Subset of MUTATING_TOOLS that can lose data or change config in
@@ -86,6 +128,7 @@ function safeHandler(
   toolName: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handler: (...handlerArgs: any[]) => Promise<ToolResult>,
+  auth?: McpAuthContext,
 ) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...handlerArgs: any[]): Promise<ToolResult> => {
@@ -94,6 +137,13 @@ function safeHandler(
     let outcome: 'ok' | 'error' | 'blocked' = 'ok';
     let errorMessage: string | undefined;
     try {
+      // Scope check (token auth only — cookie has all scopes by design).
+      const required = TOOL_SCOPES[toolName] ?? 'read';
+      if (auth && !auth.scopes.includes(required)) {
+        outcome = 'blocked';
+        errorMessage = `Token scope '${required}' required for ${toolName}; this token has [${auth.scopes.join(',')}]`;
+        return { content: [{ type: 'text' as const, text: errorMessage }], isError: true as const };
+      }
       if (MUTATING_TOOLS.has(toolName)) {
         const blocked = await guardMutation(toolName);
         if (blocked) {
@@ -131,6 +181,7 @@ function safeHandler(
       void recordAudit({
         ts: new Date().toISOString(),
         tool: toolName,
+        caller: auth?.user,
         outcome,
         durationMs: Date.now() - start,
         args,
@@ -140,18 +191,19 @@ function safeHandler(
   };
 }
 
-export function createMcpServer() {
+export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   const baseServer = new McpServer({
     name: 'servicebay',
     version: '1.0.0',
   });
   // Wrap every tool registration so the safety layer applies uniformly.
   // Read-only tools pass through unchanged; mutating tools land in the
-  // gates defined above.
+  // gates defined above. The auth context is closed over per-server so
+  // each request gets its own scope set.
   const server = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tool: (name: string, desc: string, schema: any, handler: (...args: any[]) => Promise<ToolResult>) =>
-      baseServer.tool(name, desc, schema, safeHandler(name, handler)),
+      baseServer.tool(name, desc, schema, safeHandler(name, handler, opts?.auth)),
     connect: baseServer.connect.bind(baseServer),
     close: baseServer.close.bind(baseServer),
   };

@@ -173,19 +173,40 @@ app.prepare().then(() => {
         }
 
         // Auth: MCP lives outside /api/* so the Next proxy gate doesn't see it.
-        const session = await getSessionFromCookieHeader(req.headers.cookie);
-        if (!session) {
+        // Two paths supported:
+        //   1. Authorization: Bearer sb_<id>_<secret>   — scoped API token
+        //   2. Cookie: session=...                      — full-access (legacy)
+        // Token path is preferred; cookie kept for back-compat with clients
+        // that connected before tokens existed.
+        const { verifyToken } = await import('./src/lib/mcp/tokens');
+        const authHeader = req.headers.authorization || '';
+        const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
+        let auth: { user: string; scopes: import('./src/lib/mcp/tokens').ApiScope[]; tokenId?: string } | null = null;
+        if (bearerMatch) {
+          const t = await verifyToken(bearerMatch[1]);
+          if (t) auth = { user: `token:${t.name}`, scopes: t.scopes, tokenId: t.id };
+        }
+        if (!auth) {
+          const session = await getSessionFromCookieHeader(req.headers.cookie);
+          if (session) {
+            // Cookie auth retains full scopes for back-compat. Fresh
+            // installs that want stricter behaviour use named tokens.
+            auth = { user: session.user, scopes: ['read', 'lifecycle', 'mutate', 'destroy'] };
+          }
+        }
+        if (!auth) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             jsonrpc: '2.0',
-            error: { code: -32001, message: 'Unauthorized' },
+            error: { code: -32001, message: 'Unauthorized — provide Authorization: Bearer sb_… or a session cookie' },
             id: null,
           }));
           return;
         }
 
-        // Stateless: create a fresh server + transport per request
-        const mcpServer = createMcpServer();
+        // Stateless: create a fresh server + transport per request, with
+        // the auth context closed over so each tool call can scope-check.
+        const mcpServer = createMcpServer({ auth });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         await mcpServer.connect(transport);
         const body = await collectBody(req);
