@@ -47,6 +47,12 @@ vi.mock('@/lib/registry', () => ({
   }),
 }));
 
+// Bypass the session gate: every request in these tests is treated as
+// authenticated. Auth itself is covered by the auth middleware tests.
+vi.mock('@/lib/api/requireSession', () => ({
+  requireSession: vi.fn(async () => ({ user: 'admin', expires: new Date(Date.now() + 86400_000) })),
+}));
+
 import { POST } from '../../src/app/api/system/authelia/oidc-clients/route';
 
 // Minimal Authelia pod YAML with a config volume

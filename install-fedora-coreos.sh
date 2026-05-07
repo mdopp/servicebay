@@ -890,11 +890,19 @@ prompt_secret() {
     echo
     read -r -s -p "Confirm: " value_confirm || true
     echo
-    if [[ "$value" == "$value_confirm" && -n "$value" ]]; then
-      printf -v "$var_name" '%s' "$value"
-      return
+    if [[ "$value" != "$value_confirm" || -z "$value" ]]; then
+      echo "Passwords do not match or are empty. Try again." >&2
+      continue
     fi
-    echo "Passwords do not match or are empty. Try again." >&2
+    # Reject characters that survive envsubst into the Butane template +
+    # the manually-quoted JSON build. \n breaks systemd Environment= lines
+    # (and YAML); " and \ break JSON; ${ would re-trigger envsubst.
+    if [[ "$value" == *$'\n'* || "$value" == *'"'* || "$value" == *'\'* || "$value" == *'$'* || "$value" == *'`'* ]]; then
+      echo "Password contains characters that break the install pipeline (newline, quote, backslash, \$ or backtick). Pick a different one." >&2
+      continue
+    fi
+    printf -v "$var_name" '%s' "$value"
+    return
   done
 }
 
@@ -1213,19 +1221,27 @@ save_settings
 
 PASSWORD_HASH="$(printf '%s' "$HOST_PASSWORD" | openssl passwd -6 -stdin)"
 
+# Properly escape arbitrary strings as JSON literals — prevents user-supplied
+# values (passwords, hostnames, email addresses) from breaking the JSON or
+# injecting attacker-chosen keys into config.json. Python3 is a hard dep on
+# Fedora CoreOS targets and we already require it on the build host elsewhere.
+json_str() {
+  python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1"
+}
+
 # Build ServiceBay config.json (with optional sections)
 SERVICEBAY_CONFIG='{
-  "serverName": "'"$SERVER_NAME"'",
+  "serverName": '"$(json_str "$SERVER_NAME")"',
   "auth": {
-    "username": "'"$SERVICEBAY_ADMIN_USER"'"
+    "username": '"$(json_str "$SERVICEBAY_ADMIN_USER")"'
   },
   "autoUpdate": {
     "enabled": true,
     "schedule": "0 0 * * *",
-    "channel": "'"$SERVICEBAY_CHANNEL"'"
+    "channel": '"$(json_str "$SERVICEBAY_CHANNEL")"'
   },
   "templateSettings": {
-    "DATA_DIR": "'"$DATA_ROOT/stacks"'"
+    "DATA_DIR": '"$(json_str "$DATA_ROOT/stacks")"'
   }'
 
 # Add reverseProxy.publicDomain if user supplied one — wizard reads this
@@ -1233,7 +1249,7 @@ SERVICEBAY_CONFIG='{
 if [[ -n "$PUBLIC_DOMAIN" ]]; then
   SERVICEBAY_CONFIG+=',
   "reverseProxy": {
-    "publicDomain": "'"$PUBLIC_DOMAIN"'"
+    "publicDomain": '"$(json_str "$PUBLIC_DOMAIN")"'
   }'
 fi
 
@@ -1242,9 +1258,9 @@ if [[ -n "$GW_USER" ]]; then
   SERVICEBAY_CONFIG+=',
   "gateway": {
     "type": "fritzbox",
-    "host": "'"$GW_HOST"'",
-    "username": "'"$GW_USER"'",
-    "password": "'"$GW_PASS"'"
+    "host": '"$(json_str "$GW_HOST")"',
+    "username": '"$(json_str "$GW_USER")"',
+    "password": '"$(json_str "$GW_PASS")"'
   }'
 fi
 
@@ -1264,21 +1280,22 @@ fi
 
 # Add email notifications config if enabled
 if [[ "${ENABLE_EMAIL^^}" =~ ^Y ]]; then
-  # Convert comma-separated recipients to JSON array
-  EMAIL_TO_JSON="$(echo "$EMAIL_RECIPIENTS" | sed 's/[[:space:]]*,[[:space:]]*/","/g; s/^/"/; s/$/"/')"
+  # Build JSON array of recipients via python — sed-based escaping was
+  # broken on addresses containing quotes.
+  EMAIL_TO_JSON="$(python3 -c 'import json,sys; print(json.dumps([s.strip() for s in sys.argv[1].split(",") if s.strip()]))' "$EMAIL_RECIPIENTS")"
   EMAIL_SECURE_BOOL="false"
   [[ "${EMAIL_SECURE^^}" =~ ^Y ]] && EMAIL_SECURE_BOOL="true"
   SERVICEBAY_CONFIG+=',
   "notifications": {
     "email": {
       "enabled": true,
-      "host": "'"$EMAIL_HOST"'",
+      "host": '"$(json_str "$EMAIL_HOST")"',
       "port": '"$EMAIL_PORT"',
       "secure": '"$EMAIL_SECURE_BOOL"',
-      "user": "'"$EMAIL_USER"'",
-      "pass": "'"$EMAIL_PASS"'",
-      "from": "'"$EMAIL_FROM"'",
-      "to": ['"$EMAIL_TO_JSON"']
+      "user": '"$(json_str "$EMAIL_USER")"',
+      "pass": '"$(json_str "$EMAIL_PASS")"',
+      "from": '"$(json_str "$EMAIL_FROM")"',
+      "to": '"$EMAIL_TO_JSON"'
     }
   }'
 fi
