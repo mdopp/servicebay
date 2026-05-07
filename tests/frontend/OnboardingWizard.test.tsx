@@ -67,10 +67,19 @@ vi.mock('mustache', () => ({
   },
 }));
 
+// Tick the "I don't have a public domain" checkbox so the wizard's
+// Continue gate releases. The services step now blocks Continue until
+// the operator either fills in a domain or actively opts out.
+const optOutOfDomain = () => {
+  const cb = screen.getByLabelText(/I don't have a public domain/i) as HTMLInputElement;
+  if (!cb.checked) fireEvent.click(cb);
+};
+
 // Helper: default status with no setup needed
 const completedStatus = {
   needsSetup: false,
   stackSetupPending: false,
+  installInProgress: null,
   hasGateway: true,
   hasSshKey: true,
   hasExternalLinks: false,
@@ -94,6 +103,7 @@ const stacksPendingStatus = {
   hasGateway: true,
   hasSshKey: true,
   hasExternalLinks: false,
+  installInProgress: null,
   features: { gateway: true, ssh: true, updates: true, registries: true, email: false, auth: true },
 };
 
@@ -289,14 +299,18 @@ describe('OnboardingWizard', () => {
 
             await waitFor(() => screen.getByText('nginx-web'));
 
+            // The first checkbox on the services step is the new "I don't
+            // have a public domain" toggle (added by the domain-at-top
+            // gating fix). The actual service checkboxes follow.
+            const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
+            const services = checkboxes.slice(1);
             // nginx-web is already installed (from mock /api/services GET) — unchecked + disabled
             // redis-cache is not installed but marked [x] in README — checked
             // immich is not installed and marked [ ] — unchecked
-            const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
-            expect(checkboxes[0].checked).toBe(false);   // nginx-web — already installed, unchecked
-            expect(checkboxes[0].disabled).toBe(true);    // nginx-web — disabled
-            expect(checkboxes[1].checked).toBe(true);     // redis-cache [x]
-            expect(checkboxes[2].checked).toBe(false);    // immich [ ]
+            expect(services[0].checked).toBe(false);   // nginx-web — already installed, unchecked
+            expect(services[0].disabled).toBe(true);    // nginx-web — disabled
+            expect(services[1].checked).toBe(true);     // redis-cache [x]
+            expect(services[2].checked).toBe(false);    // immich [ ]
 
             // Should show "already installed" badge
             expect(screen.getByText('already installed')).toBeDefined();
@@ -330,6 +344,7 @@ describe('OnboardingWizard', () => {
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             await waitFor(() => {
@@ -351,6 +366,7 @@ describe('OnboardingWizard', () => {
 
             // Continue to configure
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             // Wait for configure step, then install
@@ -380,6 +396,7 @@ describe('OnboardingWizard', () => {
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
@@ -413,8 +430,10 @@ describe('OnboardingWizard', () => {
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => {
-                expect(screen.getByText(/Public Domain/i)).toBeDefined();
+                // Domain prompt label appears (multiple times now: header,
+                // gating message, hint). Just verify the input is present.
                 expect(screen.getByPlaceholderText('example.com')).toBeDefined();
+                expect(screen.getByLabelText(/I don't have a public domain/i)).toBeDefined();
             });
         });
 
@@ -434,6 +453,7 @@ describe('OnboardingWizard', () => {
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
@@ -497,6 +517,7 @@ describe('OnboardingWizard', () => {
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
