@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.10.0...servicebay-v2.11.0) (2026-05-07)
+
+
+### Features
+
+* **filebrowser:** pre-promote LLDAP admin → FB admin (zero-config split) ([#146](https://github.com/mdopp/servicebay/issues/146)) ([dba5daf](https://github.com/mdopp/servicebay/commit/dba5daf3c2f501cc0adb820145895a98dd660978))
+
+
+### Bug Fixes
+
+* **security+zero-config:** cookie hardening, login rate-limit, CSRF, port-collision check ([#147](https://github.com/mdopp/servicebay/issues/147)) ([6f09a29](https://github.com/mdopp/servicebay/commit/6f09a292fa4530798e2260386c58805e3d2f364a))
+
 ## [2.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.9.0...servicebay-v2.10.0) (2026-05-07)
 
 
