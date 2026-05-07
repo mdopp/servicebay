@@ -13,8 +13,8 @@ Passwort-Manager, Foto-Verwaltung, Dateifreigabe und Smart-Home.
 - [x] immich — Selbst gehostete Foto- und Video-Sicherung mit AI-Suche, Mobile-Apps und Auto-Upload
 - [x] file-share — Datei-Sync (Syncthing) + Windows-Netzlaufwerk (Samba) auf einem geteilten Volume
 - [x] home-assistant-stack — Smart-Home-Hub, lokaler Sprachassistent, Z-Wave-/Matter-Bridges
-- [ ] navidrome — Musik-Server mit Subsonic-API (Symfonium / DSub / ähnliches)
-- [ ] audiobookshelf — Hörbücher und Podcasts mit eigenen iOS/Android-Apps
+- [x] navidrome — Musik-Server mit Subsonic-API (Symfonium / DSub / ähnliches)
+- [x] audiobookshelf — Hörbücher und Podcasts mit eigenen iOS/Android-Apps
 
 ## Reverse Proxy
 
@@ -61,12 +61,7 @@ Für Admin-Services (Nginx Admin, AdGuard) eine Access List anlegen:
 - NPM → Access Lists → Add → Allow: `192.168.0.0/16`, `10.0.0.0/8`
 - Dann bei den entsprechenden Proxy Hosts die Access List zuweisen
 
-### 4. AdGuard Setup-Wizard
-
-Beim ersten Start `http://<SERVER-IP>:3000` öffnen und den Setup-Wizard durchlaufen.
-Admin-Port auf **8083** setzen (oder den in der Installation konfigurierten Port).
-
-### 5. Geräte-DNS umstellen
+### 4. Geräte-DNS umstellen
 
 Router-DNS oder Geräte-DNS auf `<SERVER-IP>:53` zeigen lassen,
 damit AdGuard Home netzwerkweit Werbung blockiert.
