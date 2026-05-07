@@ -10,5 +10,5 @@ spec:
     image: docker.io/library/redis:{{VERSION}}
     ports:
     - containerPort: 6379
-      hostPort: 6379
+      hostPort: {{REDIS_PORT}}
 
