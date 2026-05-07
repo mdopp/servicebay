@@ -165,6 +165,12 @@ export default function OnboardingWizard() {
   const [stackSelectedNode, setStackSelectedNode] = useState('');
   const [stacksLoading, setStacksLoading] = useState(false);
   const [stackDomain, setStackDomain] = useState('');
+  // Operator can opt out of providing a public domain. When true, services
+  // are deployed in LAN-only mode (no SSL, accessible only by IP+port). The
+  // wizard's "Continue" button is gated until either a domain is set or
+  // this flag is checked, so the operator can't accidentally finish without
+  // making a deliberate choice.
+  const [stackNoDomain, setStackNoDomain] = useState(false);
   const [stackDeviceOptions, setStackDeviceOptions] = useState<Record<string, string[]>>({});
   const [stackLoadingDevices, setStackLoadingDevices] = useState(false);
 
@@ -452,7 +458,9 @@ export default function OnboardingWizard() {
     }
   };
 
-  // Fetch USB devices when node is selected and device-type variables exist
+  // Fetch USB devices when node is selected and device-type variables exist.
+  // Auto-pick when a path has exactly one device available — saves the
+  // operator a click for the common Z-Wave/Zigbee single-stick case.
   useEffect(() => {
     if (!stackSelectedNode) return;
     const deviceVars = stackVariables.filter(v => v.meta?.type === 'device');
@@ -475,6 +483,23 @@ export default function OnboardingWizard() {
       for (const r of results) opts[r.path] = r.devices;
       setStackDeviceOptions(opts);
       setStackLoadingDevices(false);
+
+      // Auto-pick the single device per path. Only fills variables that
+      // are still empty — never overwrites an explicit operator choice.
+      setStackVariables(prev => {
+        let changed = false;
+        const next = prev.map(v => {
+          if (v.meta?.type !== 'device' || v.value) return v;
+          const path = v.meta?.devicePath || '/dev/serial/by-id';
+          const devices = opts[path] ?? [];
+          if (devices.length === 1) {
+            changed = true;
+            return { ...v, value: devices[0] };
+          }
+          return v;
+        });
+        return changed ? next : prev;
+      });
     });
   }, [stackSelectedNode, stackVariables]);
 
@@ -1102,7 +1127,40 @@ export default function OnboardingWizard() {
 
                     {stackInstallStep === 'services' && (
                         <>
-                            <p className="text-sm text-gray-500 mb-2">Select which services to install from <span className="font-medium">{selectedStack?.name}</span>:</p>
+                            {/* Domain prompt — moved to the TOP of the services
+                                step so the operator answers it before scrolling
+                                through the (potentially long) service list. The
+                                Continue button below is gated until the domain
+                                is set OR the "no domain" checkbox is ticked,
+                                so finishing without a deliberate choice isn't
+                                possible. */}
+                            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-2">
+                                <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200">
+                                    <Globe className="w-4 h-4" /> Public Domain
+                                </label>
+                                <p className="text-xs text-blue-600 dark:text-blue-400">
+                                    Your services will be reachable as subdomains (photos.{stackDomain || 'yourdomain.com'}, vault.{stackDomain || 'yourdomain.com'}, …) with automatic Let&apos;s Encrypt SSL.
+                                </p>
+                                <input
+                                    type="text"
+                                    value={stackDomain}
+                                    onChange={(e) => { setStackDomain(e.target.value); if (e.target.value) setStackNoDomain(false); }}
+                                    disabled={stackNoDomain}
+                                    className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
+                                    placeholder="example.com"
+                                />
+                                <label className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={stackNoDomain}
+                                        onChange={e => { setStackNoDomain(e.target.checked); if (e.target.checked) setStackDomain(''); }}
+                                        className="rounded"
+                                    />
+                                    I don&apos;t have a public domain — install services in LAN-only mode (no SSL, no subdomains; access by IP:port).
+                                </label>
+                            </div>
+
+                            <p className="text-sm text-gray-500 mb-2 mt-3">Select which services to install from <span className="font-medium">{selectedStack?.name}</span>:</p>
                             {stacksLoading ? (
                                 <div className="flex items-center justify-center py-4 text-gray-400">
                                     <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...
@@ -1145,24 +1203,9 @@ export default function OnboardingWizard() {
                                 </div>
                             )}
 
-                            {/* Domain prompt — shown here before configure step */}
-                            {stackItems.some(i => i.checked && !i.alreadyInstalled) && (
-                                <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                                    <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">
-                                        <Globe className="w-4 h-4" /> Public Domain
-                                    </label>
-                                    <p className="text-xs text-blue-600 dark:text-blue-400 mb-2">
-                                        Your services will be accessible as subdomains of this domain (e.g. photos.yourdomain.com).
-                                    </p>
-                                    <input
-                                        type="text"
-                                        value={stackDomain}
-                                        onChange={(e) => setStackDomain(e.target.value)}
-                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                        placeholder="example.com"
-                                    />
-                                </div>
-                            )}
+                            {/* Domain prompt is now at the TOP of this step
+                                so the operator answers it before scrolling
+                                through services. See the block above. */}
 
                             {/* RAID detection prompt */}
                             {raidArrays.length > 0 && !raidMounted && (
@@ -1640,9 +1683,19 @@ export default function OnboardingWizard() {
                 <Button onClick={handleStackSkip}>Skip <ArrowRight className="w-4 h-4 ml-2" /></Button>
             )}
             {currentStep === 'stacks' && stackInstallStep === 'services' && (
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                     <button onClick={() => { setStackInstallStep('select'); setSelectedStack(null); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
-                    <Button onClick={handleStackFetchVars} disabled={stackItems.filter(i => i.checked).length === 0 || stacksLoading}>
+                    {!stackDomain.trim() && !stackNoDomain && (
+                        <span className="text-xs text-amber-700 dark:text-amber-300">Set a public domain (or check the LAN-only box) to continue.</span>
+                    )}
+                    <Button
+                        onClick={handleStackFetchVars}
+                        disabled={
+                            stackItems.filter(i => i.checked).length === 0
+                            || stacksLoading
+                            || (!stackDomain.trim() && !stackNoDomain)
+                        }
+                    >
                         {stacksLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Continue
                     </Button>
                 </div>
