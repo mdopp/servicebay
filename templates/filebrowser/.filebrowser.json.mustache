@@ -1,0 +1,33 @@
+{
+  "port": {{FILEBROWSER_PORT}},
+  "address": "127.0.0.1",
+  "database": "/database/filebrowser.db",
+  "root": "/srv",
+  "log": "stdout",
+  "auth": {
+    "method": "proxy",
+    "header": "Remote-User"
+  },
+  "branding": {
+    "name": "ServiceBay Files"
+  },
+  "defaults": {
+    "scope": ".",
+    "locale": "en",
+    "viewMode": "list",
+    "singleClick": false,
+    "perm": {
+      "admin": false,
+      "execute": false,
+      "create": true,
+      "rename": true,
+      "modify": true,
+      "delete": true,
+      "share": true,
+      "download": true
+    },
+    "commands": [],
+    "sorting": {"by": "name", "asc": true}
+  },
+  "createUserDir": false
+}

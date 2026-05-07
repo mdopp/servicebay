@@ -1,0 +1,36 @@
+{
+  "RADICALE_PORT": {
+    "type": "text",
+    "description": "Radicale CalDAV/CardDAV port",
+    "default": "5232"
+  },
+  "LLDAP_HOST": {
+    "type": "text",
+    "description": "LLDAP host (localhost when both run on the same node)",
+    "default": "localhost"
+  },
+  "LLDAP_LDAP_PORT": {
+    "type": "text",
+    "description": "LLDAP LDAP-protocol port",
+    "default": "3890"
+  },
+  "LLDAP_BASE_DN": {
+    "type": "text",
+    "description": "LLDAP base DN (e.g. dc=dopp,dc=cloud)",
+    "default": "dc=dopp,dc=cloud"
+  },
+  "LLDAP_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "LLDAP admin password — used as the bind DN for Radicale's user-lookup. Inherited from the lldap template when both are installed together."
+  },
+  "RADICALE_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for CalDAV/CardDAV. Mobile clients (DAVx⁵, iOS, Thunderbird) speak HTTP Basic auth — Authelia in front would block them, so this proxy host has NO Authelia forward-auth.",
+    "default": "caldav",
+    "proxyPort": "RADICALE_PORT",
+    "proxyConfig": {
+      "block_exploits": true,
+      "ssl_forced": true
+    }
+  }
+}
