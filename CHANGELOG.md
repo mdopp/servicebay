@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.0.0...servicebay-v3.0.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* **installer:** persist PUBLIC_DOMAIN + detect USBs without root ([#154](https://github.com/mdopp/servicebay/issues/154)) ([3afd7fc](https://github.com/mdopp/servicebay/commit/3afd7fcea3195ffac444d341a581c6bb5173509b))
+* **security:** only set Secure cookie flag on HTTPS requests ([#156](https://github.com/mdopp/servicebay/issues/156)) ([95c461e](https://github.com/mdopp/servicebay/commit/95c461e5400bca4defd00cc656187ed8a785ed50))
+
 ## [3.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v2.11.0...servicebay-v3.0.0) (2026-05-07)
 
 
