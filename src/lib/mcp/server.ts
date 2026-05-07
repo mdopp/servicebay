@@ -21,6 +21,7 @@ import {
 import { restoreSystemBackup } from '@/lib/systemBackup';
 import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
 import { recordAudit } from './audit';
+import { notifyDestructiveOp } from './notify';
 import type { ApiScope } from './tokens';
 
 interface McpAuthContext {
@@ -176,10 +177,11 @@ function safeHandler(
       errorMessage = e instanceof Error ? e.message : String(e);
       throw e;
     } finally {
+      const ts = new Date().toISOString();
       // Audit fire-and-forget — never block the tool response on the log
       // write. Tracked separately by mcp:audit logger.
       void recordAudit({
-        ts: new Date().toISOString(),
+        ts,
         tool: toolName,
         caller: auth?.user,
         outcome,
@@ -187,6 +189,13 @@ function safeHandler(
         args,
         errorMessage,
       });
+      // Email the operator on every successful destructive call so a stolen
+      // token / runaway agent shows up in their inbox right away. Skip
+      // failures and `blocked` (the safety layer already handled those).
+      // No-op when SMTP isn't configured.
+      if (DESTRUCTIVE_TOOLS.has(toolName) && outcome === 'ok') {
+        void notifyDestructiveOp({ tool: toolName, caller: auth?.user, args, ts }).catch(() => undefined);
+      }
     }
   };
 }
