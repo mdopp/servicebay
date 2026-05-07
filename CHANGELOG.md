@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.1.1...servicebay-v3.1.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* **templates,network:** rootless UID mapping in pods + NPM self-ref edges ([#162](https://github.com/mdopp/servicebay/issues/162)) ([d5dbb32](https://github.com/mdopp/servicebay/commit/d5dbb322d712bde7e25605f1f22194f9e938390a))
+
 ## [3.1.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.1.0...servicebay-v3.1.1) (2026-05-07)
 
 
