@@ -2,8 +2,36 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getTemplateVariables } from '@/lib/registry';
+import { requireSession } from '@/lib/api/requireSession';
 import crypto from 'crypto';
 import yaml from 'js-yaml';
+
+/** Restrict redirect_uris so a malicious template (or a future bug) can't
+ *  register a callback to attacker.com. Allows:
+ *   - relative paths (rewritten under the service's own subdomain)
+ *   - custom URI schemes (mobile deep-links like `app.immich:/`)
+ *   - http(s) URIs whose host is the configured publicDomain or one of
+ *     its subdomains
+ *  Returns the URI if accepted, or null if it should be dropped. */
+function safeRedirectUri(uri: string, fqdn: string, publicDomain: string): string | null {
+  // Relative path → always rewritten under the service's own subdomain.
+  if (!uri.startsWith('http') && !uri.includes(':/')) {
+    return `https://${fqdn}${uri}`;
+  }
+  try {
+    const u = new URL(uri);
+    // Mobile / native-app deep links use custom schemes (e.g. `app.immich:/auth`).
+    // These don't carry a host the IDP can spoof, so let them through.
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return uri;
+    const host = u.hostname.toLowerCase();
+    const root = publicDomain.toLowerCase();
+    // Allow exact root or any subdomain of the configured public domain.
+    if (host === root || host.endsWith(`.${root}`)) return uri;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function generateSecret(length = 32): string {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -25,6 +53,9 @@ interface OidcClientsRequest {
  */
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireSession(request);
+    if (auth instanceof NextResponse) return auth;
+
     const body: OidcClientsRequest = await request.json();
     if (!body.templates?.length || !body.variables) {
       return NextResponse.json({ error: 'templates and variables required' }, { status: 400 });
@@ -50,9 +81,10 @@ export async function POST(request: NextRequest) {
         if (!subdomain) continue;
 
         const fqdn = `${subdomain}.${domain}`;
-        const redirectUris = oidc.redirect_uris.map(uri =>
-          uri.startsWith('http') || uri.includes(':/') ? uri : `https://${fqdn}${uri}`
-        );
+        const redirectUris = oidc.redirect_uris
+          .map(uri => safeRedirectUri(uri, fqdn, domain))
+          .filter((uri): uri is string => uri !== null);
+        if (redirectUris.length === 0) continue; // skip rather than register an empty client
 
         // If the template references an env-var-pinned secret (`clientSecretVar`),
         // use the wizard-provided value so the SAME secret is in both the

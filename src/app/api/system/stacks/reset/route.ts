@@ -4,6 +4,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { getConfig } from '@/lib/config';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { logger } from '@/lib/logger';
+import { requireSession } from '@/lib/api/requireSession';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,9 @@ const PROTECTED = new Set(['servicebay']);
  */
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireSession(request);
+    if (auth instanceof NextResponse) return auth;
+
     const body = await request.json();
     const { confirm, node: requestedNode } = body as {
       confirm?: string;
