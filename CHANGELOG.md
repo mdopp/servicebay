@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.1...servicebay-v3.6.2) (2026-05-08)
+
+
+### Bug Fixes
+
+* **install:** drive OIDC client_id from variables.meta, add consistency rule ([#201](https://github.com/mdopp/servicebay/issues/201)) ([d504339](https://github.com/mdopp/servicebay/commit/d50433938471fc4511b384f208729354e80b68cd))
+* **install:** make extra-file write failures fatal, MCP deploy_service accepts extraFiles, install-nginx self-marks done ([#205](https://github.com/mdopp/servicebay/issues/205)) ([3b81538](https://github.com/mdopp/servicebay/commit/3b81538c0b5793c12a9a240af75a47634ef3a0ca))
+* **radicale+diagnose:** self-seed radicale config in-pod, suppress benign first-boot failures ([#203](https://github.com/mdopp/servicebay/issues/203)) ([a37a521](https://github.com/mdopp/servicebay/commit/a37a521d9f92b2a85cb4f2acc276e41704c964ad))
+* **reliability:** podman-volume syncthing-config + auto-migrate orphan units on upgrade ([#204](https://github.com/mdopp/servicebay/issues/204)) ([f5f8964](https://github.com/mdopp/servicebay/commit/f5f8964db021f9d8630e2b3c49b484a0d2a97e3b))
+
 ## [3.6.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.0...servicebay-v3.6.1) (2026-05-08)
 
 
