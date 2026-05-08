@@ -25,26 +25,36 @@ spec:
   # 1. Syncthing — Bidirectional folder sync (Android & desktop apps)
   - name: syncthing
     image: docker.io/syncthing/syncthing:latest
-    # Two ingredients are needed to make syncthing's startup `chmod` of
+    # THREE ingredients are needed to make syncthing's startup `chmod` of
     # /var/syncthing/config succeed under rootless podman + FCoS:
     #
     #   1. Use a podman-managed PVC for syncthing-config (see PVC below).
     #      A host bind mount fails with EPERM no matter what the container
     #      capabilities are — that's a kernel-level idmap issue.
     #
-    #   2. runAsUser: 0. Podman creates the named volume owned by the host
-    #      user running rootless podman (uid 1000 = `core`), which inside
-    #      the container appears as uid 0. The syncthing image's default
-    #      ENTRYPOINT runs as the `syncthing` user (container uid 1000 =
-    #      host sub-uid 100999), which does NOT own the volume dir, so
-    #      chmod fails. Forcing container uid 0 lines up with the volume's
-    #      ownership and chmod succeeds.
+    #   2. runAsUser: 0 / runAsGroup: 0. Podman creates the named volume
+    #      owned by the host user running rootless podman (uid 1000 =
+    #      `core`), which inside the container appears as uid 0.
     #
-    # Both pieces together = no crash loop. Either one alone = EPERM.
+    #   3. PUID=0 / PGID=0 env vars. The syncthing/syncthing image's
+    #      entrypoint runs `setpriv --reuid $PUID --regid $PGID` REGARDLESS
+    #      of the K8s runAsUser — defaulting to 1000:1000. Without these
+    #      env overrides, the container starts as uid 0 but immediately
+    #      drops to uid 1000, which doesn't own the volume's _data dir
+    #      (created as container uid 0 = host uid 1000). Setting PUID=0
+    #      keeps everything at uid 0 end-to-end and chmod succeeds.
+    #
+    # All three pieces together = no crash loop. Any one missing = EPERM.
+    # Verified the hard way: spent a debugging session walking through each
+    # combination on a live FCoS box.
     securityContext:
       runAsUser: 0
       runAsGroup: 0
     env:
+      - name: PUID
+        value: "0"
+      - name: PGID
+        value: "0"
       - name: STGUIADDRESS
         value: "0.0.0.0:8384"
     ports:

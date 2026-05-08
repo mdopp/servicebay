@@ -602,6 +602,37 @@ export class ServiceManager {
         await this.writeFile(nodeName, `${name}.kube`, kubeContent);
         await this.ensurePodmanSocket(nodeName);
 
+        // Defensive: if the template ships any *.mustache config files but the
+        // caller (wizard / MCP / installer) didn't pass them through as
+        // extraFiles, abort the deploy. The live failure mode this guards
+        // against: the OnboardingWizard's resolver returns an empty
+        // configFiles list (e.g. transient template-fetch error) and the
+        // wizard happily writes the kube + yaml without the rendered config.
+        // The container starts, finds /config/ empty, and either crashes
+        // (radicale-shape) or auto-creates an upstream-sample default
+        // (authelia-shape, 71KB of commented-out boilerplate). Both leave
+        // the operator with a permanently-failed pod and no breadcrumb to
+        // the missing seed.
+        try {
+            const { getTemplateConfigFiles } = await import('@/lib/registry');
+            const expected = await getTemplateConfigFiles(name);
+            if (expected.length > 0) {
+                const got = new Set((extraFiles ?? []).map(f => f.path.split('/').pop()).filter(Boolean));
+                const missing = expected.filter(e => !got.has(e.filename));
+                if (missing.length > 0) {
+                    throw new Error(
+                        `Template "${name}" ships ${expected.length} mustache config file(s) but ${missing.length} weren't sent to the deploy step:\n  ${missing.map(m => m.filename).join(', ')}\n\n` +
+                        `This usually means the wizard's resolver couldn't map a config file to a hostPath — check that the pod manifest declares servicebay.config-mount: <mountPath> and that the mountPath has a matching volume.`,
+                    );
+                }
+            }
+        } catch (e) {
+            // Re-throw deploy-blocking errors; swallow only registry-level
+            // issues (e.g. node-side template dir missing in the container).
+            if (e instanceof Error && e.message.startsWith('Template "')) throw e;
+            logger.debug('ServiceManager', 'Could not verify template configFiles parity:', e);
+        }
+
         // Write extra config files (e.g. Authelia configuration.yml) to the node filesystem.
         // Failures here are FATAL — the previous behaviour was to log a warning
         // and continue, which produced the radicale crash-loop class of bug:
