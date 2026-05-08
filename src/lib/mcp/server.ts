@@ -365,18 +365,34 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // --- Deploy Service ---
   server.tool(
     'deploy_service',
-    'Deploy a new service or update an existing one from kube YAML',
+    'Deploy a new service or update an existing one from kube YAML. Pass extraFiles to seed companion config (e.g. authelia/configuration.yml).',
     {
       name: z.string().describe('Service name'),
       kubeContent: z.string().describe('Kubernetes/Podman kube YAML content'),
       yamlContent: z.string().optional().describe('Companion compose/config YAML content'),
       yamlFileName: z.string().optional().describe('Filename for the companion YAML'),
+      extraFiles: z
+        .array(
+          z.object({
+            path: z.string().describe('Absolute path on the node (e.g. /mnt/data/stacks/auth/authelia-config/configuration.yml)'),
+            content: z.string().describe('File content (already mustache-rendered)'),
+          }),
+        )
+        .optional()
+        .describe('Additional config files to write before the unit starts. Failures are fatal — the deploy aborts so the operator knows the service would have started misconfigured.'),
       node: nodeParam,
     },
-    async ({ name, kubeContent, yamlContent, yamlFileName, node }) => {
+    async ({ name, kubeContent, yamlContent, yamlFileName, extraFiles, node }) => {
       const nodeName = await resolveNode(node);
-      await ServiceManager.deployKubeService(nodeName, name, kubeContent, yamlContent ?? '', yamlFileName ?? `${name}.yaml`);
-      return textResult(`Service "${name}" deployed successfully`);
+      await ServiceManager.deployKubeService(
+        nodeName,
+        name,
+        kubeContent,
+        yamlContent ?? '',
+        yamlFileName ?? `${name}.yaml`,
+        extraFiles,
+      );
+      return textResult(`Service "${name}" deployed successfully${extraFiles?.length ? ` (${extraFiles.length} extra file${extraFiles.length === 1 ? '' : 's'} written)` : ''}`);
     },
   );
 

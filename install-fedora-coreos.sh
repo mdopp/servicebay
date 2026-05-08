@@ -543,48 +543,74 @@ ${SERVICEBAY_SSH_PRIV}
           set -euo pipefail
           PORT="${SERVICEBAY_PORT:-3000}"
           API="http://localhost:$PORT"
-          API_WAIT=300        # 5 min for ServiceBay API + agent — long
-                              # enough to cover slow image pulls / first boot.
+          API_WAIT=1800       # 30 min for ServiceBay API + agent. Earlier
+                              # 5-min cap timed out before the agent came
+                              # up on slow first-boots, leaving the unit in
+                              # `failed` state forever even though NPM was
+                              # later installed cleanly via the wizard.
           INSTALLED_WAIT=1800 # 30 min for nginx to appear via the onboarding
                               # wizard before we step in. Avoids racing the
                               # interactive install which can take a while
                               # to reach the "Reverse Proxy" step.
           WAITED=0
+          MARKER=/var/home/${HOST_USER}/.config/install-nginx-done
 
-          echo "install-nginx: waiting for ServiceBay API on port $PORT..."
+          # Always touch the marker on EXIT (success OR failure). The marker's
+          # ConditionPathExists in the .service unit then suppresses the unit
+          # on subsequent boots — even if this run gave up because the
+          # operator had already installed NPM via the wizard, we're done
+          # and the wizard owns NPM going forward. Without this trap a
+          # one-time wait timeout produced an permanently-`failed` unit
+          # the operator couldn't get rid of without a manual reset-failed.
+          trap 'mkdir -p "$(dirname "$MARKER")" && touch "$MARKER"' EXIT
+
+          # Helper: returns 0 if NPM is reported as installed, 1 otherwise.
+          is_installed() {
+            curl -sf "$API/api/system/nginx/status" 2>/dev/null \
+              | grep -q '"installed":true'
+          }
+
+          echo "install-nginx: waiting for ServiceBay API on port $PORT (up to ${API_WAIT}s)..."
           while ! curl -sf "$API/api/system/nginx/status" >/dev/null 2>&1; do
             sleep 5
             WAITED=$((WAITED + 5))
             if (( WAITED >= API_WAIT )); then
-              echo "install-nginx: timeout waiting for ServiceBay API" >&2
-              exit 1
+              echo "install-nginx: timeout waiting for ServiceBay API after ${API_WAIT}s — assume the operator will install NPM via the wizard" >&2
+              exit 0
             fi
           done
 
-          # Wait for at least one agent to be connected (needs python3 installed first).
+          # Quick win: if NPM is already installed by the time the API is
+          # reachable (interactive wizard finished first), skip everything.
+          if is_installed; then
+            echo "install-nginx: nginx already installed — nothing to do"
+            exit 0
+          fi
+
+          # Wait for at least one agent to be connected (needs python3 first).
           echo "install-nginx: waiting for agent to connect..."
           while true; do
+            if is_installed; then
+              echo "install-nginx: nginx came up while we were waiting — done"
+              exit 0
+            fi
             CONNECTED=$(curl -sf "$API/api/system/health" | grep -o '"isConnected":true' || true)
             if [[ -n "$CONNECTED" ]]; then break; fi
             sleep 5
             WAITED=$((WAITED + 5))
             if (( WAITED >= API_WAIT )); then
-              echo "install-nginx: timeout waiting for agent" >&2
-              exit 1
+              echo "install-nginx: timeout waiting for agent after ${API_WAIT}s — operator will install NPM via the wizard" >&2
+              exit 0
             fi
           done
           echo "install-nginx: agent connected"
 
-          # Poll for installed=true. The user may install nginx via the
-          # onboarding wizard concurrently — we should *not* race it. If
-          # that's in progress we'd see installed=false here and our own
-          # POST /install would collide with the wizard's POST. So just
-          # wait it out.
+          # Poll for installed=true. The operator may install NPM via the
+          # onboarding wizard concurrently — don't race it.
           echo "install-nginx: polling for nginx-web service (up to ${INSTALLED_WAIT}s for the wizard to finish)..."
           POLL_WAITED=0
           while (( POLL_WAITED < INSTALLED_WAIT )); do
-            INSTALLED=$(curl -sf "$API/api/system/nginx/status" | grep -o '"installed":true' || true)
-            if [[ -n "$INSTALLED" ]]; then
+            if is_installed; then
               echo "install-nginx: nginx is installed, nothing to do"
               exit 0
             fi
@@ -602,6 +628,9 @@ ${SERVICEBAY_SSH_PRIV}
             sleep 10
           done
           echo "install-nginx: all attempts failed — install nginx manually from Settings → Reverse Proxy" >&2
+          # Marker still gets touched by the trap so the unit doesn't keep
+          # showing `failed` on every boot. Operator sees the warning above
+          # in journalctl and the diagnose probe surfaces the missing NPM.
           exit 1
 
     # Systemd user unit to install Nginx on first boot

@@ -2,9 +2,30 @@ import { NextResponse } from 'next/server';
 import { getConfig, updateConfig } from '@/lib/config';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { ServiceManager } from '@/lib/services/ServiceManager';
+import { agentManager } from '@/lib/agent/manager';
 import { logger } from '@/lib/logger';
 import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
+
+/** Touch the install-nginx-done marker so the FCoS first-boot
+ *  install-nginx.service unit's ConditionPathExists short-circuits on the
+ *  next boot. Called whenever we've confirmed NPM is up + reachable on the
+ *  wizard credentials — at that point the install-nginx.sh fallback has
+ *  nothing left to do, and leaving the unit's `failed` state lingering only
+ *  produces noise in the diagnose probe. Best-effort; if the agent isn't
+ *  reachable yet (it should be — we just talked to NPM through it) we just
+ *  swallow the error and let the install-nginx.sh trap handle it on next
+ *  boot. */
+async function markInstallNginxDone(nodeName: string): Promise<void> {
+  try {
+    const agent = await agentManager.ensureAgent(nodeName);
+    await agent.sendCommand('exec', {
+      command: 'mkdir -p ~/.config && touch ~/.config/install-nginx-done && systemctl --user reset-failed install-nginx.service 2>/dev/null || true',
+    });
+  } catch (e) {
+    logger.debug('npm:bootstrap', 'Could not mark install-nginx-done:', e);
+  }
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -167,6 +188,7 @@ export async function POST(request: Request) {
     if (targetToken) {
       const config = await getConfig();
       await updateConfig({ reverseProxy: { ...config.reverseProxy, npm: { email, password } } });
+      await markInstallNginxDone(npm.nodeName);
       return NextResponse.json({ ok: true, bootstrapped: false, reason: 'already_using_target' });
     }
 
@@ -211,6 +233,7 @@ export async function POST(request: Request) {
 
     const config = await getConfig();
     await updateConfig({ reverseProxy: { ...config.reverseProxy, npm: { email, password } } });
+    await markInstallNginxDone(npm.nodeName);
 
     logger.info('npm:bootstrap', `NPM admin updated to ${email} on node ${npm.nodeName}`);
     return NextResponse.json({ ok: true, bootstrapped: true });
