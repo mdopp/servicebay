@@ -671,14 +671,22 @@ export default function OnboardingWizard() {
           // `{{FILEBROWSER_PORT}}` don't trip the YAML parser. Values aren't
           // material here — we only need the structure.
           const safeYaml = yaml.replace(/\{\{[^}]+\}\}/g, '0');
-          let parsed: unknown;
+          // Multi-doc support — file-share ships Pod + PVC since 3.6.4.
+          // js-yaml's `load()` throws on multi-doc, was caught silently,
+          // left `parsed = null` and the resolver skipped writing the
+          // mustache config. Symptom was the wizard's defensive guard
+          // refusing the file-share deploy with "1 mustache config
+          // file(s) weren't sent to the deploy step". Use `loadAll` and
+          // find the Pod doc explicitly.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let docs: any[] = [];
           try {
-            parsed = (await import('js-yaml')).load(safeYaml);
+            docs = (await import('js-yaml')).loadAll(safeYaml);
           } catch {
-            parsed = null;
+            docs = [];
           }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const doc = parsed as any;
+          const doc = docs.find((d: any) => d?.kind === 'Pod') ?? docs[0];
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const volumes: any[] = doc?.spec?.volumes ?? [];
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -820,10 +828,20 @@ export default function OnboardingWizard() {
 
     const selected = stackItems.filter(i => i.checked);
 
+    // Track which services actually deployed cleanly. The post-install
+    // pipeline (NPM bootstrap, LLDAP/ABS/Navidrome/FileBrowser admin
+    // seeding, OIDC client registration) iterates this list instead of
+    // the user's *intended* selection \u2014 without this, a failed deploy
+    // (e.g. the wizard's defensive guard refusing a misconfigured
+    // file-share) still kicked off the FileBrowser seeder which then
+    // hung for 3 min on a container that was never going to start.
+    const deployed: { name: string; checked: boolean }[] = [];
+
     for (const item of selected) {
       // Skip already-installed services
       if (item.alreadyInstalled) {
         setStackLogs(prev => [...prev, `\u2705 ${item.name} already installed, skipping.`]);
+        deployed.push({ name: item.name, checked: true });
         continue;
       }
       if (!item.yaml) continue;
@@ -921,9 +939,12 @@ export default function OnboardingWizard() {
         }
 
         setStackLogs(prev => [...prev, `\u2705 ${item.name} deployed (containers may still be starting in background).`]);
+        deployed.push({ name: item.name, checked: true });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setStackLogs(prev => [...prev, `\u274c Failed to install ${item.name}: ${msg}`]);
+        // Don't add to `deployed` \u2014 post-install will skip seeders /
+        // proxy routes for this service.
       } finally {
         // Clear in-flight marker so the status strip switches from
         // "installing" to twin-derived state for the next render tick.
@@ -931,8 +952,13 @@ export default function OnboardingWizard() {
       }
     }
 
+    // Post-install (LLDAP seed, ABS/Navidrome/FileBrowser admin seed, OIDC
+    // client registration, NPM bootstrap, proxy-host creation) runs only
+    // for services that actually deployed cleanly. A failed deploy is
+    // dropped from `deployed` above so its post-install steps don't hang
+    // on a container that was never going to start.
     const proxyResult = await runPostInstall({
-      selected,
+      selected: deployed,
       variables: stackVariables,
       node: stackSelectedNode || undefined,
       onLog: (msg) => setStackLogs(prev => [...prev, msg]),
@@ -963,7 +989,10 @@ export default function OnboardingWizard() {
       // Skip the wait entirely if there's no twin connection (tests, or a
       // disconnected agent — in either case hanging the wizard for 3 min
       // helps no one) or if nothing was deployed.
-      const expected = selected.map(i => i.name);
+      // Same rationale as runPostInstall — wait only for services that
+      // actually deployed. A failed deploy isn't going to become active
+      // and a stuck "0/9 up" heartbeat is just noise.
+      const expected = deployed.map(i => i.name);
       if (digitalTwin && expected.length > 0) {
         const SETTLE_TIMEOUT_MS = 3 * 60_000;
         const SETTLE_POLL_MS = 5_000;
