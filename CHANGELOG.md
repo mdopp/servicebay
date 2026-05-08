@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.0...servicebay-v3.6.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* **diagnose+ui:** gate restart-loop probe by system uptime, drop duplicate network legend ([#197](https://github.com/mdopp/servicebay/issues/197)) ([30bd0bf](https://github.com/mdopp/servicebay/commit/30bd0bfd4412aa265947272efd01ad88b5627755))
+
 ## [3.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.5.0...servicebay-v3.6.0) (2026-05-08)
 
 
