@@ -1563,19 +1563,9 @@ export default function NetworkPlugin() {
                     }
                 }}
             />
-            <Panel position="top-right" className="bg-white dark:bg-gray-800 p-2 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700">
-                <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Legend</div>
-                <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-green-500" />
-                        <span className="text-xs">Healthy</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-red-500" />
-                        <span className="text-xs">Issue</span>
-                    </div>
-                </div>
-            </Panel>
+            {/* Status-only legend was here; consolidated into the bottom-left
+                NetworkLegend (which already covers shape colours + status
+                dots). Two side-by-side legend panels were redundant. */}
         </ReactFlow>
 
       </div>

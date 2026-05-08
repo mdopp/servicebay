@@ -169,12 +169,33 @@ export async function POST(request: Request) {
   //    "Restarting", "Initialized (starting)", or "Up <30s" while we'd
   //    expect long-running services. Catches the bind-mount permission
   //    crash-loops + entrypoint argv mistakes that bit us before 3.1.3.
+  //
+  //    Gate the "Up <30s" rule behind system uptime: if the host itself has
+  //    only been up for ~a minute, every container is naturally young — they
+  //    can't have been up *longer* than the kernel. Auto-running the probe
+  //    right after first boot used to flag every fresh container as
+  //    "may be in a restart loop" purely because it had only just started.
+  const uptimeRes = await exec('cat /proc/uptime 2>/dev/null', 1500);
+  const systemUptimeSec = (() => {
+    const first = (uptimeRes.stdout ?? '').trim().split(/\s+/)[0];
+    const n = parseFloat(first);
+    return Number.isFinite(n) ? Math.floor(n) : Number.POSITIVE_INFINITY;
+  })();
+  // Containers up for less than (system uptime - this margin) are genuinely
+  // restarting; younger ones are just "started at boot, not looping". 90 s
+  // covers the slowest cold-start + a tiny grace window.
+  const recentBootGrace = 90;
+  const treatYoungAsLoop = systemUptimeSec > recentBootGrace;
+
   const psStatus = await exec('podman ps --format "{{.Names}}|{{.Status}}" 2>/dev/null', 4000);
   const psLines = trimOutput(psStatus.stdout, 80).split('\n').filter(Boolean);
   const looping = psLines.filter(l => {
     const status = (l.split('|')[1] ?? '').trim();
     if (/^Restarting/i.test(status)) return true;
     if (/^Initialized/i.test(status)) return true;
+    // Only flag "Up <30s" when the system has been up long enough that a
+    // young container *must* be a fresh restart — see comment above.
+    if (!treatYoungAsLoop) return false;
     if (/^Up Less than a second/i.test(status)) return true;
     const m = status.match(/^Up (\d+) seconds?\b/);
     if (m && parseInt(m[1], 10) < 30) return true;
@@ -189,7 +210,9 @@ export async function POST(request: Request) {
       : (psLines.length === 0
           ? 'No running containers yet.'
           : looping.length === 0
-            ? `${psLines.length} container(s), all stable.`
+            ? (treatYoungAsLoop
+                ? `${psLines.length} container(s), all stable.`
+                : `${psLines.length} container(s) — system booted ${systemUptimeSec}s ago, young containers expected. Re-run after ~2 min for a real restart-loop check.`)
             : `${looping.length} of ${psLines.length} container(s) may be in a restart loop:\n${looping.join('\n')}`),
     hint: looping.length > 0
       ? 'Run `podman logs <name>` for the crash reason. Common causes: bind-mount permission mismatch (rootless UID), missing config file, port conflicts, image entrypoint argv errors.'
