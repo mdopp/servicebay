@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.4](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.3...servicebay-v3.6.4) (2026-05-08)
+
+
+### Bug Fixes
+
+* **install:** syncthing runAsUser+PVC combo, mustache strict-render, settle wait, real crash logs ([#209](https://github.com/mdopp/servicebay/issues/209)) ([cd7cd4c](https://github.com/mdopp/servicebay/commit/cd7cd4cd4469d14d747d61b19b3c53df23c7eae5))
+
 ## [3.6.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.2...servicebay-v3.6.3) (2026-05-08)
 
 
