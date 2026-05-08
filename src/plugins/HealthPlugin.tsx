@@ -15,6 +15,7 @@ import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/plugins/SystemInfoPlugin';
+import SelfDiagnoseSection from '@/app/(dashboard)/settings/_lib/sections/SelfDiagnoseSection';
 
 interface Container {
   Id: string;
@@ -29,7 +30,7 @@ interface HistoryItem {
   message?: string;
 }
 
-type HealthTab = 'checks' | 'logs' | 'system';
+type HealthTab = 'checks' | 'diagnose' | 'logs' | 'system';
 
 export default function HealthPlugin() {
   const [checks, setChecks] = useState<Check[]>([]);
@@ -58,7 +59,7 @@ export default function HealthPlugin() {
   const searchParams = useSearchParams();
   const searchString = searchParams?.toString() ?? '';
   const tabParam = searchParams?.get('tab');
-  const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' ? (tabParam as HealthTab) : null;
+  const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' || tabParam === 'diagnose' ? (tabParam as HealthTab) : null;
 
   const closeOverlaysOnEscape = useCallback(() => {
     if (isDeleteModalOpen) return;
@@ -370,6 +371,7 @@ export default function HealthPlugin() {
       <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 px-2 shrink-0 overflow-x-auto">
         {([
           { id: 'checks' as const, label: 'Checks' },
+          { id: 'diagnose' as const, label: 'Self-Diagnose' },
           { id: 'logs' as const, label: 'Logs' },
           { id: 'system' as const, label: 'System' },
         ]).map(tab => (
@@ -400,6 +402,12 @@ export default function HealthPlugin() {
           handleOpenDeleteModal={handleDelete}
           handleViewHistory={handleShowHistory}
         />
+      )}
+
+      {activeTab === 'diagnose' && (
+        <div className="px-2">
+          <SelfDiagnoseSection />
+        </div>
       )}
 
       {activeTab === 'logs' && (
