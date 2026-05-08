@@ -47,6 +47,12 @@ vi.mock('@/providers/ToastProvider', () => ({
   useToast: () => ({ addToast: mockAddToast })
 }));
 
+// Digital twin: status strip reads live container/service state from
+// here. Tests don't exercise the agent so we return an empty twin.
+vi.mock('@/hooks/useDigitalTwin', () => ({
+  useDigitalTwin: () => ({ data: null }),
+}));
+
 // 3. Mock Navigation
 const mockRefresh = vi.fn();
 vi.mock('next/navigation', () => ({

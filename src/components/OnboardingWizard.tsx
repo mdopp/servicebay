@@ -28,6 +28,7 @@ import Mustache from 'mustache';
 
 import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
 // Steps definition
 type WizardStep = 'welcome' | 'network' | 'stacks' | 'email' | 'finish';
@@ -202,6 +203,19 @@ export default function OnboardingWizard() {
     'home-assistant-stack': { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
     radicale:        { recommendedWith: ['authelia'] },
   };
+
+  // Track which service is currently mid-deploy. The deploy loop sets
+  // this before the API call and clears after — the install-progress
+  // strip below reads this to show "installing" while the API is in
+  // flight, falling back to digital-twin live state for everything else.
+  const [installingNow, setInstallingNow] = useState<string | null>(null);
+
+  // Live container/service state from the agent. The status strip
+  // ABOVE the log panel uses this — NOT log-parsing — so a service
+  // counts as "deployed" only when its container is actually Up, not
+  // when the deploy API just returned. (Earlier log-parsing version
+  // showed "12/12 deployed" while NPM was still pulling its image.)
+  const { data: digitalTwin } = useDigitalTwin();
 
   // Configure-step tab. Variables are categorised so the operator isn't
   // staring at a 50-line flat list — the "subdomains" tab shows the
@@ -747,6 +761,7 @@ export default function OnboardingWizard() {
       }
       if (!item.yaml) continue;
       setStackLogs(prev => [...prev, `Installing ${item.name}...`]);
+      setInstallingNow(item.name);
 
       const view = stackVariables.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {});
       // Disable HTML escaping for all Mustache renders (YAML + config files)
@@ -820,6 +835,10 @@ export default function OnboardingWizard() {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setStackLogs(prev => [...prev, `\u274c Failed to install ${item.name}: ${msg}`]);
+      } finally {
+        // Clear in-flight marker so the status strip switches from
+        // "installing" to twin-derived state for the next render tick.
+        setInstallingNow(null);
       }
     }
 
@@ -1611,21 +1630,45 @@ export default function OnboardingWizard() {
 
                     {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (
                         <div>
-                            {/* Per-service status strip parsed live from the
-                                install logs. Operator can see at a glance
-                                which services have already deployed, which
-                                is currently in flight, and which are still
-                                queued — without having to read the (verbose)
-                                log stream. The overlay would otherwise block
-                                the Services dashboard, so this is the only
-                                place the operator can watch progress. */}
+                            {/* Per-service status strip — REAL state, not log parsing.
+                                The previous version parsed install logs and marked
+                                services "deployed" the moment the API call returned,
+                                even while the container was still pulling its image.
+                                Now we use the digital twin: a service counts as
+                                "deployed" only when its systemd unit reports active.
+                                "installing" comes from the in-flight deploy loop
+                                via installingNow + log parsing for "Installing X..."
+                                until the twin catches up. "failed" if either the
+                                deploy log says ❌ or the twin reports the unit
+                                inactive after deploy completed. */}
                             {stackItems.filter(i => i.checked && !i.alreadyInstalled).length > 0 && (() => {
                                 const joined = stackLogs.join('\n');
+                                const node = stackSelectedNode || 'Local';
+                                const twinNode = digitalTwin?.nodes?.[node];
+                                const twinServices = twinNode?.services ?? [];
+                                const findService = (name: string) =>
+                                    twinServices.find(s => s.name === name || s.name === `${name}.service` || s.name?.replace(/\.service$/, '') === name);
                                 const statusOf = (name: string): 'pending' | 'installing' | 'deployed' | 'failed' => {
                                     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                                    // 1. Deploy loop is currently calling /api/services for this name.
+                                    if (installingNow === name) return 'installing';
+                                    // 2. Hard fail logged by the install pipeline.
                                     if (new RegExp(`(?:❌|✗|Failed to install)\\s+${esc}\\b`, 'i').test(joined)) return 'failed';
-                                    if (new RegExp(`✅\\s+${esc}\\s+deployed\\b`, 'i').test(joined)) return 'deployed';
-                                    if (new RegExp(`Installing\\s+${esc}\\.\\.\\.`, 'i').test(joined)) return 'installing';
+                                    // 3. Real state from the digital twin.
+                                    const svc = findService(name);
+                                    if (svc) {
+                                        if (svc.active) return 'deployed';
+                                        // Deploy returned + unit known to systemd but not active —
+                                        // could be mid-pull (activating) or genuinely failed.
+                                        // Treat as 'installing' until the deploy log declares
+                                        // failure, so a fast-pulling stack doesn't flicker red.
+                                        if (new RegExp(`Installing\\s+${esc}\\.\\.\\.`, 'i').test(joined)) return 'installing';
+                                        if (new RegExp(`✅\\s+${esc}\\s+deployed\\b`, 'i').test(joined)) return 'installing';
+                                        return 'pending';
+                                    }
+                                    // 4. Service not yet in twin. If the deploy log mentions it,
+                                    // it's mid-deploy; otherwise it's still queued.
+                                    if (new RegExp(`(?:Installing\\s+|✅\\s+)${esc}`, 'i').test(joined)) return 'installing';
                                     return 'pending';
                                 };
                                 const dotClass: Record<string, string> = {
