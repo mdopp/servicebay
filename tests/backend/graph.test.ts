@@ -407,4 +407,88 @@ describe('Network Graph Generation', () => {
         expect(proxyEdge).toBeDefined();
         expect(proxyEdge?.label).toBe(':8123');
     });
+
+    it("should not list domains on the nginx node that are proxied to other services", async () => {
+        // Reproduces the bug where bare-domain entries in containerUrlMapping
+        // were being passed through `new URL(...)` (which throws on a hostname
+        // without a scheme), the catch swallowed every domain, and the nginx
+        // node ended up showing all externally-verified domains even when the
+        // route actually targeted a different service.
+        const dns = await import('../../src/lib/network/dns');
+        (dns.checkDomains as any).mockResolvedValueOnce([
+            { domain: 'photos.dopp.cloud', matches: true },
+            { domain: 'nginx.dopp.cloud',  matches: true },
+        ]);
+
+        const twinStore = DigitalTwinStore.getInstance() as any;
+        const localNode = twinStore.nodes['Local'];
+
+        localNode.proxy = [];
+        localNode.services = [
+            {
+                name: 'nginx-web',
+                active: true,
+                isPrimaryProxy: true,
+                associatedContainerIds: ['nginx-container'],
+                ports: [{ hostPort: 80, containerPort: 80, protocol: 'tcp', hostIp: '0.0.0.0' }],
+                proxyConfiguration: {
+                    servers: [
+                        // photos.dopp.cloud → immich service (should NOT show on nginx)
+                        {
+                            server_name: ['photos.dopp.cloud'],
+                            listen: ['443 ssl', '80'],
+                            locations: [{ path: '/', proxy_pass: 'http://192.168.178.99:2283' }],
+                        },
+                        // nginx.dopp.cloud → nginx admin UI itself (SHOULD stay on nginx)
+                        {
+                            server_name: ['nginx.dopp.cloud'],
+                            listen: ['443 ssl', '80'],
+                            locations: [{ path: '/', proxy_pass: 'http://127.0.0.1:81' }],
+                        },
+                    ],
+                },
+            },
+            {
+                name: 'immich',
+                active: true,
+                ports: [{ hostPort: 2283, containerPort: 2283, protocol: 'tcp', hostIp: '0.0.0.0' }],
+                associatedContainerIds: ['immich-container'],
+            },
+        ];
+        localNode.containers = [
+            {
+                id: 'nginx-container',
+                names: ['/nginx-web'],
+                labels: { 'servicebay.role': 'reverse-proxy' },
+                state: 'running',
+                ports: [{ hostPort: 80, containerPort: 80, protocol: 'tcp', hostIp: '0.0.0.0' }],
+            },
+            {
+                id: 'immich-container',
+                names: ['/immich-server'],
+                state: 'running',
+                ports: [{ hostPort: 2283, containerPort: 2283, protocol: 'tcp', hostIp: '0.0.0.0' }],
+            },
+        ];
+
+        const graph = await service.getGraph('Local');
+        const nginxNode = graph.nodes.find(n => n.id.includes('group-nginx'));
+        expect(nginxNode).toBeDefined();
+
+        const verified = (nginxNode!.metadata?.verifiedDomains ?? []) as string[];
+        const allVerified = (nginxNode!.metadata?.allVerifiedDomains ?? []) as string[];
+
+        // Filtered list: only domains nginx itself serves, not what it proxies elsewhere.
+        expect(verified).not.toContain('photos.dopp.cloud');
+        // Loopback admin route should survive — that *is* nginx's own UI.
+        expect(verified).toContain('nginx.dopp.cloud');
+        // Unfiltered backup is still around for the side panel.
+        expect(allVerified).toContain('photos.dopp.cloud');
+        expect(allVerified).toContain('nginx.dopp.cloud');
+
+        // The proxied domain should land on its real service instead.
+        const immichNode = graph.nodes.find(n => n.id.includes('service-immich'));
+        const immichDomains = (immichNode?.metadata?.verifiedDomains ?? []) as string[];
+        expect(immichDomains).toContain('photos.dopp.cloud');
+    });
 });

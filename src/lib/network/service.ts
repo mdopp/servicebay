@@ -1910,19 +1910,28 @@ export class NetworkService {
         // Store full list of domains for Router/Gateway
         nginxNode.metadata.allVerifiedDomains = [...(nginxNode.metadata.verifiedDomains as string[])];
 
+        // The loopback fallback above attributes proxy_pass http://127.0.0.1:<port>
+        // entries (NPM admin UI, nginx's own subdomain) to nginx itself. Those land
+        // in containerUrlMapping under the service / container id — not under
+        // `nginxId` (which is the visual `group-nginx` node) — so we have to recognise
+        // every shape of "this is nginx" before deciding a domain is mapped elsewhere.
+        const nginxAliasIds = new Set<string>([nginxId]);
+        if (proxyService) nginxAliasIds.add(prefix(`service-${proxyService.name}`));
+        if (nginxContainer?.id) nginxAliasIds.add(prefix(nginxContainer.id));
+
+        // Values in containerUrlMapping are *bare hostnames* (see `cleanedDomain`
+        // earlier in this function), not full URLs. The previous implementation
+        // called `new URL(url)` on each entry, which threw on every iteration
+        // and silently produced an empty set — leaving every working domain
+        // attributed to nginx as well as to its real target. Compare strings.
         const domainsMappedToOthers = new Set<string>();
         for (const [targetId, urls] of containerUrlMapping.entries()) {
-            if (targetId === nginxId) continue; // Don't exclude domains explicitly mapped to Nginx
-            for (const url of urls) {
-                try {
-                    const u = new URL(url);
-                    domainsMappedToOthers.add(u.hostname);
-                } catch {
-                    // Ignore invalid URLs
-                }
+            if (nginxAliasIds.has(targetId)) continue;
+            for (const domain of urls) {
+                if (domain) domainsMappedToOthers.add(domain);
             }
         }
-        
+
         nginxNode.metadata.verifiedDomains = (nginxNode.metadata.verifiedDomains as string[])
             .filter(d => !domainsMappedToOthers.has(d));
     }
