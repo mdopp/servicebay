@@ -6,13 +6,57 @@ metadata:
     app: radicale
   annotations:
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
-    servicebay.config-mount: /config
-    # Disable SELinux labelling on the bind mounts (same as file-share /
-    # filebrowser). FCoS + SELinux + podman play-kube otherwise refuses
-    # writes to hostPath bind dirs from the container.
-    io.podman.annotations.label/radicale: "disable"
 spec:
   hostNetwork: true
+  initContainers:
+  # Seed /config/config in-pod, every deploy. Earlier versions wrote a
+  # config.mustache to the host bind-mount during the wizard's deploy
+  # step, which was fragile: any failure in the wizard's path resolver
+  # or the agent's write_file call left radicale starting with no config
+  # and crash-looping with `[Errno 2] /config/config not found`. By
+  # carrying the rendered config inside the pod manifest itself, every
+  # `podman play kube` re-creates it deterministically — there's
+  # nothing host-side that can drift.
+  - name: write-config
+    image: docker.io/busybox:latest
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        cat > /config/config <<'EOF'
+        [server]
+        hosts = 0.0.0.0:{{RADICALE_PORT}}
+        max_connections = 20
+        max_content_length = 100000000
+
+        [encoding]
+        request = utf-8
+        stock = utf-8
+
+        [auth]
+        type = ldap
+        ldap_uri = ldap://{{LLDAP_HOST}}:{{LLDAP_LDAP_PORT}}
+        ldap_base = ou=people,{{LLDAP_BASE_DN}}
+        ldap_reader_dn = uid=admin,ou=people,{{LLDAP_BASE_DN}}
+        ldap_secret = {{LLDAP_ADMIN_PASSWORD}}
+        ldap_filter = (&(objectClass=person)(uid={0}))
+        ldap_user_attribute = uid
+
+        [storage]
+        type = multifilesystem
+        filesystem_folder = /data/collections
+
+        [rights]
+        type = owner_only
+
+        [web]
+        type = internal
+
+        [logging]
+        level = info
+        EOF
+    volumeMounts:
+      - mountPath: /config
+        name: radicale-config
   containers:
   - name: radicale
     image: docker.io/tomsquest/docker-radicale:latest
@@ -38,12 +82,14 @@ spec:
         name: radicale-data
       - mountPath: /config
         name: radicale-config
+        readOnly: true
   volumes:
   - name: radicale-data
     hostPath:
       path: {{DATA_DIR}}/radicale/data
       type: DirectoryOrCreate
+  # /config is an in-pod ephemeral volume populated by the initContainer
+  # on every deploy. Radicale's runtime state lives on /data (host bind
+  # mount above), so nothing important is lost when /config is recreated.
   - name: radicale-config
-    hostPath:
-      path: {{DATA_DIR}}/radicale/config
-      type: DirectoryOrCreate
+    emptyDir: {}
