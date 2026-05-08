@@ -345,6 +345,61 @@ describe('Subdomain proxyPort references', () => {
   }
 });
 
+// ─── 7. Templates that ship mustache configs declare a config-mount target ─
+describe('Mustache configs have a resolvable target mount', () => {
+  // Every *.mustache file in a template directory gets rendered + written to
+  // a host bind path during deploy. The wizard's resolver picks the target
+  // path from `servicebay.config-mount: <mountPath>` annotation, falling back
+  // to a `/config` / `/conf`-like heuristic. The fallback is fragile in
+  // multi-mount pods: the *first* matching mount wins, so a template with
+  // two `/config`-suffix mounts can route the file to the wrong volume.
+  // Make the annotation a hard requirement when mustache files are present.
+  for (const t of templates) {
+    if (Object.keys(t.configs).length === 0) continue;
+    it(`${t.name}: has a servicebay.config-mount annotation that resolves to a real mountPath`, () => {
+      // Render the YAML with a stub view so we can parse it.
+      const safeYaml = t.yamlContent.replace(/\{\{[^}]+\}\}/g, '0');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let docs: any[];
+      try {
+        docs = yaml.loadAll(safeYaml);
+      } catch (e) {
+        throw new Error(`${t.name}: cannot parse template.yml: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pod = docs.find((d: any) => d?.kind === 'Pod');
+      const annot: string | undefined = pod?.metadata?.annotations?.['servicebay.config-mount'];
+      expect(
+        annot,
+        `${t.name} ships ${Object.keys(t.configs).join(', ')} but has no \`servicebay.config-mount: <mountPath>\` annotation. ` +
+        `Without it the resolver falls back to a /config-suffix heuristic, which silently picks the wrong mount in multi-volume pods. ` +
+        `Add the annotation pointing at the container's config mountPath.`,
+      ).toBeTruthy();
+
+      // The annotation value must match a real mountPath somewhere in the pod.
+      const mountPaths = new Set<string>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const c of (pod?.spec?.containers ?? []) as any[]) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const vm of (c.volumeMounts ?? []) as any[]) {
+          if (typeof vm?.mountPath === 'string') mountPaths.add(vm.mountPath);
+        }
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const ic of (pod?.spec?.initContainers ?? []) as any[]) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const vm of (ic.volumeMounts ?? []) as any[]) {
+          if (typeof vm?.mountPath === 'string') mountPaths.add(vm.mountPath);
+        }
+      }
+      expect(
+        mountPaths.has(annot!),
+        `${t.name}: servicebay.config-mount = "${annot}" but no container mounts that path. Resolver has nothing to write into. Mounts seen: ${[...mountPaths].join(', ')}`,
+      ).toBe(true);
+    });
+  }
+});
+
 // ─── 6. STACK_MIGRATIONS map shape ─────────────────────────────────────────
 describe('ServiceManager.STACK_MIGRATIONS map shape', () => {
   // Migrations: every key must be a current template (the new name);
