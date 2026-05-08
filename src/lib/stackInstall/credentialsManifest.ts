@@ -144,35 +144,40 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
 
   // ─── system-internal secrets (rarely needed, kept for DR) ────────────
 
-  if (isSelected('media')) {
-    const secret = get(v, 'ABS_OIDC_SECRET');
-    const domain = get(v, 'PUBLIC_DOMAIN');
-    if (secret) {
-      out.push({
-        service: 'Audiobookshelf OIDC client_secret',
-        url: domain ? `https://auth.${domain}` : 'auth.<domain>',
-        username: 'audiobookshelf',
-        password: secret,
-        importance: 'system',
-        notes: 'Paste into ABS Settings → Authentication → OIDC client_secret to enable SSO.',
-      });
-    }
+  // OIDC client secrets — derive entirely from variables[].meta.oidcClient so
+  // the client_id "username" stays in lock-step with templates/.../variables.json.
+  // Previously this section hardcoded `username: 'audiobookshelf'`, which is
+  // exactly the kind of dual-source-of-truth duplication we're trying to kill.
+  const domain = get(v, 'PUBLIC_DOMAIN');
+  for (const sv of v) {
+    const oidc = sv.meta?.oidcClient;
+    if (!oidc) continue;
+    const secretVar = oidc.clientSecretVar;
+    if (!secretVar) continue;
+    const secret = get(v, secretVar);
+    if (!secret) continue;
+    out.push({
+      service: `${oidc.client_name || oidc.client_id} OIDC client_secret`,
+      url: domain ? `https://auth.${domain}` : 'auth.<domain>',
+      username: oidc.client_id,
+      password: secret,
+      importance: 'system',
+      notes: `Paste into ${oidc.client_name || oidc.client_id} Settings → Authentication → OIDC client_secret to enable SSO.`,
+    });
   }
 
+  // Vaultwarden's OIDC entry is emitted by the variable-driven loop above.
+  // The only Vaultwarden-specific bit is the SSO_ENABLED hint, which we
+  // append to the matching existing entry rather than duplicate the whole
+  // credential. This keeps client_id sourced from variables.json and avoids
+  // the dual source-of-truth that the consistency test now forbids.
   if (isSelected('vaultwarden')) {
-    const secret = get(v, 'VAULTWARDEN_SSO_SECRET');
     const enabled = get(v, 'VAULTWARDEN_SSO_ENABLED') === 'true';
-    if (secret) {
-      out.push({
-        service: 'Vaultwarden OIDC client_secret',
-        url: 'env: SSO_CLIENT_SECRET',
-        username: 'vaultwarden',
-        password: secret,
-        importance: 'system',
-        notes: enabled
-          ? 'SSO is enabled. Already wired into the container env — no manual paste needed.'
-          : 'SSO is OFF. To enable: flip VAULTWARDEN_SSO_ENABLED=true and redeploy.',
-      });
+    const entry = out.find(c => /Vaultwarden OIDC/i.test(c.service));
+    if (entry) {
+      entry.notes = enabled
+        ? 'SSO is enabled. Already wired into the container env (SSO_CLIENT_SECRET) — no manual paste needed.'
+        : 'SSO is OFF. To enable: flip VAULTWARDEN_SSO_ENABLED=true and redeploy.';
     }
   }
 
