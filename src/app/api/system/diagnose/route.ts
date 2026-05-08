@@ -96,14 +96,39 @@ export async function POST(request: Request) {
   });
 
   // 4) Failed user services
+  // Some unit failures are first-boot artefacts that no longer reflect a
+  // problem the operator can act on:
+  //
+  //   * install-nginx.service — first-boot oneshot that waits for the
+  //     ServiceBay agent + auto-installs NPM if the wizard hasn't already.
+  //     If the wizard finished first, the agent typically hadn't connected
+  //     yet so the script gives up after its timeout and stays `failed`
+  //     forever (Type=oneshot doesn't reset on subsequent boots). NPM is
+  //     happily running by then. Surface it once with a "benign" note
+  //     instead of nagging on every probe run.
+  //   * podman healthcheck per-instance units — names look like
+  //     `<sha>-<sha>.service` and bubble up when a container reports an
+  //     unhealthy probe; the *container* state is already covered by the
+  //     crash_loop probe below, so flagging the wrapper unit too is
+  //     duplicative.
   const failed = await exec('systemctl --user --failed --no-legend --no-pager 2>&1', 5000);
-  const failedServices = trimOutput(failed.stdout, 20).split('\n').filter(Boolean);
+  const failedRaw = trimOutput(failed.stdout, 30).split('\n').filter(Boolean);
+  const isBenignFailedUnit = (line: string) =>
+    /\binstall-nginx\.service\b/.test(line) ||
+    /^●\s*[0-9a-f]{40,}-[0-9a-f]+\.service\b/i.test(line.trim());
+  const benign = failedRaw.filter(isBenignFailedUnit);
+  const realFailed = failedRaw.filter(l => !isBenignFailedUnit(l));
+  const detail = (() => {
+    if (realFailed.length === 0 && benign.length === 0) return 'No failed user units.';
+    if (realFailed.length === 0) return `0 actionable failures (${benign.length} benign first-boot leftover ignored).`;
+    return `${realFailed.length} failed unit(s)${benign.length ? ` (+${benign.length} benign first-boot leftovers ignored)` : ''}.`;
+  })();
   probes.push({
     id: 'failed_units',
     label: 'systemd user units',
-    status: failedServices.length === 0 ? 'ok' : 'warn',
-    detail: failedServices.length === 0 ? 'No failed user units.' : `${failedServices.length} failed unit(s).`,
-    hint: failedServices.length > 0 ? `Failed units:\n${failedServices.join('\n')}` : undefined,
+    status: realFailed.length === 0 ? 'ok' : 'warn',
+    detail,
+    hint: realFailed.length > 0 ? `Failed units:\n${realFailed.join('\n')}` : undefined,
   });
 
   // 5) Listening ports for known services
