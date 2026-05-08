@@ -200,7 +200,7 @@ export default function OnboardingWizard() {
     vaultwarden:     { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional but recommended)' },
     audiobookshelf:  { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
     immich:          { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
-    'home-assistant-stack': { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
+    'home-assistant': { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
     radicale:        { recommendedWith: ['authelia'] },
   };
 
@@ -633,24 +633,69 @@ export default function OnboardingWizard() {
           }
         }
 
-        // Fetch extra config files (.mustache) and resolve target paths from YAML volumes
+        // Fetch extra config files (.mustache) and resolve target paths from YAML volumes.
+        // We parse the YAML properly so multi-container pods (e.g. file-share with
+        // syncthing+samba+filebrowser) can map a config file to the correct
+        // hostPath even when the same `/config` mountPath appears in multiple
+        // volumeMounts. The previous index-based regex lined up only when each
+        // volume had exactly one mount — fragile and broken for merged stacks.
         const cfgFiles = await fetchTemplateConfigFiles(item.name, selectedStack?.source || 'Built-in');
         if (cfgFiles.length > 0) {
-          // Extract hostPath→mountPath mapping from YAML to resolve target path.
-          // Also honor an explicit `servicebay.config-mount` annotation, which
-          // wins over heuristics for templates whose config dir isn't `/config`
-          // (e.g. AdGuard mounts `/opt/adguardhome/conf`).
-          const volMounts = [...yaml.matchAll(/mountPath:\s*(\S+)/g)].map(m => m[1]);
-          const hostPaths = [...yaml.matchAll(/path:\s*(\S+)/g)].map(m => m[1]);
-          const annotationMatch = yaml.match(/servicebay\.config-mount:\s*['"]?([^'"\s]+)/);
-          const explicitMount = annotationMatch?.[1];
-          for (const cf of cfgFiles) {
-            const configMountIdx = explicitMount
-              ? volMounts.findIndex(m => m === explicitMount)
-              : volMounts.findIndex(m => m === '/config' || m.endsWith('/config') || m.endsWith('/conf'));
-            if (configMountIdx !== -1 && hostPaths[configMountIdx]) {
-              cf.targetPath = `${hostPaths[configMountIdx]}/${cf.filename}`;
+          // Build name→hostPath map from the volumes section, then mountPath→hostPath
+          // by chasing the `name` reference on each volumeMount across all containers.
+          const nameToHostPath = new Map<string, string>();
+          const mountPathToHostPath = new Map<string, string>();
+          // Render Mustache placeholders so that string interpolations like
+          // `{{FILEBROWSER_PORT}}` don't trip the YAML parser. Values aren't
+          // material here — we only need the structure.
+          const safeYaml = yaml.replace(/\{\{[^}]+\}\}/g, '0');
+          let parsed: unknown;
+          try {
+            parsed = (await import('js-yaml')).load(safeYaml);
+          } catch {
+            parsed = null;
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const doc = parsed as any;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const volumes: any[] = doc?.spec?.volumes ?? [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const containers: any[] = doc?.spec?.containers ?? [];
+          const annotations: Record<string, string> = doc?.metadata?.annotations ?? {};
+          for (const v of volumes) {
+            if (typeof v?.name === 'string' && typeof v?.hostPath?.path === 'string') {
+              nameToHostPath.set(v.name, v.hostPath.path);
             }
+          }
+          for (const c of containers) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            for (const m of (c?.volumeMounts ?? []) as any[]) {
+              if (typeof m?.mountPath === 'string' && typeof m?.name === 'string') {
+                const hp = nameToHostPath.get(m.name);
+                if (hp && !mountPathToHostPath.has(m.mountPath)) {
+                  mountPathToHostPath.set(m.mountPath, hp);
+                }
+              }
+            }
+          }
+          // Honour an explicit `servicebay.config-mount` annotation; templates
+          // whose config dir isn't `/config` (e.g. AdGuard mounts
+          // `/opt/adguardhome/conf`) declare their target this way.
+          const explicitMount = annotations['servicebay.config-mount'];
+          for (const cf of cfgFiles) {
+            let hp: string | undefined;
+            if (explicitMount) {
+              hp = mountPathToHostPath.get(explicitMount);
+            }
+            if (!hp) {
+              for (const [mp, h] of mountPathToHostPath.entries()) {
+                if (mp === '/config' || mp.endsWith('/config') || mp.endsWith('/conf')) {
+                  hp = h;
+                  break;
+                }
+              }
+            }
+            if (hp) cf.targetPath = `${hp}/${cf.filename}`;
             // Also extract variables from config file templates
             const cfgMatches = cf.content.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
             for (const m of cfgMatches) vars.add(m[1]);

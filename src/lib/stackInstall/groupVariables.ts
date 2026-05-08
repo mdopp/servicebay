@@ -8,8 +8,8 @@ const DISPLAY_NAMES: Record<string, string> = {
   'adguard': 'AdGuard Home (DNS)',
   'vaultwarden': 'Vaultwarden (Passwords)',
   'immich': 'Immich (Photos)',
-  'file-share': 'File Share (Syncthing + Samba)',
-  'home-assistant-stack': 'Home Assistant Stack',
+  'file-share': 'File Share (Syncthing + Samba + FileBrowser)',
+  'home-assistant': 'Home Assistant',
 };
 
 export interface VariableGroup {

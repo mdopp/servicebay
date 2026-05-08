@@ -13,7 +13,10 @@ interface InitRequest {
   node?: string;
 }
 
-const CONTAINER_NAME = 'filebrowser-filebrowser';
+// Pod-container naming convention: `<pod-name>-<container-name>`. FileBrowser
+// now lives inside the `file-share` pod alongside syncthing + samba (see
+// templates/file-share/template.yml).
+const CONTAINER_NAME = 'file-share-filebrowser';
 const DB_PATH = '/database/filebrowser.db';
 
 /**

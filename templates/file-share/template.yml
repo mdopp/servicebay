@@ -5,19 +5,25 @@ metadata:
   labels:
     app: file-share
   annotations:
-    servicebay.ports: "8384/tcp,22000/tcp,139/tcp,445/tcp"
-    # Disable SELinux labelling on the syncthing + samba bind mounts.
-    # Fedora CoreOS ships SELinux enforcing; without this annotation,
-    # podman play-kube doesn't relabel the hostPath dirs and syncthing
-    # can't `chmod` or write its cert.pem ("operation not permitted")
-    # even with runAsUser: 0. Targeted per-container disable is safer
-    # than `privileged: true` — no extra capabilities granted.
+    servicebay.ports: "8384/tcp,22000/tcp,139/tcp,445/tcp,{{FILEBROWSER_PORT}}/tcp"
+    # Pin the .filebrowser.json.mustache target to filebrowser's /config
+    # mount — without this the wizard's path resolver would also consider
+    # syncthing's /var/syncthing/config (which ends in /config) and pick
+    # whichever lands first in the parsed YAML.
+    servicebay.config-mount: "/config"
+    # Disable SELinux labelling on the bind mounts. FCoS ships SELinux
+    # enforcing; without this annotation podman play-kube doesn't relabel
+    # the hostPath dirs and syncthing can't `chmod` its config, samba
+    # can't write the share state, and filebrowser's seed-config `cp`
+    # fails with EPERM. Targeted per-container disable is safer than a
+    # pod-wide privileged flag.
     io.podman.annotations.label/syncthing: "disable"
     io.podman.annotations.label/samba: "disable"
+    io.podman.annotations.label/filebrowser: "disable"
 spec:
   hostNetwork: true
   containers:
-  # 1. Syncthing — Bidirectional folder sync (Android & Windows apps)
+  # 1. Syncthing — Bidirectional folder sync (Android & desktop apps)
   - name: syncthing
     image: docker.io/syncthing/syncthing:latest
     # Earlier attempts (runAsUser:0 + io.podman.annotations.label/syncthing
@@ -26,11 +32,11 @@ spec:
     # or the deeper issue is the bind-mount label rather than the
     # process's SELinux context. Skip the puzzle and grant privileged:
     # the UID-namespace + SELinux + cap-drop combo all step out of the
-    # way at once. This pod's containers (syncthing + samba) are both
-    # standard, unprivileged-on-the-host services; on a single-tenant
-    # homelab the operator already trusts the workload completely. The
-    # rootless-podman boundary still applies — privileged here means
-    # "no extra capability *deductions*", not "host root".
+    # way at once. This pod's containers are standard, unprivileged-
+    # on-the-host services; on a single-tenant homelab the operator
+    # already trusts the workload completely. The rootless-podman
+    # boundary still applies — privileged here means "no extra
+    # capability *deductions*", not "host root".
     securityContext:
       runAsUser: 0
       runAsGroup: 0
@@ -61,6 +67,38 @@ spec:
       - mountPath: /data
         name: shared-data
 
+  # 3. FileBrowser — Family-facing web file manager over the shared volume.
+  # Bound to loopback only — Authelia forward-auth at the NPM layer is the
+  # gate. Direct host-IP access on this port is intentionally unreachable
+  # so a misconfigured proxy can't accidentally expose an unauth-allowing
+  # service.
+  - name: filebrowser
+    image: docker.io/filebrowser/filebrowser:latest
+    # Run as container UID 0. Under rootless podman that maps to the host
+    # user running podman (e.g. `core`/uid 1000), which owns the hostPath
+    # dirs we mount below. Without this override the filebrowser image's
+    # default non-root user maps to a sub-UID that has no write access on
+    # the host directories, causing the entrypoint's seed-config `cp` to
+    # fail with "Permission denied" in a tight restart loop.
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
+    args:
+      - "--config=/config/.filebrowser.json"
+      - "--database=/database/filebrowser.db"
+      - "--root=/srv"
+      - "--address=127.0.0.1"
+      - "--port={{FILEBROWSER_PORT}}"
+    ports:
+      - containerPort: {{FILEBROWSER_PORT}}
+    volumeMounts:
+      - mountPath: /srv
+        name: shared-data
+      - mountPath: /database
+        name: filebrowser-db
+      - mountPath: /config
+        name: filebrowser-config
+
   volumes:
   - name: shared-data
     hostPath:
@@ -69,4 +107,12 @@ spec:
   - name: syncthing-config
     hostPath:
       path: {{DATA_DIR}}/file-share/syncthing
+      type: DirectoryOrCreate
+  - name: filebrowser-db
+    hostPath:
+      path: {{DATA_DIR}}/file-share/filebrowser-db
+      type: DirectoryOrCreate
+  - name: filebrowser-config
+    hostPath:
+      path: {{DATA_DIR}}/file-share/filebrowser-config
       type: DirectoryOrCreate
