@@ -449,7 +449,7 @@ async function seedFileBrowserAdmin(opts: { variables: StackVariable[]; node?: s
     } catch { /* retry */ }
     await new Promise(r => setTimeout(r, 5000));
   }
-  opts.onLog('⚠️ Could not pre-seed FileBrowser admin. Run `podman exec filebrowser-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db` once the pod is up.');
+  opts.onLog('⚠️ Could not pre-seed FileBrowser admin. Run `podman exec file-share-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db` once the pod is up.');
 }
 
 async function seedNavidrome(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): Promise<void> {
@@ -572,7 +572,8 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   if (isSelected('navidrome')) {
     void seedNavidrome({ variables, onLog }).catch(() => { /* logged inline */ });
   }
-  if (isSelected('filebrowser')) {
+  // FileBrowser is now part of the file-share stack (alongside syncthing + samba).
+  if (isSelected('file-share')) {
     void seedFileBrowserAdmin({ variables, node, onLog }).catch(() => { /* logged inline */ });
   }
 

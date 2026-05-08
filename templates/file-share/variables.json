@@ -1,7 +1,7 @@
 {
   "SHARE_USER": {
     "type": "text",
-    "description": "Samba username for file share access",
+    "description": "Samba username for the admin's Windows/macOS network drive",
     "default": "samba"
   },
   "SHARE_PASSWORD": {
@@ -17,6 +17,28 @@
       "allow_websocket_upgrade": true,
       "block_exploits": true,
       "ssl_forced": true
+    }
+  },
+  "FILEBROWSER_PORT": {
+    "type": "text",
+    "description": "FileBrowser HTTP port — bound to 127.0.0.1 so it's only reachable through NPM (which terminates Authelia SSO).",
+    "default": "8088"
+  },
+  "FILEBROWSER_ADMIN_USER": {
+    "type": "text",
+    "description": "LLDAP username that gets pre-promoted to FileBrowser admin. Defaults to the LLDAP admin so the wizard's only auto-created user lands as the FB admin too — when they first log in via SSO, FB matches the existing admin record.",
+    "default": "admin"
+  },
+  "FILEBROWSER_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for FileBrowser. Authelia forward-auth in the proxy snippet means SSO login → FileBrowser session in one step.",
+    "default": "files",
+    "proxyPort": "FILEBROWSER_PORT",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "auth_request /authelia;\nauth_request_set $target_url $scheme://$http_host$request_uri;\nauth_request_set $user $upstream_http_remote_user;\nauth_request_set $groups $upstream_http_remote_groups;\nauth_request_set $name $upstream_http_remote_name;\nauth_request_set $email $upstream_http_remote_email;\nproxy_set_header Remote-User $user;\nproxy_set_header Remote-Groups $groups;\nproxy_set_header Remote-Name $name;\nproxy_set_header Remote-Email $email;\nerror_page 401 =302 https://auth.{{PUBLIC_DOMAIN}}/?rd=$target_url;\n\nlocation = /authelia {\n    internal;\n    proxy_pass http://127.0.0.1:{{AUTHELIA_PORT}}/api/verify;\n    proxy_pass_request_body off;\n    proxy_set_header Content-Length \"\";\n    proxy_set_header X-Original-URL $scheme://$http_host$request_uri;\n    proxy_set_header X-Real-IP $remote_addr;\n    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n    proxy_set_header X-Forwarded-Proto $scheme;\n}"
     }
   }
 }
