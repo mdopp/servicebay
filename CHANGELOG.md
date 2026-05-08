@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.5.0...servicebay-v3.6.0) (2026-05-08)
+
+
+### Features
+
+* **wizard:** humanise variable labels — drop redundant prefix + description noise ([#190](https://github.com/mdopp/servicebay/issues/190)) ([d95e3ec](https://github.com/mdopp/servicebay/commit/d95e3ec444e49737922437d3b7487f9ae8f4cdf6))
+
+
+### Bug Fixes
+
+* **network:** correctly de-duplicate proxied domains off the nginx node ([#195](https://github.com/mdopp/servicebay/issues/195)) ([7e80b4e](https://github.com/mdopp/servicebay/commit/7e80b4e0f7d1768de1083f0b879ce9fb03aa3346))
+* **ux:** replace Backup Sync target type chip row with radio cards ([#194](https://github.com/mdopp/servicebay/issues/194)) ([bcadf5c](https://github.com/mdopp/servicebay/commit/bcadf5c8c6b65f8e5856914b87bb28d2b54615e8))
+* **wizard:** show missing dep badges for navidrome/file-share + flag nginx-web when domain is set ([#196](https://github.com/mdopp/servicebay/issues/196)) ([31f5089](https://github.com/mdopp/servicebay/commit/31f5089b04e5164595c7f90d99b82df870f1e398))
+* **wizard:** use digital twin for install status strip + clipboard fallback for HTTP ([#192](https://github.com/mdopp/servicebay/issues/192)) ([f0f8833](https://github.com/mdopp/servicebay/commit/f0f883315bcf00be78512dce304855942da2a9f5))
+
 ## [3.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.4.2...servicebay-v3.5.0) (2026-05-08)
 
 
