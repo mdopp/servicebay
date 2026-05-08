@@ -602,9 +602,16 @@ export class ServiceManager {
         await this.writeFile(nodeName, `${name}.kube`, kubeContent);
         await this.ensurePodmanSocket(nodeName);
 
-        // Write extra config files (e.g. Authelia configuration.yml) to the node filesystem
+        // Write extra config files (e.g. Authelia configuration.yml) to the node filesystem.
+        // Failures here are FATAL — the previous behaviour was to log a warning
+        // and continue, which produced the radicale crash-loop class of bug:
+        // service starts, looks for a config file that's not there, dies, and
+        // the operator has no breadcrumb back to the real cause (the silent
+        // write_file failure during deploy). Raising here surfaces the
+        // problem at deploy time with a useful path.
         if (extraFiles?.length) {
             const agent = await agentManager.ensureAgent(nodeName);
+            const failures: string[] = [];
             for (const f of extraFiles) {
                 // Ensure parent directory exists
                 const dir = f.path.substring(0, f.path.lastIndexOf('/'));
@@ -613,10 +620,17 @@ export class ServiceManager {
                 }
                 const res = await agent.sendCommand('write_file', { path: f.path, content: f.content });
                 if (res !== 'ok') {
-                    logger.warn('ServiceManager', `Failed to write extra file ${f.path}`);
+                    failures.push(f.path);
+                    logger.error('ServiceManager', `Failed to write extra file ${f.path}: agent returned ${JSON.stringify(res)}`);
                 } else {
                     logger.info('ServiceManager', `Wrote extra config file: ${f.path}`);
                 }
+            }
+            if (failures.length > 0) {
+                throw new Error(
+                    `Failed to write ${failures.length} required config file(s) for service "${name}":\n  ${failures.join('\n  ')}\n\n` +
+                    `The service was not started. Re-run the deploy or check the agent's write permissions on the target paths.`,
+                );
             }
         }
 
