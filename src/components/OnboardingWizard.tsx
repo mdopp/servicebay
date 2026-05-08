@@ -202,6 +202,8 @@ export default function OnboardingWizard() {
     immich:          { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
     'home-assistant': { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
     radicale:        { recommendedWith: ['authelia'] },
+    navidrome:       { recommendedWith: ['authelia'], reason: 'reverse-proxy SSO via authelia (Remote-User header)' },
+    'file-share':    { recommendedWith: ['authelia'], reason: 'FileBrowser uses authelia forward-auth for family-facing access' },
   };
 
   // Track which service is currently mid-deploy. The deploy loop sets
@@ -1258,13 +1260,35 @@ export default function OnboardingWizard() {
                                 const checked = stackItems.filter(i => i.checked && !i.alreadyInstalled);
                                 const checkedNames = new Set(checked.map(i => i.name));
                                 const installedNames = new Set(stackItems.filter(i => i.alreadyInstalled).map(i => i.name));
-                                const missing: { from: string; needs: string }[] = [];
+                                const missing: { from: string; needs: string; reason?: string }[] = [];
                                 for (const item of checked) {
                                     for (const dep of SERVICE_DEPS[item.name]?.requires ?? []) {
                                         if (!checkedNames.has(dep) && !installedNames.has(dep)) {
-                                            missing.push({ from: item.name, needs: dep });
+                                            missing.push({ from: item.name, needs: dep, reason: SERVICE_DEPS[item.name]?.reason });
                                         }
                                     }
+                                }
+                                // nginx-web is implicitly required as soon as the operator commits
+                                // to a public domain — every other service publishes via a
+                                // *_SUBDOMAIN variable that needs the proxy to reach the host. We
+                                // don't put this in SERVICE_DEPS because it would mean adding
+                                // `requires: ['nginx-web']` to ~10 services and cluttering each row
+                                // with a redundant red badge. Surface it once here instead.
+                                const wantsDomain = stackDomain.trim().length > 0 && !stackNoDomain;
+                                const hasPublishedService = checked.some(i => i.name !== 'nginx-web');
+                                const nginxAvailable = stackItems.some(i => i.name === 'nginx-web');
+                                if (
+                                    wantsDomain &&
+                                    nginxAvailable &&
+                                    hasPublishedService &&
+                                    !checkedNames.has('nginx-web') &&
+                                    !installedNames.has('nginx-web')
+                                ) {
+                                    missing.push({
+                                        from: 'public domain',
+                                        needs: 'nginx-web',
+                                        reason: 'Nginx Proxy Manager terminates HTTPS for every <subdomain>.' + stackDomain.trim() + ' route',
+                                    });
                                 }
                                 if (missing.length === 0) return null;
                                 return (
@@ -1273,7 +1297,7 @@ export default function OnboardingWizard() {
                                         {missing.map(m => (
                                             <div key={`${m.from}-${m.needs}`}>
                                                 <span className="font-mono">{m.from}</span> requires <span className="font-mono">{m.needs}</span>
-                                                {SERVICE_DEPS[m.from]?.reason && <span className="opacity-80"> — {SERVICE_DEPS[m.from].reason}</span>}
+                                                {m.reason && <span className="opacity-80"> — {m.reason}</span>}
                                             </div>
                                         ))}
                                         <button
@@ -1337,6 +1361,19 @@ export default function OnboardingWizard() {
                                                     <span className={`font-medium text-sm ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-900 dark:text-gray-200'}`}>{item.name}</span>
                                                     {item.alreadyInstalled && (
                                                         <span className="text-xs text-green-600 dark:text-green-400">already installed</span>
+                                                    )}
+                                                    {/* Static role hint for nginx-web — every other
+                                                        service routes through it for HTTPS subdomain
+                                                        access, but spelling that out as a per-service
+                                                        "with nginx-web" badge would clutter ~10 rows.
+                                                        Surface the role here instead. */}
+                                                    {item.name === 'nginx-web' && (
+                                                        <span
+                                                            className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60"
+                                                            title="Required for HTTPS subdomain access. Every service with a *.<your-domain> subdomain proxies through here."
+                                                        >
+                                                            public-domain gateway
+                                                        </span>
                                                     )}
                                                     {/* Dependency badges. Hard deps in red so the
                                                         operator notices; soft deps muted blue.
