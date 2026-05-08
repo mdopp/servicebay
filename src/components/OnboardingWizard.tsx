@@ -1497,10 +1497,37 @@ export default function OnboardingWizard() {
                                         <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 pb-1">{group.label}</h4>
                                         {filtered.map((v) => {
                                             const idx = stackVariables.findIndex(x => x.name === v.name);
+                                            // Humanise the visible label so the operator sees
+                                            // "Subdomain" inside "Immich (Photos)" instead of
+                                            // SCREAMING_SNAKE_CASE. Strip the group-key prefix
+                                            // when it matches, _ → space, lowercase, then
+                                            // capitalise the first word. Common abbreviations
+                                            // stay uppercase. The raw env-var name still shows
+                                            // muted on the right for power users.
+                                            const groupPrefix = group.key.toUpperCase().replace(/-/g, '_') + '_';
+                                            const stripped = v.name.startsWith(groupPrefix) ? v.name.slice(groupPrefix.length) : v.name;
+                                            const KEEP_UPPER = new Set(['DB', 'URL', 'API', 'SSH', 'TLS', 'SSL', 'OIDC', 'DNS', 'IP', 'ID', 'JWT', 'SMTP', 'CSV', 'CSRF', 'NPM', 'LDAP']);
+                                            const displayLabel = stripped.split('_').map((w, i) =>
+                                                KEEP_UPPER.has(w) ? w : (i === 0 ? w[0] + w.slice(1).toLowerCase() : w.toLowerCase())
+                                            ).join(' ');
+                                            // Hide redundant descriptions like "Subdomain for
+                                            // Immich" when the group label already says Immich.
+                                            // Short desc + contains a non-trivial token from
+                                            // the group label = redundant.
+                                            const groupTokens = (group.label.toLowerCase().match(/[a-z]+/g) ?? []).filter(t => t.length > 3);
+                                            const desc = v.meta?.description ?? '';
+                                            const isRedundant = desc.length <= 60 && groupTokens.some(t => desc.toLowerCase().includes(t));
                                             return (
                                             <div key={v.name}>
-                                                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
-                                                {v.meta?.description && <p className="text-xs text-gray-500 mb-1">{v.meta.description}</p>}
+                                                <div className="flex items-baseline justify-between gap-2 mb-1">
+                                                    <label className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate" title={v.name}>
+                                                        {displayLabel}
+                                                    </label>
+                                                    <span className="text-[10px] font-mono text-gray-400 dark:text-gray-500 opacity-50 shrink-0" title="Underlying environment variable">
+                                                        {v.name}
+                                                    </span>
+                                                </div>
+                                                {desc && !isRedundant && <p className="text-xs text-gray-500 mb-1">{desc}</p>}
                                                 {v.meta?.type === 'password' ? (
                                                     <input
                                                         type="password"
