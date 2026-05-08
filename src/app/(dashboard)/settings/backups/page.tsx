@@ -24,6 +24,10 @@ import {
   Database,
   Shield,
   Upload,
+  Usb,
+  Network,
+  Folder,
+  Cloud,
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -1049,17 +1053,52 @@ export default function BackupsSettingsPage() {
             <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sourcePath} onChange={e => setBackupSync(prev => ({ ...prev, sourcePath: e.target.value }))} placeholder="/mnt/data" />
           </div>
 
+          {/* Target picker — radio cards. The previous version used a row of
+              terse text-only buttons that read more like filter chips than a
+              "choose one of these and the form below changes" prompt. Cards
+              with icons + a one-line "what this is" description make the
+              relationship obvious and bring this control in line with how
+              the rest of ServiceBay presents primary choices. */}
           <div>
-            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Target Type</label>
-            <div className="grid grid-cols-4 gap-2">
-              {([['local', 'Local / USB'], ['ssh', 'SSH'], ['smb', 'SMB / CIFS'], ['nfs', 'NFS']] as const).map(([val, label]) => (
-                <button key={val} onClick={() => setBackupSync(prev => ({ ...prev, targetType: val }))}
-                  className={`px-3 py-2 text-xs rounded-lg border transition-colors ${backupSync.targetType === val ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600 text-blue-700 dark:text-blue-300 font-medium' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>
-                  {label}
-                </button>
-              ))}
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Where should backups go?</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              {([
+                { val: 'local', label: 'Local / USB',  hint: 'Mounted disk on this server',  Icon: Usb },
+                { val: 'ssh',   label: 'SSH',          hint: 'Push to a remote host (rsync over ssh)', Icon: Network },
+                { val: 'smb',   label: 'SMB / CIFS',   hint: 'Windows or NAS network share',  Icon: Folder },
+                { val: 'nfs',   label: 'NFS',          hint: 'Unix/NAS network export',       Icon: Cloud },
+              ] as const).map(({ val, label, hint, Icon }) => {
+                const active = backupSync.targetType === val;
+                return (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setBackupSync(prev => ({ ...prev, targetType: val }))}
+                    aria-pressed={active}
+                    className={`flex items-start gap-2 px-3 py-2 text-left rounded-lg border-2 transition-colors ${active ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 dark:border-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:border-gray-300 dark:hover:border-gray-600'}`}
+                  >
+                    <Icon size={16} className={`mt-0.5 flex-shrink-0 ${active ? 'text-blue-600 dark:text-blue-300' : 'text-gray-400'}`} />
+                    <div className="min-w-0">
+                      <div className={`text-xs font-semibold ${active ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-200'}`}>{label}</div>
+                      <div className={`text-[11px] leading-tight ${active ? 'text-blue-600/70 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}>{hint}</div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
+
+          {/* Connection-details panel — the same fields as before, but wrapped
+              in a labelled container so it's visually clear these inputs
+              belong to the chosen target type. */}
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-3 space-y-3">
+            <div className="text-[11px] uppercase tracking-wider font-semibold text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+              <ChevronRight size={12} />
+              {backupSync.targetType === 'local' ? 'Local target details' :
+               backupSync.targetType === 'ssh'   ? 'SSH connection details' :
+               backupSync.targetType === 'smb'   ? 'SMB share details'      :
+                                                   'NFS export details'}
+            </div>
 
           {backupSync.targetType === 'local' && (
             <div>
@@ -1111,6 +1150,7 @@ export default function BackupsSettingsPage() {
               <div className="col-span-2"><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Subfolder (optional)</label><input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.nfsPath} onChange={e => setBackupSync(prev => ({ ...prev, nfsPath: e.target.value }))} /></div>
             </div>
           )}
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
