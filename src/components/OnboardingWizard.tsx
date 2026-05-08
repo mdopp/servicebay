@@ -15,7 +15,7 @@ import {
     OnboardingStatus
 } from '@/app/actions/onboarding';
 import { generateLocalKey } from '@/app/actions/ssh';
-import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
+import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles, fetchTemplatePostDeployScript } from '@/app/actions';
 import { getNodes } from '@/app/actions/system';
 import { Template, VariableMeta } from '@/lib/registry';
 import {
@@ -853,6 +853,17 @@ export default function OnboardingWizard() {
     // hung for 3 min on a container that was never going to start.
     const deployed: { name: string; checked: boolean }[] = [];
 
+    // Templates that supplied a post-deploy.py \u2014 for those we skip the
+    // hardcoded helpers in postInstall.ts (the script handles credentials,
+    // admin seeding, etc. for that service). See templates/<name>/post-deploy.py
+    // and the script-protocol comment in lib/registry.ts.
+    const templatesWithScript = new Set<string>();
+
+    // Credentials parsed from `__SB_CREDENTIAL__ {json}` markers the scripts
+    // emit on stdout \u2014 appended to the SAVE-THESE-NOW banner at the end.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scriptCredentials: any[] = [];
+
     for (const item of selected) {
       // Skip already-installed services
       if (item.alreadyInstalled) {
@@ -904,12 +915,44 @@ export default function OnboardingWizard() {
         });
       Mustache.escape = savedEscape;
 
+      // Optional per-template post-deploy.py — rendered with the same view
+      // and shipped to the agent inside the deploy POST. Server runs it
+      // after the unit starts; output streams back as `progress` events
+      // and gets parsed for `__SB_CREDENTIAL__ {json}` markers below.
+      let postDeployScript: string | undefined;
+      try {
+        const raw = await fetchTemplatePostDeployScript(item.name, selectedStack?.source || 'Built-in');
+        if (raw) {
+          const savedEscape2 = Mustache.escape;
+          Mustache.escape = (text: string) => text;
+          postDeployScript = Mustache.render(raw, view);
+          Mustache.escape = savedEscape2;
+          templatesWithScript.add(item.name);
+        }
+      } catch { /* template ships no script — fall through to hardcoded helpers */ }
+
+      // Variables exported as env vars to the script. Scoped to string-shaped
+      // entries; the engine in ServiceManager handles bash-quote escaping.
+      const postDeployEnv: Record<string, string> = {};
+      for (const v of stackVariables) {
+        if (typeof v.value === 'string') postDeployEnv[v.name] = v.value;
+      }
+      if (typeof window !== 'undefined') postDeployEnv.HOST = window.location.hostname || 'localhost';
+
       try {
         const query = stackSelectedNode ? `?node=${stackSelectedNode}&stream=1` : '?stream=1';
         const res = await fetch(`/api/services${query}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: item.name, kubeContent, yamlContent: content, yamlFileName: `${item.name}.yml`, extraFiles }),
+          body: JSON.stringify({
+            name: item.name,
+            kubeContent,
+            yamlContent: content,
+            yamlFileName: `${item.name}.yml`,
+            extraFiles,
+            postDeployScript,
+            postDeployEnv: postDeployScript ? postDeployEnv : undefined,
+          }),
         });
         if (!res.ok) {
           const err = await res.json();
@@ -933,6 +976,16 @@ export default function OnboardingWizard() {
               try {
                 const evt = JSON.parse(line);
                 if (evt.type === 'progress') {
+                  // Intercept `__SB_CREDENTIAL__ {json}` markers from the
+                  // post-deploy.py script: park the parsed entry in
+                  // scriptCredentials so it lands in the SAVE-THESE-NOW
+                  // banner. Don't echo the raw marker to the install log.
+                  if (typeof evt.message === 'string' && evt.message.startsWith('__SB_CREDENTIAL__ ')) {
+                    try {
+                      scriptCredentials.push(JSON.parse(evt.message.slice('__SB_CREDENTIAL__ '.length)));
+                    } catch { /* malformed marker — drop it */ }
+                    continue;
+                  }
                   // Update last progress line in-place to avoid log spam
                   if (lastProgressLine) {
                     setStackLogs(prev => {
@@ -973,11 +1026,18 @@ export default function OnboardingWizard() {
     // for services that actually deployed cleanly. A failed deploy is
     // dropped from `deployed` above so its post-install steps don't hang
     // on a container that was never going to start.
+    //
+    // `skipDefaults` lets per-template post-deploy.py scripts replace the
+    // hardcoded helpers in postInstall.ts. `extraCredentials` are the
+    // entries those scripts emitted via `__SB_CREDENTIAL__` markers, to
+    // be appended to the final SAVE-THESE-NOW banner.
     const proxyResult = await runPostInstall({
       selected: deployed,
       variables: stackVariables,
       node: stackSelectedNode || undefined,
       onLog: (msg) => setStackLogs(prev => [...prev, msg]),
+      skipDefaults: templatesWithScript,
+      extraCredentials: scriptCredentials,
     });
 
     if (proxyResult === 'needs_credentials') {

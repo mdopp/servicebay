@@ -566,7 +566,97 @@ export class ServiceManager {
         }
     }
 
-    static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string, extraFiles?: { path: string; content: string }[], onProgress?: (message: string) => void) {
+    /**
+     * Run a template's post-deploy.py on the agent host. Writes the script
+     * to a stable per-template path (so reruns overwrite cleanly), exports
+     * the wizard's variables as env vars + SB_NODE, then `python3` it. The
+     * script's stdout is collected and replayed line-by-line through
+     * `onProgress` so it interleaves with the rest of the install log.
+     *
+     * Failures are non-fatal: a misbehaving post-deploy script doesn't roll
+     * back the service deploy. We log a warning + a "post-deploy exit N"
+     * line and continue. Restart-loop / config-broken issues will surface
+     * via the diagnose probe instead.
+     */
+    private static async runPostDeployScript(
+        nodeName: string,
+        name: string,
+        scriptContent: string,
+        env: Record<string, string>,
+        onProgress?: (message: string) => void,
+    ): Promise<void> {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const scriptDir = `~/.local/share/servicebay/post-deploy`;
+        const scriptPath = `${scriptDir}/${name}.py`;
+        try {
+            await agent.sendCommand('exec', { command: `mkdir -p ${scriptDir}` });
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not prepare post-deploy dir for ${name}:`, e);
+            onProgress?.(`⚠️ ${name} post-deploy: could not prepare script dir, skipping.`);
+            return;
+        }
+        const writeRes = await agent.sendCommand('write_file', { path: scriptPath, content: scriptContent });
+        if (writeRes !== 'ok') {
+            logger.warn('ServiceManager', `Could not write post-deploy script for ${name}:`, writeRes);
+            onProgress?.(`⚠️ ${name} post-deploy: write_file returned ${JSON.stringify(writeRes)}, skipping.`);
+            return;
+        }
+
+        // Build a sourceable env file alongside the script so we don't have
+        // to worry about quoting every value through the shell. `set -a` +
+        // `source` exports each line to the python child. The ServiceBay
+        // node identity is added so scripts can self-identify in multi-node
+        // installs.
+        const envLines = [
+            `SB_NODE=${nodeName}`,
+            ...Object.entries(env).map(([k, v]) => {
+                // Only export string-shaped values; skip empty entries the
+                // wizard sometimes carries for variables the user hasn't
+                // resolved yet (the deploy step's strict-render check
+                // catches the cases where empty values would actually
+                // matter).
+                if (typeof v !== 'string') return null;
+                // Single-quote escape for bash `source`: replace ' with '\''
+                const esc = v.replace(/'/g, `'\\''`);
+                return `${k}='${esc}'`;
+            }).filter((l): l is string => l !== null),
+        ].join('\n');
+        const envPath = `${scriptDir}/${name}.env`;
+        const envWrite = await agent.sendCommand('write_file', { path: envPath, content: envLines + '\n' });
+        if (envWrite !== 'ok') {
+            logger.warn('ServiceManager', `Could not write post-deploy env for ${name}:`, envWrite);
+            onProgress?.(`⚠️ ${name} post-deploy: env file write failed, skipping.`);
+            return;
+        }
+
+        onProgress?.(`Running ${name} post-deploy script...`);
+        // Long timeout — scripts wait for HTTP services that can take a
+        // minute or two to come up after image pull. Keep below the
+        // wizard's overall settle window.
+        const result = await agent.sendCommand('exec', {
+            command: `set -a; source '${envPath}'; set +a; python3 '${scriptPath}' 2>&1`,
+            timeout: 300,
+        });
+        const stdout = (result.stdout || '').replace(/\r/g, '');
+        for (const line of stdout.split('\n')) {
+            if (line.length > 0) onProgress?.(line);
+        }
+        if (result.code !== 0) {
+            onProgress?.(`⚠️ ${name} post-deploy exited ${result.code}. Service is deployed; the seed step did not finish — check the log lines above for the cause.`);
+        }
+    }
+
+    static async deployKubeService(
+        nodeName: string,
+        name: string,
+        kubeContent: string,
+        yamlContent: string,
+        yamlName: string,
+        extraFiles?: { path: string; content: string }[],
+        onProgress?: (message: string) => void,
+        postDeployScript?: string,
+        postDeployEnv?: Record<string, string>,
+    ) {
         // Migrate any pre-rename predecessor units first so their host-port
         // ownership is released before the port-collision pre-flight runs.
         await ServiceManager.migratePredecessors(nodeName, name, onProgress);
@@ -713,6 +803,18 @@ export class ServiceManager {
         } catch(e) {
              logger.warn('ServiceManager', `Service ${name} deployed but start failed:`, e);
         }
+
+        // Run the template's post-deploy.py if it shipped one. Convention:
+        // see lib/registry.ts:getTemplatePostDeployScript for the protocol.
+        // The script can talk to the now-running container directly (e.g.
+        // POST to its /init on the host port) or call ServiceBay's own
+        // admin endpoints. Stdout streams to onProgress; lines starting with
+        // `__SB_CREDENTIAL__ ` are the structured credential markers the
+        // wizard parses for the SAVE-THESE-NOW banner.
+        if (postDeployScript) {
+            await this.runPostDeployScript(nodeName, name, postDeployScript, postDeployEnv ?? {}, onProgress);
+        }
+
         this.backupQuadlets(nodeName);
 
         // Create health check for the new service if one doesn't exist
