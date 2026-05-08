@@ -318,13 +318,18 @@ storage:
             echo "setup-raid: saved Ignition config from OS disk"
           fi
 
-          # Mount RAID — trigger the systemd mount unit (or mount directly as fallback)
+          # Mount RAID directly. We avoid `systemctl start var-mnt-data.mount`
+          # from inside this service because the synchronous systemctl call
+          # used to deadlock against the mount unit's previous After=setup-raid
+          # ordering (now removed, but a direct mount is simpler and faster
+          # anyway). The systemd mount unit still exists and will reattach the
+          # RAID on subsequent boots via its WantedBy=multi-user.target.
           mkdir -p "$MOUNT_POINT"
-          if systemctl start var-mnt-data.mount 2>/dev/null; then
-            echo "setup-raid: mounted via systemd mount unit"
+          if findmnt -n "$MOUNT_POINT" >/dev/null 2>&1; then
+            echo "setup-raid: $MOUNT_POINT already mounted, skipping"
           else
             mount "$MD_DEV" "$MOUNT_POINT"
-            echo "setup-raid: mounted directly"
+            echo "setup-raid: mounted $MD_DEV at $MOUNT_POINT"
           fi
 
           # Create data directories (no-op if they already exist)
@@ -369,14 +374,23 @@ storage:
 
     # Systemd mount unit for RAID at /var/mnt/data (FCOS: /mnt -> /var/mnt)
     # Uses filesystem label so it works regardless of md device number.
-    # nofail: don't block boot if RAID doesn't exist yet (first boot before setup-raid)
+    # nofail: don't block boot if RAID doesn't exist yet (first boot before setup-raid).
+    #
+    # NB: the previous After=setup-raid.service caused a one-hour first-boot
+    # deadlock — setup-raid.sh calls `systemctl start var-mnt-data.mount`
+    # synchronously, but systemd refused to start the mount until setup-raid
+    # was `active`, and setup-raid wasn't going active until the systemctl
+    # call returned. Relying solely on `Before=var-mnt-data.mount` declared
+    # *on setup-raid.service* (next unit below) preserves correct boot
+    # ordering while letting the explicit start call from inside setup-raid
+    # actually proceed.
     - path: /etc/systemd/system/var-mnt-data.mount
       mode: 0644
       contents:
         inline: |
           [Unit]
           Description=Mount RAID data volume
-          After=local-fs.target setup-raid.service
+          After=local-fs.target
 
           [Mount]
           What=LABEL=data
