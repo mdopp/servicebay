@@ -345,6 +345,52 @@ describe('Subdomain proxyPort references', () => {
   }
 });
 
+// ─── 8. stacks/*/README.md `- [x] X` items resolve to real templates ──────
+describe('Stack README service lists', () => {
+  // The wizard parses `stacks/<name>/README.md` for `- [x] <name> — <desc>`
+  // lines via the same regex defined in OnboardingWizard.tsx. Every name on
+  // the left must resolve to a real templates/<name>/ directory — otherwise
+  // the user picks a checkbox the wizard then can't fetch a template for.
+  // This is the bug that surfaced after the auth+media merges: full-stack
+  // README still listed lldap / authelia / audiobookshelf / navidrome /
+  // filebrowser / home-assistant-stack while the templates dir had renamed
+  // them all to merged stacks.
+  const STACKS_DIR = path.join(REPO_ROOT, 'stacks');
+  const stacks = fs.existsSync(STACKS_DIR)
+    ? fs.readdirSync(STACKS_DIR).filter(n => fs.statSync(path.join(STACKS_DIR, n)).isDirectory())
+    : [];
+
+  // Same regex shape as OnboardingWizard.tsx so we test what the wizard sees.
+  const itemRe = /^-\s*\[([ xX])\]\s*([\w\d_-]+)\s*(?:[—–\-:]\s*(.+))?$/;
+
+  for (const stackName of stacks) {
+    it(`stacks/${stackName}/README.md service items resolve to real templates`, () => {
+      const readmePath = path.join(STACKS_DIR, stackName, 'README.md');
+      if (!fs.existsSync(readmePath)) {
+        // Stack with no README is fine — wizard just shows an empty list.
+        return;
+      }
+      const lines = fs.readFileSync(readmePath, 'utf-8').split('\n');
+      const offenders: { line: number; name: string }[] = [];
+      lines.forEach((line, i) => {
+        const m = line.match(itemRe);
+        if (!m) return;
+        const name = m[2].trim();
+        if (!templateNames.has(name)) {
+          offenders.push({ line: i + 1, name });
+        }
+      });
+      if (offenders.length > 0) {
+        const msg = offenders.map(o => `  README:${o.line} — "${o.name}" has no matching templates/${o.name}/ directory`).join('\n');
+        throw new Error(
+          `stacks/${stackName}/README.md lists ${offenders.length} service(s) that don't exist as templates:\n${msg}\n\n` +
+          `Either rename the README entry to match a real template, drop the line, or add the template.`,
+        );
+      }
+    });
+  }
+});
+
 // ─── 7. Templates that ship mustache configs declare a config-mount target ─
 describe('Mustache configs have a resolvable target mount', () => {
   // Every *.mustache file in a template directory gets rendered + written to
