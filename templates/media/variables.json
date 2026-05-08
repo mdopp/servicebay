@@ -50,5 +50,35 @@
       "scopes": ["openid", "profile", "email", "groups"],
       "clientSecretVar": "ABS_OIDC_SECRET"
     }
+  },
+  "NAVIDROME_PORT": {
+    "type": "text",
+    "description": "Port for the Navidrome web UI + Subsonic API",
+    "default": "4533"
+  },
+  "NAVIDROME_ADMIN_USER": {
+    "type": "text",
+    "description": "Navidrome admin username (also used as Subsonic API user)",
+    "default": "admin"
+  },
+  "NAVIDROME_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "Navidrome admin password — auto-generated. ServiceBay calls /auth/createAdmin after deploy so first login works without going through the in-app setup."
+  },
+  "NAVIDROME_MUSIC_PATH": {
+    "type": "text",
+    "description": "Host path to your music library. Defaults to the file-share template's data dir, so files dropped into the Samba share appear automatically.",
+    "default": "/mnt/data/stacks/file-share/data/Music"
+  },
+  "NAVIDROME_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for Navidrome (web UI + Symfonium endpoint)",
+    "default": "music",
+    "proxyPort": "NAVIDROME_PORT",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true
+    }
   }
 }

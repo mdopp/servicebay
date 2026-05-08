@@ -196,14 +196,16 @@ export default function OnboardingWizard() {
   // but the catalog is small enough today that hardcoding is fine.
   type ServiceDeps = { requires?: string[]; recommendedWith?: string[]; reason?: string };
   const SERVICE_DEPS: Record<string, ServiceDeps> = {
-    authelia:        { requires: ['lldap'],     reason: 'authelia uses LLDAP as its user/group directory' },
-    vaultwarden:     { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional but recommended)' },
-    audiobookshelf:  { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
-    immich:          { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
-    'home-assistant': { recommendedWith: ['authelia'], reason: 'OIDC SSO via authelia (optional)' },
-    radicale:        { recommendedWith: ['authelia'] },
-    navidrome:       { recommendedWith: ['authelia'], reason: 'reverse-proxy SSO via authelia (Remote-User header)' },
-    'file-share':    { recommendedWith: ['authelia'], reason: 'FileBrowser uses authelia forward-auth for family-facing access' },
+    // The 'auth' stack bundles authelia + lldap together, so there's no
+    // longer a separate authelia → lldap hard dep to declare. Soft deps
+    // ("recommendedWith: ['auth']") indicate which services benefit from
+    // SSO if you also install the auth stack.
+    vaultwarden:      { recommendedWith: ['auth'], reason: 'OIDC SSO via authelia (optional but recommended)' },
+    immich:           { recommendedWith: ['auth'], reason: 'OIDC SSO via authelia (optional)' },
+    'home-assistant': { recommendedWith: ['auth'], reason: 'OIDC SSO via authelia (optional)' },
+    radicale:         { recommendedWith: ['auth'] },
+    media:            { recommendedWith: ['auth'], reason: 'Audiobookshelf OIDC + Navidrome reverse-proxy SSO via authelia' },
+    'file-share':     { recommendedWith: ['auth'], reason: 'FileBrowser uses authelia forward-auth for family-facing access' },
   };
 
   // Track which service is currently mid-deploy. The deploy loop sets

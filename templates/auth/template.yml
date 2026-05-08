@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: auth
+  labels:
+    app: auth
+  annotations:
+    servicebay.ports: "{{LLDAP_PORT}}/tcp,{{LLDAP_LDAP_PORT}}/tcp,{{AUTHELIA_PORT}}/tcp"
+    # Pin the configuration.yml.mustache target to authelia's /config mount —
+    # without this the wizard's path resolver would also consider lldap's
+    # mounts and pick whichever lands first in the parsed YAML.
+    servicebay.config-mount: "/config"
+spec:
+  hostNetwork: true
+  containers:
+  # 1. LLDAP — Lightweight LDAP server. Started first because Authelia
+  #    won't pass its own readiness check until the LDAP socket is up.
+  - name: lldap
+    image: docker.io/lldap/lldap:latest
+    env:
+      - name: LLDAP_JWT_SECRET
+        value: "{{LLDAP_JWT_SECRET}}"
+      - name: LLDAP_LDAP_BASE_DN
+        value: "{{LLDAP_BASE_DN}}"
+      - name: LLDAP_LDAP_USER_PASS
+        value: "{{LLDAP_ADMIN_PASSWORD}}"
+      - name: LLDAP_LDAP_USER_DN
+        value: "admin"
+      - name: LLDAP_HTTP_PORT
+        value: "{{LLDAP_PORT}}"
+      - name: LLDAP_LDAP_PORT
+        value: "{{LLDAP_LDAP_PORT}}"
+    ports:
+      - containerPort: {{LLDAP_PORT}}
+      - containerPort: {{LLDAP_LDAP_PORT}}
+    volumeMounts:
+      - mountPath: /data
+        name: lldap-data
+
+  # 2. Authelia — SSO portal + OIDC IdP, backed by LLDAP via localhost.
+  - name: authelia
+    image: docker.io/authelia/authelia:latest
+    ports:
+      - containerPort: {{AUTHELIA_PORT}}
+    volumeMounts:
+      - mountPath: /config
+        name: authelia-config
+      - mountPath: /data
+        name: authelia-data
+
+  volumes:
+  - name: lldap-data
+    hostPath:
+      path: {{DATA_DIR}}/auth/lldap
+      type: DirectoryOrCreate
+  - name: authelia-config
+    hostPath:
+      path: {{DATA_DIR}}/auth/authelia-config
+      type: DirectoryOrCreate
+  - name: authelia-data
+    hostPath:
+      path: {{DATA_DIR}}/auth/authelia-data
+      type: DirectoryOrCreate

@@ -116,7 +116,9 @@ export async function POST(request: NextRequest) {
     let autheliaYaml = '';
     for (const nodeName of nodes) {
       try {
-        const files = await ServiceManager.getServiceFiles(nodeName, 'authelia');
+        // Authelia lives inside the merged 'auth' pod alongside LLDAP — read the
+        // pod's manifest by stack name and pull authelia's config volume out of it.
+        const files = await ServiceManager.getServiceFiles(nodeName, 'auth');
         if (files.yamlContent) {
           autheliaNode = nodeName;
           autheliaYaml = files.yamlContent;
@@ -208,7 +210,9 @@ export async function POST(request: NextRequest) {
 
     // Restart Authelia to pick up changes
     try {
-      await ServiceManager.restartService(autheliaNode, 'authelia');
+      // Restarting the merged 'auth' pod restarts both authelia + lldap;
+      // that's fine — the operation is fast and lldap re-attaches cleanly.
+      await ServiceManager.restartService(autheliaNode, 'auth');
     } catch {
       // Non-fatal: config is written, restart can be done manually
     }
