@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.5](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.4...servicebay-v3.6.5) (2026-05-08)
+
+
+### Bug Fixes
+
+* **install:** setup-raid deadlock + syncthing PUID + extraFiles consistency guard ([#211](https://github.com/mdopp/servicebay/issues/211)) ([215ac50](https://github.com/mdopp/servicebay/commit/215ac50ceddfdf96247baf7951a65e1a867b80ac))
+
 ## [3.6.4](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.3...servicebay-v3.6.4) (2026-05-08)
 
 
