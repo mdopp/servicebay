@@ -185,19 +185,62 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             }
 
             // Fetch extra config files (.mustache) and resolve target paths
+            // by parsing the rendered YAML and chasing volume names. The
+            // earlier regex-based resolver broke on multi-container pods
+            // (first-match-wins for same-suffix mountPaths) and on multi-
+            // doc YAML (Pod + PersistentVolumeClaim — file-share ships
+            // both since 3.6.4). Mirrors the OnboardingWizard's resolver
+            // — both code paths must stay in sync or one of them silently
+            // drops mustache configs and the deploy aborts via the
+            // ServiceManager extraFiles consistency guard.
             const cfgFiles = await fetchTemplateConfigFiles(item.name, template.source);
             if (cfgFiles.length > 0) {
-              const volMounts = [...yaml.matchAll(/mountPath:\s*(\S+)/g)].map(m => m[1]);
-              const hostPaths = [...yaml.matchAll(/path:\s*(\S+)/g)].map(m => m[1]);
-              const annotationMatch = yaml.match(/servicebay\.config-mount:\s*['"]?([^'"\s]+)/);
-              const explicitMount = annotationMatch?.[1];
-              for (const cf of cfgFiles) {
-                const configMountIdx = explicitMount
-                  ? volMounts.findIndex(m => m === explicitMount)
-                  : volMounts.findIndex(m => m === '/config' || m.endsWith('/config') || m.endsWith('/conf'));
-                if (configMountIdx !== -1 && hostPaths[configMountIdx]) {
-                  cf.targetPath = `${hostPaths[configMountIdx]}/${cf.filename}`;
+              const safeYaml = yaml.replace(/\{\{[^}]+\}\}/g, '0');
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              let docs: any[] = [];
+              try {
+                docs = (await import('js-yaml')).loadAll(safeYaml);
+              } catch {
+                docs = [];
+              }
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const doc = docs.find((d: any) => d?.kind === 'Pod') ?? docs[0];
+              const nameToHostPath = new Map<string, string>();
+              const mountPathToHostPath = new Map<string, string>();
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              for (const v of (doc?.spec?.volumes ?? []) as any[]) {
+                if (typeof v?.name === 'string' && typeof v?.hostPath?.path === 'string') {
+                  nameToHostPath.set(v.name, v.hostPath.path);
                 }
+              }
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              for (const c of (doc?.spec?.containers ?? []) as any[]) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                for (const m of (c?.volumeMounts ?? []) as any[]) {
+                  if (typeof m?.mountPath === 'string' && typeof m?.name === 'string') {
+                    const hp = nameToHostPath.get(m.name);
+                    if (hp && !mountPathToHostPath.has(m.mountPath)) {
+                      mountPathToHostPath.set(m.mountPath, hp);
+                    }
+                  }
+                }
+              }
+              const annotations: Record<string, string> = doc?.metadata?.annotations ?? {};
+              const explicitMount = annotations['servicebay.config-mount'];
+              for (const cf of cfgFiles) {
+                let hp: string | undefined;
+                if (explicitMount) {
+                  hp = mountPathToHostPath.get(explicitMount);
+                }
+                if (!hp) {
+                  for (const [mp, h] of mountPathToHostPath.entries()) {
+                    if (mp === '/config' || mp.endsWith('/config') || mp.endsWith('/conf')) {
+                      hp = h;
+                      break;
+                    }
+                  }
+                }
+                if (hp) cf.targetPath = `${hp}/${cf.filename}`;
                 const cfgMatches = cf.content.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
                 for (const m of cfgMatches) vars.add(m[1]);
               }
