@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     checkOnboardingStatus,
@@ -208,6 +208,12 @@ export default function OnboardingWizard() {
     'file-share':     { recommendedWith: ['auth'], reason: 'FileBrowser uses authelia forward-auth for family-facing access' },
   };
 
+  // Sentinel at the bottom of the install log. The single scrollbar lives on
+  // the modal body, so when new log lines append we scrollIntoView this
+  // anchor to bring the latest text under the user's eyes without their
+  // having to manually scroll the modal.
+  const logTailRef = useRef<HTMLDivElement | null>(null);
+
   // Track which service is currently mid-deploy. The deploy loop sets
   // this before the API call and clears after — the install-progress
   // strip below reads this to show "installing" while the API is in
@@ -342,6 +348,18 @@ export default function OnboardingWizard() {
     const id = setInterval(tick, 20_000);
     return () => clearInterval(id);
   }, [stackInstallStep]);
+
+  // Keep the install log tail in view as new lines arrive. Only fires while
+  // the install is actually streaming — not during 'done' or other steps —
+  // so the modal doesn't snap-jump on unrelated re-renders. Guard the call
+  // because jsdom (and some older browsers) don't implement scrollIntoView.
+  useEffect(() => {
+    if (stackInstallStep !== 'installing') return;
+    const el = logTailRef.current;
+    if (typeof el?.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [stackLogs, stackInstallStep]);
 
   // Auto-run the self-diagnose once the install pipeline lands on 'done'.
   // Gated by `diagnoseRanOnce` so reopening the panel doesn't re-fire and
@@ -820,7 +838,29 @@ export default function OnboardingWizard() {
 
       const kubeContent = `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
 
-      // Render extra config files (.mustache) with the same variables
+      // Render extra config files (.mustache) with the same variables.
+      // First sanity-check that every {{VAR}} the config references has a
+      // value in the view — Mustache renders an undefined var as empty
+      // string by default, which is exactly how the user's auth pod ended
+      // up with a configuration.yml that loaded but had session.cookies
+      // and storage.* collapsed to empty (authelia rejected it and the
+      // pod crash-looped, with no breadcrumb back to the wizard step
+      // that produced the broken config). Failing loudly here turns that
+      // class of bug into a deploy-time error message instead.
+      const refRe = /\{\{\s*[#^/{]?\s*([A-Z_][A-Z0-9_]*)\s*\}{1,3}/g;
+      for (const cf of (item.configFiles || [])) {
+        if (!cf.targetPath) continue;
+        const refs = new Set<string>();
+        for (const m of cf.content.matchAll(refRe)) refs.add(m[1]);
+        const missing = [...refs].filter(r => !(r in view) || view[r as keyof typeof view] === '');
+        if (missing.length > 0) {
+          Mustache.escape = savedEscape;
+          throw new Error(
+            `Cannot deploy ${item.name}: ${cf.filename} references variable(s) with no value: ${missing.join(', ')}. ` +
+            `Go back to the Configure step and fill them in (or check the template's variables.json defaults).`,
+          );
+        }
+      }
       const extraFiles = (item.configFiles || [])
         .filter(cf => cf.targetPath)
         .map(cf => {
@@ -911,6 +951,48 @@ export default function OnboardingWizard() {
       if (fallbackPassword) setNpmPassword(fallbackPassword);
       setNpmCredPrompt(true);
     } else {
+      // Settle wait — don't transition to 'done' until each newly-deployed
+      // service shows up as active in the digital twin. Previously we
+      // declared 'done' the moment the deploy API + post-install pipeline
+      // returned, then the auto self-diagnose ran ~immediately and saw
+      // containers still pulling their images, flagging them as restart-
+      // looping ghosts. Cap the wait at 3 minutes — long enough for
+      // cold-start image pulls on a normal connection — then transition
+      // either way and let the diagnose probe report what's genuinely stuck.
+      //
+      // Skip the wait entirely if there's no twin connection (tests, or a
+      // disconnected agent — in either case hanging the wizard for 3 min
+      // helps no one) or if nothing was deployed.
+      const expected = selected.map(i => i.name);
+      if (digitalTwin && expected.length > 0) {
+        const SETTLE_TIMEOUT_MS = 3 * 60_000;
+        const SETTLE_POLL_MS = 5_000;
+        const startedAt = Date.now();
+        let lastReady = -1;
+        while (Date.now() - startedAt < SETTLE_TIMEOUT_MS) {
+          const node = stackSelectedNode || 'Local';
+          const twinNode = digitalTwin?.nodes?.[node];
+          const services = twinNode?.services ?? [];
+          const ready = expected.filter(name =>
+            services.some(s => (s.name === name || s.name === `${name}.service`) && s.active),
+          ).length;
+          if (ready !== lastReady) {
+            setStackLogs(prev => [...prev, `Waiting for services to become active... (${ready}/${expected.length} up)`]);
+            lastReady = ready;
+          }
+          if (ready === expected.length) break;
+          await new Promise(r => setTimeout(r, SETTLE_POLL_MS));
+        }
+        const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+        if (lastReady === expected.length) {
+          setStackLogs(prev => [...prev, `✅ All ${expected.length} services active after ${elapsed}s.`]);
+        } else {
+          setStackLogs(prev => [
+            ...prev,
+            `⚠️ ${lastReady}/${expected.length} services active after ${elapsed}s — slow image pulls or a real failure. Self-diagnose below will tell you which.`,
+          ]);
+        }
+      }
       setStackInstallStep('done');
     }
   };
@@ -1802,13 +1884,23 @@ export default function OnboardingWizard() {
                                     </div>
                                 );
                             })()}
-                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs h-[28rem] overflow-y-auto border border-gray-800">
+                            {/* Log panel grows with its content; the modal-level
+                                scrollbar is the only one. Earlier this had its own
+                                fixed height + overflow, which produced two stacked
+                                vertical scrollbars (modal + log) — confusing and
+                                fiddly to drive. The min-height keeps the box from
+                                visually collapsing when the log is just a couple
+                                of lines, and the bottom sentinel auto-scrolls the
+                                modal so new lines stay visible without manual
+                                scrolling. */}
+                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs min-h-[12rem] border border-gray-800">
                                 {stackLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
                                 {stackInstallStep === 'installing' && (
                                     <div className="flex items-center gap-2 text-gray-400 mt-2">
                                         <Loader2 size={14} className="animate-spin" /> Processing...
                                     </div>
                                 )}
+                                <div ref={logTailRef} />
                             </div>
                             {npmCredPrompt && (
                                 <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
