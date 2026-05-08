@@ -441,9 +441,17 @@ async function seedAudiobookshelf(opts: { variables: StackVariable[]; onLog: (ms
  *  the FileBrowser CLI inside the running container. Idempotent. */
 async function seedFileBrowserAdmin(opts: { variables: StackVariable[]; node?: string; onLog: (msg: string) => void }): Promise<void> {
   const username = opts.variables.find(v => v.name === 'FILEBROWSER_ADMIN_USER')?.value || 'admin';
-  // Give the pod ~30s to come up before we exec into it.
+  // Give the pod a moment to start before the first exec attempt — but the
+  // real budget is in the retry loop below.
   await new Promise(r => setTimeout(r, 8000));
-  for (let attempt = 0; attempt < 12; attempt++) {
+  // 36 attempts × 5 s = 3 min. The earlier 60-s budget timed out for users
+  // on slow connections where the filebrowser image pull alone can take
+  // 90 s+, leaving the wizard with the "Could not pre-seed FileBrowser
+  // admin" warning and a manual `podman exec` fallback nobody actually runs.
+  const MAX_ATTEMPTS = 36;
+  let lastBeat = 0;
+  const startedAt = Date.now();
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       const res = await fetch('/api/system/filebrowser/init', {
         method: 'POST',
@@ -457,9 +465,14 @@ async function seedFileBrowserAdmin(opts: { variables: StackVariable[]; node?: s
       }
       // Container probably not ready yet — retry with backoff.
     } catch { /* retry */ }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed - lastBeat >= 30_000) {
+      opts.onLog(`Still waiting for FileBrowser to accept the admin seed (${fmtElapsed(elapsed)} elapsed)...`);
+      lastBeat = elapsed;
+    }
     await new Promise(r => setTimeout(r, 5000));
   }
-  opts.onLog('⚠️ Could not pre-seed FileBrowser admin. Run `podman exec file-share-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db` once the pod is up.');
+  opts.onLog('⚠️ Could not pre-seed FileBrowser admin after 3 minutes. Run `podman exec file-share-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db` once the pod is up.');
 }
 
 async function seedNavidrome(opts: { variables: StackVariable[]; onLog: (msg: string) => void }): Promise<void> {

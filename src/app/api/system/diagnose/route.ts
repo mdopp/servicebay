@@ -226,6 +226,24 @@ export async function POST(request: Request) {
     if (m && parseInt(m[1], 10) < 30) return true;
     return false;
   });
+  // Pull the actual crash reason for each restart-looping container instead
+  // of leaving the operator to run `podman logs <name>` by hand. Three lines
+  // of stderr is usually enough to identify the failure mode (chmod EPERM,
+  // missing config file, port collision, etc). Best-effort: if a fetch fails
+  // we just omit that container's snippet.
+  const offenderDiagnostics = await Promise.all(
+    looping.map(async line => {
+      const name = (line.split('|')[0] ?? '').trim();
+      if (!name) return { line, snippet: '' };
+      const logs = await exec(`podman logs --tail 3 ${name} 2>&1 | tail -3`, 3000);
+      const snippet = (logs.stdout ?? '').trim();
+      return { line, snippet };
+    }),
+  );
+  const offenderDetail = offenderDiagnostics.map(o =>
+    o.snippet ? `${o.line}\n      ↳ ${o.snippet.split('\n').join('\n        ')}` : o.line,
+  ).join('\n');
+
   probes.push({
     id: 'crash_loop',
     label: 'Containers stable',
@@ -238,9 +256,9 @@ export async function POST(request: Request) {
             ? (treatYoungAsLoop
                 ? `${psLines.length} container(s), all stable.`
                 : `${psLines.length} container(s) — system booted ${systemUptimeSec}s ago, young containers expected. Re-run after ~2 min for a real restart-loop check.`)
-            : `${looping.length} of ${psLines.length} container(s) may be in a restart loop:\n${looping.join('\n')}`),
+            : `${looping.length} of ${psLines.length} container(s) may be in a restart loop:\n${offenderDetail}`),
     hint: looping.length > 0
-      ? 'Run `podman logs <name>` for the crash reason. Common causes: bind-mount permission mismatch (rootless UID), missing config file, port conflicts, image entrypoint argv errors.'
+      ? 'The lines under `↳` are the last 3 stderr lines from `podman logs`. Common causes: bind-mount permission mismatch (rootless UID), missing config file, port conflicts, image entrypoint argv errors.'
       : undefined,
   });
 
