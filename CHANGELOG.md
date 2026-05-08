@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.7](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.6...servicebay-v3.6.7) (2026-05-08)
+
+
+### Bug Fixes
+
+* **wizard:** preserve mustache placeholders in extraFiles paths (the authelia-config bug) ([#215](https://github.com/mdopp/servicebay/issues/215)) ([b8077c5](https://github.com/mdopp/servicebay/commit/b8077c5e3cb572a7c6b40a398d564d0fcbb544a2))
+
 ## [3.6.6](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.5...servicebay-v3.6.6) (2026-05-08)
 
 
