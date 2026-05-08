@@ -667,17 +667,30 @@ export default function OnboardingWizard() {
           // by chasing the `name` reference on each volumeMount across all containers.
           const nameToHostPath = new Map<string, string>();
           const mountPathToHostPath = new Map<string, string>();
-          // Render Mustache placeholders so that string interpolations like
-          // `{{FILEBROWSER_PORT}}` don't trip the YAML parser. Values aren't
-          // material here — we only need the structure.
-          const safeYaml = yaml.replace(/\{\{[^}]+\}\}/g, '0');
+          // YAML-parse the template so we can chase volume names instead of
+          // doing fragile regex matching. Mustache placeholders need to be
+          // pre-escaped (raw {{X}} isn't valid YAML in some positions like
+          // `containerPort: {{X}}`), but we can't just substitute them with
+          // junk values — earlier versions replaced `{{X}}` with `0`, which
+          // poisoned the host-path strings: `path: {{DATA_DIR}}/auth/...`
+          // became `path: 0/auth/...`, and the resolver then computed
+          // targetPath = "0/auth/authelia-config/configuration.yml" — a
+          // RELATIVE path the agent's mkdir resolved under ~, leaving the
+          // actual /mnt/data/stacks/auth/authelia-config/ empty for
+          // authelia to fill with its 71KB upstream-sample default. Live-
+          // debugged this exact pathology twice.
+          //
+          // Round-trip the placeholders: encode `{{X}}` to a YAML-safe
+          // sentinel that preserves the variable name, parse, then decode
+          // back to `{{X}}` in the extracted strings. Mustache.render at
+          // deploy time resolves them with the user's actual values.
+          const SENTINEL_RE_OUT = /\{\{\s*([\w\d_]+)\s*\}\}/g;
+          const SENTINEL_RE_IN = /__SBVAR_([\w\d_]+)__/g;
+          const safeYaml = yaml.replace(SENTINEL_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
+          const restorePlaceholders = (s: string): string =>
+            s.replace(SENTINEL_RE_IN, (_m, n) => `{{${n}}}`);
           // Multi-doc support — file-share ships Pod + PVC since 3.6.4.
-          // js-yaml's `load()` throws on multi-doc, was caught silently,
-          // left `parsed = null` and the resolver skipped writing the
-          // mustache config. Symptom was the wizard's defensive guard
-          // refusing the file-share deploy with "1 mustache config
-          // file(s) weren't sent to the deploy step". Use `loadAll` and
-          // find the Pod doc explicitly.
+          // js-yaml's `load()` throws on multi-doc, so use `loadAll`.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let docs: any[] = [];
           try {
@@ -694,7 +707,10 @@ export default function OnboardingWizard() {
           const annotations: Record<string, string> = doc?.metadata?.annotations ?? {};
           for (const v of volumes) {
             if (typeof v?.name === 'string' && typeof v?.hostPath?.path === 'string') {
-              nameToHostPath.set(v.name, v.hostPath.path);
+              // Restore {{VAR}} placeholders that we sentinel-encoded for
+              // YAML parsing. The deploy step's Mustache.render then
+              // expands them against the wizard's view.
+              nameToHostPath.set(v.name, restorePlaceholders(v.hostPath.path));
             }
           }
           for (const c of containers) {

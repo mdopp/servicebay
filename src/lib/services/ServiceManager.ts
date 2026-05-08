@@ -626,6 +626,21 @@ export class ServiceManager {
                     );
                 }
             }
+            // Belt-and-suspenders: every extraFile path must be absolute. The
+            // earlier failure mode (#PR for this) had the wizard's resolver
+            // poison `{{DATA_DIR}}` to the literal `0`, producing a relative
+            // path like `0/auth/authelia-config/configuration.yml`. The
+            // agent's `mkdir -p` resolved it under ~ — so configs landed at
+            // `/var/home/core/0/...` and the actual mount stayed empty.
+            // Authelia's image then auto-created a 71KB upstream sample
+            // there, crash-looped, and the operator had no obvious cause.
+            const relative = (extraFiles ?? []).filter(f => !f.path.startsWith('/'));
+            if (relative.length > 0) {
+                throw new Error(
+                    `Template "${name}" extraFiles include ${relative.length} relative path(s) — the agent will resolve these under ~ and the file will land in the wrong place:\n  ${relative.map(f => f.path).join('\n  ')}\n\n` +
+                    `This usually means the wizard's resolver substituted a Mustache placeholder (e.g. {{DATA_DIR}}) with junk before parsing. Check that targetPath preserves the {{...}} placeholder until deploy-time render.`,
+                );
+            }
         } catch (e) {
             // Re-throw deploy-blocking errors; swallow only registry-level
             // issues (e.g. node-side template dir missing in the container).

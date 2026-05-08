@@ -195,7 +195,16 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             // ServiceManager extraFiles consistency guard.
             const cfgFiles = await fetchTemplateConfigFiles(item.name, template.source);
             if (cfgFiles.length > 0) {
-              const safeYaml = yaml.replace(/\{\{[^}]+\}\}/g, '0');
+              // Sentinel-encode mustache placeholders so YAML parses but
+              // we don't poison host-path strings. See the matching
+              // comment in OnboardingWizard.tsx for the live-debugged
+              // pathology that made `{{DATA_DIR}}` end up as a literal
+              // `0` in `targetPath`, writing config files under `~/0/`.
+              const SENTINEL_RE_OUT = /\{\{\s*([\w\d_]+)\s*\}\}/g;
+              const SENTINEL_RE_IN = /__SBVAR_([\w\d_]+)__/g;
+              const safeYaml = yaml.replace(SENTINEL_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
+              const restorePlaceholders = (s: string): string =>
+                s.replace(SENTINEL_RE_IN, (_m, n) => `{{${n}}}`);
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               let docs: any[] = [];
               try {
@@ -210,7 +219,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               for (const v of (doc?.spec?.volumes ?? []) as any[]) {
                 if (typeof v?.name === 'string' && typeof v?.hostPath?.path === 'string') {
-                  nameToHostPath.set(v.name, v.hostPath.path);
+                  nameToHostPath.set(v.name, restorePlaceholders(v.hostPath.path));
                 }
               }
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
