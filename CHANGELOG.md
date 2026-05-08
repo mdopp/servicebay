@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.2...servicebay-v3.6.3) (2026-05-08)
+
+
+### Bug Fixes
+
+* **stacks:** sync full-stack README with merged templates, drop dead web-stack, lock with consistency rule ([#207](https://github.com/mdopp/servicebay/issues/207)) ([3424c9b](https://github.com/mdopp/servicebay/commit/3424c9bdc7d7af8733070d9ff8e411aa0b1d5266))
+
 ## [3.6.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.1...servicebay-v3.6.2) (2026-05-08)
 
 
