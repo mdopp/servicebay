@@ -339,3 +339,75 @@ describe('Subdomain proxyPort references', () => {
     });
   }
 });
+
+// ─── 5. OIDC client_id is single-source-of-truth in templates ──────────────
+describe('OIDC client_id single source of truth', () => {
+  // Every OIDC client_id we serve to Authelia (and surface to the user as
+  // "paste this") is declared in a template's variables.json under
+  // oidcClient.client_id. This rule blocks src/ from hardcoding the same
+  // string elsewhere — the kind of dual source-of-truth duplication that
+  // sent us chasing a "wrong service name" ghost during the auth+media merge.
+  const declaredClientIds = new Set<string>();
+  for (const t of templates) {
+    for (const meta of Object.values(t.variables) as { oidcClient?: { client_id?: string } }[]) {
+      if (typeof meta?.oidcClient?.client_id === 'string') {
+        declaredClientIds.add(meta.oidcClient.client_id);
+      }
+    }
+  }
+
+  // Files exempt from the rule because they consume the value at the API
+  // boundary (Authelia request bodies, OIDC callback handlers) — those
+  // legitimately reference `client_id` as a parameter name, not duplicate
+  // the literal value of one.
+  const EXEMPT_FILES = new Set<string>([
+    'src/app/api/auth/oidc/route.ts',                // OIDC initiator — clientId comes from config
+    'src/app/api/auth/oidc/callback/route.ts',       // OIDC callback handler
+    'src/app/api/system/authelia/oidc-clients/route.ts', // forwards client.client_id from input
+    'src/lib/registry.ts',                           // type definition
+  ]);
+
+  it('no src/ file hardcodes a client_id / username literal that mirrors an OIDC declaration', () => {
+    // Only flag the *narrow* pattern that would actually create dual sources
+    // of truth: an object literal assigning a known client_id string to one
+    // of these key names. Substrings used for unrelated purposes (e.g.
+    // `service: 'audiobookshelf'` in /api/system/media/init/route.ts is a
+    // seeder discriminator, not an OIDC duplication) don't match this regex
+    // and stay quiet.
+    const KEYS = ['client_id', 'clientId', 'username'];
+    const offenders: { file: string; line: number; key: string; clientId: string }[] = [];
+    for (const file of walkSourceFiles(SRC_DIR)) {
+      const rel = path.relative(REPO_ROOT, file);
+      if (EXEMPT_FILES.has(rel)) continue;
+      const content = fs.readFileSync(file, 'utf-8');
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Skip line comments and JSDoc / block-comment continuation lines —
+        // those mention identifiers prosaically (e.g. "Previously this
+        // section hardcoded `username: 'audiobookshelf'`") rather than
+        // duplicating them in code.
+        const trimmed = line.trimStart();
+        if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue;
+        for (const key of KEYS) {
+          const re = new RegExp(`\\b${key}\\s*:\\s*['"\`]([^'"\`]+)['"\`]`);
+          const m = line.match(re);
+          if (!m) continue;
+          if (declaredClientIds.has(m[1])) {
+            offenders.push({ file: rel, line: i + 1, key, clientId: m[1] });
+          }
+        }
+      }
+    }
+    if (offenders.length > 0) {
+      const msg = offenders
+        .map(o => `  ${o.file}:${o.line} — ${o.key}: '${o.clientId}' duplicates an OIDC client_id from variables.json`)
+        .join('\n');
+      throw new Error(
+        `Found ${offenders.length} hardcoded OIDC client_id assignment(s) in src/:\n${msg}\n\n` +
+        `Read the value from variables[].meta.oidcClient instead of duplicating the string. ` +
+        `If the file genuinely needs it as a literal, add the path to EXEMPT_FILES with a comment.`,
+      );
+    }
+  });
+});

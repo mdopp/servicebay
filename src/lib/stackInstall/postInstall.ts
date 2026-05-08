@@ -268,13 +268,23 @@ function logOidcClientSecrets(opts: { selected: StackItem[]; variables: StackVar
   const isSelected = (name: string) => opts.selected.some(i => i.name === name);
   const domain = opts.variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
 
-  if (isSelected('media')) {
-    const secret = opts.variables.find(v => v.name === 'ABS_OIDC_SECRET')?.value;
-    if (secret && domain) {
-      opts.onLog(`🔐 Audiobookshelf OIDC: issuer=https://auth.${domain}, client_id=audiobookshelf, client_secret=${secret} — paste into ABS Settings → Authentication → OIDC.`);
-    }
+  // Drive the per-service "paste this OIDC secret" hints from variable
+  // metadata so client_id never duplicates between this file and
+  // templates/.../variables.json. Variables that declare oidcClient + a
+  // clientSecretVar that resolves to a wizard-generated secret get one
+  // log line here.
+  for (const sv of opts.variables) {
+    const oidc = sv.meta?.oidcClient;
+    if (!oidc?.clientSecretVar) continue;
+    const secret = opts.variables.find(x => x.name === oidc.clientSecretVar)?.value;
+    if (!secret || !domain) continue;
+    const label = oidc.client_name || oidc.client_id;
+    opts.onLog(`🔐 ${label} OIDC: issuer=https://auth.${domain}, client_id=${oidc.client_id}, client_secret=${secret} — paste into ${label} Settings → Authentication → OIDC.`);
   }
 
+  // Vaultwarden's SSO doesn't fit the variable.oidcClient pattern (the secret
+  // is consumed via env vars on the container, not a paste-into-UI flow), so
+  // it stays as a special case until the schema grows a dedicated field.
   if (isSelected('vaultwarden')) {
     const secret = opts.variables.find(v => v.name === 'VAULTWARDEN_SSO_SECRET')?.value;
     const enabled = opts.variables.find(v => v.name === 'VAULTWARDEN_SSO_ENABLED')?.value;
