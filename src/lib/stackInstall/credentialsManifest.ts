@@ -36,14 +36,20 @@ interface BuildOpts {
    *  reachable URLs in the manifest. Empty string falls back to the
    *  `<server-ip>` placeholder. */
   host?: string;
+  /** Templates whose post-deploy.py emitted their own credential markers.
+   *  This builder skips its hardcoded branches for those stacks so the
+   *  SAVE-THESE-NOW banner doesn't double-list the same entry once from
+   *  the script (via `__SB_CREDENTIAL__`) and once from here. */
+  skipDefaults?: Set<string>;
 }
 
 const get = (vars: StackVariable[], name: string): string | undefined =>
   vars.find(v => v.name === name)?.value;
 
 export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
-  const { variables: v } = opts;
-  const isSelected = (n: string) => opts.selected.some(i => i.name === n);
+  const { variables: v, skipDefaults } = opts;
+  const handled = (n: string): boolean => skipDefaults?.has(n) ?? false;
+  const isSelected = (n: string) => opts.selected.some(i => i.name === n) && !handled(n);
   const host = opts.host || '<server-ip>';
   const out: Credential[] = [];
 

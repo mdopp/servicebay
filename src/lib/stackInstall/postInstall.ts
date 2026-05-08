@@ -638,7 +638,7 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   // hardcoded helpers produced for templates that haven't migrated yet.
   const host = typeof window !== 'undefined' ? window.location.hostname : '';
   const manifest = [
-    ...buildCredentialsManifest({ selected, variables, host }),
+    ...buildCredentialsManifest({ selected, variables, host, skipDefaults }),
     ...(extraCredentials ?? []),
   ];
   formatCredentialsBanner(manifest).forEach(onLog);
