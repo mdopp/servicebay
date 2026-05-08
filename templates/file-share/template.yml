@@ -8,15 +8,14 @@ metadata:
     servicebay.ports: "8384/tcp,22000/tcp,139/tcp,445/tcp,{{FILEBROWSER_PORT}}/tcp"
     # Pin the .filebrowser.json.mustache target to filebrowser's /config
     # mount — without this the wizard's path resolver would also consider
-    # syncthing's /var/syncthing/config (which ends in /config) and pick
-    # whichever lands first in the parsed YAML.
+    # other /config-style mounts and pick whichever lands first in the
+    # parsed YAML.
     servicebay.config-mount: "/config"
     # Disable SELinux labelling on the bind mounts. FCoS ships SELinux
     # enforcing; without this annotation podman play-kube doesn't relabel
-    # the hostPath dirs and syncthing can't `chmod` its config, samba
-    # can't write the share state, and filebrowser's seed-config `cp`
-    # fails with EPERM. Targeted per-container disable is safer than a
-    # pod-wide privileged flag.
+    # the host bind dirs and samba can't write the share state, and
+    # filebrowser's seed-config `cp` fails with EPERM. Targeted per-
+    # container disable is safer than a pod-wide privileged flag.
     io.podman.annotations.label/syncthing: "disable"
     io.podman.annotations.label/samba: "disable"
     io.podman.annotations.label/filebrowser: "disable"
@@ -26,21 +25,17 @@ spec:
   # 1. Syncthing — Bidirectional folder sync (Android & desktop apps)
   - name: syncthing
     image: docker.io/syncthing/syncthing:latest
-    # Earlier attempts (runAsUser:0 + io.podman.annotations.label/syncthing
-    # = disable) didn't actually let syncthing chmod its config dir on
-    # FCoS. Either the annotation isn't honoured by this podman version,
-    # or the deeper issue is the bind-mount label rather than the
-    # process's SELinux context. Skip the puzzle and grant privileged:
-    # the UID-namespace + SELinux + cap-drop combo all step out of the
-    # way at once. This pod's containers are standard, unprivileged-
-    # on-the-host services; on a single-tenant homelab the operator
-    # already trusts the workload completely. The rootless-podman
-    # boundary still applies — privileged here means "no extra
-    # capability *deductions*", not "host root".
-    securityContext:
-      runAsUser: 0
-      runAsGroup: 0
-      privileged: true
+    # Why no privileged / runAsUser overrides any more:
+    # The chmod-the-config-dir crash was the *symptom* of a deeper rootless-
+    # podman + bind-mount + idmap interaction — even with privileged: true
+    # and runAsUser: 0 the kernel returned EPERM on chmod against a host
+    # bind mount. Switching syncthing-config to a podman-managed volume
+    # (see PVC below) sidesteps the whole class of problem: podman creates
+    # the volume with container-UID-0 ownership and the right SELinux
+    # context, so syncthing's startup permission-correct call succeeds.
+    # The shared-data volume is still a bind mount because users care
+    # about the host path of their files; samba writes inside it without
+    # needing to chmod the dir itself.
     env:
       - name: STGUIADDRESS
         value: "0.0.0.0:8384"
@@ -104,10 +99,14 @@ spec:
     hostPath:
       path: {{DATA_DIR}}/file-share/data
       type: DirectoryOrCreate
+  # syncthing-config is a podman-managed PVC (see kind: PersistentVolumeClaim
+  # below). Earlier versions used hostPath here; even with privileged: true,
+  # runAsUser: 0 and the SELinux disable annotation, syncthing's startup
+  # `chmod` against the bind mount returned EPERM on rootless podman + FCoS.
+  # The named volume sidesteps it entirely.
   - name: syncthing-config
-    hostPath:
-      path: {{DATA_DIR}}/file-share/syncthing
-      type: DirectoryOrCreate
+    persistentVolumeClaim:
+      claimName: file-share-syncthing-config
   - name: filebrowser-db
     hostPath:
       path: {{DATA_DIR}}/file-share/filebrowser-db
@@ -116,3 +115,10 @@ spec:
     hostPath:
       path: {{DATA_DIR}}/file-share/filebrowser-config
       type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: file-share-syncthing-config
+  labels:
+    app: file-share

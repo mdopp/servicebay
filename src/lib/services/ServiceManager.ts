@@ -519,7 +519,58 @@ export class ServiceManager {
         }
     }
 
+    /**
+     * Stacks that were renamed or merged at some point. Mapping: new name →
+     * the OLD systemd-unit names whose quadlet files should be soft-deleted
+     * before re-deploy.
+     *
+     * Without this, an in-place upgrade from a pre-rename release leaves
+     * orphan `<old>.kube` units running alongside the new merged pod. The
+     * wizard surfaces them as restart-looping ghosts (because the *new* pod
+     * grabs the host ports the old one wanted) and the operator has to
+     * clean up by hand. The trashed predecessor files are recoverable from
+     * `~/.config/containers/systemd/.trash/` for 7 days, so this is safe.
+     */
+    static readonly STACK_MIGRATIONS: Record<string, string[]> = {
+        'auth':           ['authelia', 'lldap'],
+        'media':          ['audiobookshelf', 'navidrome'],
+        'home-assistant': ['home-assistant-stack'],
+        'file-share':     ['filebrowser'],
+    };
+
+    private static async migratePredecessors(
+        nodeName: string,
+        newName: string,
+        onProgress?: (message: string) => void,
+    ): Promise<void> {
+        const predecessors = ServiceManager.STACK_MIGRATIONS[newName] ?? [];
+        if (predecessors.length === 0) return;
+        const agent = await agentManager.ensureAgent(nodeName);
+        for (const old of predecessors) {
+            // Cheap existence check — if the kube unit isn't on disk there's
+            // nothing to migrate. Skip silently to keep fresh-install logs clean.
+            const check = await agent.sendCommand('exec', {
+                command: `test -f ~/${SYSTEMD_DIR}/${old}.kube && echo present || echo absent`,
+            });
+            if ((check.stdout || '').trim() !== 'present') continue;
+            onProgress?.(`Migrating predecessor: soft-deleting ${old} (replaced by ${newName})`);
+            logger.info('ServiceManager', `Soft-deleting predecessor "${old}" before deploying "${newName}"`);
+            try {
+                await ServiceManager.deleteService(nodeName, old);
+            } catch (e) {
+                // Non-fatal — if the old unit can't be cleaned, the deploy
+                // below either succeeds (different ports / pod name) or
+                // fails loudly via the port-collision pre-flight.
+                logger.warn('ServiceManager', `Failed to soft-delete predecessor ${old}:`, e);
+            }
+        }
+    }
+
     static async deployKubeService(nodeName: string, name: string, kubeContent: string, yamlContent: string, yamlName: string, extraFiles?: { path: string; content: string }[], onProgress?: (message: string) => void) {
+        // Migrate any pre-rename predecessor units first so their host-port
+        // ownership is released before the port-collision pre-flight runs.
+        await ServiceManager.migratePredecessors(nodeName, name, onProgress);
+
         // Pre-flight: refuse to deploy if the YAML claims a host port that
         // another service on the same node already owns. Without this check,
         // the second deploy "succeeds" but the unit fails to start because the

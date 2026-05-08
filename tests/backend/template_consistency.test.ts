@@ -274,15 +274,20 @@ describe('Templates render to valid Pod manifests', () => {
         throw new Error(`${t.name}: Mustache failed to render: ${e instanceof Error ? e.message : String(e)}`);
       }
 
+      // Multi-document YAML support — some templates ship a Pod plus a
+      // PersistentVolumeClaim alongside (e.g. file-share's syncthing-config
+      // is podman-managed via a PVC declared in the same file).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let parsed: any;
+      let docs: any[];
       try {
-        parsed = yaml.load(rendered);
+        docs = yaml.loadAll(rendered);
       } catch (e) {
         throw new Error(`${t.name}: rendered YAML is not parseable:\n${e instanceof Error ? e.message : String(e)}`);
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const parsed = docs.find((d: any) => d?.kind === 'Pod');
 
-      expect(parsed?.kind, `${t.name}: rendered doc must be kind=Pod`).toBe('Pod');
+      expect(parsed?.kind, `${t.name}: rendered doc must contain a kind=Pod entry`).toBe('Pod');
       expect(parsed?.metadata?.name, `${t.name}: pod must have metadata.name`).toBeTruthy();
       // Reachability rule: either hostNetwork=true OR every published port
       // declares a hostPort. Some stacks (nginx-web / vaultwarden / immich)
@@ -338,6 +343,37 @@ describe('Subdomain proxyPort references', () => {
       ).toEqual([]);
     });
   }
+});
+
+// ─── 6. STACK_MIGRATIONS map shape ─────────────────────────────────────────
+describe('ServiceManager.STACK_MIGRATIONS map shape', () => {
+  // Migrations: every key must be a current template (the new name);
+  // every value must NOT be a current template (must be an obsolete name).
+  // Catches typos + accidental "migrate from a template that still exists",
+  // which would soft-delete the active unit on every deploy.
+  it('keys reference real templates, predecessors are no-longer-existing names', () => {
+    const sm = fs.readFileSync(path.join(SRC_DIR, 'lib', 'services', 'ServiceManager.ts'), 'utf-8');
+    const block = sm.match(/STACK_MIGRATIONS:\s*Record<string,\s*string\[\]>\s*=\s*\{([\s\S]*?)\n\s*\};/);
+    expect(block, 'STACK_MIGRATIONS block not found in ServiceManager.ts').toBeTruthy();
+
+    const body = block![1];
+    const entryRe = /^\s*['"]([\w-]+)['"]\s*:\s*\[([^\]]*)\]/gm;
+    const offenders: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = entryRe.exec(body)) !== null) {
+      const key = m[1];
+      const values = [...m[2].matchAll(/['"]([^'"]+)['"]/g)].map(x => x[1]);
+      if (!templateNames.has(key)) {
+        offenders.push(`STACK_MIGRATIONS key "${key}" — no matching template (typo, or stale entry?)`);
+      }
+      for (const v of values) {
+        if (templateNames.has(v)) {
+          offenders.push(`STACK_MIGRATIONS["${key}"] = ["${v}", …] — "${v}" is still a current template; migrating from it would soft-delete the live deploy on every install`);
+        }
+      }
+    }
+    expect(offenders, `STACK_MIGRATIONS shape problems:\n  ${offenders.join('\n  ')}`).toEqual([]);
+  });
 });
 
 // ─── 5. OIDC client_id is single-source-of-truth in templates ──────────────
