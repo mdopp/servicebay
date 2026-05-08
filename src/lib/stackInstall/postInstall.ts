@@ -268,7 +268,7 @@ function logOidcClientSecrets(opts: { selected: StackItem[]; variables: StackVar
   const isSelected = (name: string) => opts.selected.some(i => i.name === name);
   const domain = opts.variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
 
-  if (isSelected('audiobookshelf')) {
+  if (isSelected('media')) {
     const secret = opts.variables.find(v => v.name === 'ABS_OIDC_SECRET')?.value;
     if (secret && domain) {
       opts.onLog(`🔐 Audiobookshelf OIDC: issuer=https://auth.${domain}, client_id=audiobookshelf, client_secret=${secret} — paste into ABS Settings → Authentication → OIDC.`);
@@ -528,16 +528,17 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   const isSelected = (name: string) => selected.some(i => i.name === name);
 
   // Surface credentials immediately — independent of any wait.
-  if (isSelected('lldap')) {
+  // LLDAP + Authelia live in the merged 'auth' stack now; whenever the auth
+  // stack is selected, both run together.
+  if (isSelected('auth')) {
     await persistLldapCredentials({ variables, onLog });
   }
   if (isSelected('adguard')) {
     logAdguardCredentials({ variables, onLog });
   }
-  if (isSelected('audiobookshelf')) {
+  // Audiobookshelf + Navidrome live in the merged 'media' stack now.
+  if (isSelected('media')) {
     logAudiobookshelfCredentials({ variables, onLog });
-  }
-  if (isSelected('navidrome')) {
     logNavidromeCredentials({ variables, onLog });
   }
   if (isSelected('file-share')) {
@@ -563,13 +564,11 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   // Kick off all "wait + initialize" tasks in the background. Their logs
   // interleave with the proxy step's, but the proxy result returns ASAP
   // so the NPM credentials prompt (if needed) appears responsive.
-  if (isSelected('lldap')) {
+  if (isSelected('auth')) {
     void seedLldap({ variables, onLog }).catch(() => { /* logged inline */ });
   }
-  if (isSelected('audiobookshelf')) {
+  if (isSelected('media')) {
     void seedAudiobookshelf({ variables, onLog }).catch(() => { /* logged inline */ });
-  }
-  if (isSelected('navidrome')) {
     void seedNavidrome({ variables, onLog }).catch(() => { /* logged inline */ });
   }
   // FileBrowser is now part of the file-share stack (alongside syncthing + samba).

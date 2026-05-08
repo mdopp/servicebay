@@ -1,4 +1,37 @@
 {
+  "LLDAP_PORT": {
+    "type": "text",
+    "description": "LLDAP Web UI port",
+    "default": "17170"
+  },
+  "LLDAP_LDAP_PORT": {
+    "type": "text",
+    "description": "LDAP protocol port",
+    "default": "3890"
+  },
+  "LLDAP_BASE_DN": {
+    "type": "text",
+    "description": "LDAP base DN (e.g. dc=dopp,dc=cloud)",
+    "default": "dc=dopp,dc=cloud"
+  },
+  "LLDAP_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "LLDAP admin password — auto-generated. Saved to Settings → Integrations → LLDAP after install so you can retrieve it for first login (user: admin)."
+  },
+  "LLDAP_JWT_SECRET": {
+    "type": "secret",
+    "description": "JWT secret for LLDAP session tokens"
+  },
+  "LLDAP_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for LLDAP Web UI",
+    "default": "ldap",
+    "proxyPort": "LLDAP_PORT",
+    "proxyConfig": {
+      "block_exploits": true,
+      "ssl_forced": true
+    }
+  },
   "AUTHELIA_PORT": {
     "type": "text",
     "description": "Authelia web portal port",
@@ -37,22 +70,8 @@
   },
   "LLDAP_HOST": {
     "type": "text",
-    "description": "LLDAP host (localhost if on same node)",
+    "description": "LLDAP host — always localhost when bundled with Authelia in the auth pod.",
     "default": "localhost"
-  },
-  "LLDAP_LDAP_PORT": {
-    "type": "text",
-    "description": "LDAP protocol port",
-    "default": "3890"
-  },
-  "LLDAP_BASE_DN": {
-    "type": "text",
-    "description": "LDAP base DN (e.g. dc=dopp,dc=cloud)",
-    "default": "dc=dopp,dc=cloud"
-  },
-  "LLDAP_ADMIN_PASSWORD": {
-    "type": "secret",
-    "description": "LLDAP admin password — auto-generated when LLDAP is installed alongside, inherited from lldap/variables.json. Standalone Authelia installs use this for the LDAP bind that is not actually wired up."
   },
   "PUBLIC_DOMAIN": {
     "type": "text",

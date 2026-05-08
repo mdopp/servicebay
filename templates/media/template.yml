@@ -1,15 +1,36 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: navidrome
+  name: media
   labels:
-    app: navidrome
+    app: media
     servicebay.role: media
   annotations:
-    servicebay.ports: "{{NAVIDROME_PORT}}/tcp"
+    servicebay.ports: "{{ABS_PORT}}/tcp,{{NAVIDROME_PORT}}/tcp"
 spec:
   hostNetwork: true
   containers:
+  # 1. Audiobookshelf — Audiobooks + podcasts library + listening apps
+  - name: audiobookshelf
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    env:
+      - name: PORT
+        value: "{{ABS_PORT}}"
+      - name: TZ
+        value: "{{TZ}}"
+    ports:
+      - containerPort: {{ABS_PORT}}
+    volumeMounts:
+      - mountPath: /config
+        name: abs-config
+      - mountPath: /metadata
+        name: abs-metadata
+      - mountPath: /audiobooks
+        name: abs-audiobooks
+      - mountPath: /podcasts
+        name: abs-podcasts
+
+  # 2. Navidrome — Music library + Subsonic-API endpoint for mobile clients
   - name: navidrome
     image: docker.io/deluan/navidrome:latest
     env:
@@ -41,10 +62,27 @@ spec:
       - mountPath: /music
         name: navidrome-music
         readOnly: true
+
   volumes:
+  - name: abs-config
+    hostPath:
+      path: {{DATA_DIR}}/media/audiobookshelf-config
+      type: DirectoryOrCreate
+  - name: abs-metadata
+    hostPath:
+      path: {{DATA_DIR}}/media/audiobookshelf-metadata
+      type: DirectoryOrCreate
+  - name: abs-audiobooks
+    hostPath:
+      path: {{ABS_AUDIOBOOKS_PATH}}
+      type: DirectoryOrCreate
+  - name: abs-podcasts
+    hostPath:
+      path: {{ABS_PODCASTS_PATH}}
+      type: DirectoryOrCreate
   - name: navidrome-data
     hostPath:
-      path: {{DATA_DIR}}/navidrome/data
+      path: {{DATA_DIR}}/media/navidrome
       type: DirectoryOrCreate
   - name: navidrome-music
     hostPath:

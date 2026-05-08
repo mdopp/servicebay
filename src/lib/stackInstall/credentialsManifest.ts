@@ -47,7 +47,9 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
   const host = opts.host || '<server-ip>';
   const out: Credential[] = [];
 
-  if (isSelected('lldap')) {
+  // LLDAP + Authelia live in the merged 'auth' stack now; the variables
+  // and credentials shapes are unchanged, only the gating template name.
+  if (isSelected('auth')) {
     const port = get(v, 'LLDAP_PORT') || '17170';
     const password = get(v, 'LLDAP_ADMIN_PASSWORD');
     if (password) {
@@ -94,32 +96,31 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
     }
   }
 
-  if (isSelected('audiobookshelf')) {
-    const port = get(v, 'ABS_PORT') || '13378';
-    const username = get(v, 'ABS_ADMIN_USER') || 'root';
-    const password = get(v, 'ABS_ADMIN_PASSWORD');
-    if (password) {
+  // Audiobookshelf + Navidrome live in the merged 'media' stack now.
+  if (isSelected('media')) {
+    const absPort = get(v, 'ABS_PORT') || '13378';
+    const absUser = get(v, 'ABS_ADMIN_USER') || 'root';
+    const absPassword = get(v, 'ABS_ADMIN_PASSWORD');
+    if (absPassword) {
       out.push({
         service: 'Audiobookshelf',
-        url: `http://${host}:${port}`,
-        username,
-        password,
+        url: `http://${host}:${absPort}`,
+        username: absUser,
+        password: absPassword,
         importance: 'critical',
         notes: 'Library manager. Mobile apps use this credential too.',
       });
     }
-  }
 
-  if (isSelected('navidrome')) {
-    const port = get(v, 'NAVIDROME_PORT') || '4533';
-    const username = get(v, 'NAVIDROME_ADMIN_USER') || 'admin';
-    const password = get(v, 'NAVIDROME_ADMIN_PASSWORD');
-    if (password) {
+    const ndPort = get(v, 'NAVIDROME_PORT') || '4533';
+    const ndUser = get(v, 'NAVIDROME_ADMIN_USER') || 'admin';
+    const ndPassword = get(v, 'NAVIDROME_ADMIN_PASSWORD');
+    if (ndPassword) {
       out.push({
         service: 'Navidrome',
-        url: `http://${host}:${port}`,
-        username,
-        password,
+        url: `http://${host}:${ndPort}`,
+        username: ndUser,
+        password: ndPassword,
         importance: 'critical',
         notes: 'Music server. Symfonium / Subsonic clients use this too.',
       });
@@ -143,7 +144,7 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
 
   // ─── system-internal secrets (rarely needed, kept for DR) ────────────
 
-  if (isSelected('audiobookshelf')) {
+  if (isSelected('media')) {
     const secret = get(v, 'ABS_OIDC_SECRET');
     const domain = get(v, 'PUBLIC_DOMAIN');
     if (secret) {
@@ -175,7 +176,7 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
     }
   }
 
-  if (isSelected('lldap')) {
+  if (isSelected('auth')) {
     const seed = get(v, 'LLDAP_JWT_SECRET');
     if (seed) {
       out.push({

@@ -158,7 +158,7 @@ describe('POST /api/system/authelia/oidc-clients', () => {
   it('extracts OIDC clients from template variables and registers them', async () => {
     // Setup: Authelia deployed on node1
     mockNodes['node1'] = {};
-    mockServiceFiles['node1:authelia'] = { yamlContent: AUTHELIA_YAML };
+    mockServiceFiles['node1:auth'] = { yamlContent: AUTHELIA_YAML };
     mockAgent.sendCommand.mockImplementation((cmd: string) => {
       if (cmd === 'read_file') return Promise.resolve({ content: AUTHELIA_CONFIG_EMPTY });
       if (cmd === 'write_file') return Promise.resolve({});
@@ -204,7 +204,7 @@ describe('POST /api/system/authelia/oidc-clients', () => {
 
   it('skips already registered clients', async () => {
     mockNodes['node1'] = {};
-    mockServiceFiles['node1:authelia'] = { yamlContent: AUTHELIA_YAML };
+    mockServiceFiles['node1:auth'] = { yamlContent: AUTHELIA_YAML };
     mockAgent.sendCommand.mockImplementation((cmd: string) => {
       if (cmd === 'read_file') return Promise.resolve({ content: AUTHELIA_CONFIG_WITH_CLIENT });
       if (cmd === 'write_file') return Promise.resolve({});
@@ -238,7 +238,7 @@ describe('POST /api/system/authelia/oidc-clients', () => {
 
   it('handles multiple templates with mixed OIDC/non-OIDC variables', async () => {
     mockNodes['node1'] = {};
-    mockServiceFiles['node1:authelia'] = { yamlContent: AUTHELIA_YAML };
+    mockServiceFiles['node1:auth'] = { yamlContent: AUTHELIA_YAML };
     mockAgent.sendCommand.mockImplementation((cmd: string) => {
       if (cmd === 'read_file') return Promise.resolve({ content: AUTHELIA_CONFIG_EMPTY });
       if (cmd === 'write_file') return Promise.resolve({});

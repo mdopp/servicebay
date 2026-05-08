@@ -3,11 +3,11 @@ import type { StackVariable } from './postInstall';
 /** Friendly display names for templates that show up grouped in the UI. */
 const DISPLAY_NAMES: Record<string, string> = {
   'nginx-web': 'Nginx Proxy Manager',
-  'lldap': 'LLDAP (User Directory)',
-  'authelia': 'Authelia (SSO)',
+  'auth': 'Auth (LLDAP + Authelia)',
   'adguard': 'AdGuard Home (DNS)',
   'vaultwarden': 'Vaultwarden (Passwords)',
   'immich': 'Immich (Photos)',
+  'media': 'Media (Audiobookshelf + Navidrome)',
   'file-share': 'File Share (Syncthing + Samba + FileBrowser)',
   'home-assistant': 'Home Assistant',
 };
