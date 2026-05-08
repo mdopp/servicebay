@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.4.2...servicebay-v3.5.0) (2026-05-08)
+
+
+### Features
+
+* **wizard:** domain prompt at top of services step + LAN-only opt-out + USB auto-pick single device ([#185](https://github.com/mdopp/servicebay/issues/185)) ([0003f4d](https://github.com/mdopp/servicebay/commit/0003f4d4ee3ad0d0d2ab761393e8e3770b1f88b6))
+* **wizard:** per-service status strip during install + bigger log panel ([#186](https://github.com/mdopp/servicebay/issues/186)) ([e71b09c](https://github.com/mdopp/servicebay/commit/e71b09cca6ef230190737f41f73c62159dfde956))
+* **wizard:** server-side install lock + concurrent-install guard ([#184](https://github.com/mdopp/servicebay/issues/184)) ([272a3b8](https://github.com/mdopp/servicebay/commit/272a3b83a857510c496de5dd6316a6f3be61e5a0))
+* **wizard:** tab-split configure step (Subdomains / Settings / Ports) ([#187](https://github.com/mdopp/servicebay/issues/187)) ([0b13aa5](https://github.com/mdopp/servicebay/commit/0b13aa575d65091fd7da0f14a68ef0949a0c366d))
+* **wizard:** visible service dependencies + auto-include of hard deps ([#188](https://github.com/mdopp/servicebay/issues/188)) ([476e624](https://github.com/mdopp/servicebay/commit/476e62412e43b44858e4035cd1a516c4a0b91820))
+
+
+### Bug Fixes
+
+* **install:** copy src/content/help + CHANGELOG.md into the runtime image ([#183](https://github.com/mdopp/servicebay/issues/183)) ([41027b1](https://github.com/mdopp/servicebay/commit/41027b1f4a7e3fb70b9252b928cc15300cf2062a))
+* restart-directive injection for single-image stacks + radicale via env + syncthing privileged ([#181](https://github.com/mdopp/servicebay/issues/181)) ([7c087cc](https://github.com/mdopp/servicebay/commit/7c087cc3428f5188c205bdd5d3d14ea2d31283c4))
+
 ## [3.4.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.4.1...servicebay-v3.4.2) (2026-05-07)
 
 
