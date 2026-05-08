@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.6](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.5...servicebay-v3.6.6) (2026-05-08)
+
+
+### Bug Fixes
+
+* **wizard:** multi-doc YAML resolver + skip post-install steps for failed deploys ([#213](https://github.com/mdopp/servicebay/issues/213)) ([0c5119a](https://github.com/mdopp/servicebay/commit/0c5119ad816b1f3b50662d879be525e5f948b729))
+
 ## [3.6.5](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.4...servicebay-v3.6.5) (2026-05-08)
 
 
