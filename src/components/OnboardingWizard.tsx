@@ -1727,7 +1727,7 @@ export default function OnboardingWizard() {
                                     <div className="mt-3 space-y-3 max-h-[60vh] overflow-y-auto">
                                         {/* Auto self-test verdict — first thing the operator
                                             sees on the Done screen. Same probes as
-                                            Settings → Self-Diagnose, run automatically against
+                                            Health → Self-Diagnose, run automatically against
                                             the just-deployed install. */}
                                         <div className={`p-3 rounded border text-sm ${overallStyle.bg} ${overallStyle.border}`}>
                                             <div className="flex items-center justify-between mb-1.5">
@@ -1766,7 +1766,7 @@ export default function OnboardingWizard() {
                                                 </details>
                                             )}
                                             <p className={`text-xs mt-1 ${overallStyle.text} opacity-70`}>
-                                                Re-run any time at <span className="font-mono">Settings → Self-Diagnose</span>.
+                                                Re-run any time at <span className="font-mono">Health → Self-Diagnose</span>.
                                             </p>
                                         </div>
                                         {manifest.length > 0 && (
