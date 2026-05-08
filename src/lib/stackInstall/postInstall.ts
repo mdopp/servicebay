@@ -536,6 +536,26 @@ interface RunPostInstallOpts {
   variables: StackVariable[];
   node?: string;
   onLog: (msg: string) => void;
+  /**
+   * Templates whose post-deploy.py already handled credential logging +
+   * admin seeding. Hardcoded helpers below check this set and skip per-
+   * template work that the script already did, so we don't double-emit
+   * credentials or re-call admin-init endpoints.
+   *
+   * Phase 1 — only `media` migrates. Other templates' hardcoded paths
+   * still run as before. As more templates ship post-deploy.py the
+   * branches in this function will shrink.
+   */
+  skipDefaults?: Set<string>;
+  /**
+   * Credentials parsed from `__SB_CREDENTIAL__` markers a template's
+   * post-deploy.py emitted on stdout. Appended to the SAVE-THESE-NOW
+   * banner alongside the hardcoded entries.
+   */
+  // Re-using the Credential shape from credentialsManifest without an
+  // import cycle — the entries already conform.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  extraCredentials?: any[];
 }
 
 /** Orchestrate every post-install step. Returns the proxy-route status so
@@ -547,28 +567,30 @@ interface RunPostInstallOpts {
  *  LLDAP cold-start (up to 10 minutes). Seed logs interleave with proxy
  *  logs in the install panel — both streams are independent. */
 export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyResult> {
-  const { selected, variables, node, onLog } = opts;
+  const { selected, variables, node, onLog, skipDefaults, extraCredentials } = opts;
   const isSelected = (name: string) => selected.some(i => i.name === name);
+  const handled = (name: string): boolean => skipDefaults?.has(name) ?? false;
 
   // Surface credentials immediately — independent of any wait.
   // LLDAP + Authelia live in the merged 'auth' stack now; whenever the auth
   // stack is selected, both run together.
-  if (isSelected('auth')) {
+  if (isSelected('auth') && !handled('auth')) {
     await persistLldapCredentials({ variables, onLog });
   }
-  if (isSelected('adguard')) {
+  if (isSelected('adguard') && !handled('adguard')) {
     logAdguardCredentials({ variables, onLog });
   }
   // Audiobookshelf + Navidrome live in the merged 'media' stack now.
-  if (isSelected('media')) {
+  if (isSelected('media') && !handled('media')) {
     logAudiobookshelfCredentials({ variables, onLog });
     logNavidromeCredentials({ variables, onLog });
   }
-  if (isSelected('file-share')) {
+  if (isSelected('file-share') && !handled('file-share')) {
     logFileShareCredentials({ variables, onLog });
   }
   // Surface OIDC client secrets (one log line per service that needs UI
-  // configuration or has an env-flag to flip).
+  // configuration or has an env-flag to flip). Driven by variables[].meta
+  // so it stays template-driven regardless of skipDefaults.
   logOidcClientSecrets({ selected, variables, onLog });
   // NPM bootstrap is best-effort: if it fails we still want to run the rest
   // of the post-install pipeline (LLDAP seeding, OIDC client creation, proxy
@@ -587,15 +609,15 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   // Kick off all "wait + initialize" tasks in the background. Their logs
   // interleave with the proxy step's, but the proxy result returns ASAP
   // so the NPM credentials prompt (if needed) appears responsive.
-  if (isSelected('auth')) {
+  if (isSelected('auth') && !handled('auth')) {
     void seedLldap({ variables, onLog }).catch(() => { /* logged inline */ });
   }
-  if (isSelected('media')) {
+  if (isSelected('media') && !handled('media')) {
     void seedAudiobookshelf({ variables, onLog }).catch(() => { /* logged inline */ });
     void seedNavidrome({ variables, onLog }).catch(() => { /* logged inline */ });
   }
   // FileBrowser is now part of the file-share stack (alongside syncthing + samba).
-  if (isSelected('file-share')) {
+  if (isSelected('file-share') && !handled('file-share')) {
     void seedFileBrowserAdmin({ variables, node, onLog }).catch(() => { /* logged inline */ });
   }
 
@@ -612,8 +634,13 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   // Final banner — single block where every credential the user might
   // have to remember is collected. Same data is exposed to the wizard's
   // Done view + a Bitwarden CSV download via buildCredentialsManifest().
+  // Per-template post-deploy.py output is appended to whatever the
+  // hardcoded helpers produced for templates that haven't migrated yet.
   const host = typeof window !== 'undefined' ? window.location.hostname : '';
-  const manifest = buildCredentialsManifest({ selected, variables, host });
+  const manifest = [
+    ...buildCredentialsManifest({ selected, variables, host }),
+    ...(extraCredentials ?? []),
+  ];
   formatCredentialsBanner(manifest).forEach(onLog);
 
   return proxyResult;

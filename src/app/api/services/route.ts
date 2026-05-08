@@ -292,7 +292,7 @@ export async function POST(request: Request) {
   }
 
   // Handle Container Creation
-  const { name, kubeContent, yamlContent, yamlFileName, extraFiles } = body;
+  const { name, kubeContent, yamlContent, yamlFileName, extraFiles, postDeployScript, postDeployEnv } = body;
 
   if (!name || !kubeContent || !yamlContent || !yamlFileName) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
@@ -306,9 +306,19 @@ export async function POST(request: Request) {
 
     (async () => {
       try {
-        await ServiceManager.deployKubeService(targetNode, name, kubeContent, yamlContent, yamlFileName, extraFiles, (message) => {
-          writer.write(encoder.encode(JSON.stringify({ type: 'progress', message }) + '\n')).catch(() => {});
-        });
+        await ServiceManager.deployKubeService(
+          targetNode,
+          name,
+          kubeContent,
+          yamlContent,
+          yamlFileName,
+          extraFiles,
+          (message) => {
+            writer.write(encoder.encode(JSON.stringify({ type: 'progress', message }) + '\n')).catch(() => {});
+          },
+          postDeployScript,
+          postDeployEnv,
+        );
         await writer.write(encoder.encode(JSON.stringify({ type: 'complete', success: true }) + '\n'));
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -326,6 +336,16 @@ export async function POST(request: Request) {
     });
   }
 
-  await ServiceManager.deployKubeService(targetNode, name, kubeContent, yamlContent, yamlFileName, extraFiles);
+  await ServiceManager.deployKubeService(
+    targetNode,
+    name,
+    kubeContent,
+    yamlContent,
+    yamlFileName,
+    extraFiles,
+    undefined,
+    postDeployScript,
+    postDeployEnv,
+  );
   return NextResponse.json({ success: true });
 }

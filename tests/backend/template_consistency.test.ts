@@ -548,3 +548,36 @@ describe('OIDC client_id single source of truth', () => {
     }
   });
 });
+
+// ─── 9. post-deploy.py scripts parse as valid Python ───────────────────────
+describe('Template post-deploy.py syntax', () => {
+  // The wizard executes templates/<name>/post-deploy.py on the agent host
+  // after a successful deploy. A syntax error there would silently break
+  // the seed / credential-banner step at install time. Catch them at
+  // PR-time via `python3 -m py_compile`. Skipped if python3 isn't on the
+  // CI runner (rare but possible in some docker-only setups).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { execSync } = require('child_process') as typeof import('child_process');
+  let pythonAvailable = true;
+  try {
+    execSync('python3 --version', { stdio: 'ignore' });
+  } catch {
+    pythonAvailable = false;
+  }
+
+  for (const t of templates) {
+    const script = path.join(TEMPLATES_DIR, t.name, 'post-deploy.py');
+    if (!fs.existsSync(script)) continue;
+    const testFn = pythonAvailable ? it : it.skip;
+    testFn(`${t.name}/post-deploy.py is syntactically valid Python`, () => {
+      try {
+        execSync(`python3 -m py_compile ${JSON.stringify(script)}`, { stdio: 'pipe' });
+      } catch (e) {
+        const msg = e instanceof Error && 'stderr' in e
+          ? String((e as { stderr: Buffer }).stderr)
+          : String(e);
+        throw new Error(`${t.name}/post-deploy.py has a Python syntax error:\n${msg}`);
+      }
+    });
+  }
+});

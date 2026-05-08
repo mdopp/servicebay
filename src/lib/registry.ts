@@ -353,3 +353,44 @@ export async function getTemplateConfigFiles(name: string, source?: string): Pro
 
   return scanDir(path.join(TEMPLATES_PATH, name));
 }
+
+/**
+ * Read a template's post-deploy script if present. Convention: a single
+ * `post-deploy.py` file in the template directory, executed by the agent
+ * (python3 is guaranteed by FCoS install-python.service) after the unit
+ * has started. The script gets the wizard's variables as env vars and
+ * can either talk to the now-running container directly (e.g. POST to
+ * the service's /init endpoint on its host port) or call ServiceBay's
+ * own admin endpoints.
+ *
+ * It can emit:
+ *   - regular stdout lines → relayed to the install log as-is
+ *   - lines beginning with `__SB_CREDENTIAL__ ` followed by JSON →
+ *     parsed by the wizard and added to the SAVE-THESE-NOW banner +
+ *     Bitwarden CSV export
+ *
+ * Returns the script content (un-rendered, mustache placeholders intact)
+ * or null if the template ships no post-deploy script.
+ */
+export async function getTemplatePostDeployScript(name: string, source?: string): Promise<string | null> {
+  const tryRead = async (dir: string): Promise<string | null> => {
+    try {
+      return await fs.readFile(path.join(dir, 'post-deploy.py'), 'utf-8');
+    } catch { return null; }
+  };
+
+  if (source && source !== 'Built-in') {
+    return tryRead(path.join(REGISTRIES_DIR, source, 'templates', name));
+  }
+
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      const found = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      if (found !== null) return found;
+    }
+  }
+
+  return tryRead(path.join(TEMPLATES_PATH, name));
+}
