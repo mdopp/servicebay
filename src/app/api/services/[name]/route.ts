@@ -216,6 +216,21 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
       return NextResponse.json({ error: 'kubeContent and yamlContent are required' }, { status: 400 });
   }
 
+  // Validate the Pod manifest. Same call as POST /api/services — keeps
+  // bundle imports + Settings → Services edits honest about manifest shape.
+  const { validatePodManifest } = await import('@/lib/services/podSchema');
+  const validation = validatePodManifest(yamlContent);
+  if (!validation.ok) {
+      return NextResponse.json(
+          {
+              error: 'invalid Pod manifest',
+              path: validation.error?.path,
+              detail: validation.error?.message,
+          },
+          { status: 400 },
+      );
+  }
+
   await ServiceManager.saveService(nodeName, safeName, kubeContent, yamlContent, yamlFileName);
   return NextResponse.json({ success: true });
 }
