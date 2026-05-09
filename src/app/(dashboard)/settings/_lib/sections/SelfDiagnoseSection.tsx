@@ -1,9 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle2, Info, Loader2, Stethoscope } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, Info, Loader2, Stethoscope, Wrench } from 'lucide-react';
 
 type ProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
+
+interface ProbeAction {
+  id: string;
+  label: string;
+  description: string;
+  destructive?: boolean;
+}
 
 interface DiagnoseProbe {
   id: string;
@@ -11,6 +18,7 @@ interface DiagnoseProbe {
   status: ProbeStatus;
   detail: string;
   hint?: string;
+  actions?: ProbeAction[];
 }
 
 interface DiagnoseResult {
@@ -29,6 +37,8 @@ export default function SelfDiagnoseSection() {
   const [result, setResult] = useState<DiagnoseResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Per-action transient state. Keyed by `<probeId>:<actionId>`. */
+  const [actionState, setActionState] = useState<Record<string, { running?: boolean; message?: string; ok?: boolean }>>({});
 
   const run = async () => {
     setRunning(true);
@@ -44,6 +54,46 @@ export default function SelfDiagnoseSection() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
+    }
+  };
+
+  const runAction = async (probe: DiagnoseProbe, action: ProbeAction) => {
+    // Confirm-on-destructive guard. The action's description is
+    // surfaced in the dialog so the user sees the consequences they
+    // accepted.
+    if (action.destructive) {
+      const ok = window.confirm(`${action.label}\n\n${action.description}\n\nThis action can't be undone. Continue?`);
+      if (!ok) return;
+    }
+    const key = `${probe.id}:${action.id}`;
+    setActionState(s => ({ ...s, [key]: { running: true } }));
+    try {
+      const res = await fetch('/api/system/diagnose/run-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          probeId: probe.id,
+          actionId: action.id,
+          node: result?.node,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const ok = res.ok && data.ok !== false;
+      setActionState(s => ({
+        ...s,
+        [key]: { ok, message: data.message ?? (ok ? 'Done.' : `HTTP ${res.status}`) },
+      }));
+      // Auto-rerun the diagnose suite when the action requested it.
+      // This makes the probe transition to `ok` (or to a follow-up
+      // warn) immediately visible without a manual click.
+      if (ok && data.refresh !== false) {
+        void run();
+      }
+    } catch (e) {
+      setActionState(s => ({
+        ...s,
+        [key]: { ok: false, message: e instanceof Error ? e.message : String(e) },
+      }));
     }
   };
 
@@ -118,6 +168,36 @@ export default function SelfDiagnoseSection() {
                     <p className={`text-xs mt-2 ${meta.color}`}>
                       <strong>Suggestion:</strong> {probe.hint}
                     </p>
+                  )}
+                  {(probe.actions ?? []).length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(probe.actions ?? []).map(action => {
+                        const key = `${probe.id}:${action.id}`;
+                        const state = actionState[key];
+                        const isRunning = state?.running;
+                        const baseStyle = action.destructive
+                          ? 'bg-red-600 hover:bg-red-700 text-white'
+                          : 'bg-violet-600 hover:bg-violet-700 text-white';
+                        return (
+                          <div key={action.id} className="flex items-center gap-2">
+                            <button
+                              onClick={() => runAction(probe, action)}
+                              disabled={isRunning || running}
+                              title={action.description}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors disabled:opacity-50 ${baseStyle}`}
+                            >
+                              {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
+                              {action.label}
+                            </button>
+                            {state?.message && !isRunning && (
+                              <span className={`text-xs ${state.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                {state.ok ? '✓' : '✗'} {state.message}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               </div>
