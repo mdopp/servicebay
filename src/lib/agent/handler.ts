@@ -85,8 +85,13 @@ export class AgentHandler extends EventEmitter {
     private isStarting = false;
     private startPromise: Promise<void> | null = null;
     private currentRunId?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private pendingRequests: Map<string, { resolve: (val: any) => void; reject: (err: any) => void }> = new Map();
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  private pendingRequests: Map<string, {
+      resolve: (val: any) => void;
+      reject: (err: any) => void;
+      onChunk?: (line: string) => void;
+  }> = new Map();
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   private isConnected: boolean = false;
   private consecutiveParseErrors = 0;
   private readonly MAX_PARSE_ERRORS = 5;
@@ -366,6 +371,20 @@ export class AgentHandler extends EventEmitter {
         return;
     }
 
+    // 1b. Streaming chunk for an in-flight exec_stream — forward to
+    // the per-request onChunk callback if the caller registered one.
+    if (msg.type === 'exec:chunk' && msg.payload && msg.payload.id) {
+        const req = this.pendingRequests.get(msg.payload.id);
+        if (req?.onChunk && typeof msg.payload.line === 'string') {
+            try { req.onChunk(msg.payload.line); }
+            catch (e) { this.log(this.nodeName, 'warn', 'onChunk handler threw:', e); }
+        }
+        // Don't fall through to the generic event emitter for chunks
+        // — they're noisy and the only legitimate consumer is the
+        // request that owns this id.
+        return;
+    }
+
     // 2. Generic Event
     this.emit('event', msg);
     // Also specific types
@@ -374,8 +393,13 @@ export class AgentHandler extends EventEmitter {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public async sendCommand(action: string, params: any = {}, options: { timeoutMs?: number } = {}): Promise<any> {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  public async sendCommand(
+      action: string,
+      params: any = {},
+      options: { timeoutMs?: number; onChunk?: (line: string) => void } = {},
+  ): Promise<any> {
+  /* eslint-enable @typescript-eslint/no-explicit-any */
     if (!this.isConnected) {
         // Single start() used to be enough, but install loops that
         // straddle a ServiceBay autoupdate or host reboot need to wait
@@ -424,8 +448,11 @@ export class AgentHandler extends EventEmitter {
     this.log(this.nodeName, 'info', `Sending command '${action}' (id: ${id}) payload: ${payloadPreview}`);
     
     return new Promise((resolve, reject) => {
-        // maintain pending map
-        this.pendingRequests.set(id, { resolve, reject });
+        // maintain pending map. onChunk (when set) is invoked for each
+        // exec:chunk event the agent emits with this id — used by
+        // exec_stream callers (post-deploy scripts) so the wizard can
+        // surface each line as it arrives instead of a 10-min void.
+        this.pendingRequests.set(id, { resolve, reject, onChunk: options.onChunk });
         
         // Timeout (extendable per command; defaults to 30s).
         // 10s was too aggressive: a `systemctl start <pod>` for a fresh deploy
