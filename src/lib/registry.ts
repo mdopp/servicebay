@@ -274,6 +274,15 @@ export interface VariableMeta {
   type?: 'text' | 'password' | 'secret' | 'rsa-private' | 'bcrypt' | 'select' | 'device' | 'subdomain';
   description?: string;
   default?: string;
+  /**
+   * Concrete example value shown next to the input in the Configure
+   * step (small grey hint text). Use for fields whose `description`
+   * tells the user *what* but not what a *valid value looks like* —
+   * URLs, e-mail addresses, fully-qualified domains, etc. Distinct
+   * from `default` because we don't want to pre-fill every field
+   * with example data the user then has to remember to change.
+   */
+  example?: string;
   options?: string[];
   devicePath?: string;
   /** For subdomain type: variable name referencing the target port, or a literal port number */

@@ -6,12 +6,13 @@
   },
   "VAULTWARDEN_DOMAIN": {
     "type": "text",
-    "description": "Public URL (z.B. https://vault.example.com)",
-    "default": ""
+    "description": "Public URL where Vaultwarden will be reachable, e.g. https://vault.example.com. Auto-derived from VAULTWARDEN_SUBDOMAIN + PUBLIC_DOMAIN at install time — leave blank unless you want to override.",
+    "default": "",
+    "example": "https://vault.example.com"
   },
   "VAULTWARDEN_SIGNUPS": {
     "type": "select",
-    "description": "Registrierungen erlauben",
+    "description": "Allow new users to create accounts on the Vaultwarden web UI directly. Leave 'true' on first install so you can register your own account; flip to 'false' afterwards to lock the family-only vault down.",
     "options": ["true", "false"],
     "default": "true"
   },
