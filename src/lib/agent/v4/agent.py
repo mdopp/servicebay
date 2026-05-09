@@ -1736,7 +1736,21 @@ class Agent:
                         continue
                         
                     msg = json.loads(line)
-                    self.handle_command(msg)
+                    # Spawn each command in a worker thread so a
+                    # long-running exec (e.g. a 10-min post-deploy
+                    # waiting on LLDAP) doesn't block the read loop.
+                    # Without this, every queued write_file behind the
+                    # in-flight exec sat for the full duration and hit
+                    # the wizard's 30-s client timeout — a single slow
+                    # service used to fail every following service in
+                    # the install loop. io_lock already serializes
+                    # stdout writes, so concurrent threads can't
+                    # interleave bytes mid-message.
+                    threading.Thread(
+                        target=self.handle_command,
+                        args=(msg,),
+                        daemon=True,
+                    ).start()
                 except Exception:
                     pass
         finally:
@@ -1822,6 +1836,45 @@ class Agent:
                         "stdout": stdout,
                         "stderr": stderr
                     })
+            elif cmd == 'exec_stream':
+                # Same as exec, but emit each stdout line as an
+                # `exec:chunk` event keyed by the request id while the
+                # process runs. ServiceManager.runPostDeployScript uses
+                # this so the wizard can show heartbeat output (e.g.
+                # "Still waiting for LLDAP (Ns elapsed)...") instead of
+                # buffering everything until the script exits.
+                command_str = msg.get('payload', {}).get('command')
+                if not command_str:
+                    reply(error="Missing command")
+                else:
+                    log_info(f"Executing streaming shell command: {command_str}")
+                    try:
+                        proc = subprocess.Popen(
+                            ['sh', '-c', command_str],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            bufsize=1,  # line-buffered
+                        )
+                        stdout_lines = []
+                        for line in proc.stdout:
+                            line = line.rstrip("\n")
+                            stdout_lines.append(line)
+                            chunk = {
+                                'type': 'exec:chunk',
+                                'payload': {'id': req_id, 'line': line},
+                            }
+                            with self.io_lock:
+                                sys.stdout.write(json.dumps(chunk) + "\0")
+                                sys.stdout.flush()
+                        proc.wait()
+                        reply(result={
+                            "code": proc.returncode,
+                            "stdout": "\n".join(stdout_lines),
+                            "stderr": "",
+                        })
+                    except Exception as e:
+                        reply(error=str(e))
             elif cmd == 'write_file':
                 path = msg.get('payload', {}).get('path')
                 content = msg.get('payload', {}).get('content')
