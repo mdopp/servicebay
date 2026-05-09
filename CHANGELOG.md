@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.8.1...servicebay-v3.9.0) (2026-05-09)
+
+
+### Features
+
+* **install:** stream post-deploy stdout + multiplex agent commands ([#230](https://github.com/mdopp/servicebay/issues/230)) ([190b9bc](https://github.com/mdopp/servicebay/commit/190b9bce5f2a55b7037f29cf3f8371a94e88ef15))
+
 ## [3.8.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.8.0...servicebay-v3.8.1) (2026-05-09)
 
 
