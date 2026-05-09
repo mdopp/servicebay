@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.7...servicebay-v3.7.0) (2026-05-08)
+
+
+### Features
+
+* **templates:** per-template post-deploy.py scripts (phase 1: media) ([#217](https://github.com/mdopp/servicebay/issues/217)) ([8d9fbd5](https://github.com/mdopp/servicebay/commit/8d9fbd5891184d95eac5dea9e6fc8157a9424668))
+* **templates:** post-deploy.py for auth + nginx-web (phase 2 / part 2) ([#220](https://github.com/mdopp/servicebay/issues/220)) ([c79da83](https://github.com/mdopp/servicebay/commit/c79da83fbfa2a725aa12749f1ef3339473071640))
+* **templates:** post-deploy.py for file-share + adguard (phase 2 / part 1) ([#219](https://github.com/mdopp/servicebay/issues/219)) ([db5cea2](https://github.com/mdopp/servicebay/commit/db5cea2ae7227d390318a8f447ce6b949194b37e))
+
 ## [3.6.7](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.6...servicebay-v3.6.7) (2026-05-08)
 
 
