@@ -32,13 +32,25 @@ export async function POST(
   const encoder = new TextEncoder();
   const stream = new TransformStream();
   const writer = stream.writable.getWriter();
+  let writerClosed = false;
 
   const write = async (msg: string) => {
-    await writer.write(encoder.encode(msg + '\r\n'));
+    if (writerClosed) return;
+    try {
+      await writer.write(encoder.encode(msg + '\r\n'));
+    } catch {
+      // Client aborted — stop attempting to write to a closed stream.
+      writerClosed = true;
+    }
   };
 
   const writeRaw = async (msg: string) => {
-    await writer.write(encoder.encode(msg));
+    if (writerClosed) return;
+    try {
+      await writer.write(encoder.encode(msg));
+    } catch {
+      writerClosed = true;
+    }
   };
 
   (async () => {
@@ -153,7 +165,9 @@ export async function POST(
     } catch (e) {
       await write(`Error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
-      await writer.close();
+      if (!writerClosed) {
+        try { await writer.close(); } catch { /* already closed */ }
+      }
     }
   })();
 
