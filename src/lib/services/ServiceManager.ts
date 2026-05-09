@@ -633,8 +633,17 @@ export class ServiceManager {
         // Long timeout — scripts wait for HTTP services that can take a
         // minute or two to come up after image pull. Keep below the
         // wizard's overall settle window.
+        //
+        // NB on the unquoted paths: scriptPath / envPath start with `~/`.
+        // Bash only expands `~` when it's an *unquoted* token at the
+        // beginning of a word — `'~/x'` and `"~/x"` both stay literal.
+        // The earlier single-quoted form failed every script with
+        // `sh: line 1: ~/.local/share/...: No such file or directory` and
+        // every migrated stack reported `post-deploy exited 1`. Paths are
+        // framework-controlled (no spaces, no shell metas) so unquoted is
+        // safe and the simplest form that does the right thing.
         const result = await agent.sendCommand('exec', {
-            command: `set -a; source '${envPath}'; set +a; python3 '${scriptPath}' 2>&1`,
+            command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
             timeout: 300,
         });
         const stdout = (result.stdout || '').replace(/\r/g, '');
