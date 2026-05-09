@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.8.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.8.0...servicebay-v3.8.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* **install:** thread items + variables through express install chain ([#228](https://github.com/mdopp/servicebay/issues/228)) ([5732665](https://github.com/mdopp/servicebay/commit/5732665ec1d99178f741d4a2594333d91f87631b))
+
 ## [3.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.7.1...servicebay-v3.8.0) (2026-05-09)
 
 
