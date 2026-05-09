@@ -756,9 +756,8 @@ WantedBy=default.target`;
                             const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
                             const subdomains = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
                             const hasProxyRoutes = !!domain && subdomains.length > 0;
-                            const selected = items.filter(i => i.checked);
                             const host = typeof window !== 'undefined' ? window.location.hostname : '<server-ip>';
-                            const manifest = buildCredentialsManifest({ selected, variables, host });
+                            const manifest = buildCredentialsManifest({ variables, host });
                             if (!hasProxyRoutes && manifest.length === 0) return null;
                             const downloadCsv = () => {
                                 const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });

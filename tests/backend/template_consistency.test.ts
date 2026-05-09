@@ -564,32 +564,16 @@ describe('stackInstall has no unauthorized per-template branches', () => {
   const STACKINSTALL_DIR = path.join(SRC_DIR, 'lib', 'stackInstall');
 
   /** Map of file → set of template names allowed to appear in
-   *  `isSelected('X')` calls. Anything else is a violation. */
+   *  `isSelected(...)` calls. Anything else is a violation. */
   const ALLOWED: Record<string, Set<string>> = {
     'postInstall.ts': new Set([
-      // bootstrapNpmAdmin: returns 'needs_credentials' which drives the
-      // wizard credential-prompt UI. Cannot live in a script.
+      // bootstrapNpmAdmin returns a tri-state result that drives the
+      // wizard's NPM-credentials-prompt UI when the auto-bootstrap
+      // fails. A post-deploy.py script can't cleanly express that, so
+      // the NPM bootstrap stays in the engine.
       'nginx-web',
-      // The following are legacy hardcoded helpers gated by skipDefaults.
-      // They are dead at runtime once the corresponding post-deploy.py
-      // ships (it always does today). This list shrinks to {nginx-web}
-      // after task B in the template-separation cleanup.
-      'auth',
-      'adguard',
-      'media',
-      'file-share',
-      'vaultwarden',
     ]),
-    'credentialsManifest.ts': new Set([
-      // Same legacy-gated branches; shrinks to {} (or {auth} for the JWT
-      // system entry, if not migrated) after task B.
-      'auth',
-      'nginx-web',
-      'adguard',
-      'media',
-      'file-share',
-      'vaultwarden',
-    ]),
+    'credentialsManifest.ts': new Set(),
     'groupVariables.ts': new Set(),
   };
 
