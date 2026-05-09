@@ -241,7 +241,7 @@ describe('OnboardingWizard', () => {
             await waitFor(() => {
                 // Header h2 contains "Install Services"
                 expect(screen.getAllByText(/Install Services/i).length).toBeGreaterThan(0);
-                expect(screen.getByText(/Choose a service stack/i)).toBeDefined();
+                expect(screen.getByText(/Choose which services/i)).toBeDefined();
             });
             // Should NOT show the full setup welcome
             expect(screen.queryByText(/Welcome to ServiceBay/i)).toBeNull();
@@ -252,7 +252,7 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
-            await waitFor(() => screen.getByText(/Choose a service stack/i));
+            await waitFor(() => screen.getByText(/Choose which services/i));
             // Progress bar shows "Step X of Y" — should not be present
             expect(screen.queryByText(/Step \d+ of \d+/)).toBeNull();
         });
