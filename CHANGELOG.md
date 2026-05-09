@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.7.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.7.0...servicebay-v3.7.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* **post-deploy:** drop single quotes around tilde paths so bash expands ~ ([#224](https://github.com/mdopp/servicebay/issues/224)) ([bf24ae1](https://github.com/mdopp/servicebay/commit/bf24ae12cccc15aa600ecb3affd7f2fbc9cf8bfd))
+* **wizard:** only collapse pull-progress lines, not post-deploy.py output ([#222](https://github.com/mdopp/servicebay/issues/222)) ([a30c346](https://github.com/mdopp/servicebay/commit/a30c3460434fc40e770fe01e9bb1c4c8c0c13607))
+
 ## [3.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.6.7...servicebay-v3.7.0) (2026-05-08)
 
 
