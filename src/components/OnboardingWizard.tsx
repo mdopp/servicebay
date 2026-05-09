@@ -986,8 +986,20 @@ export default function OnboardingWizard() {
                     } catch { /* malformed marker — drop it */ }
                     continue;
                   }
-                  // Update last progress line in-place to avoid log spam
-                  if (lastProgressLine) {
+                  // In-place collapse — ONLY for image-pull progress lines
+                  // (which tick once a second per layer and would otherwise
+                  // bury everything else). Anything else — including
+                  // post-deploy.py stdout — appends a new log entry so the
+                  // operator can see what's actually happening.
+                  //
+                  // Earlier this collapsed every consecutive progress event
+                  // indiscriminately. Once any line came through, every
+                  // subsequent line replaced it, and the only visible trace
+                  // of a post-deploy.py was the final summary line — so
+                  // every script appeared to "exit 1" with no breadcrumb to
+                  // the actual error.
+                  const isPullProgress = /Pulling image \d+\/\d+|MB\s*\/\s*[\d.]+\s*MB/.test(evt.message ?? '');
+                  if (isPullProgress && lastProgressLine && /Pulling image \d+\/\d+|MB\s*\/\s*[\d.]+\s*MB/.test(lastProgressLine)) {
                     setStackLogs(prev => {
                       const next = [...prev];
                       next[next.length - 1] = evt.message;
