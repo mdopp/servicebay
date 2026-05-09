@@ -81,13 +81,16 @@ const optOutOfDomain = () => {
   if (!cb.checked) fireEvent.click(cb);
 };
 
-// stacksOnlyMode now lands on the new 'machine' step (domain / drives /
-// clean-install) and only continues to the stack picker after the
-// operator clears the domain gate. This helper runs that transition so
-// each existing stack-picker test doesn't have to know about it.
+// stacksOnlyMode now lands on the express 'install-confirm' screen.
+// The existing stack-picker tests want the verbose wizard, so this
+// helper opts out of the public domain (state is shared with the
+// machine step), clicks Edit details to drop into the wizard, then
+// clicks Continue on the machine step — ending up on the stack picker.
 const advancePastMachineStep = async () => {
   await waitFor(() => screen.getByLabelText(/I don't have a public domain/i));
   optOutOfDomain();
+  fireEvent.click(screen.getByRole('button', { name: /Edit details/i }));
+  await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
   fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 };
 

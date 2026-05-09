@@ -32,18 +32,25 @@ import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
 // Steps definition
 // Wizard flow:
-//   welcome  → pick which features to configure
-//   network  → gateway + SSH (if selected on welcome)
-//   email    → SMTP (if selected on welcome)
-//   machine  → host-side prep before installing services: domain choice,
-//              drive detection / RAID mount, optional clean-install reset.
-//              Only shown when the operator wants to install stacks.
-//   stacks   → stack picker + per-service selection + per-service config
-//   finish   → summary
-// machine + stacks are split so the operator answers host-level questions
-// (do we have a domain? is the data drive mounted? wipe first?) before
-// scrolling through the long service list.
-type WizardStep = 'welcome' | 'network' | 'email' | 'machine' | 'stacks' | 'finish';
+//   welcome         → pick which features to configure
+//   network         → gateway + SSH (if selected on welcome)
+//   email           → SMTP (if selected on welcome)
+//   install-confirm → compact "express install" summary: domain + clean
+//                     install + auto-mount + preselected full-stack.
+//                     Default landing for stacksOnlyMode and the next
+//                     step after email in fresh setup. Click Install
+//                     and the wizard runs the whole install with
+//                     sensible defaults; click Edit on a row to fall
+//                     through into the explicit machine + stacks steps
+//                     below.
+//   machine         → host-side prep: domain choice, drive detection
+//                     / RAID mount, optional clean-install reset.
+//                     Reached via Edit from install-confirm.
+//   stacks          → stack picker + per-service selection + per-
+//                     service config. Reached via Edit from install-
+//                     confirm OR by Continue from machine.
+//   finish          → summary
+type WizardStep = 'welcome' | 'network' | 'email' | 'install-confirm' | 'machine' | 'stacks' | 'finish';
 
 interface ConfigFile {
   filename: string;
@@ -322,10 +329,11 @@ export default function OnboardingWizard() {
         }
       } else if (s.stackSetupPending) {
         // Setup was completed by installer, but stacks haven't been chosen
-        // yet. Land on the machine step (domain / drives / clean-install)
-        // before showing the stack picker — same flow new users get.
+        // yet. Land on the express install-confirm screen — domain +
+        // clean-install + preselected full-stack. Edit drops them into
+        // the explicit machine + stacks flow.
         setStacksOnlyMode(true);
-        setCurrentStep('machine');
+        setCurrentStep('install-confirm');
         setIsOpen(true);
       } else {
         // No setup needed — clear any stale draft.
@@ -440,14 +448,38 @@ export default function OnboardingWizard() {
   }, []);
 
   useEffect(() => {
-    // Load stacks list eagerly on the machine step too — we need a node
-    // selected before /api/system/storage knows which agent to query for
-    // detected drives. loadStacks() also seeds stackSelectedNode for
-    // single-node setups.
-    if ((currentStep === 'stacks' || currentStep === 'machine') && availableStacks.length === 0 && !stacksLoading) {
+    // Load stacks list eagerly on every install-related step — we need
+    // the list to render the express confirm summary (preselected
+    // full-stack), to drive /api/system/storage (single-node nodename),
+    // and for the explicit stack picker. loadStacks() also seeds
+    // stackSelectedNode for single-node setups.
+    if (
+        (currentStep === 'stacks' || currentStep === 'machine' || currentStep === 'install-confirm')
+        && availableStacks.length === 0
+        && !stacksLoading
+    ) {
       loadStacks();
     }
   }, [currentStep, availableStacks.length, stacksLoading, loadStacks]);
+
+  // On entering install-confirm, pre-fill the domain field from the
+  // baked-in reverseProxy.publicDomain (set by the install script when
+  // the operator passed --domain to the bootstrap). Same setting that
+  // handleStackFetchVars reads later — pulling it eagerly here just
+  // means the operator sees their domain rather than an empty input.
+  useEffect(() => {
+    if (currentStep !== 'install-confirm') return;
+    if (stackDomain || stackNoDomain) return;
+    let cancelled = false;
+    fetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
+      if (cancelled) return;
+      const baked = s?.reverseProxy?.publicDomain;
+      if (typeof baked === 'string' && baked.length > 0) {
+        setStackDomain(baked);
+      }
+    }).catch(() => { /* silent — operator can type the domain */ });
+    return () => { cancelled = true; };
+  }, [currentStep, stackDomain, stackNoDomain]);
 
   const navigateTo = (step: WizardStep) => {
       setStepHistory(prev => [...prev, currentStep]);
@@ -463,16 +495,22 @@ export default function OnboardingWizard() {
   };
 
   const getNextStep = (current: WizardStep): WizardStep => {
-      const order: WizardStep[] = ['welcome', 'network', 'email', 'machine', 'stacks', 'finish'];
+      const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
 
-      // network step covers both Gateway and Remote Access (SSH key) — show
-      // it if either was selected on the welcome screen.
-      // machine step is host-side prep for installing services — only
-      // makes sense when the operator wants to install stacks.
+      // Two paths through the install region of the wizard:
+      //   express mode  → welcome → network → email → install-confirm → finish
+      //   edit mode     → welcome → network → email → machine → stacks → finish
+      // Edit mode is entered when the operator clicks "Edit details"
+      // on the confirm screen (jumps to 'machine'). Once they're in
+      // either machine or stacks, we treat them as committed to the
+      // verbose flow — install-confirm drops out of the activeSteps
+      // and the existing machine → stacks → finish chain takes over.
+      const inEditMode = current === 'machine' || current === 'stacks';
       const activeSteps = order.filter(step => {
          if (step === 'welcome' || step === 'finish') return true;
          if (step === 'network') return selection.gateway || selection.ssh;
-         if (step === 'machine') return selection.stacks;
+         if (step === 'install-confirm') return selection.stacks && !inEditMode;
+         if (step === 'machine' || step === 'stacks') return inEditMode;
          return selection[step as keyof typeof selection];
       });
 
@@ -1193,6 +1231,66 @@ export default function OnboardingWizard() {
     setStackInstallStep('done');
   };
 
+  // Express install path. Runs the same install steps the operator
+  // would otherwise click through manually:
+  //   0. Auto-mount the detected unmounted RAID (if any) so the data
+  //      drive is in place before the install starts laying out
+  //      /var/mnt/data/stacks/*
+  //   1. Pick the full-stack template (handleSelectStack)
+  //   2. Fetch service YAMLs and resolve all variables, using defaults
+  //      and auto-fill secrets (handleStackFetchVars)
+  //   3. Run the install (handleStackInstall)
+  // Returns once the install transitions to its 'installing' substep —
+  // log streaming + done-state handling continues in the existing
+  // stacks-step render below.
+  const handleExpressInstall = async () => {
+    const fullStack = availableStacks.find(s => s.name === 'full-stack')
+        ?? availableStacks[0];
+    if (!fullStack) {
+      addToast('error', 'No stack available', 'Could not find the full-stack template. Try Edit to pick a stack manually.');
+      return;
+    }
+
+    // Auto-mount the data drive before the install begins. The detected
+    // RAID is the most common shape on the FCoS install (mdadm-managed
+    // mirror across the two largest disks); if there isn't one we just
+    // continue and let services fall back to the rootfs.
+    const raid = raidArrays[0];
+    if (raid && !raidMounted && stackSelectedNode) {
+      setRaidMounting(true);
+      try {
+        const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device: raid.device,
+            mountpoint: '/var/mnt/data',
+            label: raid.label,
+            fstype: raid.fstype,
+          }),
+        });
+        if (res.ok) {
+          setRaidMounted(true);
+          setRaidArrays([]);
+        } else {
+          addToast('warning', 'Auto-mount failed', `Could not mount ${raid.device}. Continuing — services will use local storage.`);
+        }
+      } catch {
+        addToast('warning', 'Auto-mount failed', `Could not reach the agent to mount ${raid.device}. Continuing.`);
+      } finally {
+        setRaidMounting(false);
+      }
+    }
+
+    // Move to the stacks step so the install-progress UI takes over the
+    // wizard body. The substep transitions are driven by the helpers
+    // below.
+    navigateTo('stacks');
+    await handleSelectStack(fullStack);
+    await handleStackFetchVars();
+    await handleStackInstall();
+  };
+
   const handleStackSkip = async () => {
     if (stacksOnlyMode) {
       // In stacks-only mode, skipping goes straight to finish
@@ -1228,11 +1326,14 @@ export default function OnboardingWizard() {
              )}
            </h2>
            {!stacksOnlyMode && (() => {
-             const order: WizardStep[] = ['welcome', 'network', 'email', 'machine', 'stacks', 'finish'];
+             const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
+             // Same two-path logic as getNextStep — see comment there.
+             const inEditMode = currentStep === 'machine' || currentStep === 'stacks';
              const activeSteps = order.filter(step => {
                if (step === 'welcome' || step === 'finish') return true;
                if (step === 'network') return selection.gateway || selection.ssh;
-               if (step === 'machine') return selection.stacks;
+               if (step === 'install-confirm') return selection.stacks && !inEditMode;
+               if (step === 'machine' || step === 'stacks') return inEditMode;
                return selection[step as keyof typeof selection];
              });
              const currentIndex = activeSteps.indexOf(currentStep);
@@ -1429,6 +1530,141 @@ export default function OnboardingWizard() {
                      </div>
                 </div>
             )}
+
+            {/* Express install confirm — compact summary of the
+                defaults (preselected full-stack, auto-mount detected
+                RAID, preserve data). Operator answers the two remaining
+                questions inline (domain + clean-vs-preserve) and hits
+                Install. Edit drops them into the explicit machine /
+                stacks flow below. */}
+            {currentStep === 'install-confirm' && (() => {
+                const fullStack = availableStacks.find(s => s.name === 'full-stack') ?? availableStacks[0];
+                const detectedRaid = raidArrays[0];
+                const topDisks = detectedDrives.filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md');
+                return (
+                    <div className="space-y-4">
+                        <h3 className="font-semibold text-lg flex items-center gap-2">
+                            <CheckCircle className="w-5 h-5 text-indigo-500"/> Ready to install
+                        </h3>
+                        <p className="text-sm text-gray-500">
+                            We&apos;ll install the recommended stack with sensible defaults. Adjust the two questions below or click <em>Edit details</em> for the full wizard.
+                        </p>
+
+                        {/* Domain — required, inline */}
+                        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-2">
+                            <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200">
+                                <Globe className="w-4 h-4" /> Public domain
+                            </label>
+                            <input
+                                type="text"
+                                value={stackDomain}
+                                onChange={(e) => { setStackDomain(e.target.value); if (e.target.value) setStackNoDomain(false); }}
+                                disabled={stackNoDomain}
+                                className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
+                                placeholder="example.com"
+                            />
+                            <p className="text-xs text-blue-600 dark:text-blue-400">
+                                Services will be reachable at <span className="font-mono">photos.{stackDomain || 'yourdomain.com'}</span>, <span className="font-mono">vault.{stackDomain || 'yourdomain.com'}</span>, … with automatic Let&apos;s Encrypt SSL.
+                            </p>
+                            <label className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={stackNoDomain}
+                                    onChange={e => { setStackNoDomain(e.target.checked); if (e.target.checked) setStackDomain(''); }}
+                                    className="rounded"
+                                />
+                                I don&apos;t have a public domain — install LAN-only.
+                            </label>
+                        </div>
+
+                        {/* Storage summary */}
+                        {(detectedRaid || topDisks.length > 0) && (
+                            <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+                                        <HardDrive className="w-4 h-4" /> Storage
+                                    </span>
+                                    <button type="button" onClick={() => navigateTo('machine')} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">Edit</button>
+                                </div>
+                                {detectedRaid && !raidMounted && (
+                                    <p className="text-xs text-gray-600 dark:text-gray-300">
+                                        Will auto-mount <span className="font-mono">{detectedRaid.device}</span>{detectedRaid.size && <> ({detectedRaid.size})</>} to <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">/var/mnt/data</code>{detectedRaid.degraded && <> · <span className="text-amber-600 dark:text-amber-400">degraded — 1 disk missing</span></>}.
+                                    </p>
+                                )}
+                                {raidMounted && (
+                                    <p className="text-xs text-green-700 dark:text-green-300">
+                                        Data drive mounted at <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">/var/mnt/data</code>.
+                                    </p>
+                                )}
+                                {!detectedRaid && !raidMounted && topDisks.length > 0 && (
+                                    <p className="text-xs text-gray-600 dark:text-gray-300">
+                                        Using local storage — {topDisks.map(d => `${d.path}${d.size ? ` (${d.size})` : ''}`).join(', ')}.
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Stack summary */}
+                        <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+                                    <Layers className="w-4 h-4" /> Stack
+                                </span>
+                                <button type="button" onClick={() => navigateTo('stacks')} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">Edit</button>
+                            </div>
+                            <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                                {fullStack
+                                    ? <><span className="font-mono">{fullStack.name}</span> from <span className="font-mono">{fullStack.source}</span> — install all services with their defaults.</>
+                                    : 'Loading available stacks…'}
+                            </p>
+                        </div>
+
+                        {/* Existing data — explicit choice, no default */}
+                        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-300 dark:border-amber-700 space-y-2">
+                            <span className="flex items-center gap-2 text-sm font-medium text-amber-900 dark:text-amber-100">
+                                Existing service data
+                            </span>
+                            <div className="flex flex-col gap-1">
+                                <label className="flex items-start gap-2 cursor-pointer text-xs text-amber-900 dark:text-amber-100">
+                                    <input
+                                        type="radio"
+                                        name="data-policy"
+                                        checked={!cleanInstall}
+                                        onChange={() => { setCleanInstall(false); setCleanInstallConfirm(''); }}
+                                        className="mt-0.5"
+                                    />
+                                    <span><strong>Preserve data</strong> — keep anything already in <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. Failed installs of the same service will reuse old volumes.</span>
+                                </label>
+                                <label className="flex items-start gap-2 cursor-pointer text-xs text-amber-900 dark:text-amber-100">
+                                    <input
+                                        type="radio"
+                                        name="data-policy"
+                                        checked={cleanInstall}
+                                        onChange={() => setCleanInstall(true)}
+                                        className="mt-0.5"
+                                    />
+                                    <span><strong>Clean install</strong> — wipe <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code> first. Use for true fresh-installs or re-testing from scratch.</span>
+                                </label>
+                            </div>
+                            {cleanInstall && (
+                                <div className="pt-2">
+                                    <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
+                                        Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={cleanInstallConfirm}
+                                        onChange={(e) => setCleanInstallConfirm(e.target.value)}
+                                        className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
+                                        placeholder="RESET"
+                                        autoComplete="off"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Machine prep — host-side decisions (domain, drives, fresh
                 install) the operator should answer before picking the
@@ -2405,6 +2641,37 @@ export default function OnboardingWizard() {
             {/* Step specific primary actions */}
             {currentStep === 'network' && <Button onClick={handleSaveNetwork} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} {selection.gateway ? 'Save & Next' : 'Continue'}</Button>}
             {currentStep === 'email' && <Button onClick={handleSaveEmail} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save Email</Button>}
+
+            {/* Express install footer: Install kicks off the full
+                pipeline (full-stack defaults), Edit drops into the
+                explicit machine step for per-row control. */}
+            {currentStep === 'install-confirm' && (
+                <div className="flex gap-2 items-center">
+                    <button
+                        type="button"
+                        onClick={() => navigateTo('machine')}
+                        className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                    >
+                        Edit details
+                    </button>
+                    {!stackDomain.trim() && !stackNoDomain && (
+                        <span className="text-xs text-amber-700 dark:text-amber-300">Enter a domain or check LAN-only.</span>
+                    )}
+                    {cleanInstall && cleanInstallConfirm !== 'RESET' && (
+                        <span className="text-xs text-amber-700 dark:text-amber-300">Type RESET to confirm clean install.</span>
+                    )}
+                    <Button
+                        onClick={handleExpressInstall}
+                        disabled={
+                            (!stackDomain.trim() && !stackNoDomain)
+                            || (cleanInstall && cleanInstallConfirm !== 'RESET')
+                            || availableStacks.length === 0
+                        }
+                    >
+                        {cleanInstall ? 'Reset & Install' : 'Install Stack'}
+                    </Button>
+                </div>
+            )}
 
             {/* Machine step gates Continue on the same domain choice the
                 services sub-step used to gate, plus a RESET-typed
