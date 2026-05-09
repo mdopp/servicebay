@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.9.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.9.0...servicebay-v3.9.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* **install:** set SB_API_URL so post-deploy scripts can reach back ([#232](https://github.com/mdopp/servicebay/issues/232)) ([4af6261](https://github.com/mdopp/servicebay/commit/4af6261723f6588396626f2732ad8106facfe1c8))
+
 ## [3.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.8.1...servicebay-v3.9.0) (2026-05-09)
 
 
