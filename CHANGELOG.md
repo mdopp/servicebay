@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.9.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.9.1...servicebay-v3.9.2) (2026-05-09)
+
+
+### Bug Fixes
+
+* **agent:** apply multiplexing + exec_stream to v4 agent (the one shipped) ([#234](https://github.com/mdopp/servicebay/issues/234)) ([85f1975](https://github.com/mdopp/servicebay/commit/85f19752e39f00447c17105caa01288418154f15))
+
 ## [3.9.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.9.0...servicebay-v3.9.1) (2026-05-09)
 
 
