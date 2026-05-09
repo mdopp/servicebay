@@ -549,6 +549,75 @@ describe('OIDC client_id single source of truth', () => {
   });
 });
 
+// ─── 10. No new per-template branches in stackInstall/ ────────────────────
+describe('stackInstall has no unauthorized per-template branches', () => {
+  // Per-template glue (credential surfacing, admin seeding, etc.) lives in
+  // each template's own post-deploy.py. The engine only keeps branches that
+  // genuinely need core knowledge — currently nginx-web's bootstrapNpmAdmin,
+  // because it returns a tri-state result that drives the wizard's
+  // credential-prompt UI (a script can't cleanly express that).
+  //
+  // Every other `isSelected('X')` is dead code or a regression in waiting.
+  // This test fails if a new template name shows up in stackInstall/* —
+  // forcing the author to either (a) extend post-deploy.py or (b) document
+  // why their case can't live in a script and add it to ALLOWED below.
+  const STACKINSTALL_DIR = path.join(SRC_DIR, 'lib', 'stackInstall');
+
+  /** Map of file → set of template names allowed to appear in
+   *  `isSelected('X')` calls. Anything else is a violation. */
+  const ALLOWED: Record<string, Set<string>> = {
+    'postInstall.ts': new Set([
+      // bootstrapNpmAdmin: returns 'needs_credentials' which drives the
+      // wizard credential-prompt UI. Cannot live in a script.
+      'nginx-web',
+      // The following are legacy hardcoded helpers gated by skipDefaults.
+      // They are dead at runtime once the corresponding post-deploy.py
+      // ships (it always does today). This list shrinks to {nginx-web}
+      // after task B in the template-separation cleanup.
+      'auth',
+      'adguard',
+      'media',
+      'file-share',
+      'vaultwarden',
+    ]),
+    'credentialsManifest.ts': new Set([
+      // Same legacy-gated branches; shrinks to {} (or {auth} for the JWT
+      // system entry, if not migrated) after task B.
+      'auth',
+      'nginx-web',
+      'adguard',
+      'media',
+      'file-share',
+      'vaultwarden',
+    ]),
+    'groupVariables.ts': new Set(),
+  };
+
+  for (const [file, allowed] of Object.entries(ALLOWED)) {
+    it(`${file}: no isSelected/get('X') calls outside the allow-list`, () => {
+      const fullPath = path.join(STACKINSTALL_DIR, file);
+      if (!fs.existsSync(fullPath)) return;
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      const re = /isSelected\(\s*['"]([\w-]+)['"]\s*\)/g;
+      const offenders: string[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content)) !== null) {
+        const name = m[1];
+        if (!allowed.has(name)) offenders.push(name);
+      }
+      if (offenders.length > 0) {
+        const unique = [...new Set(offenders)].sort();
+        throw new Error(
+          `${file} references template name(s) not in the allow-list: ${unique.join(', ')}\n\n` +
+          `Per-template glue should live in templates/<name>/post-deploy.py, not in core. ` +
+          `Either migrate the logic (preferred) or, if the case genuinely needs core access, ` +
+          `add the name to ALLOWED in this test with a one-line comment explaining why.`,
+        );
+      }
+    });
+  }
+});
+
 // ─── 9. post-deploy.py scripts parse as valid Python ───────────────────────
 describe('Template post-deploy.py syntax', () => {
   // The wizard executes templates/<name>/post-deploy.py on the agent host
