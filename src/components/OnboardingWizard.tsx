@@ -182,6 +182,18 @@ export default function OnboardingWizard() {
 
   // RAID detection
   const [raidArrays, setRaidArrays] = useState<{ device: string; label: string; fstype: string; size: string; mountpoint: string | null; degraded: boolean }[]>([]);
+  // Full block-device list from /api/system/storage. Surfaced as a
+  // "Detected drives" panel so the operator can confirm every expected
+  // disk is visible before deciding what to mount. Tree-shaped (top-level
+  // disks with children for partitions / RAID members).
+  type DetectedDrive = {
+    name: string; path: string; type: string; size: string;
+    model?: string; vendor?: string; serial?: string; rota?: boolean;
+    fstype?: string; label?: string; mountpoint?: string | null;
+    fsAvail?: string; fsUsedPct?: string;
+    children?: DetectedDrive[];
+  };
+  const [detectedDrives, setDetectedDrives] = useState<DetectedDrive[]>([]);
   const [raidMounting, setRaidMounting] = useState(false);
   const [raidMounted, setRaidMounted] = useState(false);
 
@@ -579,9 +591,12 @@ export default function OnboardingWizard() {
   useEffect(() => {
     if (!stackSelectedNode || raidMounted) return;
     fetch(`/api/system/storage?node=${stackSelectedNode}`)
-      .then(r => r.ok ? r.json() : { raids: [] })
-      .then(data => setRaidArrays((data.raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint)))
-      .catch(() => setRaidArrays([]));
+      .then(r => r.ok ? r.json() : { raids: [], drives: [] })
+      .then(data => {
+        setRaidArrays((data.raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint));
+        setDetectedDrives(data.drives || []);
+      })
+      .catch(() => { setRaidArrays([]); setDetectedDrives([]); });
   }, [stackSelectedNode, raidMounted]);
 
   // -- Stack Handlers --
@@ -1631,6 +1646,47 @@ export default function OnboardingWizard() {
                             {/* Domain prompt is now at the TOP of this step
                                 so the operator answers it before scrolling
                                 through services. See the block above. */}
+
+                            {/* Detected drives — shown so the operator
+                                can confirm the expected disks are
+                                visible. Filters to top-level disks (sda,
+                                nvme0n1, ...) and RAID arrays; partitions
+                                appear under their parent. */}
+                            {detectedDrives.filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md').length > 0 && (
+                                <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
+                                    <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
+                                        <HardDrive className="w-4 h-4" /> Detected Drives
+                                    </label>
+                                    <div className="space-y-1">
+                                        {detectedDrives
+                                            .filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md')
+                                            .map(d => (
+                                                <div key={d.path} className="text-xs text-gray-600 dark:text-gray-300 font-mono">
+                                                    <span className="text-gray-900 dark:text-gray-100">{d.path}</span>
+                                                    {d.size && <> &middot; {d.size}</>}
+                                                    {d.model && <> &middot; <span className="text-gray-500">{d.model.trim()}</span></>}
+                                                    {typeof d.rota === 'boolean' && <> &middot; <span className="text-gray-500">{d.rota ? 'HDD' : 'SSD/NVMe'}</span></>}
+                                                    {d.mountpoint && <> &middot; mounted: <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">{d.mountpoint}</code></>}
+                                                    {d.fsAvail && <> &middot; free: {d.fsAvail}{d.fsUsedPct ? ` (${d.fsUsedPct} used)` : ''}</>}
+                                                    {!d.mountpoint && d.fstype && <> &middot; {d.fstype} (unmounted)</>}
+                                                    {d.children && d.children.length > 0 && (
+                                                        <div className="ml-4 text-[11px] text-gray-500 dark:text-gray-400">
+                                                            {d.children.map(c => (
+                                                                <div key={c.path}>
+                                                                    └ {c.path}
+                                                                    {c.size && <> &middot; {c.size}</>}
+                                                                    {c.fstype && <> &middot; {c.fstype}</>}
+                                                                    {c.mountpoint && <> &middot; <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">{c.mountpoint}</code></>}
+                                                                    {c.fsAvail && <> &middot; free: {c.fsAvail}</>}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* RAID detection prompt */}
                             {raidArrays.length > 0 && !raidMounted && (
