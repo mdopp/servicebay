@@ -607,8 +607,22 @@ export class ServiceManager {
         // `source` exports each line to the python child. The ServiceBay
         // node identity is added so scripts can self-identify in multi-node
         // installs.
+        //
+        // SB_API_URL is critical: scripts call back into ServiceBay to
+        // probe LLDAP, persist credentials, etc. Without it the script
+        // defaults to http://localhost:3000 which is *not* ServiceBay
+        // (the container listens on PORT, default 5888 from the install
+        // script's Quadlet). On the FCoS host where the script runs,
+        // ServiceBay is reachable as http://localhost:${PORT} thanks to
+        // Network=host. This was the silent reason auth's post-deploy
+        // hit its 10-minute LLDAP-wait deadline on every install — the
+        // probe couldn't reach back, even though LLDAP itself came up
+        // in <1 s.
+        const sbPort = process.env.PORT || '5888';
+        const sbApiUrl = `http://localhost:${sbPort}`;
         const envLines = [
             `SB_NODE=${nodeName}`,
+            `SB_API_URL=${sbApiUrl}`,
             ...Object.entries(env).map(([k, v]) => {
                 // Only export string-shaped values; skip empty entries the
                 // wizard sometimes carries for variables the user hasn't
