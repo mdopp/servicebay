@@ -31,7 +31,19 @@ import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
 // Steps definition
-type WizardStep = 'welcome' | 'network' | 'stacks' | 'email' | 'finish';
+// Wizard flow:
+//   welcome  → pick which features to configure
+//   network  → gateway + SSH (if selected on welcome)
+//   email    → SMTP (if selected on welcome)
+//   machine  → host-side prep before installing services: domain choice,
+//              drive detection / RAID mount, optional clean-install reset.
+//              Only shown when the operator wants to install stacks.
+//   stacks   → stack picker + per-service selection + per-service config
+//   finish   → summary
+// machine + stacks are split so the operator answers host-level questions
+// (do we have a domain? is the data drive mounted? wipe first?) before
+// scrolling through the long service list.
+type WizardStep = 'welcome' | 'network' | 'email' | 'machine' | 'stacks' | 'finish';
 
 interface ConfigFile {
   filename: string;
@@ -309,9 +321,11 @@ export default function OnboardingWizard() {
           );
         }
       } else if (s.stackSetupPending) {
-        // Setup was completed by installer, but stacks haven't been chosen yet
+        // Setup was completed by installer, but stacks haven't been chosen
+        // yet. Land on the machine step (domain / drives / clean-install)
+        // before showing the stack picker — same flow new users get.
         setStacksOnlyMode(true);
-        setCurrentStep('stacks');
+        setCurrentStep('machine');
         setIsOpen(true);
       } else {
         // No setup needed — clear any stale draft.
@@ -426,7 +440,11 @@ export default function OnboardingWizard() {
   }, []);
 
   useEffect(() => {
-    if (currentStep === 'stacks' && availableStacks.length === 0 && !stacksLoading) {
+    // Load stacks list eagerly on the machine step too — we need a node
+    // selected before /api/system/storage knows which agent to query for
+    // detected drives. loadStacks() also seeds stackSelectedNode for
+    // single-node setups.
+    if ((currentStep === 'stacks' || currentStep === 'machine') && availableStacks.length === 0 && !stacksLoading) {
       loadStacks();
     }
   }, [currentStep, availableStacks.length, stacksLoading, loadStacks]);
@@ -445,13 +463,16 @@ export default function OnboardingWizard() {
   };
 
   const getNextStep = (current: WizardStep): WizardStep => {
-      const order: WizardStep[] = ['welcome', 'network', 'stacks', 'email', 'finish'];
+      const order: WizardStep[] = ['welcome', 'network', 'email', 'machine', 'stacks', 'finish'];
 
       // network step covers both Gateway and Remote Access (SSH key) — show
       // it if either was selected on the welcome screen.
+      // machine step is host-side prep for installing services — only
+      // makes sense when the operator wants to install stacks.
       const activeSteps = order.filter(step => {
          if (step === 'welcome' || step === 'finish') return true;
          if (step === 'network') return selection.gateway || selection.ssh;
+         if (step === 'machine') return selection.stacks;
          return selection[step as keyof typeof selection];
       });
 
@@ -1207,10 +1228,11 @@ export default function OnboardingWizard() {
              )}
            </h2>
            {!stacksOnlyMode && (() => {
-             const order: WizardStep[] = ['welcome', 'network', 'stacks', 'email', 'finish'];
+             const order: WizardStep[] = ['welcome', 'network', 'email', 'machine', 'stacks', 'finish'];
              const activeSteps = order.filter(step => {
                if (step === 'welcome' || step === 'finish') return true;
                if (step === 'network') return selection.gateway || selection.ssh;
+               if (step === 'machine') return selection.stacks;
                return selection[step as keyof typeof selection];
              });
              const currentIndex = activeSteps.indexOf(currentStep);
@@ -1408,6 +1430,172 @@ export default function OnboardingWizard() {
                 </div>
             )}
 
+            {/* Machine prep — host-side decisions (domain, drives, fresh
+                install) the operator should answer before picking the
+                stack. Pulled out of the 'services' / 'configure' install
+                sub-steps so the long service list isn't competing for
+                attention. */}
+            {currentStep === 'machine' && (
+                <div className="space-y-4">
+                    <h3 className="font-semibold text-lg flex items-center gap-2"><HardDrive className="w-5 h-5 text-indigo-500"/> Machine Setup</h3>
+                    <p className="text-sm text-gray-500">
+                        Before installing services, decide how this machine should be reachable, whether to wipe any existing service data, and confirm the storage we plan to use.
+                    </p>
+
+                    {/* Domain */}
+                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-2">
+                        <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200">
+                            <Globe className="w-4 h-4" /> Public Domain
+                        </label>
+                        <p className="text-xs text-blue-600 dark:text-blue-400">
+                            Your services will be reachable as subdomains (photos.{stackDomain || 'yourdomain.com'}, vault.{stackDomain || 'yourdomain.com'}, …) with automatic Let&apos;s Encrypt SSL.
+                        </p>
+                        <input
+                            type="text"
+                            value={stackDomain}
+                            onChange={(e) => { setStackDomain(e.target.value); if (e.target.value) setStackNoDomain(false); }}
+                            disabled={stackNoDomain}
+                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
+                            placeholder="example.com"
+                        />
+                        <label className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={stackNoDomain}
+                                onChange={e => { setStackNoDomain(e.target.checked); if (e.target.checked) setStackDomain(''); }}
+                                className="rounded"
+                            />
+                            I don&apos;t have a public domain — install services in LAN-only mode (no SSL, no subdomains; access by IP:port).
+                        </label>
+                    </div>
+
+                    {/* Detected drives */}
+                    {detectedDrives.filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md').length > 0 && (
+                        <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
+                                <HardDrive className="w-4 h-4" /> Detected Drives
+                            </label>
+                            <div className="space-y-1">
+                                {detectedDrives
+                                    .filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md')
+                                    .map(d => (
+                                        <div key={d.path} className="text-xs text-gray-600 dark:text-gray-300 font-mono">
+                                            <span className="text-gray-900 dark:text-gray-100">{d.path}</span>
+                                            {d.size && <> &middot; {d.size}</>}
+                                            {d.model && <> &middot; <span className="text-gray-500">{d.model.trim()}</span></>}
+                                            {typeof d.rota === 'boolean' && <> &middot; <span className="text-gray-500">{d.rota ? 'HDD' : 'SSD/NVMe'}</span></>}
+                                            {d.mountpoint && <> &middot; mounted: <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">{d.mountpoint}</code></>}
+                                            {d.fsAvail && <> &middot; free: {d.fsAvail}{d.fsUsedPct ? ` (${d.fsUsedPct} used)` : ''}</>}
+                                            {!d.mountpoint && d.fstype && <> &middot; {d.fstype} (unmounted)</>}
+                                            {d.children && d.children.length > 0 && (
+                                                <div className="ml-4 text-[11px] text-gray-500 dark:text-gray-400">
+                                                    {d.children.map(c => (
+                                                        <div key={c.path}>
+                                                            └ {c.path}
+                                                            {c.size && <> &middot; {c.size}</>}
+                                                            {c.fstype && <> &middot; {c.fstype}</>}
+                                                            {c.mountpoint && <> &middot; <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">{c.mountpoint}</code></>}
+                                                            {c.fsAvail && <> &middot; free: {c.fsAvail}</>}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* RAID / data drive mount */}
+                    {raidArrays.length > 0 && !raidMounted && (
+                        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                            <label className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">
+                                <HardDrive className="w-4 h-4" /> Unmounted RAID Detected
+                            </label>
+                            {raidArrays.map(raid => (
+                                <div key={raid.device} className="text-xs text-amber-700 dark:text-amber-300 mb-2">
+                                    <span className="font-mono">{raid.device}</span>
+                                    {raid.label && <> &middot; label: <strong>{raid.label}</strong></>}
+                                    {raid.size && <> &middot; {raid.size}</>}
+                                    {raid.degraded && <span className="text-amber-600 dark:text-amber-400"> (degraded — 1 disk missing, still usable)</span>}
+                                </div>
+                            ))}
+                            <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">
+                                This looks like your data drive. Mount it to <code className="bg-amber-100 dark:bg-amber-800/50 px-1 rounded">/var/mnt/data</code> so services can store data on it?
+                            </p>
+                            <button
+                                type="button"
+                                disabled={raidMounting}
+                                onClick={async () => {
+                                    setRaidMounting(true);
+                                    try {
+                                        const raid = raidArrays[0];
+                                        const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                                device: raid.device,
+                                                mountpoint: '/var/mnt/data',
+                                                label: raid.label,
+                                                fstype: raid.fstype,
+                                            }),
+                                        });
+                                        if (res.ok) {
+                                            setRaidMounted(true);
+                                            setRaidArrays([]);
+                                        }
+                                    } catch { /* ignore */ }
+                                    setRaidMounting(false);
+                                }}
+                                className="px-3 py-1.5 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                            >
+                                {raidMounting ? <><Loader2 className="w-3 h-3 animate-spin inline mr-1" /> Mounting...</> : 'Mount & persist across reboots'}
+                            </button>
+                        </div>
+                    )}
+                    {raidMounted && (
+                        <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                            <p className="text-sm text-green-800 dark:text-green-200 flex items-center gap-2">
+                                <CheckCircle className="w-4 h-4" /> RAID mounted at <code className="bg-green-100 dark:bg-green-800/50 px-1 rounded">/var/mnt/data</code> and will persist across reboots.
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Clean install / reset */}
+                    <div className="border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={cleanInstall}
+                                onChange={(e) => { setCleanInstall(e.target.checked); if (!e.target.checked) setCleanInstallConfirm(''); }}
+                                className="mt-0.5"
+                            />
+                            <div className="text-sm text-amber-900 dark:text-amber-100">
+                                <strong>Clean install</strong> — wipe existing service data first.
+                                <p className="text-xs text-amber-800 dark:text-amber-200/80 mt-1">
+                                    Stops every stack service, deletes their Quadlet definitions and the contents of <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. ServiceBay itself is not affected. Use for true fresh-installs or when re-testing from scratch.
+                                </p>
+                            </div>
+                        </label>
+                        {cleanInstall && (
+                            <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
+                                <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
+                                    Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
+                                </label>
+                                <input
+                                    type="text"
+                                    value={cleanInstallConfirm}
+                                    onChange={(e) => setCleanInstallConfirm(e.target.value)}
+                                    className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
+                                    placeholder="RESET"
+                                    autoComplete="off"
+                                />
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {currentStep === 'stacks' && (
                 <div className="space-y-4">
                     <h3 className="font-semibold text-lg flex items-center gap-2"><Layers className="w-5 h-5 text-indigo-500"/> Install a Stack</h3>
@@ -1450,37 +1638,18 @@ export default function OnboardingWizard() {
 
                     {stackInstallStep === 'services' && (
                         <>
-                            {/* Domain prompt — moved to the TOP of the services
-                                step so the operator answers it before scrolling
-                                through the (potentially long) service list. The
-                                Continue button below is gated until the domain
-                                is set OR the "no domain" checkbox is ticked,
-                                so finishing without a deliberate choice isn't
-                                possible. */}
-                            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-2">
-                                <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200">
-                                    <Globe className="w-4 h-4" /> Public Domain
-                                </label>
-                                <p className="text-xs text-blue-600 dark:text-blue-400">
-                                    Your services will be reachable as subdomains (photos.{stackDomain || 'yourdomain.com'}, vault.{stackDomain || 'yourdomain.com'}, …) with automatic Let&apos;s Encrypt SSL.
-                                </p>
-                                <input
-                                    type="text"
-                                    value={stackDomain}
-                                    onChange={(e) => { setStackDomain(e.target.value); if (e.target.value) setStackNoDomain(false); }}
-                                    disabled={stackNoDomain}
-                                    className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
-                                    placeholder="example.com"
-                                />
-                                <label className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={stackNoDomain}
-                                        onChange={e => { setStackNoDomain(e.target.checked); if (e.target.checked) setStackDomain(''); }}
-                                        className="rounded"
-                                    />
-                                    I don&apos;t have a public domain — install services in LAN-only mode (no SSL, no subdomains; access by IP:port).
-                                </label>
+                            {/* Domain / drives / clean-install moved to the
+                                Machine step (currentStep === 'machine'). Show
+                                a small reminder of the domain choice the
+                                operator made there so this screen stays
+                                self-explanatory. */}
+                            <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-xs text-blue-800 dark:text-blue-200 flex items-center gap-2">
+                                <Globe className="w-3 h-3" />
+                                {stackNoDomain
+                                    ? 'LAN-only install (no public domain — access services by IP:port).'
+                                    : stackDomain
+                                        ? <>Public domain: <span className="font-mono">{stackDomain}</span></>
+                                        : 'No domain set — go back to Machine to choose.'}
                             </div>
 
                             <p className="text-sm text-gray-500 mb-2 mt-3">Select which services to install from <span className="font-medium">{selectedStack?.name}</span>:</p>
@@ -1647,101 +1816,8 @@ export default function OnboardingWizard() {
                                 so the operator answers it before scrolling
                                 through services. See the block above. */}
 
-                            {/* Detected drives — shown so the operator
-                                can confirm the expected disks are
-                                visible. Filters to top-level disks (sda,
-                                nvme0n1, ...) and RAID arrays; partitions
-                                appear under their parent. */}
-                            {detectedDrives.filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md').length > 0 && (
-                                <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
-                                    <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-                                        <HardDrive className="w-4 h-4" /> Detected Drives
-                                    </label>
-                                    <div className="space-y-1">
-                                        {detectedDrives
-                                            .filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md')
-                                            .map(d => (
-                                                <div key={d.path} className="text-xs text-gray-600 dark:text-gray-300 font-mono">
-                                                    <span className="text-gray-900 dark:text-gray-100">{d.path}</span>
-                                                    {d.size && <> &middot; {d.size}</>}
-                                                    {d.model && <> &middot; <span className="text-gray-500">{d.model.trim()}</span></>}
-                                                    {typeof d.rota === 'boolean' && <> &middot; <span className="text-gray-500">{d.rota ? 'HDD' : 'SSD/NVMe'}</span></>}
-                                                    {d.mountpoint && <> &middot; mounted: <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">{d.mountpoint}</code></>}
-                                                    {d.fsAvail && <> &middot; free: {d.fsAvail}{d.fsUsedPct ? ` (${d.fsUsedPct} used)` : ''}</>}
-                                                    {!d.mountpoint && d.fstype && <> &middot; {d.fstype} (unmounted)</>}
-                                                    {d.children && d.children.length > 0 && (
-                                                        <div className="ml-4 text-[11px] text-gray-500 dark:text-gray-400">
-                                                            {d.children.map(c => (
-                                                                <div key={c.path}>
-                                                                    └ {c.path}
-                                                                    {c.size && <> &middot; {c.size}</>}
-                                                                    {c.fstype && <> &middot; {c.fstype}</>}
-                                                                    {c.mountpoint && <> &middot; <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">{c.mountpoint}</code></>}
-                                                                    {c.fsAvail && <> &middot; free: {c.fsAvail}</>}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* RAID detection prompt */}
-                            {raidArrays.length > 0 && !raidMounted && (
-                                <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                                    <label className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">
-                                        <HardDrive className="w-4 h-4" /> Unmounted RAID Detected
-                                    </label>
-                                    {raidArrays.map(raid => (
-                                        <div key={raid.device} className="text-xs text-amber-700 dark:text-amber-300 mb-2">
-                                            <span className="font-mono">{raid.device}</span>
-                                            {raid.label && <> &middot; label: <strong>{raid.label}</strong></>}
-                                            {raid.size && <> &middot; {raid.size}</>}
-                                            {raid.degraded && <span className="text-amber-600 dark:text-amber-400"> (degraded — 1 disk missing, still usable)</span>}
-                                        </div>
-                                    ))}
-                                    <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">
-                                        This looks like your data drive. Mount it to <code className="bg-amber-100 dark:bg-amber-800/50 px-1 rounded">/var/mnt/data</code> so services can store data on it?
-                                    </p>
-                                    <button
-                                        type="button"
-                                        disabled={raidMounting}
-                                        onClick={async () => {
-                                            setRaidMounting(true);
-                                            try {
-                                                const raid = raidArrays[0];
-                                                const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`, {
-                                                    method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({
-                                                        device: raid.device,
-                                                        mountpoint: '/var/mnt/data',
-                                                        label: raid.label,
-                                                        fstype: raid.fstype,
-                                                    }),
-                                                });
-                                                if (res.ok) {
-                                                    setRaidMounted(true);
-                                                    setRaidArrays([]);
-                                                }
-                                            } catch { /* ignore */ }
-                                            setRaidMounting(false);
-                                        }}
-                                        className="px-3 py-1.5 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                                    >
-                                        {raidMounting ? <><Loader2 className="w-3 h-3 animate-spin inline mr-1" /> Mounting...</> : 'Mount & persist across reboots'}
-                                    </button>
-                                </div>
-                            )}
-                            {raidMounted && (
-                                <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                                    <p className="text-sm text-green-800 dark:text-green-200 flex items-center gap-2">
-                                        <CheckCircle className="w-4 h-4" /> RAID mounted at <code className="bg-green-100 dark:bg-green-800/50 px-1 rounded">/var/mnt/data</code> and will persist across reboots.
-                                    </p>
-                                </div>
-                            )}
+                            {/* Detected drives + RAID prompt + clean-install
+                                toggle have all moved to the Machine step. */}
                         </>
                     )}
 
@@ -1761,37 +1837,15 @@ export default function OnboardingWizard() {
                                 </div>
                             )}
 
-                            <div className="mb-4 border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3">
-                                <label className="flex items-start gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={cleanInstall}
-                                        onChange={(e) => { setCleanInstall(e.target.checked); if (!e.target.checked) setCleanInstallConfirm(''); }}
-                                        className="mt-0.5"
-                                    />
-                                    <div className="text-sm text-amber-900 dark:text-amber-100">
-                                        <strong>Clean install</strong> — wipe existing service data first.
-                                        <p className="text-xs text-amber-800 dark:text-amber-200/80 mt-1">
-                                            Stops every stack service, deletes their Quadlet definitions and the contents of <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. ServiceBay itself is not affected. Use for true fresh-installs or when re-testing from scratch.
-                                        </p>
-                                    </div>
-                                </label>
-                                {cleanInstall && (
-                                    <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
-                                        <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
-                                            Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={cleanInstallConfirm}
-                                            onChange={(e) => setCleanInstallConfirm(e.target.value)}
-                                            className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
-                                            placeholder="RESET"
-                                            autoComplete="off"
-                                        />
-                                    </div>
-                                )}
-                            </div>
+                            {/* Clean-install toggle moved to the Machine
+                                step. Show a small reminder if RESET is
+                                staged so the operator knows what's about
+                                to happen on Install. */}
+                            {cleanInstall && cleanInstallConfirm === 'RESET' && (
+                                <div className="mb-4 p-2 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200">
+                                    🧹 Clean install staged: existing service data will be wiped before the new services are deployed.
+                                </div>
+                            )}
                             {stacksLoading ? (
                                 <div className="flex items-center justify-center py-4 text-gray-400">
                                     <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading variables...
@@ -2352,21 +2406,40 @@ export default function OnboardingWizard() {
             {currentStep === 'network' && <Button onClick={handleSaveNetwork} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} {selection.gateway ? 'Save & Next' : 'Continue'}</Button>}
             {currentStep === 'email' && <Button onClick={handleSaveEmail} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save Email</Button>}
 
+            {/* Machine step gates Continue on the same domain choice the
+                services sub-step used to gate, plus a RESET-typed
+                confirmation if clean install is checked. */}
+            {currentStep === 'machine' && (
+                <div className="flex gap-2 items-center">
+                    {!stackDomain.trim() && !stackNoDomain && (
+                        <span className="text-xs text-amber-700 dark:text-amber-300">Set a public domain (or check the LAN-only box) to continue.</span>
+                    )}
+                    {cleanInstall && cleanInstallConfirm !== 'RESET' && (
+                        <span className="text-xs text-amber-700 dark:text-amber-300">Type RESET to confirm the clean install.</span>
+                    )}
+                    <Button
+                        onClick={handleNext}
+                        disabled={
+                            (!stackDomain.trim() && !stackNoDomain)
+                            || (cleanInstall && cleanInstallConfirm !== 'RESET')
+                        }
+                    >
+                        Continue <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                </div>
+            )}
+
             {currentStep === 'stacks' && stackInstallStep === 'select' && (
                 <Button onClick={handleStackSkip}>Skip <ArrowRight className="w-4 h-4 ml-2" /></Button>
             )}
             {currentStep === 'stacks' && stackInstallStep === 'services' && (
                 <div className="flex gap-2 items-center">
                     <button onClick={() => { setStackInstallStep('select'); setSelectedStack(null); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
-                    {!stackDomain.trim() && !stackNoDomain && (
-                        <span className="text-xs text-amber-700 dark:text-amber-300">Set a public domain (or check the LAN-only box) to continue.</span>
-                    )}
                     <Button
                         onClick={handleStackFetchVars}
                         disabled={
                             stackItems.filter(i => i.checked).length === 0
                             || stacksLoading
-                            || (!stackDomain.trim() && !stackNoDomain)
                         }
                     >
                         {stacksLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Continue
@@ -2378,7 +2451,7 @@ export default function OnboardingWizard() {
                     <button onClick={() => setStackInstallStep('services')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
                     <Button
                         onClick={handleStackInstall}
-                        disabled={(!stackSelectedNode && stackNodes.length > 1) || (cleanInstall && cleanInstallConfirm !== 'RESET')}
+                        disabled={(!stackSelectedNode && stackNodes.length > 1)}
                     >
                         {cleanInstall ? 'Reset & Install' : 'Install Stack'}
                     </Button>
