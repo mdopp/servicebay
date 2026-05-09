@@ -44,7 +44,11 @@ def log(msg: str) -> None:
 
 def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tuple[int, dict[str, object] | None]:
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    headers = {"Content-Type": "application/json"}
+    token = os.environ.get("SB_API_TOKEN", "")
+    if token:
+        headers["X-SB-Internal-Token"] = token
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = resp.read().decode("utf-8")

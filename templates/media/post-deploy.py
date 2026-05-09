@@ -57,10 +57,14 @@ def log(msg: str) -> None:
 def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tuple[int, dict[str, object] | None]:
     """POST JSON, return (status, parsed-body-or-None)."""
     body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    token = os.environ.get("SB_API_TOKEN", "")
+    if token:
+        headers["X-SB-Internal-Token"] = token
     req = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:

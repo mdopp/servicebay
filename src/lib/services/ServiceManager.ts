@@ -618,11 +618,21 @@ export class ServiceManager {
         // hit its 10-minute LLDAP-wait deadline on every install — the
         // probe couldn't reach back, even though LLDAP itself came up
         // in <1 s.
+        //
+        // SB_API_TOKEN authenticates server-to-server calls. The
+        // scripts attach it as `X-SB-Internal-Token` so proxy.ts can
+        // bypass the browser-flow CSRF + session checks (urllib has
+        // no Origin header, so the same-origin guard rejected every
+        // POST with 403 — even though the call was reaching the
+        // ServiceBay container as intended).
         const sbPort = process.env.PORT || '5888';
         const sbApiUrl = `http://localhost:${sbPort}`;
+        const { getInternalApiToken } = await import('@/lib/auth/internalToken');
+        const sbApiToken = getInternalApiToken();
         const envLines = [
             `SB_NODE=${nodeName}`,
             `SB_API_URL=${sbApiUrl}`,
+            `SB_API_TOKEN=${sbApiToken}`,
             ...Object.entries(env).map(([k, v]) => {
                 // Only export string-shaped values; skip empty entries the
                 // wizard sometimes carries for variables the user hasn't
