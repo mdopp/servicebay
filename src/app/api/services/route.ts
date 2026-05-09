@@ -298,6 +298,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
+  // Validate the Pod manifest before the agent write. Catches typoed
+  // apiVersion / missing spec.containers / cross-volume mismatches before
+  // they produce a permanently-failed unit nobody can debug from the UI.
+  const { validatePodManifest } = await import('@/lib/services/podSchema');
+  const validation = validatePodManifest(yamlContent);
+  if (!validation.ok) {
+    return NextResponse.json(
+      {
+        error: 'invalid Pod manifest',
+        path: validation.error?.path,
+        detail: validation.error?.message,
+      },
+      { status: 400 },
+    );
+  }
+
   // Streaming mode: return progress events as they happen
   if (searchParams.get('stream') === '1') {
     const encoder = new TextEncoder();
