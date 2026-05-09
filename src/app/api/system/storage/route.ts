@@ -13,7 +13,82 @@ interface RaidArray {
   degraded: boolean;
 }
 
-/** Detect RAID arrays and their mount status on a node. */
+interface DetectedDrive {
+  name: string;        // e.g. "sda"
+  path: string;        // e.g. "/dev/sda"
+  type: string;        // disk / part / raid1 / lvm / ...
+  size: string;        // human-readable, e.g. "3.6T"
+  model?: string;      // e.g. "WDC WD40EFRX-68N32N0"
+  vendor?: string;     // e.g. "ATA"
+  serial?: string;     // disk serial; useful for distinguishing two same-model drives
+  rota?: boolean;      // true = HDD, false = SSD/NVMe
+  fstype?: string;     // e.g. "xfs", "linux_raid_member"
+  label?: string;
+  mountpoint?: string | null;
+  fsAvail?: string;    // human-readable free space when mounted
+  fsUsedPct?: string;  // e.g. "23%"
+  children?: DetectedDrive[];
+}
+
+interface RawLsblkNode {
+  name?: string;
+  path?: string;
+  type?: string;
+  size?: string;
+  model?: string;
+  vendor?: string;
+  serial?: string;
+  rota?: boolean;
+  fstype?: string;
+  label?: string;
+  mountpoint?: string | null;
+  fsavail?: string;
+  'fsuse%'?: string;
+  children?: RawLsblkNode[];
+}
+
+const trim = (v: unknown): string | undefined => {
+  if (typeof v !== 'string') return undefined;
+  const s = v.trim();
+  return s.length > 0 ? s : undefined;
+};
+
+const mapNode = (raw: RawLsblkNode): DetectedDrive => {
+  const name = (raw.name ?? '').toString();
+  const path = raw.path ?? (name.startsWith('/') ? name : `/dev/${name}`);
+  const node: DetectedDrive = {
+    name,
+    path,
+    type: (raw.type ?? '').toString(),
+    size: (raw.size ?? '').toString(),
+    model: trim(raw.model),
+    vendor: trim(raw.vendor),
+    serial: trim(raw.serial),
+    rota: typeof raw.rota === 'boolean' ? raw.rota : undefined,
+    fstype: trim(raw.fstype),
+    label: trim(raw.label),
+    mountpoint: raw.mountpoint ?? null,
+    fsAvail: trim(raw.fsavail),
+    fsUsedPct: trim(raw['fsuse%']),
+  };
+  if (Array.isArray(raw.children) && raw.children.length > 0) {
+    node.children = raw.children.map(mapNode);
+  }
+  return node;
+};
+
+/** Detect RAID arrays and physical drives on a node.
+ *
+ * Returns:
+ *   - `raids`: backwards-compatible RAID-only summary the wizard already
+ *     uses for the "mount your data drive" prompt.
+ *   - `drives`: every top-level block device with model/serial/size/free
+ *     space, so the wizard can show "what hardware did we see" before the
+ *     operator commits to an install. This was added because two recent
+ *     installs on the same hardware behaved differently and there was no
+ *     way to tell from the install log whether all expected disks were
+ *     even visible.
+ */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node');
@@ -25,9 +100,12 @@ export async function GET(request: Request) {
   try {
     const agent = await agentManager.ensureAgent(nodeName);
 
-    // Get block device info as JSON
+    // Pull a fuller column set than before. NB: not every util-linux
+    // version supports every column. The `2>/dev/null` + JSON fallback
+    // keeps older agents from crashing the call; if a column is missing
+    // it just shows up as undefined for that drive.
     const lsblk = await agent.sendCommand('exec', {
-      command: `lsblk -J -o NAME,TYPE,FSTYPE,LABEL,SIZE,MOUNTPOINT 2>/dev/null || echo '{"blockdevices":[]}'`
+      command: `lsblk -J -b -o NAME,PATH,TYPE,SIZE,MODEL,VENDOR,SERIAL,ROTA,FSTYPE,LABEL,MOUNTPOINT,FSAVAIL,FSUSE% 2>/dev/null || lsblk -J -o NAME,TYPE,FSTYPE,LABEL,SIZE,MOUNTPOINT 2>/dev/null || echo '{"blockdevices":[]}'`
     });
 
     // Get mdstat for degraded detection
@@ -37,6 +115,39 @@ export async function GET(request: Request) {
 
     const blockDevices = JSON.parse(lsblk.stdout || '{"blockdevices":[]}');
     const mdstatText = mdstat.stdout || '';
+
+    // Re-render byte sizes as human-readable so the UI doesn't have to
+    // carry a formatter. lsblk -b returns bytes; without -b lsblk
+    // already returns human-readable. Detect by sniffing the first leaf.
+    const looksLikeBytes = (() => {
+      const probe = (nodes: RawLsblkNode[]): boolean => {
+        for (const n of nodes) {
+          if (typeof n.size === 'string' && /^\d+$/.test(n.size)) return true;
+          if (n.children && probe(n.children)) return true;
+        }
+        return false;
+      };
+      return probe(blockDevices.blockdevices ?? []);
+    })();
+    const fmtBytes = (b: number): string => {
+      const units = ['B', 'K', 'M', 'G', 'T', 'P'];
+      let v = b;
+      let i = 0;
+      while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+      return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)}${units[i]}`;
+    };
+    const humanizeSizes = (node: DetectedDrive) => {
+      if (looksLikeBytes && node.size && /^\d+$/.test(node.size)) {
+        node.size = fmtBytes(parseInt(node.size, 10));
+      }
+      if (looksLikeBytes && node.fsAvail && /^\d+$/.test(node.fsAvail)) {
+        node.fsAvail = fmtBytes(parseInt(node.fsAvail, 10));
+      }
+      node.children?.forEach(humanizeSizes);
+    };
+
+    const drives: DetectedDrive[] = (blockDevices.blockdevices ?? []).map(mapNode);
+    drives.forEach(humanizeSizes);
 
     const raids: RaidArray[] = [];
 
@@ -53,11 +164,26 @@ export async function GET(request: Request) {
           const statusLine = mdLine ? mdstatText.split('\n')[mdstatText.split('\n').indexOf(mdLine) + 1] : '';
           const degraded = statusLine ? /\[U*_+U*\]/.test(statusLine) : false;
 
+          // Re-derive the human-readable size from the matching drive.
+          // After humanizeSizes runs `drives` already has friendly sizes;
+          // the original `dev.size` here is still raw bytes if -b worked.
+          const sizeStr = (() => {
+            const findSize = (nodes: DetectedDrive[]): string | undefined => {
+              for (const n of nodes) {
+                if (n.path === mdDevice) return n.size;
+                const inner = n.children ? findSize(n.children) : undefined;
+                if (inner) return inner;
+              }
+              return undefined;
+            };
+            return findSize(drives) ?? (dev.size as string) ?? '';
+          })();
+
           raids.push({
             device: mdDevice,
             label: (dev.label as string) || '',
             fstype: (dev.fstype as string) || '',
-            size: (dev.size as string) || '',
+            size: sizeStr,
             mountpoint: (dev.mountpoint as string) || null,
             degraded,
           });
@@ -71,7 +197,7 @@ export async function GET(request: Request) {
 
     findRaids(blockDevices.blockdevices || []);
 
-    return NextResponse.json({ raids });
+    return NextResponse.json({ raids, drives });
   } catch (error) {
     return apiError(error, { tag: 'api:system:storage:get', status: 500 });
   }

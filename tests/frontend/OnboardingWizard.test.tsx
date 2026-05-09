@@ -74,11 +74,21 @@ vi.mock('mustache', () => ({
 }));
 
 // Tick the "I don't have a public domain" checkbox so the wizard's
-// Continue gate releases. The services step now blocks Continue until
-// the operator either fills in a domain or actively opts out.
+// Continue gate releases. The machine step blocks Continue until the
+// operator either fills in a domain or actively opts out.
 const optOutOfDomain = () => {
   const cb = screen.getByLabelText(/I don't have a public domain/i) as HTMLInputElement;
   if (!cb.checked) fireEvent.click(cb);
+};
+
+// stacksOnlyMode now lands on the new 'machine' step (domain / drives /
+// clean-install) and only continues to the stack picker after the
+// operator clears the domain gate. This helper runs that transition so
+// each existing stack-picker test doesn't have to know about it.
+const advancePastMachineStep = async () => {
+  await waitFor(() => screen.getByLabelText(/I don't have a public domain/i));
+  optOutOfDomain();
+  fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 };
 
 // Helper: default status with no setup needed
@@ -249,6 +259,8 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
+
             await waitFor(() => {
                 expect(screen.getByText('full-stack')).toBeDefined();
                 expect(screen.getByText('web-stack')).toBeDefined();
@@ -261,6 +273,8 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
+
             await waitFor(() => {
                 expect(screen.getByRole('button', { name: /Skip/i })).toBeDefined();
             });
@@ -272,6 +286,7 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
             await waitFor(() => screen.getByRole('button', { name: /Skip/i }));
             fireEvent.click(screen.getByRole('button', { name: /Skip/i }));
 
@@ -285,6 +300,7 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
             await waitFor(() => screen.getByText('full-stack'));
             fireEvent.click(screen.getByText('full-stack'));
 
@@ -300,16 +316,16 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
             await waitFor(() => screen.getByText('full-stack'));
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => screen.getByText('nginx-web'));
 
-            // The first checkbox on the services step is the new "I don't
-            // have a public domain" toggle (added by the domain-at-top
-            // gating fix). The actual service checkboxes follow.
+            // After moving the domain checkbox out to the machine step,
+            // the services step renders only the per-service checkboxes.
             const checkboxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
-            const services = checkboxes.slice(1);
+            const services = checkboxes;
             // nginx-web is already installed (from mock /api/services GET) — unchecked + disabled
             // redis-cache is not installed but marked [x] in README — checked
             // immich is not installed and marked [ ] — unchecked
@@ -327,6 +343,7 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
             await waitFor(() => screen.getByText('full-stack'));
             fireEvent.click(screen.getByText('full-stack'));
 
@@ -346,11 +363,11 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
             await waitFor(() => screen.getByText('full-stack'));
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             await waitFor(() => {
@@ -366,13 +383,15 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            // Machine step → stack picker
+            await advancePastMachineStep();
+
             // Select stack
             await waitFor(() => screen.getByText('full-stack'));
             fireEvent.click(screen.getByText('full-stack'));
 
             // Continue to configure
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             // Wait for configure step, then install
@@ -397,12 +416,12 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
-            // Select stack → services → configure → install → done
+            // Machine → select stack → services → configure → install → done
+            await advancePastMachineStep();
             await waitFor(() => screen.getByText('full-stack'));
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
@@ -422,22 +441,21 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
+
             await waitFor(() => {
                 expect(screen.getByText(/No stacks available/i)).toBeDefined();
             });
         });
 
-        it('shows domain prompt on services step', async () => {
+        it('shows domain prompt on machine step', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
 
             render(<OnboardingWizard />);
 
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
-
+            // Domain prompt is now on the machine step (the first step
+            // stacksOnlyMode lands on), not the services sub-step.
             await waitFor(() => {
-                // Domain prompt label appears (multiple times now: header,
-                // gating message, hint). Just verify the input is present.
                 expect(screen.getByPlaceholderText('example.com')).toBeDefined();
                 expect(screen.getByLabelText(/I don't have a public domain/i)).toBeDefined();
             });
@@ -454,12 +472,12 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
-            // Select stack → services → configure → install → done
+            // Machine → select stack → services → configure → install → done
+            await advancePastMachineStep();
             await waitFor(() => screen.getByText('full-stack'));
             fireEvent.click(screen.getByText('full-stack'));
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-            optOutOfDomain();
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
@@ -553,6 +571,7 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
+            await advancePastMachineStep();
             await waitFor(() => screen.getByText('full-stack'));
             fireEvent.click(screen.getByText('full-stack'));
 

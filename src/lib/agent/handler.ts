@@ -377,14 +377,34 @@ export class AgentHandler extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public async sendCommand(action: string, params: any = {}, options: { timeoutMs?: number } = {}): Promise<any> {
     if (!this.isConnected) {
-        this.log(this.nodeName, 'warn', 'Not connected, attempting to reconnect...');
-        try {
-            await this.start();
-        } catch (e) {  
+        // Single start() used to be enough, but install loops that
+        // straddle a ServiceBay autoupdate or host reboot need to wait
+        // out the reconnect window — otherwise the wizard fails every
+        // service it tries during that ~10–30 s gap. Retry start() with
+        // backoff for up to 30 s before giving up.
+        this.log(this.nodeName, 'warn', 'Not connected, waiting for reconnect...');
+        const deadline = Date.now() + 30_000;
+        let attempt = 0;
+        let lastErr: unknown = null;
+        while (!this.isConnected) {
+            try {
+                await this.start();
+                if (this.isConnected) break;
+                lastErr = new Error('start() returned but agent still not connected');
+            } catch (e) {
+                lastErr = e;
+            }
+            attempt += 1;
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) break;
+            const wait = Math.min(2_000, Math.max(500, 250 * 2 ** attempt), remaining);
+            await new Promise(r => setTimeout(r, wait));
+        }
+        if (!this.isConnected) {
             this.health.errorCount++;
-            const msg = e instanceof Error ? e.message : String(e);
+            const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
             this.health.lastError = `Reconnection failed: ${msg}`;
-            this.log(this.nodeName, 'error', 'Reconnection failed:', e);
+            this.log(this.nodeName, 'error', 'Reconnection failed after retries:', lastErr);
             throw new Error(`Agent not connected: ${msg}`);
         }
     }
