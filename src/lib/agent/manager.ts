@@ -48,10 +48,40 @@ export class AgentManager extends EventEmitter {
     return this.agents.get(nodeName)!;
   }
   
-  public async ensureAgent(nodeName: string): Promise<AgentHandler> {
+  // Bring the agent up, waiting for it to reconnect if necessary. The
+  // common reason a single start() call fails is that the SSH session
+  // has briefly gone away — for instance, ServiceBay just autoupdated
+  // and the new container is mid-boot, or the host rebooted itself.
+  // Before this retry loop, an install kicked off in that ~10–30 s
+  // window failed every service in the wizard with "Agent disconnected"
+  // and abandoned a half-done install. We now poll start() with backoff
+  // until the agent is reachable or `timeoutMs` elapses.
+  public async ensureAgent(nodeName: string, timeoutMs: number = 30_000): Promise<AgentHandler> {
       const agent = this.getAgent(nodeName);
-      await agent.start();
-      return agent;
+      const deadline = Date.now() + Math.max(0, timeoutMs);
+      let attempt = 0;
+      let lastError: unknown = null;
+      while (true) {
+          try {
+              await agent.start();
+              return agent;
+          } catch (e) {
+              lastError = e;
+              attempt += 1;
+              const remaining = deadline - Date.now();
+              if (remaining <= 0) break;
+              // Cap each backoff so we still get several attempts in 30 s.
+              const wait = Math.min(2_000, Math.max(500, 250 * 2 ** attempt));
+              logger.warn(
+                  'AgentManager',
+                  `ensureAgent(${nodeName}) attempt ${attempt} failed, retrying in ${wait}ms: ${e instanceof Error ? e.message : String(e)}`,
+              );
+              await new Promise(resolve => setTimeout(resolve, Math.min(wait, remaining)));
+          }
+      }
+      throw lastError instanceof Error
+          ? lastError
+          : new Error(`Agent on "${nodeName}" did not become ready within ${timeoutMs}ms`);
   }
   
   public async setMonitoringAll(enabled: boolean): Promise<void> {
