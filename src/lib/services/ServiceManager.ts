@@ -642,10 +642,20 @@ export class ServiceManager {
         // every migrated stack reported `post-deploy exited 1`. Paths are
         // framework-controlled (no spaces, no shell metas) so unquoted is
         // safe and the simplest form that does the right thing.
+        //
+        // Two timeouts: `timeout: 300` is the agent-side process kill
+        // budget (seconds). `timeoutMs: 360_000` is the client-side
+        // sendCommand wait — it MUST outlast the agent budget, otherwise
+        // the client gives up at 30 s (the default), the agent keeps
+        // running, and every queued command behind it also times out.
+        // That was the failure mode in 3.7.x: auth post-deploy ran longer
+        // than 30 s waiting on LLDAP, the wizard surfaced "exec after
+        // 30000ms", and subsequent stacks all reported "write_file after
+        // 30000ms" while the agent was still single-threading the script.
         const result = await agent.sendCommand('exec', {
             command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
             timeout: 300,
-        });
+        }, { timeoutMs: 360_000 });
         const stdout = (result.stdout || '').replace(/\r/g, '');
         for (const line of stdout.split('\n')) {
             if (line.length > 0) onProgress?.(line);

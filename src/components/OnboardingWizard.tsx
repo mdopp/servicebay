@@ -126,6 +126,11 @@ export default function OnboardingWizard() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [showSkipConfirm, setShowSkipConfirm] = useState(false);
+  // ServiceBay version, surfaced in the wizard header. ServiceBay uses
+  // autoupdate=registry, so the running version can change between two
+  // attempts of the same install — knowing which version produced a
+  // given install log saves a debugging round-trip.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const { addToast } = useToast();
   const router = useRouter();
 
@@ -249,6 +254,13 @@ export default function OnboardingWizard() {
   // Clean install — wipe existing service data before deploying.
   const [cleanInstall, setCleanInstall] = useState(false);
   const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
+
+  useEffect(() => {
+    fetch('/api/system/version')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.version) setAppVersion(d.version); })
+      .catch(() => { /* version is informational; silent failure is fine */ });
+  }, []);
 
   useEffect(() => {
     checkOnboardingStatus().then(s => {
@@ -1173,6 +1185,11 @@ export default function OnboardingWizard() {
                   : <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
              </div>
              {stacksOnlyMode ? 'Install Services' : 'ServiceBay Setup'}
+             {appVersion && (
+               <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400 align-middle">
+                 v{appVersion}
+               </span>
+             )}
            </h2>
            {!stacksOnlyMode && (() => {
              const order: WizardStep[] = ['welcome', 'network', 'stacks', 'email', 'finish'];
