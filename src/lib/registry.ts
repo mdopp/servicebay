@@ -108,11 +108,32 @@ async function cloneSparse(url: string, dest: string, dirs: string[]) {
     await execFileAsync('git', ['sparse-checkout', 'set', ...dirs], { cwd: dest });
 }
 
+let gitAvailability: boolean | null = null;
+async function isGitAvailable(): Promise<boolean> {
+    if (gitAvailability !== null) return gitAvailability;
+    try {
+        await execFileAsync('git', ['--version']);
+        gitAvailability = true;
+    } catch {
+        gitAvailability = false;
+    }
+    return gitAvailability;
+}
+
 export async function syncRegistries() {
     const config = await getConfig();
     const registries = getRegistries(config);
 
     if (registries.length === 0) return;
+
+    // Fedora CoreOS doesn't ship git. Without it we can still serve the
+    // built-in templates/stacks bundled with ServiceBay; only external
+    // registry sync is unavailable. Log once and skip rather than fail
+    // every server start.
+    if (!(await isGitAvailable())) {
+        console.log('Registry sync skipped: git not available (built-in templates still served).');
+        return;
+    }
 
     try {
         await fs.mkdir(REGISTRIES_DIR, { recursive: true });
