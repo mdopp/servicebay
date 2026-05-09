@@ -14,9 +14,17 @@ def log(msg):
     sys.stderr.write(f"[Agent] {msg}\n")
     sys.stderr.flush()
 
+# stdout is the SSH channel back to ServiceBay. Once handle_command runs
+# in worker threads (so a long exec doesn't block other commands on the
+# same channel), multiple threads will race on print() — which can
+# interleave bytes mid-message and break the framing the JS client
+# expects ("\n"-delimited JSON). Serialize every emit through a lock.
+_emit_lock = threading.Lock()
+
 def emit(event_type, payload):
     msg = json.dumps({"type": event_type, "payload": payload})
-    print(msg, flush=True)
+    with _emit_lock:
+        print(msg, flush=True)
 
 class FileWatcher(threading.Thread):
     def __init__(self):
@@ -101,8 +109,44 @@ def handle_command(cmd_line):
             except Exception as e:
                 error = str(e)
 
+        elif action == "exec_stream":
+            # Execute a shell command, streaming stdout line-by-line as
+            # `exec:chunk` events while the process runs. Final response
+            # carries the exit code and the joined stdout/stderr (so
+            # callers that don't subscribe to chunks still get the
+            # legacy result shape). Used for post-deploy scripts so the
+            # operator sees the script's heartbeat instead of staring
+            # at "Running auth post-deploy script..." for ten minutes
+            # while the command buffers in subprocess.PIPE.
+            command = cmd.get("command")
+            try:
+                proc = subprocess.Popen(
+                    command,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,  # line-buffered
+                )
+                stdout_lines = []
+                # Stream every line back as it arrives. Carries the
+                # request id so the client can correlate chunks with
+                # the in-flight request — same id will appear on the
+                # final `response` event.
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    line = line.rstrip("\n")
+                    stdout_lines.append(line)
+                    emit("exec:chunk", {"id": req_id, "line": line})
+                proc.wait()
+                result = {
+                    "code": proc.returncode,
+                    "stdout": "\n".join(stdout_lines),
+                    "stderr": "",  # merged into stdout via stderr=STDOUT above
+                }
+            except Exception as e:
+                error = str(e)
 
-                
         elif action == "list_files":
              if os.path.exists(WATCH_DIR):
                  result = os.listdir(WATCH_DIR)
@@ -164,7 +208,18 @@ def main():
             line = sys.stdin.readline()
             if not line:
                 break # EOF
-            handle_command(line.strip())
+            # Spawn each command in a worker thread so a long-running
+            # exec (e.g. a 10-minute post-deploy waiting on LLDAP)
+            # doesn't block the read loop. Without this, every
+            # subsequent write_file / exec the wizard sent for the
+            # next service queued behind the in-flight exec on the
+            # SSH channel and timed out client-side at 30s — a
+            # single slow service used to fail the entire install.
+            threading.Thread(
+                target=handle_command,
+                args=(line.strip(),),
+                daemon=True,
+            ).start()
         except KeyboardInterrupt:
             break
         except Exception as e:

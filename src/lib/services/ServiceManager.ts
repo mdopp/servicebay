@@ -631,8 +631,11 @@ export class ServiceManager {
 
         onProgress?.(`Running ${name} post-deploy script...`);
         // Long timeout — scripts wait for HTTP services that can take a
-        // minute or two to come up after image pull. Keep below the
-        // wizard's overall settle window.
+        // minute or two to come up after image pull. The auth script's
+        // LLDAP wait deadline is 10 min on its own (image pull on a
+        // fresh install + database init); we give a 20 min client
+        // timeout so it outlasts the agent-side process budget plus
+        // generous slack.
         //
         // NB on the unquoted paths: scriptPath / envPath start with `~/`.
         // Bash only expands `~` when it's an *unquoted* token at the
@@ -643,22 +646,48 @@ export class ServiceManager {
         // framework-controlled (no spaces, no shell metas) so unquoted is
         // safe and the simplest form that does the right thing.
         //
-        // Two timeouts: `timeout: 300` is the agent-side process kill
-        // budget (seconds). `timeoutMs: 360_000` is the client-side
-        // sendCommand wait — it MUST outlast the agent budget, otherwise
-        // the client gives up at 30 s (the default), the agent keeps
-        // running, and every queued command behind it also times out.
-        // That was the failure mode in 3.7.x: auth post-deploy ran longer
-        // than 30 s waiting on LLDAP, the wizard surfaced "exec after
-        // 30000ms", and subsequent stacks all reported "write_file after
-        // 30000ms" while the agent was still single-threading the script.
-        const result = await agent.sendCommand('exec', {
-            command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
-            timeout: 300,
-        }, { timeoutMs: 360_000 });
-        const stdout = (result.stdout || '').replace(/\r/g, '');
-        for (const line of stdout.split('\n')) {
-            if (line.length > 0) onProgress?.(line);
+        // exec_stream forwards each stdout line to onProgress as soon
+        // as the script prints it — without it, ServiceBay buffered the
+        // whole 10-min run and the wizard sat showing "Running auth
+        // post-deploy script..." with no signal that LLDAP was actually
+        // coming up. Falls back to the legacy `exec` action if the
+        // remote agent is older than 3.8.2.
+        let streamed = false;
+        let result: { code: number; stdout: string; stderr: string };
+        try {
+            result = await agent.sendCommand(
+                'exec_stream',
+                {
+                    command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
+                    timeout: 1200,
+                },
+                {
+                    timeoutMs: 1_200_000,
+                    onChunk: (line: string) => {
+                        streamed = true;
+                        if (line.length > 0) onProgress?.(line);
+                    },
+                },
+            );
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            // Older agent that doesn't know exec_stream — fall back.
+            if (/exec_stream|Unknown|action/i.test(msg)) {
+                result = await agent.sendCommand('exec', {
+                    command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
+                    timeout: 1200,
+                }, { timeoutMs: 1_200_000 });
+            } else {
+                throw e;
+            }
+        }
+        // If we didn't get any chunks (legacy fallback path or empty
+        // stream), surface the buffered stdout the way we used to.
+        if (!streamed) {
+            const stdout = (result.stdout || '').replace(/\r/g, '');
+            for (const line of stdout.split('\n')) {
+                if (line.length > 0) onProgress?.(line);
+            }
         }
         if (result.code !== 0) {
             onProgress?.(`⚠️ ${name} post-deploy exited ${result.code}. Service is deployed; the seed step did not finish — check the log lines above for the cause.`);
