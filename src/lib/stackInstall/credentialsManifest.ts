@@ -162,13 +162,16 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
     if (!secretVar) continue;
     const secret = get(v, secretVar);
     if (!secret) continue;
+    // `clientSecretVar` means the secret is wired into the container env
+    // (e.g. SSO_CLIENT_SECRET) — there's nothing to paste into a UI. The
+    // entry exists only for disaster recovery / cross-stack restoration.
     out.push({
       service: `${oidc.client_name || oidc.client_id} OIDC client_secret`,
       url: domain ? `https://auth.${domain}` : 'auth.<domain>',
       username: oidc.client_id,
       password: secret,
       importance: 'system',
-      notes: `Paste into ${oidc.client_name || oidc.client_id} Settings → Authentication → OIDC client_secret to enable SSO.`,
+      notes: 'Wired into the container env (SSO_CLIENT_SECRET) automatically — save for disaster recovery only.',
     });
   }
 
