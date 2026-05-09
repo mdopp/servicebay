@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.9.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.9.2...servicebay-v3.9.3) (2026-05-09)
+
+
+### Bug Fixes
+
+* **install:** authenticate post-deploy callbacks via internal token ([#236](https://github.com/mdopp/servicebay/issues/236)) ([b6a1385](https://github.com/mdopp/servicebay/commit/b6a13853fa03b74ffb679de2abe86c9ad8a98a45))
+
 ## [3.9.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.9.1...servicebay-v3.9.2) (2026-05-09)
 
 
