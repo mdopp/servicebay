@@ -660,7 +660,11 @@ export default function OnboardingWizard() {
 
   // -- Stack Handlers --
 
-  const handleSelectStack = async (stack: Template) => {
+  // Returns the parsed items in addition to setting state. Express
+  // install threads them into the next step directly because React
+  // closures captured before the setStackItems can't see the new
+  // value within the same async chain.
+  const handleSelectStack = async (stack: Template): Promise<StackItem[]> => {
     setSelectedStack(stack);
     setStackInstallStep('services');
     setStacksLoading(true);
@@ -689,20 +693,31 @@ export default function OnboardingWizard() {
         }
       });
       setStackItems(parsedItems);
+      return parsedItems;
     } catch {
       setStackItems([]);
+      return [];
     } finally {
       setStacksLoading(false);
     }
   };
 
-  const handleStackFetchVars = async () => {
+  // itemsOverride: when called from the express flow inside the same
+  // render's closure, we can't rely on stackItems being populated by
+  // the preceding setStackItems — pass them through directly. Returns
+  // the items with .yaml hydrated and the resolved variables so the
+  // caller can hand them straight to handleStackInstall without
+  // another closure round-trip.
+  const handleStackFetchVars = async (
+      itemsOverride?: StackItem[],
+  ): Promise<{ items: StackItem[]; variables: Variable[] }> => {
     setStackInstallStep('configure');
     setStacksLoading(true);
 
-    const selected = stackItems.filter(i => i.checked && !i.alreadyInstalled);
+    const baseItems = itemsOverride ?? stackItems;
+    const selected = baseItems.filter(i => i.checked && !i.alreadyInstalled);
     const vars = new Set<string>();
-    const newItems = [...stackItems];
+    const newItems = [...baseItems];
     const allMeta: Record<string, VariableMeta> = {};
 
     let globalSettings: Record<string, string> = {};
@@ -897,11 +912,24 @@ export default function OnboardingWizard() {
     }
     setStackVariables(resolvedVars);
     setStacksLoading(false);
+    return { items: newItems, variables: resolvedVars };
   };
 
-  const handleStackInstall = async () => {
+  // itemsOverride / variablesOverride: same closure-bypass story as
+  // handleStackFetchVars. Express install threads the freshly-computed
+  // items + variables through so we don't read stale state.
+  const handleStackInstall = async (
+      itemsOverride?: StackItem[],
+      variablesOverride?: Variable[],
+  ) => {
     setStackInstallStep('installing');
     setStackLogs([]);
+
+    // Bind locals so every read below uses the override when the
+    // express flow passed one. The setState calls (setStackItems /
+    // setStackVariables) elsewhere don't affect this closure.
+    const itemsBase = itemsOverride ?? stackItems;
+    const varsBase = variablesOverride ?? stackVariables;
 
     // Optional: wipe existing service data before deploying.
     if (cleanInstall && cleanInstallConfirm === 'RESET') {
@@ -928,7 +956,20 @@ export default function OnboardingWizard() {
       }
     }
 
-    const selected = stackItems.filter(i => i.checked);
+    const selected = itemsBase.filter(i => i.checked);
+
+    // Surface the empty-selected case loudly. If we get here with zero
+    // items, something upstream produced an empty stackItems list (a
+    // README that didn't parse, or — more commonly — the express
+    // flow's old closure race). Without this branch the install loop
+    // ran zero iterations and "Stack installation complete" printed
+    // with nothing actually deployed, which looked like a silent
+    // success on top of an Agent-disconnected reset failure.
+    if (selected.length === 0) {
+      setStackLogs(prev => [...prev, '⚠️ No services selected to install — aborting. Try Edit details to pick services manually.']);
+      setStackInstallStep('done');
+      return;
+    }
 
     // Track which services actually deployed cleanly. The post-install
     // pipeline (NPM bootstrap, LLDAP/ABS/Navidrome/FileBrowser admin
@@ -961,7 +1002,7 @@ export default function OnboardingWizard() {
       setStackLogs(prev => [...prev, `Installing ${item.name}...`]);
       setInstallingNow(item.name);
 
-      const view = stackVariables.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {});
+      const view = varsBase.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {});
       // Disable HTML escaping for all Mustache renders (YAML + config files)
       const savedEscape = Mustache.escape;
       Mustache.escape = (text: string) => text;
@@ -1020,7 +1061,7 @@ export default function OnboardingWizard() {
       // Variables exported as env vars to the script. Scoped to string-shaped
       // entries; the engine in ServiceManager handles bash-quote escaping.
       const postDeployEnv: Record<string, string> = {};
-      for (const v of stackVariables) {
+      for (const v of varsBase) {
         if (typeof v.value === 'string') postDeployEnv[v.name] = v.value;
       }
       if (typeof window !== 'undefined') postDeployEnv.HOST = window.location.hostname || 'localhost';
@@ -1131,7 +1172,7 @@ export default function OnboardingWizard() {
     // be appended to the final SAVE-THESE-NOW banner.
     const proxyResult = await runPostInstall({
       selected: deployed,
-      variables: stackVariables,
+      variables: varsBase,
       node: stackSelectedNode || undefined,
       onLog: (msg) => setStackLogs(prev => [...prev, msg]),
       skipDefaults: templatesWithScript,
@@ -1145,8 +1186,8 @@ export default function OnboardingWizard() {
       // the user the values they meant to use lets them just hit "Retry"
       // (which will fail again) or paste a real password if they reset
       // NPM manually.
-      const fallbackEmail = stackVariables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value;
-      const fallbackPassword = stackVariables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value;
+      const fallbackEmail = varsBase.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value;
+      const fallbackPassword = varsBase.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value;
       if (fallbackEmail) setNpmEmail(fallbackEmail);
       if (fallbackPassword) setNpmPassword(fallbackPassword);
       setNpmCredPrompt(true);
@@ -1282,13 +1323,26 @@ export default function OnboardingWizard() {
       }
     }
 
-    // Move to the stacks step so the install-progress UI takes over the
-    // wizard body. The substep transitions are driven by the helpers
-    // below.
+    // Thread the freshly-computed items + variables through both
+    // helpers — calling them as a chain in the same render's closure
+    // means the setStackItems / setStackVariables they make aren't
+    // visible to the next call's stale closure. Without the explicit
+    // hand-off, handleStackInstall used to read an empty stackItems
+    // array and "Stack installation complete" appeared with nothing
+    // actually deployed.
+    const items = await handleSelectStack(fullStack);
+    if (items.length === 0) {
+      // handleSelectStack already nudged stackInstallStep to 'services'
+      // — bring it back to a clean state on install-confirm.
+      setStackInstallStep('select');
+      addToast('error', 'Stack readme empty', 'Could not parse any services from the full-stack README. Try Edit details.');
+      return;
+    }
+    // Now that we know we have services to install, hand control to
+    // the stacks step's install-progress UI.
     navigateTo('stacks');
-    await handleSelectStack(fullStack);
-    await handleStackFetchVars();
-    await handleStackInstall();
+    const fetched = await handleStackFetchVars(items);
+    await handleStackInstall(fetched.items, fetched.variables);
   };
 
   const handleStackSkip = async () => {
@@ -2703,7 +2757,7 @@ export default function OnboardingWizard() {
                 <div className="flex gap-2 items-center">
                     <button onClick={() => { setStackInstallStep('select'); setSelectedStack(null); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
                     <Button
-                        onClick={handleStackFetchVars}
+                        onClick={() => { void handleStackFetchVars(); }}
                         disabled={
                             stackItems.filter(i => i.checked).length === 0
                             || stacksLoading
@@ -2717,7 +2771,7 @@ export default function OnboardingWizard() {
                 <div className="flex gap-2">
                     <button onClick={() => setStackInstallStep('services')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
                     <Button
-                        onClick={handleStackInstall}
+                        onClick={() => { void handleStackInstall(); }}
                         disabled={(!stackSelectedNode && stackNodes.length > 1)}
                     >
                         {cleanInstall ? 'Reset & Install' : 'Install Stack'}
