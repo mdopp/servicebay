@@ -3,6 +3,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { HealthStore } from '@/lib/health/store';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { actionsForProbe, type ProbeAction } from '@/lib/diagnose/actions';
+import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -381,6 +382,28 @@ export async function POST(request: Request) {
     probes.push({
       id: 'dangling_proxy',
       label: 'Reverse-proxy routes',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 12) NPM admin credentials staleness — probe-action handlers
+  //     attached automatically when status !== 'ok' (see withActions).
+  try {
+    const npmStale = await checkNpmDataStale(nodeName);
+    if (npmStale.status) {
+      probes.push({
+        id: 'npm_data_stale',
+        label: 'Nginx Proxy Manager auth',
+        status: npmStale.status,
+        detail: npmStale.detail,
+        hint: npmStale.hint,
+      });
+    }
+  } catch (e) {
+    probes.push({
+      id: 'npm_data_stale',
+      label: 'Nginx Proxy Manager auth',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
