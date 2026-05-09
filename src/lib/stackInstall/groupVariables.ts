@@ -1,19 +1,7 @@
 import type { StackVariable } from './postInstall';
 
-/** Friendly display names for templates that show up grouped in the UI. */
-const DISPLAY_NAMES: Record<string, string> = {
-  'nginx-web': 'Nginx Proxy Manager',
-  'auth': 'Auth (LLDAP + Authelia)',
-  'adguard': 'AdGuard Home (DNS)',
-  'vaultwarden': 'Vaultwarden (Passwords)',
-  'immich': 'Immich (Photos)',
-  'media': 'Media (Audiobookshelf + Navidrome)',
-  'file-share': 'File Share (Syncthing + Samba + FileBrowser)',
-  'home-assistant': 'Home Assistant',
-};
-
 export interface VariableGroup {
-  /** Internal template key (e.g. "lldap") or "_global" / "_shared". */
+  /** Internal template key (e.g. "lldap") or "_global" / "_other". */
   key: string;
   /** User-facing display name. */
   label: string;
@@ -28,7 +16,10 @@ export interface VariableGroup {
  *
  * - Variables marked `global: true` go into the special `_global` bucket,
  *   which the UI renders read-only at the top.
- * - Variables whose `meta.templateName` is set are grouped by that name.
+ * - Variables whose `meta.templateName` is set are grouped by that name;
+ *   the section's display label comes from `meta.templateLabel` (read at
+ *   collection time from the template.yml's
+ *   `metadata.annotations['servicebay.label']`).
  * - Anything else (legacy templates without origin tagging) lands in
  *   `_other` so it stays visible to the user.
  *
@@ -45,12 +36,19 @@ export function groupVariablesByTemplate(variables: StackVariable[]): VariableGr
     v.meta?.type === 'rsa-private' ||
     v.meta?.type === 'bcrypt';
 
+  // Track the friendly label per group key, captured from the first
+  // variable that declares one. Per group, every variable should agree
+  // on the label since they share a templateName.
   const groups = new Map<string, StackVariable[]>();
+  const labels = new Map<string, string>();
   for (const v of variables) {
     if (isHidden(v)) continue; // never displayed
     const key = v.global ? '_global' : (v.meta?.templateName || '_other');
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(v);
+    if (v.meta?.templateLabel && !labels.has(key)) {
+      labels.set(key, v.meta.templateLabel);
+    }
   }
 
   // Stable ordering: globals first, then services in declaration order
@@ -65,7 +63,7 @@ export function groupVariablesByTemplate(variables: StackVariable[]): VariableGr
   for (const [key, vars] of groups) {
     result.push({
       key,
-      label: DISPLAY_NAMES[key] || key,
+      label: labels.get(key) || key,
       variables: vars,
     });
   }

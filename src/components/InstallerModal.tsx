@@ -6,6 +6,7 @@ import { runPostInstall } from '@/lib/stackInstall/postInstall';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { buildCredentialsManifest, buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
 import { fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
+import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
 import { Layers, Loader2, AlertCircle, X, Folder, Server, RefreshCw } from 'lucide-react';
@@ -176,10 +177,11 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
 
             // Fetch variable metadata
             const meta = await fetchTemplateVariables(item.name, template.source);
+            const templateLabel = parseTemplateLabel(yaml);
             if (meta) {
               for (const [key, value] of Object.entries(meta)) {
                 if (!allMeta[key]) {
-                  allMeta[key] = { ...value, templateName: item.name };
+                  allMeta[key] = { ...value, templateName: item.name, templateLabel };
                 }
               }
             }

@@ -6,6 +6,7 @@ metadata:
     app: adguard
     servicebay.role: dns
   annotations:
+    servicebay.label: "AdGuard Home (DNS)"
     servicebay.ports: "{{ADGUARD_ADMIN_PORT}}/tcp,53/udp,53/tcp"
     servicebay.config-mount: /opt/adguardhome/conf
 spec:

@@ -6,6 +6,7 @@ metadata:
     app: media
     servicebay.role: media
   annotations:
+    servicebay.label: "Media (Audiobookshelf + Navidrome)"
     servicebay.ports: "{{ABS_PORT}}/tcp,{{NAVIDROME_PORT}}/tcp"
 spec:
   hostNetwork: true

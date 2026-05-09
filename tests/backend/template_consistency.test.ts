@@ -3,7 +3,7 @@
  *
  * Catches the class of bugs we hit during the file-share / home-assistant /
  * auth / media merges: a template gets renamed or merged, but `isSelected('X')`
- * / SERVICE_DEPS / DISPLAY_NAMES / getServiceFiles still references the old
+ * / SERVICE_DEPS / servicebay.label / getServiceFiles still references the old
  * name. None of those fail at compile time, only at runtime when the wizard
  * runs and the deploy step skips the seed/credential surfacing.
  *
@@ -188,20 +188,26 @@ describe('Template ↔ source-name consistency', () => {
     expect(offenders, `Stale SERVICE_DEPS entries:\n  ${offenders.join('\n  ')}`).toEqual([]);
   });
 
-  it('groupVariables.DISPLAY_NAMES keys reference real templates only', () => {
-    const groupPath = path.join(SRC_DIR, 'lib', 'stackInstall', 'groupVariables.ts');
-    const content = fs.readFileSync(groupPath, 'utf-8');
-    const block = content.match(/DISPLAY_NAMES:\s*Record<string,\s*string>\s*=\s*\{([\s\S]*?)\n\};/);
-    expect(block, 'DISPLAY_NAMES block not found').toBeTruthy();
-
-    const body = block![1];
-    const keyRe = /^\s*['"]([\w-]+)['"]\s*:/gm;
+  it('every template.yml declares a servicebay.label annotation', async () => {
+    // Friendly template labels live in the template itself
+    // (metadata.annotations['servicebay.label']), so a new template
+    // doesn't need to touch core code to get a non-default UI label.
+    // The wizard / installer modal extracts the label at variable-
+    // collection time via parseTemplateLabel(); the test exercises the
+    // same parser to guarantee consistency.
+    const { parseTemplateLabel } = await import('../../src/lib/templateLabel');
     const offenders: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = keyRe.exec(body)) !== null) {
-      if (!templateNames.has(m[1])) offenders.push(m[1]);
+    for (const t of templates) {
+      const label = parseTemplateLabel(t.yamlContent);
+      if (!label) {
+        offenders.push(`${t.name}: parseTemplateLabel returned no label`);
+      }
     }
-    expect(offenders, `DISPLAY_NAMES keys without a matching template:\n  ${offenders.join('\n  ')}`).toEqual([]);
+    expect(
+      offenders,
+      `Templates missing the servicebay.label annotation:\n  ${offenders.join('\n  ')}\n\n` +
+      `Add \`servicebay.label: "<friendly name>"\` under metadata.annotations in template.yml.`,
+    ).toEqual([]);
   });
 });
 

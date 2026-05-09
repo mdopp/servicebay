@@ -16,6 +16,7 @@ import {
 } from '@/app/actions/onboarding';
 import { generateLocalKey } from '@/app/actions/ssh';
 import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles, fetchTemplatePostDeployScript } from '@/app/actions';
+import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getNodes } from '@/app/actions/system';
 import { Template, VariableMeta } from '@/lib/registry';
 import {
@@ -745,13 +746,14 @@ export default function OnboardingWizard() {
         const matches = yaml.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
         for (const match of matches) vars.add(match[1]);
         const meta = await fetchTemplateVariables(item.name, selectedStack?.source || 'Built-in');
+        const templateLabel = parseTemplateLabel(yaml);
         if (meta) {
           // First template that declares a variable owns it for grouping —
           // shared vars (LLDAP_ADMIN_PASSWORD, LLDAP_HOST, ...) live under
           // the originator and are inherited by other templates' YAMLs.
           for (const [key, value] of Object.entries(meta)) {
             if (!allMeta[key]) {
-              allMeta[key] = { ...value, templateName: item.name };
+              allMeta[key] = { ...value, templateName: item.name, templateLabel };
             }
           }
         }
