@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.7.1...servicebay-v3.8.0) (2026-05-09)
+
+
+### Features
+
+* **install:** express install-confirm screen as default landing ([#227](https://github.com/mdopp/servicebay/issues/227)) ([8620085](https://github.com/mdopp/servicebay/commit/86200858d8fcc037abc9d2be8f43b593436c6060))
+
+
+### Bug Fixes
+
+* **install:** make wizard resilient to agent reconnect + script timeouts ([#225](https://github.com/mdopp/servicebay/issues/225)) ([dc00950](https://github.com/mdopp/servicebay/commit/dc00950b8c4a026734725a4d61a3cc72cffb3a41))
+
 ## [3.7.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.7.0...servicebay-v3.7.1) (2026-05-09)
 
 
