@@ -88,7 +88,6 @@ export interface BackupPreviewConfig {
     update?: {
         enabled?: boolean;
         schedule?: string;
-        channel?: string;
     };
 }
 
@@ -771,7 +770,6 @@ export async function previewSystemBackup(archivePath: string): Promise<BackupPr
             update: backupConfig?.autoUpdate ? {
                 enabled: backupConfig.autoUpdate.enabled,
                 schedule: backupConfig.autoUpdate.schedule,
-                channel: backupConfig.autoUpdate.channel
             } : undefined
         };
 

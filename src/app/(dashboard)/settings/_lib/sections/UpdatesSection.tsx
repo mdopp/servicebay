@@ -128,29 +128,6 @@ export default function UpdatesSection() {
     }
   };
 
-  const handleChannelChange = async (newChannel: 'stable' | 'test' | 'dev') => {
-    if (!appUpdate) return;
-    try {
-      const res = await fetch('/api/system/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'configure',
-          autoUpdate: {
-            enabled: appUpdate.config.autoUpdate.enabled,
-            channel: newChannel,
-          },
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAppUpdate(prev => (prev ? { ...prev, config: data.config } : null));
-        addToast('success', 'Release channel updated', `Switched to ${newChannel} channel. Check for updates to apply.`);
-      }
-    } catch {
-      addToast('error', 'Failed to update release channel');
-    }
-  };
 
   if (!appUpdate) {
     return (
@@ -173,19 +150,6 @@ export default function UpdatesSection() {
             <p className="text-xs text-gray-500 dark:text-gray-400">Manage application updates</p>
           </div>
           <div className="ml-auto flex items-center gap-4">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-gray-500 dark:text-gray-400">Channel:</span>
-              <select
-                value={appUpdate.config.autoUpdate.channel || 'stable'}
-                onChange={e => handleChannelChange(e.target.value as 'stable' | 'test' | 'dev')}
-                className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded px-2 py-1 text-xs focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none cursor-pointer"
-              >
-                <option value="stable">Stable</option>
-                <option value="test">Test</option>
-                <option value="dev">Dev</option>
-              </select>
-            </div>
-            <div className="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
             <button
               onClick={handleCheckUpdate}
               disabled={checkingUpdate || updateStatus === 'updating'}

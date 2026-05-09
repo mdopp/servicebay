@@ -100,7 +100,6 @@ export async function saveAutoUpdateConfig(enabled: boolean) {
     config.autoUpdate = {
         ...config.autoUpdate,
         enabled,
-        channel: 'stable'
     };
     await saveConfig(config);
 }
