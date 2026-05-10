@@ -179,6 +179,34 @@ export interface AppConfig {
     username?: string;
     /** scrypt-encoded password hash. Use hashPassword() to produce. */
     passwordHash?: string;
+    /**
+     * One-shot LAN-only bootstrap token for MCP. The operator types it
+     * into the install wizard (`install-fedora-coreos.sh`); the script
+     * SHA-256s the cleartext and persists only the hash here. The
+     * server never sees the cleartext.
+     *
+     * Used to bootstrap MCP-based diagnostics during the install
+     * window — before the operator has logged into the dashboard to
+     * mint their first scoped token. Lifecycle:
+     *
+     *   - install: hash written, no expiresAt yet
+     *   - first server boot that observes a hash with no expiresAt:
+     *     persist `expiresAt = now + 30 min`
+     *   - first dashboard-minted MCP token: entire entry deleted
+     *   - operator clicks "revoke bootstrap token": same, immediate
+     *
+     * Validation requires the request originate from RFC1918 / loopback
+     * (see src/lib/mcp/bootstrapToken.ts) and current time < expiresAt.
+     * See #322.
+     */
+    bootstrapToken?: {
+      /** sha256(cleartext) hex, written by the install script */
+      hash: string;
+      /** Always 'read' — the only scope this token gets */
+      scope: 'read';
+      /** Lazy-initialized at first boot to install + 30 min */
+      expiresAt?: string;
+    };
   };
   oidc?: {
     enabled: boolean;

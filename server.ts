@@ -32,6 +32,7 @@ import { logger } from './src/lib/logger';
 import { migrateConfig, getConfig, updateConfig } from './src/lib/config';
 import { syncRegistries } from './src/lib/registry';
 import { reconcileLanIp } from './src/lib/lanIp';
+import { lazyInitializeExpiry as initBootstrapTokenExpiry } from './src/lib/mcp/bootstrapToken';
 import { createMcpServer } from './src/lib/mcp/server';
 import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -195,12 +196,22 @@ app.prepare().then(() => {
         // Token path is preferred; cookie kept for back-compat with clients
         // that connected before tokens existed.
         const { verifyToken } = await import('./src/lib/mcp/tokens');
+        const { verifyBootstrapToken } = await import('./src/lib/mcp/bootstrapToken');
         const authHeader = req.headers.authorization || '';
         const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
         let auth: { user: string; scopes: import('./src/lib/mcp/tokens').ApiScope[]; tokenId?: string } | null = null;
         if (bearerMatch) {
           const t = await verifyToken(bearerMatch[1]);
           if (t) auth = { user: `token:${t.name}`, scopes: t.scopes, tokenId: t.id };
+          // Bootstrap token (#322): only valid bearer that doesn't
+          // match the sb_<id>_<secret> shape. Always read-only, always
+          // LAN-only, always TTL'd. The verifier handles all three
+          // gates — server.ts just hands off remoteAddress.
+          if (!auth) {
+            const remoteIp = (req.socket?.remoteAddress) ?? undefined;
+            const bt = await verifyBootstrapToken(bearerMatch[1], remoteIp);
+            if (bt) auth = bt;
+          }
         }
         if (!auth) {
           const session = await getSessionFromCookieHeader(req.headers.cookie);
@@ -498,6 +509,13 @@ app.prepare().then(() => {
 
     // Sync template registries in background (non-blocking)
     syncRegistries().catch(err => logger.warn('Server', `Registry sync failed: ${err}`));
+
+    // Bootstrap-token TTL initialisation (#322). Idempotent: only
+    // writes expiresAt when the install script left a hash but no
+    // expiry; subsequent boots see expiresAt already set and skip.
+    initBootstrapTokenExpiry().catch(err =>
+      logger.warn('Server', `Bootstrap-token expiry init failed: ${err instanceof Error ? err.message : String(err)}`),
+    );
 
     // LAN IP reconcile (#318). Captures the install-time IP on first
     // boot and updates the stored value (with history) when the IP

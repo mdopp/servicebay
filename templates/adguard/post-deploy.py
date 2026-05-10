@@ -46,7 +46,7 @@ def main() -> int:
         log("⚠️ ADGUARD_ADMIN_PASSWORD missing — first-login won't work; reset via the AdGuard Home setup wizard at http://<server-ip>:" + port)
         return 0
 
-    log(f"🔑 AdGuard admin (user: {user}, password: {password}) — open http://{host}:{port}. Note now, only shown once.")
+    log(f"✅ AdGuard admin saved (user: {user}) — open http://{host}:{port}. Password retrievable from Settings → Integrations → Saved credentials.")
     emit_credential(
         service="AdGuard Home",
         url=f"http://{host}:{port}",

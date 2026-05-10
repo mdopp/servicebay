@@ -88,6 +88,33 @@ export default function McpSection() {
       .finally(() => setAuditLoading(false));
   };
 
+  // ── Bootstrap-token state (#322) ──────────────────────────────────
+  // The hash is set by the install script; this UI just reflects
+  // status + offers a manual revoke. Auto-revoked when the operator
+  // mints their first regular MCP token below.
+  type BootstrapStatus =
+    | { active: false }
+    | { active: true; expiresAt: string | null; minutesRemaining: number | null };
+  const [bootstrap, setBootstrap] = useState<BootstrapStatus | null>(null);
+  const [revokingBootstrap, setRevokingBootstrap] = useState(false);
+
+  const loadBootstrap = () => {
+    fetch('/api/system/mcp-bootstrap')
+      .then(r => r.ok ? r.json() : { active: false })
+      .then((data: BootstrapStatus) => setBootstrap(data))
+      .catch(() => setBootstrap({ active: false }));
+  };
+
+  const revokeBootstrap = async () => {
+    setRevokingBootstrap(true);
+    try {
+      await fetch('/api/system/mcp-bootstrap', { method: 'DELETE' });
+      loadBootstrap();
+    } finally {
+      setRevokingBootstrap(false);
+    }
+  };
+
   // ── API token state ──────────────────────────────────────────────
   const [tokensOpen, setTokensOpen] = useState(false);
   const [tokens, setTokens] = useState<TokenView[] | null>(null);
@@ -123,6 +150,9 @@ export default function McpSection() {
       setNewScopes(['read']);
       setShowCreate(false);
       loadTokens();
+      // Server-side createToken auto-revokes the bootstrap token —
+      // refresh the panel so the operator sees it disappear.
+      loadBootstrap();
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -150,8 +180,16 @@ export default function McpSection() {
 
   useEffect(() => {
     // Read window.location after mount to avoid SSR/hydration mismatch.
-     
+
     setMcpUrl(`${window.location.origin}/mcp`);
+    // Bootstrap-token status (#322) loads alongside the rest of the
+    // panel so a fresh-install operator sees the active bootstrap
+    // banner without having to expand a sub-section.
+    fetch('/api/system/mcp-bootstrap')
+      .then(r => r.ok ? r.json() : { active: false })
+      .then((data: BootstrapStatus) => setBootstrap(data))
+      .catch(() => setBootstrap({ active: false }));
+
   }, []);
 
   useEffect(() => {
@@ -213,6 +251,28 @@ export default function McpSection() {
           label="How to connect"
         />
       </div>
+
+      {bootstrap?.active && (
+        <div className="mt-4 rounded-lg border border-amber-200 dark:border-amber-700/40 bg-amber-50/80 dark:bg-amber-900/20 px-4 py-3 flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-amber-900 dark:text-amber-200">Bootstrap token active</p>
+            <p className="text-xs text-amber-800/90 dark:text-amber-200/80 mt-0.5">
+              {bootstrap.minutesRemaining !== null
+                ? `LAN-only, read scope, ${bootstrap.minutesRemaining} min remaining.`
+                : 'LAN-only, read scope. Expiry will be set on next server boot.'}
+              {' '}Auto-revokes when you mint your first regular token below.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={revokingBootstrap}
+            onClick={revokeBootstrap}
+            className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-100 bg-white dark:bg-amber-900/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 disabled:opacity-50"
+          >
+            {revokingBootstrap ? 'Revoking…' : 'Revoke now'}
+          </button>
+        </div>
+      )}
 
       <div className="mt-4">
         <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">

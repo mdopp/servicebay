@@ -967,6 +967,20 @@ prompt_secret() {
   done
 }
 
+# Prompt for an *optional* secret. No "Confirm:" pass — the operator
+# is pasting a value they already generated locally (e.g. via
+# `openssl rand -hex 32`) and they keep the cleartext on their side.
+# Empty input means "skip" — the calling code treats that as "no
+# bootstrap token, MCP-during-install disabled".
+prompt_optional_secret() {
+  local var_name="$1"; shift
+  local prompt_text="$1"; shift
+  local value
+  read -r -s -p "$prompt_text: " value || true
+  echo
+  printf -v "$var_name" '%s' "$value"
+}
+
 # --- Load / save settings ---
 load_setting() {
   local key="$1"
@@ -1108,6 +1122,20 @@ if $USE_SAVED; then
   if [[ "${ENABLE_EMAIL^^}" =~ ^Y ]]; then
     prompt_secret EMAIL_PASS "SMTP password ($EMAIL_USER)"
   fi
+
+  # Bootstrap MCP token (#322): optional, LAN-only, read-only,
+  # 30 minutes of usable life from first server boot. If the operator
+  # leaves it empty we don't write anything — they'll mint MCP tokens
+  # via the dashboard later. To enable: paste a token they generated
+  # locally (e.g. `openssl rand -hex 32`) — the script SHA-256s it
+  # before writing into config.json so the cleartext never leaves the
+  # operator's terminal.
+  echo ""
+  echo "Optional: MCP bootstrap token for install-time diagnostics."
+  echo "  - Generate locally with: openssl rand -hex 32"
+  echo "  - Read-only, LAN-only, 30 minutes from first boot."
+  echo "  - Press Enter to skip (you can mint MCP tokens later via the dashboard)."
+  prompt_optional_secret SERVICEBAY_BOOTSTRAP_TOKEN "Paste bootstrap token (or Enter to skip)"
 
   # Backup restore (also available in saved-settings mode)
   echo ""
@@ -1277,12 +1305,30 @@ else
   else
     BACKUP_FILE=""
   fi
+
+  # Bootstrap MCP token (#322) — same prompt as the saved-settings
+  # branch above, repeated here for the full-interactive path.
+  echo ""
+  echo "Optional: MCP bootstrap token for install-time diagnostics."
+  echo "  - Generate locally with: openssl rand -hex 32"
+  echo "  - Read-only, LAN-only, 30 minutes from first boot."
+  echo "  - Press Enter to skip (you can mint MCP tokens later via the dashboard)."
+  prompt_optional_secret SERVICEBAY_BOOTSTRAP_TOKEN "Paste bootstrap token (or Enter to skip)"
 fi
 
 # --- Save settings for next run ---
 save_settings
 
 PASSWORD_HASH="$(printf '%s' "$HOST_PASSWORD" | openssl passwd -6 -stdin)"
+
+# Hash the optional bootstrap token (#322). The cleartext stays on the
+# operator's box — only the SHA-256 hex hash lands in config.json. We
+# don't echo or save the cleartext anywhere.
+SERVICEBAY_BOOTSTRAP_TOKEN_HASH=""
+if [[ -n "${SERVICEBAY_BOOTSTRAP_TOKEN:-}" ]]; then
+  SERVICEBAY_BOOTSTRAP_TOKEN_HASH="$(printf '%s' "$SERVICEBAY_BOOTSTRAP_TOKEN" | openssl dgst -sha256 -hex | awk '{print $NF}')"
+  unset SERVICEBAY_BOOTSTRAP_TOKEN  # don't keep cleartext in env
+fi
 
 # Properly escape arbitrary strings as JSON literals — prevents user-supplied
 # values (passwords, hostnames, email addresses) from breaking the JSON or
@@ -1292,11 +1338,25 @@ json_str() {
   python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1"
 }
 
+# Build the auth block. If the operator pasted a bootstrap token, the
+# SHA-256 hash + scope='read' are inlined — the server reads it on
+# first boot, lazy-initializes expiresAt to first-boot + 30 min, then
+# uses it to authenticate LAN-only read-scope MCP requests until the
+# operator mints their first dashboard token. See #322.
+AUTH_BLOCK='"username": '"$(json_str "$SERVICEBAY_ADMIN_USER")"
+if [[ -n "${SERVICEBAY_BOOTSTRAP_TOKEN_HASH:-}" ]]; then
+  AUTH_BLOCK+=',
+    "bootstrapToken": {
+      "hash": '"$(json_str "$SERVICEBAY_BOOTSTRAP_TOKEN_HASH")"',
+      "scope": "read"
+    }'
+fi
+
 # Build ServiceBay config.json (with optional sections)
 SERVICEBAY_CONFIG='{
   "serverName": '"$(json_str "$SERVER_NAME")"',
   "auth": {
-    "username": '"$(json_str "$SERVICEBAY_ADMIN_USER")"'
+    '"$AUTH_BLOCK"'
   },
   "autoUpdate": {
     "enabled": true,

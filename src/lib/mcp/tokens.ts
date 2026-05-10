@@ -123,6 +123,18 @@ export async function createToken(input: {
   data.tokens.push(token);
   await saveFile(data);
   logger.info('mcp:tokens', `Created MCP token ${id} ("${token.name}") scopes=[${token.scopes.join(',')}] by ${input.createdBy}`);
+
+  // First user-minted MCP token closes the bootstrap-token bridge
+  // (#322). The operator now has a real, scoped credential — keep
+  // the bootstrap entry around any longer is just attack surface.
+  // Best-effort: a failure here doesn't unwind the token-create.
+  try {
+    const { revokeBootstrapToken } = await import('./bootstrapToken');
+    await revokeBootstrapToken();
+  } catch (e) {
+    logger.warn('mcp:tokens', `Could not auto-revoke bootstrap token after first mint: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   // The clear-text token is `sb_<id>_<secret>` — returned exactly once.
   return { token: publicView(token), secret: `sb_${id}_${secret}` };
 }

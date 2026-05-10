@@ -136,7 +136,7 @@ def main() -> int:
     abs_password = env("ABS_ADMIN_PASSWORD")
     abs_port = env("ABS_PORT", "13378")
     if abs_password:
-        log(f"🔑 Audiobookshelf admin (user: {abs_user}, password: {abs_password}) — open http://{host}:{abs_port}. Note now, only shown once.")
+        log(f"✅ Audiobookshelf admin saved (user: {abs_user}) — open http://{host}:{abs_port}. Password retrievable from Settings → Integrations → Saved credentials.")
         emit_credential(
             service="Audiobookshelf",
             url=f"http://{host}:{abs_port}",
@@ -151,7 +151,7 @@ def main() -> int:
     nd_password = env("NAVIDROME_ADMIN_PASSWORD")
     nd_port = env("NAVIDROME_PORT", "4533")
     if nd_password:
-        log(f"🔑 Navidrome admin (user: {nd_user}, password: {nd_password}) — open http://{host}:{nd_port}. Subsonic clients (Symfonium etc.) use the same credentials.")
+        log(f"✅ Navidrome admin saved (user: {nd_user}) — open http://{host}:{nd_port}. Subsonic clients (Symfonium etc.) use the same credentials. Password retrievable from Settings → Integrations → Saved credentials.")
         emit_credential(
             service="Navidrome",
             url=f"http://{host}:{nd_port}",
