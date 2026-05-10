@@ -440,12 +440,23 @@ export default function OnboardingWizard() {
       setAvailableStacks(stacks);
       setStackNodes(nodes);
       if (nodes.length === 1) setStackSelectedNode(nodes[0].Name);
+      // Single-stack-only installs (the common case — only `full-stack`
+      // ships built-in) should skip the picker step; the user has
+      // nothing to choose. Auto-select it so they land directly in
+      // the per-service checkbox grid.
+      if (stacks.length === 1 && !selectedStack) {
+        await handleSelectStack(stacks[0]);
+      }
     } catch {
       // Stacks not available yet, that's OK
       setAvailableStacks([]);
     } finally {
       setStacksLoading(false);
     }
+    // handleSelectStack + selectedStack referenced in the auto-select
+    // branch — they don't change identity within a wizard run, so
+    // omitting from deps is safe and avoids a re-loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1450,7 +1461,7 @@ export default function OnboardingWizard() {
              );
            })()}
            {stacksOnlyMode && (
-             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Choose a service stack to deploy on your new server.</p>
+             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Choose which services to install on your new server.</p>
            )}
         </div>
 
@@ -1936,12 +1947,12 @@ export default function OnboardingWizard() {
 
             {currentStep === 'stacks' && (
                 <div className="space-y-4">
-                    <h3 className="font-semibold text-lg flex items-center gap-2"><Layers className="w-5 h-5 text-indigo-500"/> Install a Stack</h3>
+                    <h3 className="font-semibold text-lg flex items-center gap-2"><Layers className="w-5 h-5 text-indigo-500"/> Install services</h3>
 
                     {stackInstallStep === 'select' && (
                         <>
                             <p className="text-sm text-gray-500">
-                                Choose a pre-configured stack to install, or skip this step and install services later from the Registry.
+                                Pick a curated set of services to install. You&apos;ll choose which ones from the set on the next step. (Or skip and install individual services later from the Registry.)
                             </p>
                             {stacksLoading ? (
                                 <div className="flex items-center justify-center py-8 text-gray-400">
