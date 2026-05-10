@@ -100,7 +100,7 @@ The installer creates a bootable USB that provisions the entire system: OS, netw
 - **Multi-Node** — manage containers across machines via SSH from a single UI
 - **System Backups** — snapshot all configs across nodes (auto-snapshot before destructive ops); restore in seconds
 - **Auto-Updates** — keep ServiceBay and containers current automatically; email notification on each new release
-- **Self-Diagnose** — built-in probe battery (containers stable / health-check coverage / dangling proxy routes / disk / failed units / first-boot units); auto-runs at end of install
+- **Self-Diagnose** — built-in probe battery with one-click fixes for every detected problem: restart crash-looping containers, retry stale NPM auth, delete dangling proxy routes, configure FritzBox DNS via TR-064, re-run failed seed scripts, free disk space, and more. Auto-runs at end of install.
 - **Mobile-Responsive** — full UI with dedicated mobile navigation
 - **MCP Server** — 37+ MCP tools, scoped tokens, audit log, soft-delete, auto-snapshot, exec denylist, destructive-op email alerts
 
