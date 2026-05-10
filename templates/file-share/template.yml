@@ -97,6 +97,21 @@ spec:
     securityContext:
       runAsUser: 0
       runAsGroup: 0
+    # The filebrowser image's HEALTHCHECK runs healthcheck.sh, which
+    # probes `http://${FB_ADDRESS:-localhost}:${FB_PORT}/health`. When
+    # those envs aren't set the script falls back to reading
+    # `/config/settings.json` — but our config file is
+    # `/config/.filebrowser.json` (legacy `--config=` style), so the
+    # script's jq lookup fails, PORT comes out empty, and the probe
+    # always fails. `podman ps` then shows `(unhealthy)` even though
+    # filebrowser is serving fine through NPM. Setting FB_PORT +
+    # FB_ADDRESS here gives the healthcheck.sh what it needs without
+    # changing the config-file shape — closes #319.
+    env:
+      - name: FB_PORT
+        value: "{{FILEBROWSER_PORT}}"
+      - name: FB_ADDRESS
+        value: "127.0.0.1"
     args:
       - "--config=/config/.filebrowser.json"
       - "--database=/database/filebrowser.db"

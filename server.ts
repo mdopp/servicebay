@@ -31,6 +31,7 @@ import { GatewayPoller } from './src/lib/gateway/poller';
 import { logger } from './src/lib/logger';
 import { migrateConfig, getConfig, updateConfig } from './src/lib/config';
 import { syncRegistries } from './src/lib/registry';
+import { reconcileLanIp } from './src/lib/lanIp';
 import { createMcpServer } from './src/lib/mcp/server';
 import { scheduleBackup } from './src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -497,6 +498,18 @@ app.prepare().then(() => {
 
     // Sync template registries in background (non-blocking)
     syncRegistries().catch(err => logger.warn('Server', `Registry sync failed: ${err}`));
+
+    // LAN IP reconcile (#318). Captures the install-time IP on first
+    // boot and updates the stored value (with history) when the IP
+    // drifts. Deferred 60s so the Local agent has time to come up
+    // through the socket lifecycle — detectLanIp() needs an `exec`
+    // round-trip. Best-effort: a missing IP just leaves the previous
+    // value alone, the diagnose probe handles the no-value case.
+    setTimeout(() => {
+      reconcileLanIp('Local').catch(err =>
+        logger.warn('Server', `LAN IP reconcile failed: ${err instanceof Error ? err.message : String(err)}`),
+      );
+    }, 60_000);
 
     // Auto-update logic to be migrated to Executor Task
   });

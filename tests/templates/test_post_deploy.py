@@ -280,6 +280,50 @@ class FileShareScript(unittest.TestCase):
         self.assertIn("Samba (file-share)", services)
         self.assertIn("FileBrowser admin", out)
 
+    def test_returns_nonzero_when_seed_times_out(self):
+        """If /api/system/filebrowser/init never accepts the seed within
+        the 3-minute budget, the script must exit non-zero so the
+        post-deploy run record + diagnose probe surface the failure
+        (regression-guard for #317)."""
+        m = load_script("file-share")
+        # 0 → urllib treats it as a connection failure; the script's
+        # post_json catches URLError and returns (0, None), which the
+        # main loop reads as "not seeded yet" and keeps retrying.
+        responses = {
+            "/api/system/filebrowser/init": {"status": 0, "body": None},
+        }
+        env = {
+            "HOST": "h",
+            "SB_API_URL": "http://sb.test",
+            "FILEBROWSER_ADMIN_USER": "admin",
+            "SB_NODE": "Local",
+        }
+        # Patch time.time so the deadline expires immediately and we
+        # don't actually wait three minutes for the test.
+        import urllib.request
+        import subprocess as subprocess_mod
+        import time as time_mod
+
+        class _FakeCompletedProcess:
+            returncode = 0
+            stdout = "Running"
+            stderr = ""
+
+        # First call inside main() reads the start-of-budget; subsequent
+        # calls must be > deadline so the while-loop exits on the first
+        # iteration.
+        time_calls = iter([0.0, 0.0, 0.0, 10_000.0])
+        def fake_time(): return next(time_calls, 10_000.0)
+
+        with run_with_env(env), \
+             mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)), \
+             mock.patch.object(time_mod, "sleep", lambda _s: None), \
+             mock.patch.object(time_mod, "time", fake_time), \
+             mock.patch.object(subprocess_mod, "run", lambda *a, **kw: _FakeCompletedProcess()):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 1)
+        self.assertIn("Could not pre-seed FileBrowser admin", out)
+
 
 class MediaScript(unittest.TestCase):
     def test_no_passwords_emits_nothing_and_returns_zero(self):
