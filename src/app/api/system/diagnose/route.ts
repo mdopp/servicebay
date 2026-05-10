@@ -172,12 +172,32 @@ export async function POST(request: Request) {
     if (realFailed.length === 0) return `0 actionable failures (${benign.length} benign first-boot leftover ignored).`;
     return `${realFailed.length} failed unit(s)${benign.length ? ` (+${benign.length} benign first-boot leftovers ignored)` : ''}.`;
   })();
+  // Parse each failed line into { name, description } for items[].
+  // `systemctl --failed --no-legend` output is like:
+  //   ● my-svc.service           loaded failed failed Description text here
+  // Whitespace-split → name is index 1, description starts at index 5.
+  const failedUnitItems: ProbeItem[] = realFailed.map((line): ProbeItem | null => {
+    const tokens = line.trim().replace(/^●\s*/, '').split(/\s+/);
+    const name = tokens[0];
+    if (!name) return null;
+    const desc = tokens.slice(4).join(' ').trim();
+    return {
+      id: name,
+      label: name,
+      detail: desc || 'failed',
+      status: 'warn' as const,
+      actionIds: ['restart_unit', 'reset_failed'],
+    };
+  }).filter((i): i is ProbeItem => i !== null);
   probes.push({
     id: 'failed_units',
     label: 'systemd user units',
     status: realFailed.length === 0 ? 'ok' : 'warn',
     detail,
-    hint: realFailed.length > 0 ? `Failed units:\n${realFailed.join('\n')}` : undefined,
+    hint: realFailed.length > 0
+      ? 'Click "Restart" to retry a failed unit, or "Clear failed state" if the underlying cause is already fixed and you just want the dashboard to stop nagging.'
+      : undefined,
+    _items: failedUnitItems.length > 0 ? failedUnitItems : undefined,
   });
 
   // 5) Listening ports for known services

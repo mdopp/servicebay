@@ -18,5 +18,6 @@ import './danglingProxy';
 import './postDeployFailed';
 import './crashLoop';
 import './proxyRouteMissing';
+import './failedUnits';
 
 export {};
