@@ -6,6 +6,7 @@ import { actionsForProbe, resolveItemActions, type ProbeAction, type ProbeItem, 
 import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
 import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
+import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -494,6 +495,29 @@ export async function POST(request: Request) {
     probes.push({
       id: 'router_dns_not_pointing',
       label: 'Router DNS routing',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 15) Post-deploy seed failures (B8 / #252). Surfaces services whose
+  //     last `post-deploy.py` exited non-zero so silent seed failures
+  //     don't sit there indefinitely. Each failed service is one item
+  //     with per-row "Re-run post-install" + "Clear record" actions.
+  try {
+    const pd = await checkPostDeployFailed();
+    probes.push({
+      id: 'post_deploy_failed',
+      label: 'Service seed steps',
+      status: pd.status,
+      detail: pd.detail,
+      hint: pd.hint,
+      _items: pd.items,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'post_deploy_failed',
+      label: 'Service seed steps',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

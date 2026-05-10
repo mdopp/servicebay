@@ -200,6 +200,26 @@ export interface AppConfig {
   };
   setupCompleted?: boolean;
   stackSetupPending?: boolean;
+  /**
+   * Per-service record of the last `post-deploy.py` run. Written by
+   * `ServiceManager.runPostDeployScript` after every run; read by the
+   * `post_deploy_failed` probe (B8 / #241) so it can surface
+   * "Re-run post-install" actions instead of letting silent seed
+   * failures linger. See #252.
+   *
+   * Key is the template/service name (e.g. `vaultwarden`, `auth`).
+   * `stdoutTail` is bounded to ~1KB so config.json stays small.
+   */
+  servicePostDeploy?: Record<string, ServicePostDeployRecord>;
+}
+
+export interface ServicePostDeployRecord {
+  /** ISO timestamp of when the script finished (success or failure). */
+  lastRunAt: string;
+  /** Exit code; 0 = success. */
+  exitCode: number;
+  /** Tail of stdout (last ~1KB). Aids "what failed" diagnosis without bloating config. */
+  stdoutTail?: string;
 }
 
 export function getOidcCallbackUrl(config: { reverseProxy?: { publicDomain?: string } }): string {
