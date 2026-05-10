@@ -17,15 +17,14 @@
  *
  * Action `reset_volume` (destructive) wipes NPM's data dir and restarts
  * the service so it re-seeds with the wizard's INITIAL_ADMIN_*
- * credentials. The `use_existing` path is currently surfaced via the
- * probe's `hint` field — operators who know the existing password go
- * to Settings → Reverse Proxy and update there. Adding an inline
- * credentials form on the diagnose page is a follow-up (needs F1
- * extension for action inputs[]).
+ * credentials. Action `use_existing` (non-destructive) accepts the
+ * password the operator knows works and persists it to config — no
+ * data loss, the right path for "I already changed the password
+ * outside the wizard."
  */
 
 import { agentManager } from '@/lib/agent/manager';
-import { getConfig } from '@/lib/config';
+import { getConfig, updateConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
@@ -97,7 +96,7 @@ export async function checkNpmDataStale(node: string): Promise<NpmDataStaleResul
         status: 'fail',
         detail:
           'Nginx Proxy Manager is rejecting the stored admin credentials. This usually means a previous install left an admin password in the NPM database that no longer matches.',
-        hint: 'Click "Reset NPM data" below to wipe and reinstall, or open Settings → Reverse Proxy to enter the credentials NPM is actually using.',
+        hint: 'If you know the password NPM is actually using, click "Use existing password" below to save it (no data loss). Otherwise "Reset NPM data" wipes the database and re-seeds with the wizard credentials.',
       };
     }
     return {
@@ -169,4 +168,95 @@ registerProbeAction(
     destructive: true,
   },
   resetNpmVolume,
+);
+
+/**
+ * Non-destructive sibling of `reset_volume` — saves credentials the
+ * operator already knows are correct. Uses NPM's /api/tokens to
+ * confirm the password works before persisting; if NPM still 401s we
+ * surface the error rather than overwriting good config with bad.
+ */
+async function useExistingNpmCreds({
+  node,
+  payload,
+}: {
+  node: string;
+  payload?: Record<string, unknown>;
+}): Promise<ProbeActionResult> {
+  const email = typeof payload?.email === 'string' ? payload.email.trim() : '';
+  const password = typeof payload?.password === 'string' ? payload.password : '';
+  if (!email || !password) {
+    return { ok: false, message: 'Email and password are required.', refresh: false };
+  }
+  const adminUrl = await findNpmAdminUrl(node);
+  if (!adminUrl) {
+    return {
+      ok: false,
+      message: 'Nginx Proxy Manager is not deployed on this node — nothing to authenticate against.',
+      refresh: false,
+    };
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${adminUrl}/api/tokens`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identity: email, secret: password }),
+      signal: AbortSignal.timeout(4000),
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      message: `Could not reach NPM at ${adminUrl}: ${e instanceof Error ? e.message : String(e)}`,
+      refresh: false,
+    };
+  }
+  if (res.status === 401) {
+    return {
+      ok: false,
+      message: 'NPM still rejected those credentials — double-check the password and try again. (Nothing was saved.)',
+      refresh: false,
+    };
+  }
+  if (!res.ok) {
+    return { ok: false, message: `NPM returned HTTP ${res.status} during verification.`, refresh: false };
+  }
+  await updateConfig({
+    reverseProxy: {
+      npm: { email, password },
+    },
+  });
+  logger.info('diagnose:npm_data_stale', `Saved verified NPM credentials for ${email}`);
+  return {
+    ok: true,
+    message: 'Credentials verified and saved. Future installs and proxy syncs will use these.',
+    refresh: true,
+  };
+}
+
+registerProbeAction(
+  PROBE_ID,
+  {
+    id: 'use_existing',
+    label: 'Use existing password',
+    description:
+      'Saves the NPM admin email + password you already know works. ServiceBay verifies them against NPM before persisting, so a wrong entry can\'t lock you out further.',
+    inputs: [
+      {
+        name: 'email',
+        label: 'NPM admin email',
+        type: 'email',
+        placeholder: 'admin@example.com',
+        required: true,
+      },
+      {
+        name: 'password',
+        label: 'NPM admin password',
+        type: 'password',
+        placeholder: 'The password you can log in with at NPM\'s admin UI',
+        required: true,
+      },
+    ],
+  },
+  useExistingNpmCreds,
 );

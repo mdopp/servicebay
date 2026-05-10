@@ -94,3 +94,94 @@ describe('dispatchProbeAction', () => {
     expect(result.refresh).toBe(false);
   });
 });
+
+describe('inline-form inputs', () => {
+  it('rejects dispatch when required inputs are missing', async () => {
+    const handler = vi.fn(async () => ({ ok: true, message: 'should not run' }));
+    registerProbeAction(
+      'p1',
+      {
+        id: 'a1',
+        label: 'A',
+        description: 'd',
+        inputs: [
+          { name: 'email', label: 'Email', type: 'email', required: true },
+          { name: 'password', label: 'Password', type: 'password' /* required defaults true */ },
+        ],
+      },
+      handler,
+    );
+    const result = await dispatchProbeAction({
+      probeId: 'p1',
+      actionId: 'a1',
+      node: 'Local',
+      payload: { email: 'a@b.c' /* password missing */ },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/Password/);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('rejects dispatch when required inputs are empty strings', async () => {
+    const handler = vi.fn(async () => ({ ok: true, message: '' }));
+    registerProbeAction(
+      'p1',
+      {
+        id: 'a1',
+        label: 'A',
+        description: 'd',
+        inputs: [{ name: 'email', label: 'Email', type: 'email', required: true }],
+      },
+      handler,
+    );
+    const result = await dispatchProbeAction({
+      probeId: 'p1',
+      actionId: 'a1',
+      node: 'Local',
+      payload: { email: '' },
+    });
+    expect(result.ok).toBe(false);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('passes payload through when all required inputs are present', async () => {
+    const handler = vi.fn(async () => ({ ok: true, message: 'saved' }));
+    registerProbeAction(
+      'p1',
+      {
+        id: 'a1',
+        label: 'A',
+        description: 'd',
+        inputs: [
+          { name: 'email', label: 'Email', type: 'email', required: true },
+          { name: 'note', label: 'Note', type: 'text', required: false },
+        ],
+      },
+      handler,
+    );
+    const result = await dispatchProbeAction({
+      probeId: 'p1',
+      actionId: 'a1',
+      node: 'Local',
+      payload: { email: 'a@b.c' /* note optional, omitted */ },
+    });
+    expect(result.ok).toBe(true);
+    expect(handler).toHaveBeenCalledWith({ node: 'Local', payload: { email: 'a@b.c' } });
+  });
+
+  it('exposes inputs[] via actionsForProbe', () => {
+    registerProbeAction(
+      'p1',
+      {
+        id: 'a1',
+        label: 'A',
+        description: 'd',
+        inputs: [{ name: 'email', label: 'Email', type: 'email' }],
+      },
+      async () => ({ ok: true, message: '' }),
+    );
+    const [action] = actionsForProbe('p1');
+    expect(action.inputs).toHaveLength(1);
+    expect(action.inputs?.[0].name).toBe('email');
+  });
+});

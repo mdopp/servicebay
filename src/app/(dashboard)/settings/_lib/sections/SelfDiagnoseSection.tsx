@@ -5,11 +5,21 @@ import { AlertCircle, AlertTriangle, CheckCircle2, Info, Loader2, Stethoscope, W
 
 type ProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
 
+interface ProbeActionInput {
+  name: string;
+  label: string;
+  type: 'text' | 'password' | 'email';
+  placeholder?: string;
+  hint?: string;
+  required?: boolean;
+}
+
 interface ProbeAction {
   id: string;
   label: string;
   description: string;
   destructive?: boolean;
+  inputs?: ProbeActionInput[];
 }
 
 interface DiagnoseProbe {
@@ -39,6 +49,10 @@ export default function SelfDiagnoseSection() {
   const [error, setError] = useState<string | null>(null);
   /** Per-action transient state. Keyed by `<probeId>:<actionId>`. */
   const [actionState, setActionState] = useState<Record<string, { running?: boolean; message?: string; ok?: boolean }>>({});
+  /** Which actions have their inline form expanded. Keyed by `<probeId>:<actionId>`. */
+  const [expandedForms, setExpandedForms] = useState<Record<string, boolean>>({});
+  /** Form-field values per action. Keyed by `<probeId>:<actionId>` → { fieldName: value }. */
+  const [formValues, setFormValues] = useState<Record<string, Record<string, string>>>({});
 
   const run = async () => {
     setRunning(true);
@@ -57,7 +71,7 @@ export default function SelfDiagnoseSection() {
     }
   };
 
-  const runAction = async (probe: DiagnoseProbe, action: ProbeAction) => {
+  const runAction = async (probe: DiagnoseProbe, action: ProbeAction, payload?: Record<string, string>) => {
     // Confirm-on-destructive guard. The action's description is
     // surfaced in the dialog so the user sees the consequences they
     // accepted.
@@ -115,6 +129,7 @@ export default function SelfDiagnoseSection() {
           probeId: probe.id,
           actionId: action.id,
           node: result?.node,
+          ...(payload ? { payload } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -210,31 +225,107 @@ export default function SelfDiagnoseSection() {
                     </p>
                   )}
                   {(probe.actions ?? []).length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-3 space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        {(probe.actions ?? []).map(action => {
+                          const key = `${probe.id}:${action.id}`;
+                          const state = actionState[key];
+                          const isRunning = state?.running;
+                          const hasInputs = (action.inputs ?? []).length > 0;
+                          const isExpanded = expandedForms[key];
+                          const baseStyle = action.destructive
+                            ? 'bg-red-600 hover:bg-red-700 text-white'
+                            : 'bg-violet-600 hover:bg-violet-700 text-white';
+                          return (
+                            <div key={action.id} className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  if (hasInputs) {
+                                    setExpandedForms(s => ({ ...s, [key]: !s[key] }));
+                                  } else {
+                                    void runAction(probe, action);
+                                  }
+                                }}
+                                disabled={isRunning || running}
+                                title={action.description}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors disabled:opacity-50 ${baseStyle}`}
+                              >
+                                {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
+                                {action.label}
+                                {hasInputs && (isExpanded ? ' ▴' : ' ▾')}
+                              </button>
+                              {state?.message && !isRunning && (
+                                <span className={`text-xs ${state.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                  {state.ok ? '✓' : '✗'} {state.message}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                       {(probe.actions ?? []).map(action => {
                         const key = `${probe.id}:${action.id}`;
+                        const hasInputs = (action.inputs ?? []).length > 0;
+                        if (!hasInputs || !expandedForms[key]) return null;
+                        const values = formValues[key] ?? {};
                         const state = actionState[key];
                         const isRunning = state?.running;
-                        const baseStyle = action.destructive
-                          ? 'bg-red-600 hover:bg-red-700 text-white'
-                          : 'bg-violet-600 hover:bg-violet-700 text-white';
+                        const inputs = action.inputs ?? [];
+                        const allRequiredFilled = inputs
+                          .filter(i => i.required !== false)
+                          .every(i => (values[i.name] ?? '').length > 0);
                         return (
-                          <div key={action.id} className="flex items-center gap-2">
-                            <button
-                              onClick={() => runAction(probe, action)}
-                              disabled={isRunning || running}
-                              title={action.description}
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors disabled:opacity-50 ${baseStyle}`}
-                            >
-                              {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
-                              {action.label}
-                            </button>
-                            {state?.message && !isRunning && (
-                              <span className={`text-xs ${state.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                                {state.ok ? '✓' : '✗'} {state.message}
-                              </span>
-                            )}
-                          </div>
+                          <form
+                            key={`${key}-form`}
+                            onSubmit={e => {
+                              e.preventDefault();
+                              void runAction(probe, action, values);
+                            }}
+                            className="p-3 rounded-md bg-white/60 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 space-y-2"
+                          >
+                            <p className="text-xs text-gray-600 dark:text-gray-400">{action.description}</p>
+                            {inputs.map(input => (
+                              <div key={input.name} className="space-y-1">
+                                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                                  {input.label}{input.required !== false && <span className="text-red-500"> *</span>}
+                                </label>
+                                <input
+                                  type={input.type}
+                                  value={values[input.name] ?? ''}
+                                  placeholder={input.placeholder}
+                                  required={input.required !== false}
+                                  onChange={e =>
+                                    setFormValues(s => ({
+                                      ...s,
+                                      [key]: { ...(s[key] ?? {}), [input.name]: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full px-2 py-1.5 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                                  autoComplete="off"
+                                />
+                                {input.hint && (
+                                  <p className="text-xs text-gray-500 dark:text-gray-400">{input.hint}</p>
+                                )}
+                              </div>
+                            ))}
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="submit"
+                                disabled={!allRequiredFilled || isRunning || running}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
+                              >
+                                {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
+                                Submit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedForms(s => ({ ...s, [key]: false }))}
+                                className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
                         );
                       })}
                     </div>
