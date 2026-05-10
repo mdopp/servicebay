@@ -294,6 +294,15 @@ export default function OnboardingWizard() {
   // when the deploy API just returned. (Earlier log-parsing version
   // showed "12/12 deployed" while NPM was still pulling its image.)
   const { data: digitalTwin } = useDigitalTwin();
+  // Async install handlers (deploy → settle-wait → done) capture the
+  // initial digitalTwin closure value and never see SSE-driven updates
+  // for the duration of the loop. Mirror the latest value into a ref
+  // so those long-running async functions can read fresh state via
+  // `digitalTwinRef.current`. Without this, the settle-wait loop reads
+  // stale data and reports "0/N services active" indefinitely even
+  // though services are actually coming up.
+  const digitalTwinRef = useRef(digitalTwin);
+  useEffect(() => { digitalTwinRef.current = digitalTwin; }, [digitalTwin]);
 
   // Configure-step tab. Variables are categorised so the operator isn't
   // staring at a 50-line flat list — the "subdomains" tab shows the
@@ -1314,14 +1323,17 @@ export default function OnboardingWizard() {
       // actually deployed. A failed deploy isn't going to become active
       // and a stuck "0/9 up" heartbeat is just noise.
       const expected = deployed.map(i => i.name);
-      if (digitalTwin && expected.length > 0) {
+      // Read via the ref so each poll iteration sees fresh SSE updates
+      // — `digitalTwin` from the closure is the snapshot at handler-
+      // start time and never changes for the duration of this loop.
+      if (digitalTwinRef.current && expected.length > 0) {
         const SETTLE_TIMEOUT_MS = 3 * 60_000;
         const SETTLE_POLL_MS = 5_000;
         const startedAt = Date.now();
         let lastReady = -1;
         while (Date.now() - startedAt < SETTLE_TIMEOUT_MS) {
           const node = stackSelectedNode || 'Local';
-          const twinNode = digitalTwin?.nodes?.[node];
+          const twinNode = digitalTwinRef.current?.nodes?.[node];
           const services = twinNode?.services ?? [];
           const ready = expected.filter(name =>
             services.some(s => (s.name === name || s.name === `${name}.service`) && s.active),
