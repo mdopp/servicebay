@@ -343,9 +343,19 @@ storage:
                 cp "$IGNITION_TMP/servicebay/$f" "$MOUNT_POINT/servicebay/$f"
               fi
             done
-            # Only write config.json if it doesn't exist (preserve user changes)
-            if [[ ! -f "$MOUNT_POINT/servicebay/config.json" && -f "$IGNITION_TMP/servicebay/config.json" ]]; then
-              cp "$IGNITION_TMP/servicebay/config.json" "$MOUNT_POINT/servicebay/config.json"
+            # config.json: stage the new ISO copy alongside the existing
+            # one. setup-config-merge.service does the smart merge once
+            # python3 is available (we run too early here for python).
+            # On a fresh box (no existing config.json) we just rename
+            # the new one into place — no merge needed.
+            if [[ -f "$IGNITION_TMP/servicebay/config.json" ]]; then
+              if [[ -f "$MOUNT_POINT/servicebay/config.json" ]]; then
+                cp "$IGNITION_TMP/servicebay/config.json" "$MOUNT_POINT/servicebay/config.iso.json"
+                echo "setup-raid: existing config.json found, staged ISO copy as config.iso.json (merge runs after python install)"
+              else
+                cp "$IGNITION_TMP/servicebay/config.json" "$MOUNT_POINT/servicebay/config.json"
+                echo "setup-raid: no existing config.json, wrote ISO config directly"
+              fi
             fi
             rm -rf "$IGNITION_TMP"
             echo "setup-raid: applied Ignition config to RAID"
@@ -540,6 +550,121 @@ ${SERVICEBAY_SSH_PRIV}
           RemainAfterExit=yes
           ExecStart=/bin/bash /usr/local/bin/install-python.sh
           ExecStartPost=/bin/touch /var/lib/install-python-done
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # Re-install config-merge script (#331). On a re-install, setup-raid
+    # leaves the existing config.json alone (so runtime-managed values
+    # like encrypted password hashes + LLDAP creds + NPM creds + post-
+    # deploy run history aren't lost) but stages the freshly-rendered
+    # ISO config as `config.iso.json` alongside. This script combines
+    # the two:
+    #   - starts from the new ISO config (operator's current intent)
+    #   - overlays a small whitelist of runtime-managed paths from the
+    #     old config (everything else from the new ISO wins)
+    #   - writes back atomically + removes config.iso.json
+    #
+    # Without this, every new schema field added in a future ServiceBay
+    # release silently fails to land on re-installed boxes.
+    - path: /usr/local/bin/setup-config-merge.py
+      mode: 0755
+      contents:
+        inline: |
+          #!/usr/bin/env python3
+          """Merge a freshly-staged ISO config (config.iso.json) into the
+          existing config.json on a re-install, preserving runtime-managed
+          fields. Idempotent: no-op when config.iso.json doesn't exist."""
+          import json
+          import os
+          import sys
+
+          DIR = "/var/mnt/data/servicebay"
+          OLD = os.path.join(DIR, "config.json")
+          NEW = os.path.join(DIR, "config.iso.json")
+
+          # Paths whose value the runtime owns (not the install prompts).
+          # Everything not on this list takes its value from the new ISO
+          # config — that mirrors what the operator just typed.
+          PRESERVE_PATHS = [
+              ("auth", "password"),
+              ("auth", "passwordHash"),
+              ("lldap",),
+              ("reverseProxy", "npm"),
+              ("reverseProxy", "lanIp"),
+              ("reverseProxy", "lanIpHistory"),
+              ("servicePostDeploy",),
+              ("agent",),
+          ]
+
+          def get_path(obj, path):
+              cur = obj
+              for k in path:
+                  if not isinstance(cur, dict) or k not in cur:
+                      return None, False
+                  cur = cur[k]
+              return cur, True
+
+          def set_path(obj, path, value):
+              cur = obj
+              for k in path[:-1]:
+                  if k not in cur or not isinstance(cur[k], dict):
+                      cur[k] = {}
+                  cur = cur[k]
+              cur[path[-1]] = value
+
+          def main():
+              if not os.path.exists(NEW):
+                  return 0
+              if not os.path.exists(OLD):
+                  os.replace(NEW, OLD)
+                  print("setup-config-merge: no prior config.json, ISO copy promoted in place.")
+                  return 0
+              with open(OLD) as f:
+                  old = json.load(f)
+              with open(NEW) as f:
+                  new = json.load(f)
+              merged = new
+              kept = 0
+              for path in PRESERVE_PATHS:
+                  val, found = get_path(old, path)
+                  if found:
+                      set_path(merged, path, val)
+                      kept += 1
+              tmp = OLD + ".merge.tmp"
+              with open(tmp, "w") as f:
+                  json.dump(merged, f, indent=2)
+              os.chmod(tmp, 0o600)
+              os.replace(tmp, OLD)
+              os.remove(NEW)
+              print(f"setup-config-merge: merged config.iso.json into config.json (preserved {kept} runtime path(s)).")
+              return 0
+
+          if __name__ == "__main__":
+              sys.exit(main())
+
+    # Systemd unit for the config-merge — runs once after install-python
+    # so python3 is guaranteed available, before servicebay.service.
+    - path: /etc/systemd/system/setup-config-merge.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Merge re-install ISO config into existing config.json (#331)
+          ConditionPathExists=/var/mnt/data/servicebay/config.iso.json
+          After=install-python.service var-mnt-data.mount
+          Requires=install-python.service var-mnt-data.mount
+          # No `Before=servicebay.service` — that unit is in the user
+          # systemd instance (Quadlet under ~/.config/containers/systemd)
+          # and isn't visible to the system bus. The user instance only
+          # starts after the system reaches multi-user.target, which
+          # this oneshot is ordered into via WantedBy below — so the
+          # merge always completes before the container reads config.
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/bin/python3 /usr/local/bin/setup-config-merge.py
 
           [Install]
           WantedBy=multi-user.target
