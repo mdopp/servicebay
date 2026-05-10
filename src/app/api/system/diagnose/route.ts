@@ -4,6 +4,7 @@ import { HealthStore } from '@/lib/health/store';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { actionsForProbe, type ProbeAction } from '@/lib/diagnose/actions';
 import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
+import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -404,6 +405,28 @@ export async function POST(request: Request) {
     probes.push({
       id: 'npm_data_stale',
       label: 'Nginx Proxy Manager auth',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 13) LAN-IP drift since install (D19-PR9 / #266). info / warn —
+  //     surfaces when ServiceBay's current LAN IP differs from the
+  //     value captured at install, or when the IP has flipped > 1
+  //     time in 30 days.
+  try {
+    const lanIp = await checkLanIpChanged(nodeName);
+    probes.push({
+      id: 'lan_ip_changed_since_install',
+      label: 'LAN IP stability',
+      status: lanIp.status,
+      detail: lanIp.detail,
+      hint: lanIp.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'lan_ip_changed_since_install',
+      label: 'LAN IP stability',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
