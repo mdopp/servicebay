@@ -51,13 +51,14 @@ def main() -> int:
 
     if enabled:
         log(
-            "🔐 Vaultwarden SSO is ENABLED via env (SSO_CLIENT_SECRET is wired in). "
-            "Test login through Authelia once before relying on it."
+            "Vaultwarden SSO is ENABLED via env (SSO_CLIENT_SECRET is wired in). "
+            "Family members log in via Authelia with the household password."
         )
     else:
         log(
-            "🔐 Vaultwarden SSO is OFF (default). "
-            "To enable: set VAULTWARDEN_SSO_ENABLED=true on this template and redeploy."
+            "Vaultwarden SSO is DISABLED. Family members will use local "
+            "Vaultwarden accounts. To re-enable: set VAULTWARDEN_SSO_ENABLED=true "
+            "in the wizard and redeploy."
         )
 
     if domain:

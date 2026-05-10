@@ -190,7 +190,7 @@ class VaultwardenScript(unittest.TestCase):
         with run_with_env(env):
             rc, out = capture_main(m)
         self.assertEqual(rc, 0)
-        self.assertIn("Vaultwarden SSO is OFF", out)
+        self.assertIn("Vaultwarden SSO is DISABLED", out)
 
     def test_no_secret_returns_zero_silently(self):
         m = load_script("vaultwarden")

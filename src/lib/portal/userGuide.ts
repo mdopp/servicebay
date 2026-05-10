@@ -107,9 +107,38 @@ export type PortalIconName = typeof PORTAL_ICONS[number];
 
 const PORTAL_ICON_SET: ReadonlySet<string> = new Set(PORTAL_ICONS);
 
+/**
+ * Per-subdomain card definition. Templates that host multiple
+ * services (e.g. `media` runs both Audiobookshelf at `books.<domain>`
+ * and Navidrome at `music.<domain>`) declare one entry per service
+ * via `cards[]` in the frontmatter, and the portal emits one card
+ * per entry.
+ *
+ * Single-service templates skip `cards[]` entirely — the parser
+ * synthesizes a single implicit card from the top-level frontmatter.
+ */
+export interface UserGuideCard {
+  /** Variable name in the template's `variables.json` to use as the
+   *  subdomain. e.g. `"ABS_SUBDOMAIN"` for Audiobookshelf. */
+  subdomain_var: string;
+  /** Optional override label; falls back to the template label. */
+  label?: string;
+  lucide_icon?: PortalIconName;
+  icon?: string;
+  tagline?: string;
+  recommended_apps?: RecommendedApp[];
+  setup_assets?: SetupAsset[];
+}
+
 export interface UserGuideFrontmatter {
+  /** Multi-service templates (`media`) declare per-subdomain cards
+   *  here. When present, top-level icon/tagline/etc. are ignored and
+   *  one PortalCard is emitted per entry. */
+  cards?: UserGuideCard[];
+
   /** Lucide icon name (line-art, matches ServiceBay's dashboard
-   *  chrome). Preferred over the legacy emoji `icon` field. */
+   *  chrome). Preferred over the legacy emoji `icon` field. Used
+   *  when `cards` is absent. */
   lucide_icon?: PortalIconName;
   /** Legacy emoji icon (📷 / 🏠 / …). Kept for back-compat;
    *  templates should migrate to `lucide_icon` for visual
@@ -208,6 +237,45 @@ export function parseUserGuide(raw: string | null, templateName: string): Parsed
     } else if (Array.isArray(data.mobile_apps)) {
       const lifted = liftMobileApps(data.mobile_apps);
       if (lifted.length > 0) fm.recommended_apps = lifted;
+    }
+
+    if (Array.isArray(data.cards)) {
+      const cards = data.cards
+        .map((entry: unknown): UserGuideCard | null => {
+          if (!entry || typeof entry !== 'object') return null;
+          const e = entry as Record<string, unknown>;
+          if (typeof e.subdomain_var !== 'string' || !/^[A-Z][A-Z0-9_]*_SUBDOMAIN$/.test(e.subdomain_var)) {
+            return null;
+          }
+          const card: UserGuideCard = { subdomain_var: e.subdomain_var };
+          if (typeof e.label === 'string' && e.label.trim()) card.label = e.label.trim();
+          if (typeof e.icon === 'string') card.icon = e.icon;
+          if (typeof e.lucide_icon === 'string' && PORTAL_ICON_SET.has(e.lucide_icon)) {
+            card.lucide_icon = e.lucide_icon as PortalIconName;
+          }
+          if (typeof e.tagline === 'string') card.tagline = e.tagline;
+          if (Array.isArray(e.recommended_apps)) {
+            const apps = parseRecommendedApps(e.recommended_apps);
+            if (apps.length > 0) card.recommended_apps = apps;
+          }
+          if (Array.isArray(e.setup_assets)) {
+            const assets = (e.setup_assets as unknown[])
+              .map((a): SetupAsset | null => {
+                if (!a || typeof a !== 'object') return null;
+                const ae = a as Record<string, unknown>;
+                if (typeof ae.kind !== 'string' || !KNOWN_ASSET_KINDS.has(ae.kind as SetupAssetKind)) return null;
+                const out: SetupAsset = { kind: ae.kind as SetupAssetKind };
+                if (typeof ae.label === 'string' && ae.label.trim()) out.label = ae.label.trim();
+                if (typeof ae.description === 'string' && ae.description.trim()) out.description = ae.description.trim();
+                return out;
+              })
+              .filter((a): a is SetupAsset => a !== null);
+            if (assets.length > 0) card.setup_assets = assets;
+          }
+          return card;
+        })
+        .filter((c): c is UserGuideCard => c !== null);
+      if (cards.length > 0) fm.cards = cards;
     }
 
     if (Array.isArray(data.setup_assets)) {

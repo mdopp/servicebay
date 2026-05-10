@@ -32,26 +32,30 @@ import { parseUserGuide, type PortalIconName, type RecommendedApp, type SetupAss
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 
 export interface PortalCard {
-  /** Template name (e.g. "immich"). Used as React key. */
+  /** Stable id, e.g. "media:ABS_SUBDOMAIN" or "immich:IMMICH_SUBDOMAIN".
+   *  Used as React key + lets multi-service templates emit one card
+   *  per subdomain (#242 follow-up). */
+  id: string;
+  /** Template name (e.g. "media"). Used for asset endpoint paths. */
   name: string;
-  /** User-facing label (from frontmatter title fallback or `servicebay.label`). */
+  /** Subdomain-variable name on the template (`*_SUBDOMAIN`). The
+   *  asset endpoint uses this to resolve the right URL when the
+   *  template has multiple subdomains (e.g. media → ABS_SUBDOMAIN
+   *  for the Audiobookshelf card). */
+  subdomainVar: string;
+  /** User-facing label */
   label: string;
-  /** Lucide icon name from `lucide_icon` frontmatter (line-art,
-   *  matches dashboard chrome). Null when only the legacy emoji is
-   *  set or no icon at all. */
+  /** Lucide icon name */
   lucideIcon: PortalIconName | null;
-  /** Legacy emoji icon (`icon` frontmatter). Empty string when only
-   *  lucideIcon is set or no icon at all. */
+  /** Legacy emoji icon */
   icon: string;
-  /** Frontmatter tagline, or empty string. */
   tagline: string;
   /** External URL the "Open" button should point at. */
   url: string;
-  /** Markdown body for the expandable Getting-started section. May be empty. */
+  /** Markdown body shared across all cards from the same template
+   *  (the template's `user-guide.md` body). */
   body: string;
-  /** Companion apps recommended by the template author (validated). */
   recommendedApps: RecommendedApp[];
-  /** Pre-configured setup artifacts (iOS profile, deep links, …). */
   setupAssets: SetupAsset[];
 }
 
@@ -68,22 +72,6 @@ async function readTemplateYaml(templateName: string): Promise<string | null> {
   try {
     return await fs.readFile(path.join(TEMPLATES_PATH, templateName, 'template.yml'), 'utf-8');
   } catch { return null; }
-}
-
-/**
- * Given a template's variables.json, pick the operator-facing
- * subdomain default. Heuristic: first variable whose `meta.type` is
- * `subdomain` and whose name ends in `_SUBDOMAIN`. Returns the
- * default value (e.g. `'photos'` for Immich's `IMMICH_SUBDOMAIN`),
- * or null when the template has no subdomain variable.
- */
-function pickSubdomainDefault(variables: Record<string, { type?: string; default?: string }>): string | null {
-  for (const [name, meta] of Object.entries(variables)) {
-    if (meta.type === 'subdomain' && name.endsWith('_SUBDOMAIN') && typeof meta.default === 'string') {
-      return meta.default;
-    }
-  }
-  return null;
 }
 
 /**
@@ -105,23 +93,41 @@ function pickSubdomainDefault(variables: Record<string, { type?: string; default
  */
 export async function resolveServiceUrl(
   config: AppConfig,
-  serviceName: string,
+  templateName: string,
+  /** Optional explicit *_SUBDOMAIN variable name. Required for
+   *  multi-subdomain templates (media has both ABS_SUBDOMAIN and
+   *  NAVIDROME_SUBDOMAIN); when omitted, falls back to the first
+   *  subdomain variable in variables.json (single-subdomain case). */
+  subdomainVar?: string,
 ): Promise<string | null> {
   const scheme = getMode(config) === 'public' ? 'https' : 'http';
+  const variables = await readVariables(templateName);
 
-  // Prefer the persisted proxy-host entry — it has the operator's
-  // chosen subdomain baked in.
+  // Resolve which variable to read.
+  let chosenVar = subdomainVar;
+  if (!chosenVar) {
+    chosenVar = Object.keys(variables).find(
+      k => k.endsWith('_SUBDOMAIN') && variables[k].type === 'subdomain',
+    );
+  }
+  if (!chosenVar) return null;
+  const sub = variables[chosenVar]?.default;
+  if (typeof sub !== 'string' || !sub) return null;
+
+  // Prefer a created proxy-host entry. The wizard's `buildProxyHosts`
+  // derives `service` per subdomain variable: lowercase `<NAME>` from
+  // `<NAME>_SUBDOMAIN`. Match against that so operator-customized
+  // subdomains (e.g. `agenda` instead of `caldav` for Radicale) get
+  // honoured even when the install renamed away from the default.
+  const expectedService = chosenVar.replace(/_SUBDOMAIN$/i, '').toLowerCase();
   const hostEntry = (config.reverseProxy?.hosts ?? []).find(
-    h => h.service === serviceName && h.created,
+    h => h.created && h.service === expectedService,
   );
   if (hostEntry) {
     return `${scheme}://${hostEntry.domain}`;
   }
 
   // Fallback: template default subdomain + active domain.
-  const variables = await readVariables(serviceName);
-  const sub = pickSubdomainDefault(variables);
-  if (!sub) return null;
   return `${scheme}://${sub}.${getActiveDomain(config)}`;
 }
 
@@ -151,24 +157,53 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
     const parsed = parseUserGuide(rawGuide, svc.name);
     if (!parsed) continue; // No guide → not on the portal in v1
 
-    const url = await resolveServiceUrl(config, svc.name);
-    if (!url) {
-      logger.warn('portal', `Template ${svc.name} has user-guide.md but no subdomain variable and no proxy-host entry — skipping`);
-      continue;
-    }
+    const templateLabel = parseTemplateLabel(yaml) ?? svc.name;
 
-    const label = parseTemplateLabel(yaml) ?? svc.name;
-    cards.push({
-      name: svc.name,
-      label,
-      lucideIcon: parsed.frontmatter.lucide_icon ?? null,
-      icon: parsed.frontmatter.icon ?? '',
-      tagline: parsed.frontmatter.tagline ?? '',
-      url,
-      body: parsed.body,
-      recommendedApps: parsed.frontmatter.recommended_apps ?? [],
-      setupAssets: parsed.frontmatter.setup_assets ?? [],
-    });
+    // Multi-card templates: emit one card per `cards[]` entry. Single-
+    // service templates: synthesize one implicit card from top-level
+    // frontmatter (legacy path).
+    const cardDefs = parsed.frontmatter.cards
+      ?? [{
+        // Implicit single card — use the first *_SUBDOMAIN variable.
+        subdomain_var: '',
+        lucide_icon: parsed.frontmatter.lucide_icon,
+        icon: parsed.frontmatter.icon,
+        tagline: parsed.frontmatter.tagline,
+        recommended_apps: parsed.frontmatter.recommended_apps,
+        setup_assets: parsed.frontmatter.setup_assets,
+      }];
+
+    for (const def of cardDefs) {
+      const url = await resolveServiceUrl(config, svc.name, def.subdomain_var || undefined);
+      if (!url) {
+        logger.warn('portal', `Template ${svc.name} card (subdomain_var=${def.subdomain_var || '<auto>'}) couldn't resolve a URL — skipping`);
+        continue;
+      }
+      const subdomainVar = def.subdomain_var || (await firstSubdomainVar(svc.name)) || '';
+      cards.push({
+        id: `${svc.name}:${subdomainVar || 'default'}`,
+        name: svc.name,
+        subdomainVar,
+        label: def.label ?? templateLabel,
+        lucideIcon: def.lucide_icon ?? null,
+        icon: def.icon ?? '',
+        tagline: def.tagline ?? '',
+        url,
+        body: parsed.body,
+        recommendedApps: def.recommended_apps ?? [],
+        setupAssets: def.setup_assets ?? [],
+      });
+    }
   }
   return cards;
+}
+
+/** Helper for the implicit-card path — find the first `*_SUBDOMAIN`
+ *  variable name so the resulting PortalCard can record it. */
+async function firstSubdomainVar(templateName: string): Promise<string | null> {
+  const variables = await readVariables(templateName);
+  for (const [name, meta] of Object.entries(variables)) {
+    if (meta.type === 'subdomain' && name.endsWith('_SUBDOMAIN')) return name;
+  }
+  return null;
 }

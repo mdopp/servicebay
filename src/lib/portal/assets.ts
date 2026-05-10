@@ -32,9 +32,9 @@ import type { SetupAssetKind } from './userGuide';
  * `application/x-apple-aspen-config` Content-Type that triggers the
  * "Install Profile" prompt on download.
  */
-export async function generateIosCalendarProfile(serviceName: string): Promise<string | null> {
+export async function generateIosCalendarProfile(serviceName: string, subdomainVar?: string): Promise<string | null> {
   const config = await getConfig();
-  const url = await resolveServiceUrl(config, serviceName);
+  const url = await resolveServiceUrl(config, serviceName, subdomainVar);
   if (!url) return null;
   const parsed = new URL(url);
   const hostname = parsed.hostname;
@@ -139,9 +139,9 @@ export async function generateIosCalendarProfile(serviceName: string): Promise<s
  * Format derived from Audiobookshelf's documented client deep link:
  * `abs://<host>?ssl=true|false`.
  */
-export async function generateAudiobookshelfDeepLink(serviceName: string): Promise<string | null> {
+export async function generateAudiobookshelfDeepLink(serviceName: string, subdomainVar?: string): Promise<string | null> {
   const config = await getConfig();
-  const url = await resolveServiceUrl(config, serviceName);
+  const url = await resolveServiceUrl(config, serviceName, subdomainVar);
   if (!url) return null;
   const parsed = new URL(url);
   const ssl = parsed.protocol === 'https:' ? 'true' : 'false';
@@ -189,14 +189,18 @@ export async function fetchSyncthingDeviceId(node: string = 'Local'): Promise<st
 }
 
 /** Resolve any setup-asset kind into its concrete artifact. */
-export async function resolveSetupAsset(kind: SetupAssetKind, serviceName: string): Promise<{ kind: SetupAssetKind; data: string } | null> {
+export async function resolveSetupAsset(
+  kind: SetupAssetKind,
+  serviceName: string,
+  subdomainVar?: string,
+): Promise<{ kind: SetupAssetKind; data: string } | null> {
   switch (kind) {
     case 'ios_calendar_profile': {
-      const xml = await generateIosCalendarProfile(serviceName);
+      const xml = await generateIosCalendarProfile(serviceName, subdomainVar);
       return xml ? { kind, data: xml } : null;
     }
     case 'audiobookshelf_deeplink': {
-      const url = await generateAudiobookshelfDeepLink(serviceName);
+      const url = await generateAudiobookshelfDeepLink(serviceName, subdomainVar);
       return url ? { kind, data: url } : null;
     }
     case 'syncthing_qr': {

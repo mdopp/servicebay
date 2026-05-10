@@ -15,9 +15,11 @@ spec:
       value: "{{VAULTWARDEN_DOMAIN}}"
     - name: SIGNUPS_ALLOWED
       value: "{{VAULTWARDEN_SIGNUPS}}"
-    # Authelia SSO — disabled by default (set VAULTWARDEN_SSO_ENABLED=true).
-    # When enabled, the wizard has already registered the matching OIDC
-    # client with Authelia using the same VAULTWARDEN_SSO_SECRET below.
+    # Authelia SSO — enabled by default so family members log in once
+    # via the household password and have access to every service.
+    # Wizard auto-registers the matching OIDC client with Authelia
+    # using the same VAULTWARDEN_SSO_SECRET below. Flip to false in
+    # the wizard if you need to fall back to local-account auth.
     - name: SSO_ENABLED
       value: "{{VAULTWARDEN_SSO_ENABLED}}"
     - name: SSO_AUTHORITY

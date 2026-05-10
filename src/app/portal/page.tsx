@@ -21,7 +21,7 @@ export default async function PortalPage() {
     <main className="max-w-6xl mx-auto px-6 py-12">
       <header className="mb-10 text-center">
         <div className="flex items-center justify-center gap-3">
-          <ServiceBayLogo size={36} className="text-violet-600 dark:text-violet-400 shrink-0" />
+          <ServiceBayLogo size={36} className="text-blue-600 dark:text-blue-400 shrink-0" />
           <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
             Home <span className="text-gray-400 dark:text-gray-600 font-normal">— your family&apos;s private cloud</span>
           </h1>

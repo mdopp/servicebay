@@ -18,9 +18,9 @@
   },
   "VAULTWARDEN_SSO_ENABLED": {
     "type": "select",
-    "description": "Enable Vaultwarden ↔ Authelia SSO. Off by default — Vaultwarden's SSO is still experimental upstream. Flip to true once you've tested local login.",
+    "description": "Enable Vaultwarden ↔ Authelia SSO. On by default so family members log in once and have access to every service. Flip to false if you hit Vaultwarden SSO regressions and need to fall back to local accounts.",
     "options": ["true", "false"],
-    "default": "false"
+    "default": "true"
   },
   "VAULTWARDEN_SSO_SECRET": {
     "type": "secret",
