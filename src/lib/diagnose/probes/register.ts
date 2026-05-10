@@ -16,5 +16,6 @@ import './npmDataStale';
 import './routerDnsNotPointing';
 import './danglingProxy';
 import './postDeployFailed';
+import './crashLoop';
 
 export {};
