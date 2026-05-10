@@ -370,9 +370,28 @@ export default function OnboardingWizard() {
         }
       } else if (s.stackSetupPending) {
         // Setup was completed by installer, but stacks haven't been chosen
-        // yet. Land on the express install-confirm screen — domain +
+        // yet. Land on the install-confirm screen — domain +
         // clean-install + preselected full-stack. Edit drops them into
         // the explicit machine + stacks flow.
+        //
+        // Self-heal: if the persisted draft is from a previous (broken)
+        // install attempt — i.e. it points at any step BEFORE
+        // install-confirm — the installer has since rewritten config
+        // with `setupCompleted=true` and `stackSetupPending=true`, so
+        // anything the operator had drafted (gateway? SSH? email?) is
+        // either irrelevant or already provisioned. Drop the stale
+        // draft and start fresh at install-confirm. Without this
+        // guard, sessionStorage survives across reinstalls and the
+        // operator gets stuck on the welcome step even though their
+        // box is fully configured. See #341.
+        const stepsBeforeInstallConfirm: WizardStep[] = ['welcome', 'network', 'email'];
+        if (persisted && stepsBeforeInstallConfirm.includes(persisted.currentStep)) {
+          clearPersistedWizardState();
+        }
+        // stacksOnlyMode still drives the finish action (we just
+        // completeStackSetup vs full skipOnboarding) and the button
+        // label on the last step — what we *don't* do anymore is let
+        // it diverge the wizard's chrome.
         setStacksOnlyMode(true);
         setCurrentStep('install-confirm');
         setIsOpen(true);
@@ -1482,22 +1501,25 @@ export default function OnboardingWizard() {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
-        {/* Header */}
+        {/* Header. Same chrome regardless of whether we entered via
+            full-setup or installer-completed-express mode (#341): one
+            title, one icon, one step counter. Step skipping already
+            handles "this is configured, skip it" via activeSteps
+            filtering, so an express operator naturally sees a smaller
+            denominator ("Step 1 of 2") without needing a separate UI. */}
         <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
            <h2 className="text-xl font-bold flex items-center gap-2">
-             <div className={`p-2 rounded-lg ${stacksOnlyMode ? 'bg-indigo-100 dark:bg-indigo-900/30' : 'bg-blue-100 dark:bg-blue-900/30'}`}>
-                {stacksOnlyMode
-                  ? <Layers className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                  : <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
+             <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+               <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />
              </div>
-             {stacksOnlyMode ? 'Install Services' : 'ServiceBay Setup'}
+             ServiceBay Setup
              {appVersion && (
                <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400 align-middle">
                  v{appVersion}
                </span>
              )}
            </h2>
-           {!stacksOnlyMode && (() => {
+           {(() => {
              const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
              // Same two-path logic as getNextStep — see comment there.
              const inEditMode = currentStep === 'machine' || currentStep === 'stacks';
@@ -1510,6 +1532,7 @@ export default function OnboardingWizard() {
              });
              const currentIndex = activeSteps.indexOf(currentStep);
              const total = activeSteps.length;
+             if (total <= 1) return null;
              return (
                <div className="flex items-center gap-3 mt-2">
                  <span className="text-sm text-gray-500 dark:text-gray-400">Step {currentIndex + 1} of {total}</span>
@@ -1519,9 +1542,6 @@ export default function OnboardingWizard() {
                </div>
              );
            })()}
-           {stacksOnlyMode && (
-             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Choose which services to install on your new server.</p>
-           )}
         </div>
 
         {/* Content */}

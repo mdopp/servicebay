@@ -237,28 +237,35 @@ describe('OnboardingWizard', () => {
     // ---- Stacks-only mode (post-install first boot) ----
 
     describe('stacks-only mode (stackSetupPending)', () => {
-        it('opens directly to stacks step with correct header', async () => {
+        it('opens directly to install-confirm step with unified header', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
 
             render(<OnboardingWizard />);
 
             await waitFor(() => {
-                // Header h2 contains "Install Services"
-                expect(screen.getAllByText(/Install Services/i).length).toBeGreaterThan(0);
-                expect(screen.getByText(/Choose which services/i)).toBeDefined();
+                // After #341 the header is the same in both modes —
+                // "ServiceBay Setup" with the Monitor icon. Step
+                // skipping handles the express case by collapsing
+                // the active-steps array.
+                expect(screen.getAllByText(/ServiceBay Setup/i).length).toBeGreaterThan(0);
             });
             // Should NOT show the full setup welcome
             expect(screen.queryByText(/Welcome to ServiceBay/i)).toBeNull();
         });
 
-        it('does not show progress bar in stacks-only mode', async () => {
+        it('renders an honest step counter even in stacks-only mode', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
 
             render(<OnboardingWizard />);
 
-            await waitFor(() => screen.getByText(/Choose which services/i));
-            // Progress bar shows "Step X of Y" — should not be present
-            expect(screen.queryByText(/Step \d+ of \d+/)).toBeNull();
+            // The wizard lands directly on install-confirm; with
+            // selection.stacks=true and no edit mode, activeSteps
+            // shrinks to [install-confirm, finish] (2 steps), so the
+            // operator sees "Step 1 of 2" — same chrome as full setup,
+            // just a smaller denominator.
+            await waitFor(() => {
+                expect(screen.queryByText(/Step \d+ of \d+/)).toBeDefined();
+            });
         });
 
         it('loads and displays available stacks', async () => {
