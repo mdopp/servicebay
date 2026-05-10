@@ -116,15 +116,11 @@ async function showRecentLogs({
       refresh: false,
     };
   }
-  // Action result messages render as a one-line toast — too small for
-  // 30 lines of log. Surface the last 5 lines (most-recent-failure
-  // signal) plus a count so the operator knows there's more to see.
   const lines = log.split('\n');
-  const tail = lines.slice(-5).join(' | ');
-  const truncated = lines.length > 5 ? ` (${lines.length} lines total — see Settings → Services → ${itemId} → Logs for full output)` : '';
   return {
     ok: true,
-    message: `Last 5 lines: ${tail.slice(0, 600)}${truncated}`,
+    message: `${lines.length} log line${lines.length === 1 ? '' : 's'} from ${itemId} — open details below.`,
+    details: log,
     refresh: false,
   };
 }
@@ -146,7 +142,7 @@ registerProbeAction(
     id: 'show_recent_logs',
     label: 'Show recent logs',
     description:
-      'Fetches the last 30 stderr lines via `podman logs --tail 30`. Surfaces 5 in the toast — enough to identify the crash cause without SSH-ing into the box.',
+      'Fetches the last 30 stderr lines via `podman logs --tail 30` and renders them inline below the row — enough to identify the crash cause without SSH-ing into the box.',
   },
   showRecentLogs,
 );

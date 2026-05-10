@@ -56,8 +56,9 @@ export default function SelfDiagnoseSection() {
   const [result, setResult] = useState<DiagnoseResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Per-action transient state. Keyed by `<probeId>:<actionId>`. */
-  const [actionState, setActionState] = useState<Record<string, { running?: boolean; message?: string; ok?: boolean }>>({});
+  /** Per-action transient state. Keyed by `<probeId>:<actionId>` for probe-level
+   *  actions, or `<probeId>:<actionId>:<itemId>` for per-item actions. */
+  const [actionState, setActionState] = useState<Record<string, { running?: boolean; message?: string; details?: string; ok?: boolean }>>({});
   /** Which actions have their inline form expanded. Keyed by `<probeId>:<actionId>`. */
   const [expandedForms, setExpandedForms] = useState<Record<string, boolean>>({});
   /** Form-field values per action. Keyed by `<probeId>:<actionId>` → { fieldName: value }. */
@@ -148,7 +149,11 @@ export default function SelfDiagnoseSection() {
       const ok = res.ok && data.ok !== false;
       setActionState(s => ({
         ...s,
-        [key]: { ok, message: data.message ?? (ok ? 'Done.' : `HTTP ${res.status}`) },
+        [key]: {
+          ok,
+          message: data.message ?? (ok ? 'Done.' : `HTTP ${res.status}`),
+          details: typeof data.details === 'string' ? data.details : undefined,
+        },
       }));
       // Auto-rerun the diagnose suite when the action requested it.
       // This makes the probe transition to `ok` (or to a follow-up
@@ -275,6 +280,20 @@ export default function SelfDiagnoseSection() {
                           );
                         })}
                       </div>
+                      {/* Multi-line action result details (e.g. log tails). One
+                          block per action that produced details on its last
+                          run. Rendered as a wrapped <pre> so newlines survive. */}
+                      {(probe.actions ?? []).map(action => {
+                        const key = `${probe.id}:${action.id}`;
+                        const state = actionState[key];
+                        if (!state?.details) return null;
+                        return (
+                          <pre
+                            key={`${key}-details`}
+                            className="text-xs text-gray-700 dark:text-gray-300 bg-white/60 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono"
+                          >{state.details}</pre>
+                        );
+                      })}
                       {(probe.actions ?? []).map(action => {
                         const key = `${probe.id}:${action.id}`;
                         const hasInputs = (action.inputs ?? []).length > 0;
@@ -381,6 +400,21 @@ export default function SelfDiagnoseSection() {
                                     </span>
                                   )}
                                 </div>
+                              );
+                            })}
+                            {/* Multi-line details for any per-item action that
+                                produced them — rendered full-width below the
+                                button row. flex-wrap on the parent makes
+                                w-full take a new line cleanly. */}
+                            {item.actions.map(action => {
+                              const key = `${probe.id}:${action.id}:${item.id}`;
+                              const state = actionState[key];
+                              if (!state?.details) return null;
+                              return (
+                                <pre
+                                  key={`${key}-details`}
+                                  className="w-full text-xs text-gray-700 dark:text-gray-300 bg-white/80 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono"
+                                >{state.details}</pre>
                               );
                             })}
                           </div>

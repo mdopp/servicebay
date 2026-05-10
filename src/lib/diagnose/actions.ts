@@ -89,6 +89,14 @@ export interface ProbeActionResult {
    */
   message: string;
   /**
+   * Optional multi-line content rendered as an expandable code block
+   * below `message`. Use for actions that legitimately produce more
+   * than a single sentence (log tails, du output, structured error
+   * details). Hidden by default behind a "Show details" toggle so
+   * the row stays compact when the operator just wants the verdict.
+   */
+  details?: string;
+  /**
    * When true, the UI re-runs the diagnose suite after the action so
    * the operator immediately sees the probe transition to `ok` (or to
    * a different `warn` if there's a follow-up step). Defaults to true.

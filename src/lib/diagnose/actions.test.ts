@@ -94,6 +94,17 @@ describe('dispatchProbeAction', () => {
     expect(result.ok).toBe(true);
     expect(result.refresh).toBe(false);
   });
+
+  it('passes handler-supplied details through to the result', async () => {
+    registerProbeAction('p1', { id: 'a1', label: 'A', description: 'd' }, async () => ({
+      ok: true,
+      message: 'logs attached',
+      details: 'line1\nline2\nline3',
+    }));
+    const result = await dispatchProbeAction({ probeId: 'p1', actionId: 'a1', node: 'Local' });
+    expect(result.ok).toBe(true);
+    expect(result.details).toBe('line1\nline2\nline3');
+  });
 });
 
 describe('inline-form inputs', () => {
