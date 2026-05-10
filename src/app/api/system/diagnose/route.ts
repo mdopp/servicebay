@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
 import { HealthStore } from '@/lib/health/store';
 import { DigitalTwinStore } from '@/lib/store/twin';
+import { actionsForProbe, type ProbeAction } from '@/lib/diagnose/actions';
+import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +15,22 @@ export interface DiagnoseProbe {
   status: ProbeStatus;
   detail: string;
   hint?: string;
+  /**
+   * Fix-buttons the UI renders next to this probe's status. Populated
+   * automatically from the probe-action registry (see
+   * `src/lib/diagnose/actions.ts`). Empty array when the probe has no
+   * registered actions — UI shows status + hint only.
+   */
+  actions?: ProbeAction[];
+}
+
+/** Attach registry-known actions to a probe. Called once per probe in
+ *  the diagnose route. Probes whose status is `ok` skip actions to
+ *  avoid noisy "fix it" buttons next to passing checks. */
+function withActions(probe: DiagnoseProbe): DiagnoseProbe {
+  if (probe.status === 'ok') return probe;
+  const actions = actionsForProbe(probe.id);
+  return actions.length > 0 ? { ...probe, actions } : probe;
 }
 
 interface ExecResult {
@@ -368,5 +386,5 @@ export async function POST(request: Request) {
     });
   }
 
-  return NextResponse.json({ node: nodeName, probes });
+  return NextResponse.json({ node: nodeName, probes: probes.map(withActions) });
 }
