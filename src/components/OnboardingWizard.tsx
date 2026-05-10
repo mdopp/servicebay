@@ -2361,7 +2361,7 @@ export default function OnboardingWizard() {
                                                             setStackVariables(newVars);
                                                         }}
                                                         className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
-                                                        placeholder={v.meta?.default ? `Default: ${v.meta.default}` : `Value for ${v.name}`}
+                                                        placeholder={v.meta?.example ? `e.g. ${v.meta.example}` : (v.meta?.default ? `Default: ${v.meta.default}` : `Value for ${v.name}`)}
                                                     />
                                                 )}
                                             </div>
