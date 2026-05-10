@@ -17,5 +17,6 @@ import './routerDnsNotPointing';
 import './danglingProxy';
 import './postDeployFailed';
 import './crashLoop';
+import './proxyRouteMissing';
 
 export {};
