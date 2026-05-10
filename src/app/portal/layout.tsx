@@ -6,7 +6,7 @@ import type { Metadata, Viewport } from 'next';
  *
  * Adds PWA manifest + iOS Safari meta tags so family members can
  * "Add to Home Screen" and the portal launches in its own standalone
- * window with the violet house icon. The manifest endpoint at
+ * window with the blue ServiceBay icon. The manifest endpoint at
  * `/portal/manifest.webmanifest` returns a per-install JSON with the
  * active domain in the app name.
  */

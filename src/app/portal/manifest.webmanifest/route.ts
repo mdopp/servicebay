@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * Served at `/portal/manifest.webmanifest`. Mobile browsers + desktop
  * Chrome use this for the "Install app" / "Add to Home Screen"
  * affordance — once installed, the portal launches in its own
- * standalone window with the violet house icon, separate from any
+ * standalone window with the blue ServiceBay icon, separate from any
  * browser chrome.
  *
  * The `name` field uses the active domain so the home-screen label
