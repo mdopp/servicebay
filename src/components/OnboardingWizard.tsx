@@ -19,6 +19,7 @@ import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables,
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getNodes } from '@/app/actions/system';
 import { Template, VariableMeta } from '@/lib/registry';
+import type { TemplateTier } from '@/lib/templateTier';
 import {
   runPostInstall,
   configureProxyRoutes as sharedConfigureProxyRoutes,
@@ -67,6 +68,13 @@ interface StackItem {
   yaml?: string;
   alreadyInstalled?: boolean;
   configFiles?: ConfigFile[];
+  /**
+   * Platform vs feature classification, parsed from the template's
+   * `metadata.annotations['servicebay.tier']`. Defaults to 'feature'.
+   * Infrastructure-tier templates are auto-included by the wizard
+   * with their checkbox locked-on; users pick features on top.
+   */
+  tier?: TemplateTier;
 }
 
 /** Fetch names of services already deployed on the target node */
@@ -182,6 +190,11 @@ export default function OnboardingWizard() {
 
   // Stack Selection
   const [availableStacks, setAvailableStacks] = useState<Template[]>([]);
+  /** name → tier map of every template (not just stacks). Populated by
+   *  loadStacks(), used by handleSelectStack to mark each StackItem as
+   *  'infrastructure' or 'feature' so the wizard can lock-include the
+   *  platform tier. See `src/lib/templateTier.ts`. */
+  const [templateTiers, setTemplateTiers] = useState<Map<string, TemplateTier>>(new Map());
   const [selectedStack, setSelectedStack] = useState<Template | null>(null);
   const [stackItems, setStackItems] = useState<StackItem[]>([]);
   const [stackVariables, setStackVariables] = useState<Variable[]>([]);
@@ -438,6 +451,15 @@ export default function OnboardingWizard() {
       const [templates, nodes] = await Promise.all([fetchTemplates(), getNodes()]);
       const stacks = templates.filter(t => t.type === 'stack');
       setAvailableStacks(stacks);
+      // Cache per-template tier info so handleSelectStack can decorate
+      // its parsed stackItems with `tier` lookups instead of re-fetching
+      // each template.yml on stack-pick. Templates list is small (~10
+      // entries), the lookup is one-off per install.
+      const tiers = new Map<string, 'infrastructure' | 'feature'>();
+      for (const t of templates.filter(t => t.type === 'template')) {
+        tiers.set(t.name, t.tier ?? 'feature');
+      }
+      setTemplateTiers(tiers);
       setStackNodes(nodes);
       if (nodes.length === 1) setStackSelectedNode(nodes[0].Name);
       // Single-stack-only installs (the common case — only `full-stack`
@@ -699,7 +721,14 @@ export default function OnboardingWizard() {
           parsedItems.push({
             name,
             description: match[3]?.trim() || undefined,
-            checked: !isInstalled && match[1].toLowerCase() === 'x',
+            // Infrastructure-tier templates (adguard, nginx, auth) are
+            // always installed — force-checked regardless of the
+            // README's [x] / [ ] state. Users pick features; the
+            // platform is non-negotiable. See #258 / #249.
+            tier: templateTiers.get(name) ?? 'feature',
+            checked: templateTiers.get(name) === 'infrastructure'
+              ? !isInstalled
+              : (!isInstalled && match[1].toLowerCase() === 'x'),
             alreadyInstalled: isInstalled,
           });
         }
@@ -2074,7 +2103,37 @@ export default function OnboardingWizard() {
                                 </div>
                             ) : (
                                 <div className="space-y-2">
-                                    {stackItems.map((item, i) => (
+                                    {/* Platform-tier templates render as a small
+                                        read-only block above the feature checkboxes —
+                                        users always get DNS / proxy / auth and can't
+                                        opt out. Per the design conversation in #249. */}
+                                    {stackItems.some(i => i.tier === 'infrastructure') && (
+                                        <div className="p-3 border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-900/10 rounded">
+                                            <div className="text-[11px] uppercase font-bold text-indigo-700 dark:text-indigo-300 mb-1.5">
+                                                Platform · always installed
+                                            </div>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {stackItems.filter(i => i.tier === 'infrastructure').map(item => (
+                                                    <span
+                                                        key={item.name}
+                                                        className="text-xs font-medium px-2 py-0.5 rounded bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-indigo-200 dark:border-indigo-800/60"
+                                                        title={item.description ?? ''}
+                                                    >
+                                                        {item.name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                            <p className="text-[11px] text-indigo-700/80 dark:text-indigo-300/70 mt-1.5">
+                                                DNS, reverse proxy, and SSO are part of every install. Pick your features below.
+                                            </p>
+                                        </div>
+                                    )}
+                                    {stackItems.filter(i => i.tier !== 'infrastructure').map((item) => {
+                                        // Find this item's index in the master array
+                                        // so the checkbox onChange mutates the right
+                                        // entry. Filtering only changes render order.
+                                        const i = stackItems.findIndex(x => x.name === item.name);
+                                        return (
                                         <label key={item.name} className={`flex items-start gap-3 p-3 border rounded transition-colors ${
                                             item.alreadyInstalled
                                                 ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10'
@@ -2157,7 +2216,8 @@ export default function OnboardingWizard() {
                                                 )}
                                             </div>
                                         </label>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
 

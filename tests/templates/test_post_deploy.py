@@ -255,13 +255,24 @@ class FileShareScript(unittest.TestCase):
             "FILEBROWSER_ADMIN_USER": "admin",
             "SB_NODE": "Local",
         }
-        # The script does time.sleep(8) before the first FB seed call.
-        # Patch sleep to a no-op for the test.
+        # The script calls wait_pod_running() which invokes subprocess.run
+        # against `podman pod inspect`; mock it to fast-return Running so
+        # the 60s readiness loop exits on the first iteration. Also patch
+        # time.sleep to a no-op (file-share keeps a few sleeps in the
+        # FB seed retry loop). See #254.
         import urllib.request
+        import subprocess as subprocess_mod
         import time as time_mod
+
+        class _FakeCompletedProcess:
+            returncode = 0
+            stdout = "Running"
+            stderr = ""
+
         with run_with_env(env), \
              mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)), \
-             mock.patch.object(time_mod, "sleep", lambda _s: None):
+             mock.patch.object(time_mod, "sleep", lambda _s: None), \
+             mock.patch.object(subprocess_mod, "run", lambda *a, **kw: _FakeCompletedProcess()):
             rc, out = capture_main(m)
         self.assertEqual(rc, 0)
         creds = parse_credentials(out)

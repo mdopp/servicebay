@@ -28,6 +28,13 @@ export interface Template {
   url: string;
   type: 'template' | 'stack';
   source: string;
+  /**
+   * Platform vs feature classification. Read from each template.yml's
+   * `metadata.annotations['servicebay.tier']`. `undefined` for stacks
+   * and for templates without the annotation (treated as 'feature' by
+   * the wizard). See `src/lib/templateTier.ts`.
+   */
+  tier?: 'infrastructure' | 'feature';
 }
 
 export interface TemplateSettingsSchemaEntry {
@@ -59,6 +66,28 @@ export async function getTemplateSettingsSchema(): Promise<Record<string, Templa
     }
 }
 
+/**
+ * Extract `servicebay.tier` from a template.yml. Returns 'feature' on
+ * any failure mode (missing file, unparseable YAML, missing
+ * annotation) — that matches the wizard's default-to-feature rule.
+ * Stacks have no tier.
+ */
+async function readTemplateTier(itemDir: string, type: 'template' | 'stack'): Promise<'infrastructure' | 'feature' | undefined> {
+  if (type === 'stack') return undefined;
+  try {
+    const yaml = await fs.readFile(path.join(itemDir, 'template.yml'), 'utf-8');
+    // Same regex as parseTemplateTier in src/lib/templateTier.ts —
+    // duplicated here because that module is client-safe (no fs) and
+    // we don't want to import from server code into it.
+    const m = /^\s+servicebay\.tier:\s*(?:"([^"]*)"|'([^']*)'|([^\n#]+?))\s*$/m.exec(yaml);
+    const raw = (m ? (m[1] ?? m[2] ?? m[3] ?? '') : '').trim();
+    if (raw === 'infrastructure') return 'infrastructure';
+    return 'feature';
+  } catch {
+    return 'feature';
+  }
+}
+
 async function fetchDir(dirPath: string, type: 'template' | 'stack', source: string): Promise<Template[]> {
   try {
     // Check if directory exists
@@ -69,16 +98,20 @@ async function fetchDir(dirPath: string, type: 'template' | 'stack', source: str
     }
 
     const items = await fs.readdir(dirPath, { withFileTypes: true });
-    
-    return items
-        .filter(item => item.isDirectory() && !item.name.startsWith('.'))
-        .map(item => ({
+    const directories = items.filter(item => item.isDirectory() && !item.name.startsWith('.'));
+
+    return await Promise.all(directories.map(async item => {
+        const itemPath = path.join(dirPath, item.name);
+        const tier = await readTemplateTier(itemPath, type);
+        return {
             name: item.name,
-            path: path.join(dirPath, item.name),
+            path: itemPath,
             url: '', // No URL for local files
             type,
-            source
-        }));
+            source,
+            tier,
+        };
+    }));
   } catch (e) {
       console.error(`Error fetching ${type}s from ${source}:`, e);
       return [];
