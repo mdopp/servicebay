@@ -233,7 +233,7 @@ export async function POST(request: Request) {
     const used = parseInt(usePctMatch[1], 10);
     if (used >= 90) {
       diskStatus = 'warn';
-      diskHint = 'Storage above 90% — clean old backups or extend the array.';
+      diskHint = 'Storage above 90% — click "Show largest directories" below to find what to clean, or extend the array.';
     }
   }
   probes.push({
