@@ -24,6 +24,8 @@ const Body = z.object({
   actionId: z.string().min(1).max(64),
   node: z.string().min(1).max(64).optional(),
   payload: z.record(z.string(), z.unknown()).optional(),
+  /** Per-item dynamic actions (#251). Bounded length is just hygiene. */
+  itemId: z.string().min(1).max(128).optional(),
 });
 
 export async function POST(request: Request) {
@@ -42,6 +44,7 @@ export async function POST(request: Request) {
     actionId: parsed.actionId,
     node: parsed.node ?? 'Local',
     payload: parsed.payload,
+    itemId: parsed.itemId,
   });
 
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });

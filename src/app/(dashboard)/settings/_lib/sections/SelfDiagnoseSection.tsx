@@ -22,6 +22,14 @@ interface ProbeAction {
   inputs?: ProbeActionInput[];
 }
 
+interface ProbeItem {
+  id: string;
+  label: string;
+  detail?: string;
+  status?: ProbeStatus;
+  actions: ProbeAction[];
+}
+
 interface DiagnoseProbe {
   id: string;
   label: string;
@@ -29,6 +37,7 @@ interface DiagnoseProbe {
   detail: string;
   hint?: string;
   actions?: ProbeAction[];
+  items?: ProbeItem[];
 }
 
 interface DiagnoseResult {
@@ -71,7 +80,7 @@ export default function SelfDiagnoseSection() {
     }
   };
 
-  const runAction = async (probe: DiagnoseProbe, action: ProbeAction, payload?: Record<string, string>) => {
+  const runAction = async (probe: DiagnoseProbe, action: ProbeAction, payload?: Record<string, string>, itemId?: string) => {
     // Confirm-on-destructive guard. The action's description is
     // surfaced in the dialog so the user sees the consequences they
     // accepted.
@@ -79,7 +88,9 @@ export default function SelfDiagnoseSection() {
       const ok = window.confirm(`${action.label}\n\n${action.description}\n\nThis action can't be undone. Continue?`);
       if (!ok) return;
     }
-    const key = `${probe.id}:${action.id}`;
+    // Per-item actions key off the item id too so a row's button
+    // state doesn't bleed into siblings.
+    const key = itemId ? `${probe.id}:${action.id}:${itemId}` : `${probe.id}:${action.id}`;
     setActionState(s => ({ ...s, [key]: { running: true } }));
     // Special case: actions with id `verify_from_device` run as a
     // browser-side fetch instead of dispatching to the server (#264).
@@ -129,6 +140,7 @@ export default function SelfDiagnoseSection() {
           probeId: probe.id,
           actionId: action.id,
           node: result?.node,
+          ...(itemId ? { itemId } : {}),
           ...(payload ? { payload } : {}),
         }),
       });
@@ -326,6 +338,52 @@ export default function SelfDiagnoseSection() {
                               </button>
                             </div>
                           </form>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {(probe.items ?? []).length > 0 && (
+                    <div className="mt-3 space-y-1.5">
+                      {(probe.items ?? []).map(item => {
+                        const itemMeta = STATUS_META[item.status ?? probe.status];
+                        return (
+                          <div
+                            key={item.id}
+                            className={`flex flex-wrap items-center gap-2 px-2 py-1.5 rounded border ${itemMeta.ring} bg-white/60 dark:bg-gray-900/40`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className={`text-xs font-mono ${itemMeta.color}`}>{item.label}</div>
+                              {item.detail && (
+                                <div className="text-xs text-gray-600 dark:text-gray-400 font-mono">{item.detail}</div>
+                              )}
+                            </div>
+                            {item.actions.map(action => {
+                              const key = `${probe.id}:${action.id}:${item.id}`;
+                              const state = actionState[key];
+                              const isRunning = state?.running;
+                              const baseStyle = action.destructive
+                                ? 'bg-red-600 hover:bg-red-700 text-white'
+                                : 'bg-violet-600 hover:bg-violet-700 text-white';
+                              return (
+                                <div key={action.id} className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => void runAction(probe, action, undefined, item.id)}
+                                    disabled={isRunning || running}
+                                    title={action.description}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50 ${baseStyle}`}
+                                  >
+                                    {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
+                                    {action.label}
+                                  </button>
+                                  {state?.message && !isRunning && (
+                                    <span className={`text-xs ${state.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                      {state.ok ? '✓' : '✗'} {state.message}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         );
                       })}
                     </div>

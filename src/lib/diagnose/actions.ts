@@ -106,7 +106,73 @@ export type ProbeActionHandler = (params: {
    * Validate inside the handler — the dispatch layer doesn't.
    */
   payload?: Record<string, unknown>;
+  /**
+   * For per-item dynamic actions (`items[]` on a probe), the id of
+   * the specific item the user clicked — e.g. an NPM proxy_host id.
+   * Absent for probe-level actions; validate inside the handler.
+   */
+  itemId?: string;
 }) => Promise<ProbeActionResult>;
+
+/**
+ * One row inside a probe's `items[]` — used for per-item dynamic
+ * actions (#251). E.g. each dangling proxy route is an item with a
+ * "Delete route" action targeted at its NPM proxy_host id.
+ *
+ * Items reference probe-level actions by id; the diagnose route
+ * resolves the matching `ProbeAction` metadata into `actions[]`
+ * before the response leaves the server, so the UI consumes
+ * `ResolvedProbeItem` directly.
+ */
+export interface ProbeItem {
+  /** Unique within the probe — passed back as `itemId` on dispatch. */
+  id: string;
+  /** Human-readable label, e.g. "vault.dopp.cloud → 192.168.0.10:8443". */
+  label: string;
+  /** Optional secondary line shown below the label. */
+  detail?: string;
+  /**
+   * Optional per-item status. Lets the UI color-code an item
+   * differently from its parent probe (e.g. one expired cert in a
+   * list of healthy ones). Defaults to the probe status when omitted.
+   */
+  status?: 'ok' | 'warn' | 'fail' | 'info';
+  /**
+   * Action IDs available on this item. Must each match an action
+   * registered against the probe via `registerProbeAction`.
+   */
+  actionIds: string[];
+}
+
+/** Server-to-client item shape — `actionIds` resolved to full
+ *  `ProbeAction` objects by `resolveItemActions`. */
+export interface ResolvedProbeItem {
+  id: string;
+  label: string;
+  detail?: string;
+  status?: 'ok' | 'warn' | 'fail' | 'info';
+  actions: ProbeAction[];
+}
+
+/**
+ * Resolve a probe's items[] action-ids to the full ProbeAction
+ * objects from the registry, so the UI doesn't need a second lookup.
+ * Items whose actionIds reference unknown actions silently drop those
+ * ids — better to render fewer buttons than crash the diagnose page.
+ */
+export function resolveItemActions(probeId: string, items: ProbeItem[]): ResolvedProbeItem[] {
+  const actions = actionsForProbe(probeId);
+  const byId = new Map(actions.map(a => [a.id, a]));
+  return items.map(item => ({
+    id: item.id,
+    label: item.label,
+    detail: item.detail,
+    status: item.status,
+    actions: item.actionIds
+      .map(id => byId.get(id))
+      .filter((a): a is ProbeAction => a !== undefined),
+  }));
+}
 
 interface RegistryEntry {
   action: ProbeAction;
@@ -156,6 +222,8 @@ export async function dispatchProbeAction(params: {
   actionId: string;
   node: string;
   payload?: Record<string, unknown>;
+  /** Optional — present only for per-item dynamic actions. See ProbeItem. */
+  itemId?: string;
 }): Promise<ProbeActionResult> {
   const k = key(params.probeId, params.actionId);
   const entry = registry.get(k);
@@ -185,7 +253,11 @@ export async function dispatchProbeAction(params: {
     }
   }
   try {
-    const result = await entry.handler({ node: params.node, payload: params.payload });
+    const result = await entry.handler({
+      node: params.node,
+      payload: params.payload,
+      itemId: params.itemId,
+    });
     // Default refresh = true so probes auto-re-run after a fix.
     return { refresh: true, ...result };
   } catch (e) {
