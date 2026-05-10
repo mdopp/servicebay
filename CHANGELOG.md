@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.14.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.13.0...servicebay-v3.14.0) (2026-05-10)
+
+
+### Features
+
+* **portal:** "request access" flow for visitors without an account ([#307](https://github.com/mdopp/servicebay/issues/307)) ([690632b](https://github.com/mdopp/servicebay/commit/690632b19a8178011617bbdf826f594db86d8e1e))
+* **portal:** one-tap iOS profile + Audiobookshelf deep link ([#242](https://github.com/mdopp/servicebay/issues/242) follow-up) ([#310](https://github.com/mdopp/servicebay/issues/310)) ([453b1f3](https://github.com/mdopp/servicebay/commit/453b1f3d3c7c0ac907e516ff6c5fce11a0a349ba))
+* **portal:** PWA install — Add to Home Screen on mobile ([#312](https://github.com/mdopp/servicebay/issues/312)) ([45f5e26](https://github.com/mdopp/servicebay/commit/45f5e264a3033004a8eb2ad97fc802cb55649084))
+* **portal:** recommended_apps schema with platform badges + per-app notes ([#309](https://github.com/mdopp/servicebay/issues/309)) ([dd7758e](https://github.com/mdopp/servicebay/commit/dd7758ee34f0c2916d37be6edc6660ca66f99a7f))
+* **portal:** switch from emoji icons to Lucide line-art ([#314](https://github.com/mdopp/servicebay/issues/314)) ([b760976](https://github.com/mdopp/servicebay/commit/b7609761e7f61987d11afbf4a4b647167c2f2176))
+* **portal:** Syncthing QR setup asset for one-tap Android device pairing ([#311](https://github.com/mdopp/servicebay/issues/311)) ([56bb854](https://github.com/mdopp/servicebay/commit/56bb854e6888526aae6744734e972055e37b8732))
+* **portal:** user-guides for vaultwarden, file-share, home-assistant, media, radicale ([#306](https://github.com/mdopp/servicebay/issues/306)) ([bb06391](https://github.com/mdopp/servicebay/commit/bb06391937fd3c2f751849d3c0d03a779a4f7980))
+
+
+### Bug Fixes
+
+* **portal:** use install-time subdomain not template default ([#313](https://github.com/mdopp/servicebay/issues/313)) ([e4a52ef](https://github.com/mdopp/servicebay/commit/e4a52efef930e8cb8f67406d79b6d3cfe8d3a9b2))
+
 ## [3.13.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.12.0...servicebay-v3.13.0) (2026-05-10)
 
 
