@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Portal icon for the family-facing /portal route. House-shape on a
+       violet background mirrors the 🏠 emoji that opens the portal page
+       header. Used as the manifest icon for PWA install ("Add to Home
+       Screen") so the family-portal app icon is distinct from the
+       admin dashboard's. -->
+  <rect width="512" height="512" rx="96" fill="#7c3aed"/>
+  <path d="M256 96 L96 224 V416 H192 V288 H320 V416 H416 V224 Z"
+        fill="#fff" stroke="#fff" stroke-width="16" stroke-linejoin="round"/>
+</svg>
