@@ -83,8 +83,11 @@ function sha256(s: string): string {
 /** Strip the hash field for any caller-facing list. The hash never leaves
  *  the server. */
 function publicView(t: ApiToken): Omit<ApiToken, 'hash'> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { hash, ...rest } = t;
+  // Underscore-prefixed `_hash` matches the unused-vars rule's allow
+  // pattern, so the destructuring stays explicit about which field is
+  // being stripped without needing a per-line disable.
+  const { hash: _hash, ...rest } = t;
+  void _hash;
   return rest;
 }
 
