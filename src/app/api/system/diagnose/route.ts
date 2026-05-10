@@ -8,6 +8,7 @@ import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
 import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
+import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -627,6 +628,28 @@ export async function POST(request: Request) {
     probes.push({
       id: 'post_deploy_failed',
       label: 'Service seed steps',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 16) Let's Encrypt cert expiry. Silent (info) in LAN-domain mode
+  //     where no certs exist; warn at ≤14d, fail when expired. Per-row
+  //     "Renew now" action triggers NPM's ACME endpoint.
+  try {
+    const ce = await checkCertExpiry(nodeName);
+    probes.push({
+      id: 'cert_expiry',
+      label: 'TLS certificates',
+      status: ce.status,
+      detail: ce.detail,
+      hint: ce.hint,
+      _items: ce.items,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'cert_expiry',
+      label: 'TLS certificates',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

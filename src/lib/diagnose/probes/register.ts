@@ -22,5 +22,6 @@ import './failedUnits';
 import './healthChecks';
 import './disk';
 import './podsAndEngine';
+import './certExpiry';
 
 export {};
