@@ -351,7 +351,28 @@ export async function getConfig(): Promise<AppConfig> {
   }
 }
 
-export async function saveConfig(config: AppConfig): Promise<void> {
+/**
+ * Per-process serialization for config writes. Prevents the
+ * read-modify-write race in `updateConfig`: without it, two concurrent
+ * callers both read state X, both compute X+updates, then both write
+ * — the second write clobbers the first's update.
+ *
+ * The queue is a Promise chain. Each new write waits for the previous
+ * one to settle (success or error) before running. Errors don't break
+ * the chain — they're caught here so a failed update doesn't prevent
+ * subsequent ones.
+ */
+let configWriteQueue: Promise<unknown> = Promise.resolve();
+
+function withConfigLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = configWriteQueue.then(fn, fn);
+  // Don't let a rejection break the chain — `fn` already either
+  // returns the result or throws, the queue just needs to advance.
+  configWriteQueue = next.catch(() => undefined);
+  return next;
+}
+
+async function saveConfigLocked(config: AppConfig): Promise<void> {
   await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
   // Encrypt sensitive fields before saving
   const normalizedConfig: AppConfig = {
@@ -361,6 +382,10 @@ export async function saveConfig(config: AppConfig): Promise<void> {
   };
   const safeConfig = transformConfig(normalizedConfig, SENSITIVE_KEYS, encrypt);
   await atomicWriteFile(CONFIG_PATH, JSON.stringify(safeConfig, null, 2));
+}
+
+export async function saveConfig(config: AppConfig): Promise<void> {
+  return withConfigLock(() => saveConfigLocked(config));
 }
 
 /**
@@ -398,9 +423,15 @@ function deepMerge(target: any, source: any): any {
 }
 
 export async function updateConfig(updates: Partial<AppConfig>): Promise<AppConfig> {
-  const current = await getConfig();
-  const updated: AppConfig = deepMerge(current, updates);
-  await saveConfig(updated);
-  return updated;
+  // Hold the lock across the read+write so two concurrent callers
+  // don't both read state X then both write X+updates with one
+  // clobbering the other. Calling `saveConfigLocked` directly here
+  // (instead of `saveConfig`) avoids re-entering the same lock.
+  return withConfigLock(async () => {
+    const current = await getConfig();
+    const updated: AppConfig = deepMerge(current, updates);
+    await saveConfigLocked(updated);
+    return updated;
+  });
 }
 
