@@ -130,10 +130,26 @@ export async function POST(request: Request) {
     hint: podmanInfo.code === 0 ? undefined : 'Run `systemctl --user enable --now podman.socket` on the node.',
   });
 
-  // 3) Running pods
+  // 3) Running pods — one item per non-running pod with a per-row Start
+  //    action (per podsAndEngine.ts). Pods whose containers crash-loop
+  //    are surfaced separately by the crash_loop probe with their own
+  //    actions; this row catches the pod-level "Created/Exited" cases.
   const pods = await exec('podman pod ps --format "{{.Name}}|{{.Status}}|{{.NumberOfContainers}}"', 5000);
   const podLines = trimOutput(pods.stdout, 30).split('\n').filter(Boolean);
   const failedPods = podLines.filter(l => !/Running/i.test(l.split('|')[1] ?? ''));
+  const podItems: ProbeItem[] = failedPods.map((line): ProbeItem | null => {
+    const tokens = line.split('|');
+    const name = (tokens[0] ?? '').trim();
+    const podStatus = (tokens[1] ?? '').trim();
+    if (!name) return null;
+    return {
+      id: name,
+      label: name,
+      detail: podStatus,
+      status: 'warn' as const,
+      actionIds: ['start_pod'],
+    };
+  }).filter((i): i is ProbeItem => i !== null);
   probes.push({
     id: 'pods',
     label: 'Pods',
@@ -141,7 +157,8 @@ export async function POST(request: Request) {
     detail: pods.code !== 0
       ? (pods.stderr || 'podman pod ps failed')
       : (podLines.length === 0 ? 'No pods deployed yet.' : `${podLines.length} pod(s): ${podLines.length - failedPods.length} running, ${failedPods.length} not running.`),
-    hint: failedPods.length > 0 ? `Check pods that aren't running:\n${failedPods.join('\n')}` : undefined,
+    hint: failedPods.length > 0 ? 'Click "Start" on a row to bring the pod back up. If individual containers are crash-looping, the crash_loop probe below has per-container actions.' : undefined,
+    _items: podItems.length > 0 ? podItems : undefined,
   });
 
   // 4) Failed user services
