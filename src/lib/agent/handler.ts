@@ -71,11 +71,34 @@ export interface AgentHealth {
   isConnected: boolean;
   lastSync: number; // timestamp
   messageCount: number;
+  /**
+   * Errors observed *after* the agent finishes its bootstrap window
+   * (~60 s post-connect). These are the ones the operator should
+   * actually pay attention to.
+   */
   errorCount: number;
+  /**
+   * Errors observed during the agent bootstrap window — typically
+   * `python3: command not found` while FCoS first-boot install-python
+   * is still running, RAID-setup unit content captured on stderr by
+   * `tee`, and the first connect/disconnect churn before the agent's
+   * state machine settles. Tracked separately so the user-visible
+   * `Errs:` counter stays at 0 on a healthy install instead of
+   * inflating to ~40+ purely from first-boot noise.
+   */
+  bootstrapErrorCount?: number;
   lastError?: string;
   runId?: string;
   sessionId?: string;
 }
+
+/**
+ * How long after the agent starts to treat errors as "bootstrap noise"
+ * rather than real failures. Covers the FCoS install-python.service
+ * race, the RAID-setup unit content that comes through on stderr, and
+ * the first reconnect churn before the agent settles.
+ */
+const BOOTSTRAP_WINDOW_MS = 60 * 1000;
 
 export class AgentHandler extends EventEmitter {
   public nodeName: string;
@@ -85,6 +108,9 @@ export class AgentHandler extends EventEmitter {
     private isStarting = false;
     private startPromise: Promise<void> | null = null;
     private currentRunId?: string;
+    /** Wall-clock when the current run's bootstrap window started.
+     *  0 means "not yet connected on this run". */
+    private bootstrapWindowStart = 0;
   /* eslint-disable @typescript-eslint/no-explicit-any */
   private pendingRequests: Map<string, {
       resolve: (val: any) => void;
@@ -104,7 +130,27 @@ export class AgentHandler extends EventEmitter {
     lastSync: 0,
     messageCount: 0,
     errorCount: 0,
+    bootstrapErrorCount: 0,
   };
+
+  /** True iff we're inside the post-connect bootstrap window — errors
+   *  observed during this period are tagged as bootstrap noise rather
+   *  than visible failures. See BOOTSTRAP_WINDOW_MS. */
+  private inBootstrapWindow(): boolean {
+    return this.bootstrapWindowStart > 0
+      && Date.now() - this.bootstrapWindowStart < BOOTSTRAP_WINDOW_MS;
+  }
+
+  /** Bump errorCount or bootstrapErrorCount depending on which window
+   *  we're in. Called from every site that previously did
+   *  `this.health.errorCount++` directly. */
+  private bumpErrorCount(): void {
+    if (this.inBootstrapWindow()) {
+      this.health.bootstrapErrorCount = (this.health.bootstrapErrorCount ?? 0) + 1;
+    } else {
+      this.health.errorCount++;
+    }
+  }
 
   constructor(nodeName: string) {
     super();
@@ -172,6 +218,11 @@ export class AgentHandler extends EventEmitter {
   private async startSSH(runId: string) {
     try {
       this.log(this.nodeName, 'info', 'Establishing SSH connection...');
+      // Open the bootstrap window — errors observed during the next
+      // ~60 s (FCoS install-python race, RAID-setup unit content on
+      // stderr, first state-machine churn) are tagged as bootstrap
+      // noise rather than visible failures.
+      this.bootstrapWindowStart = Date.now();
       const pool = SSHConnectionPool.getInstance();
       const conn = await pool.getConnection(this.nodeName);
       
@@ -216,7 +267,7 @@ export class AgentHandler extends EventEmitter {
               const errorMsg = `Failed to execute agent command on ${this.nodeName}: ${err.message}`;
               this.log(this.nodeName, 'error', errorMsg);
               this.health.lastError = errorMsg;
-              this.health.errorCount++;
+              this.bumpErrorCount();
               this.emit('error', err);
               reject(new Error(errorMsg));
               return;
@@ -248,7 +299,7 @@ export class AgentHandler extends EventEmitter {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.log(this.nodeName, 'error', `SSH agent startup failed: ${errorMsg}`);
       this.health.lastError = `SSH startup failed: ${errorMsg}`;
-      this.health.errorCount++;
+      this.bumpErrorCount();
       this.health.isConnected = false;
       this.emit('error', error);
       throw error;
@@ -273,14 +324,14 @@ export class AgentHandler extends EventEmitter {
             } else if (line.includes('[WARN]')) {
               this.log(`Agent:${this.nodeName}`, 'warn', line.replace(/.*\[WARN\]\s*/, ''));
             } else if (line.includes('[ERROR]')) {
-              this.health.errorCount++;
+              this.bumpErrorCount();
               this.health.lastError = line;
               this.log(`Agent:${this.nodeName}`, 'error', line.replace(/.*\[ERROR\]\s*/, ''));
             } else if (line.includes('[DEBUG]')) {
               this.log(`Agent:${this.nodeName}`, 'debug', line.replace(/.*\[DEBUG\]\s*/, ''));
           } else {
               // Unclassified stderr (e.g. traceback, system tool output)
-              this.health.errorCount++;
+              this.bumpErrorCount();
               this.health.lastError = line;
               this.log(`Agent:${this.nodeName}:STDERR`, 'error', line);
           }
@@ -342,7 +393,7 @@ export class AgentHandler extends EventEmitter {
           this.consecutiveParseErrors = 0; // Reset on success
         } catch (e: unknown) {
              this.consecutiveParseErrors++;
-             this.health.errorCount++;
+             this.bumpErrorCount();
              const errorMsg = e instanceof Error ? e.message : String(e);
              this.health.lastError = `Parse Error: ${errorMsg}`;
              this.log(this.nodeName, 'error', `Invalid JSON error: ${errorMsg}`);
@@ -433,7 +484,7 @@ export class AgentHandler extends EventEmitter {
             await new Promise(r => setTimeout(r, wait));
         }
         if (!this.isConnected) {
-            this.health.errorCount++;
+            this.bumpErrorCount();
             const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
             this.health.lastError = `Reconnection failed: ${msg}`;
             this.log(this.nodeName, 'error', 'Reconnection failed after retries:', lastErr);
@@ -471,7 +522,7 @@ export class AgentHandler extends EventEmitter {
         setTimeout(() => {
             if (this.pendingRequests.has(id)) {
                 this.pendingRequests.delete(id);
-                this.health.errorCount++;
+                this.bumpErrorCount();
                 this.health.lastError = `Command timeout: ${action}`;
                 this.log(this.nodeName, 'warn', `Command timeout for '${action}' after ${timeoutMs}ms (id: ${id})`);
                 reject(new Error(`Agent request timeout (${action} after ${timeoutMs}ms)`));
@@ -480,7 +531,7 @@ export class AgentHandler extends EventEmitter {
 
         const payload = cmd + '\n';
         if (!this.channel) {
-            this.health.errorCount++;
+            this.bumpErrorCount();
             this.health.lastError = 'No active channel/process';
             reject(new Error('No active channel/process'));
             return;
@@ -496,7 +547,7 @@ export class AgentHandler extends EventEmitter {
             }
         } catch (e) {
             this.pendingRequests.delete(id);
-            this.health.errorCount++;
+            this.bumpErrorCount();
             this.health.lastError = `channel.write failed: ${e instanceof Error ? e.message : String(e)}`;
             reject(e instanceof Error ? e : new Error(String(e)));
         }
