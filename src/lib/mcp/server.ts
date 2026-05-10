@@ -22,6 +22,7 @@ import { restoreSystemBackup } from '@/lib/systemBackup';
 import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
 import { recordAudit } from './audit';
 import { notifyDestructiveOp } from './notify';
+import { redactLogText, redactServiceFiles } from './redact';
 import type { ApiScope } from './tokens';
 
 interface McpAuthContext {
@@ -273,7 +274,11 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         if (since) args.push('--since', `@${since}`);
         const result = await agent.sendCommand('exec', { command: `journalctl ${args.join(' ')} 2>&1` });
         return textResult({
-          stdout: result.stdout ?? '',
+          // Strip credentials before handing journalctl output back to
+          // the MCP client (#321) — service journals catch any
+          // post-deploy line that prints rendered passwords plus
+          // anything the service itself dumps at startup.
+          stdout: redactLogText(result.stdout ?? ''),
           exitCode: result.code,
           fetchedAt: Math.floor(Date.now() / 1000),
         });
@@ -301,7 +306,8 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         if (since) args.push(`--since ${since}`);
         const result = await agent.sendCommand('exec', { command: `podman logs ${args.join(' ')} ${id} 2>&1` });
         return textResult({
-          stdout: result.stdout ?? '',
+          // Same redaction as get_service_logs — see #321.
+          stdout: redactLogText(result.stdout ?? ''),
           exitCode: result.code,
           fetchedAt: Math.floor(Date.now() / 1000),
         });
@@ -358,7 +364,12 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
       const files = await ServiceManager.getServiceFiles(nodeName, name);
-      return textResult(files);
+      // Rendered kube YAML inlines templated `{{X_PASSWORD}}` values.
+      // Redact env entries with sensitive names before returning to the
+      // MCP client (#321). The dashboard's own service-file viewer
+      // doesn't go through this path; it reads from the same source
+      // files but is gated by the admin session.
+      return textResult(redactServiceFiles(files));
     },
   );
 

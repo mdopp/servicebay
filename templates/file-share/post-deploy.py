@@ -96,7 +96,7 @@ def main() -> int:
     share_user = env("SHARE_USER", "samba")
     share_password = env("SHARE_PASSWORD")
     if share_password:
-        log(f"🔑 Samba share (user: {share_user}, password: {share_password}) — mount via \\\\{host}\\data on Windows or smb://{host}/data on macOS. Note now, only shown once.")
+        log(f"✅ Samba share saved (user: {share_user}) — mount via \\\\{host}\\data on Windows or smb://{host}/data on macOS. Password retrievable from Settings → Integrations → Saved credentials.")
         emit_credential(
             service="Samba (file-share)",
             url=f"\\\\{host}\\data",

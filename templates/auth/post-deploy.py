@@ -117,9 +117,12 @@ def main() -> int:
         timeout=10,
     )
     if persist_status == 200:
-        log(f"🔑 LLDAP admin (user: admin, password: {lldap_password}) — open http://{host}:{lldap_port} or via NPM. Stored in Settings → Integrations.")
+        log(f"✅ LLDAP admin saved (user: admin) — open http://{host}:{lldap_port} or via NPM. Password retrievable from Settings → Integrations → Saved credentials.")
     else:
-        log(f"⚠️ Could not persist LLDAP credentials (HTTP {persist_status}). Note now: admin / {lldap_password}")
+        # Even on persist failure, the password still lands in the wizard
+        # banner via emit_credential below — keep the warning short and
+        # don't echo the secret into journalctl.
+        log(f"⚠️ Could not persist LLDAP credentials (HTTP {persist_status}). Password is still shown in the post-install credential banner.")
 
     emit_credential(
         service="LLDAP (User Directory)",

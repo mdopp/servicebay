@@ -130,7 +130,16 @@ class AdguardScript(unittest.TestCase):
         self.assertEqual(creds[0]["username"], "admin")
         self.assertEqual(creds[0]["password"], "s3cret")
         self.assertEqual(creds[0]["url"], "http://192.168.1.10:8083")
-        self.assertIn("password: s3cret", out)
+        # Password must NOT leak into the user-visible log line — it
+        # only travels via the __SB_CREDENTIAL__ JSON marker, which
+        # ServiceBay stores encrypted (#321).
+        # Strip credential markers before checking, since the JSON line
+        # legitimately contains the password.
+        log_only = "\n".join(
+            line for line in out.splitlines()
+            if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("s3cret", log_only)
 
     def test_no_password_skips_credential_silently(self):
         m = load_script("adguard")
@@ -236,6 +245,14 @@ class AuthScript(unittest.TestCase):
         services = {c["service"] for c in creds}
         self.assertIn("LLDAP (User Directory)", services)
         self.assertIn("LLDAP JWT secret", services)
+        # The LLDAP admin password and JWT secret must travel only via
+        # __SB_CREDENTIAL__ markers, not user-visible log lines (#321).
+        log_only = "\n".join(
+            line for line in out.splitlines()
+            if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("lldap-pass", log_only)
+        self.assertNotIn("jwt-secret", log_only)
 
 
 class FileShareScript(unittest.TestCase):
@@ -279,6 +296,14 @@ class FileShareScript(unittest.TestCase):
         services = {c["service"] for c in creds}
         self.assertIn("Samba (file-share)", services)
         self.assertIn("FileBrowser admin", out)
+        # The Samba password must NOT leak into the user-visible log
+        # line (#321). It still ships in the __SB_CREDENTIAL__ marker
+        # for the wizard banner + encrypted store.
+        log_only = "\n".join(
+            line for line in out.splitlines()
+            if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("shar3", log_only)
 
     def test_returns_nonzero_when_seed_times_out(self):
         """If /api/system/filebrowser/init never accepts the seed within
@@ -356,6 +381,14 @@ class MediaScript(unittest.TestCase):
         services = {c["service"] for c in parse_credentials(out)}
         self.assertIn("Audiobookshelf", services)
         self.assertIn("Navidrome", services)
+        # Neither admin password may leak into user-visible log lines
+        # (#321) — only travel via __SB_CREDENTIAL__ markers.
+        log_only = "\n".join(
+            line for line in out.splitlines()
+            if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("abs-pass", log_only)
+        self.assertNotIn("nav-pass", log_only)
 
 
 if __name__ == "__main__":
