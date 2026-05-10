@@ -884,6 +884,15 @@ ${SERVICEBAY_SSH_PRIV}
     - path: /etc/systemd/system/multi-user.target.wants/install-python.service
       target: /etc/systemd/system/install-python.service
 
+    # Enable setup-config-merge on first boot (#331). Without this
+    # symlink, Ignition drops the unit file at /etc/systemd/system/
+    # but never enables it — systemd ignores the [Install] section
+    # of unit files placed via Ignition, so an explicit
+    # multi-user.target.wants symlink is required, same as the
+    # other first-boot units above.
+    - path: /etc/systemd/system/multi-user.target.wants/setup-config-merge.service
+      target: /etc/systemd/system/setup-config-merge.service
+
     # Enable Nginx install on first boot (user service)
     - path: /var/home/${HOST_USER}/.config/systemd/user/default.target.wants/install-nginx.service
       target: /var/home/${HOST_USER}/.config/systemd/user/install-nginx.service
