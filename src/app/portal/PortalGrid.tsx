@@ -3,15 +3,20 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, ExternalLink, Smartphone } from 'lucide-react';
 import type { PortalCard } from '@/lib/portal/services';
-import type { AppPlatform } from '@/lib/portal/userGuide';
+import type { AppPlatform, SetupAssetKind } from '@/lib/portal/userGuide';
 
 const PLATFORM_LABELS: Record<AppPlatform, string> = {
   ios: 'iOS',
   android: 'Android',
   desktop: 'Desktop',
   browser: 'Browser',
+};
+
+const ASSET_LABELS: Record<SetupAssetKind, { label: string; icon: typeof Download }> = {
+  ios_calendar_profile: { label: 'Add to iPhone (Calendar + Contacts)', icon: Download },
+  audiobookshelf_deeplink: { label: 'Open in Audiobookshelf app', icon: Smartphone },
 };
 
 /**
@@ -48,6 +53,37 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
               >
                 Open <ExternalLink size={16} />
               </a>
+
+              {card.setupAssets.length > 0 && (
+                <div className="space-y-1.5">
+                  {card.setupAssets.map(asset => {
+                    const meta = ASSET_LABELS[asset.kind];
+                    const Icon = meta.icon;
+                    const label = asset.label ?? meta.label;
+                    if (asset.kind === 'ios_calendar_profile') {
+                      return (
+                        <div key={asset.kind}>
+                          <a
+                            href={`/api/portal/asset/${card.name}/${asset.kind}`}
+                            className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+                          >
+                            <Icon size={14} /> {label}
+                          </a>
+                          {asset.description && (
+                            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-snug text-center">{asset.description}</p>
+                          )}
+                        </div>
+                      );
+                    }
+                    if (asset.kind === 'audiobookshelf_deeplink') {
+                      return (
+                        <DeepLinkButton key={asset.kind} card={card} kind={asset.kind} label={label} description={asset.description} Icon={Icon} />
+                      );
+                    }
+                    return null;
+                  })}
+                </div>
+              )}
 
               {card.recommendedApps.length > 0 && (
                 <div className="pt-2 space-y-1.5">
@@ -107,6 +143,65 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Deep-link button for setup assets that resolve to a custom-scheme
+ * URL (`abs://`, etc.). Fetches the URL from the asset endpoint on
+ * click, then sets `window.location` so the browser hands off to the
+ * registered app — or shows a friendly fallback if no app handles it.
+ */
+function DeepLinkButton({
+  card,
+  kind,
+  label,
+  description,
+  Icon,
+}: {
+  card: PortalCard;
+  kind: SetupAssetKind;
+  label: string;
+  description?: string;
+  Icon: typeof Smartphone;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const onClick = async () => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/portal/asset/${card.name}/${kind}`);
+      if (!res.ok) {
+        setError(`Couldn't load the link (HTTP ${res.status}).`);
+        return;
+      }
+      const data = await res.json() as { url?: string };
+      if (typeof data.url !== 'string') {
+        setError('No URL returned.');
+        return;
+      }
+      // Same-tab navigation — the browser hands off to the registered
+      // app. If no app is registered, the user just sees a "can't
+      // open this URL" prompt; we add a small fallback note below.
+      window.location.href = data.url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <div>
+      <button
+        onClick={onClick}
+        className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+      >
+        <Icon size={14} /> {label}
+      </button>
+      {description && !error && (
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-snug text-center">{description}</p>
+      )}
+      {error && (
+        <p className="text-[11px] text-red-600 dark:text-red-400 mt-1 leading-snug text-center">{error}</p>
+      )}
     </div>
   );
 }

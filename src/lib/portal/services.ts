@@ -27,7 +27,7 @@ import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getTemplateUserGuide } from '@/lib/registry';
 import { logger } from '@/lib/logger';
-import { parseUserGuide, type RecommendedApp } from './userGuide';
+import { parseUserGuide, type RecommendedApp, type SetupAsset } from './userGuide';
 
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 
@@ -46,6 +46,8 @@ export interface PortalCard {
   body: string;
   /** Companion apps recommended by the template author (validated). */
   recommendedApps: RecommendedApp[];
+  /** Pre-configured setup artifacts (iOS profile, deep links, …). */
+  setupAssets: SetupAsset[];
 }
 
 /** Read a template's variables.json (best-effort, returns empty record on miss). */
@@ -126,6 +128,7 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
       url: `${scheme}://${sub}.${activeDomain}`,
       body: parsed.body,
       recommendedApps: parsed.frontmatter.recommended_apps ?? [],
+      setupAssets: parsed.frontmatter.setup_assets ?? [],
     });
   }
   return cards;

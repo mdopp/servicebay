@@ -113,6 +113,37 @@ mobile_apps:
     expect(result!.body).toContain('Just a title');
   });
 
+  it('parses setup_assets with whitelisted kinds', () => {
+    const raw = `---
+setup_assets:
+  - kind: "ios_calendar_profile"
+    label: "Add to iPhone"
+    description: "Two-tap install."
+  - kind: "audiobookshelf_deeplink"
+  - kind: "unknown_kind"
+---
+`;
+    const result = parseUserGuide(raw, 'mixed');
+    expect(result!.frontmatter.setup_assets).toHaveLength(2);
+    expect(result!.frontmatter.setup_assets?.[0]).toEqual({
+      kind: 'ios_calendar_profile',
+      label: 'Add to iPhone',
+      description: 'Two-tap install.',
+    });
+    expect(result!.frontmatter.setup_assets?.[1].kind).toBe('audiobookshelf_deeplink');
+  });
+
+  it('drops setup_assets entries with non-string kind', () => {
+    const raw = `---
+setup_assets:
+  - kind: 42
+  - kind: "ios_calendar_profile"
+---
+`;
+    const result = parseUserGuide(raw, 'x');
+    expect(result!.frontmatter.setup_assets).toHaveLength(1);
+  });
+
   it('returns null on YAML parse error', () => {
     const raw = `---
 icon: "📷
