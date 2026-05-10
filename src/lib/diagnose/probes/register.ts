@@ -20,5 +20,6 @@ import './crashLoop';
 import './proxyRouteMissing';
 import './failedUnits';
 import './healthChecks';
+import './disk';
 
 export {};
