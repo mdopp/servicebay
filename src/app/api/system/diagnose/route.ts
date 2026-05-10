@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
 import { HealthStore } from '@/lib/health/store';
 import { DigitalTwinStore } from '@/lib/store/twin';
-import { actionsForProbe, type ProbeAction } from '@/lib/diagnose/actions';
+import { actionsForProbe, resolveItemActions, type ProbeAction, type ProbeItem, type ResolvedProbeItem } from '@/lib/diagnose/actions';
 import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
 import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
@@ -25,14 +25,40 @@ export interface DiagnoseProbe {
    * registered actions — UI shows status + hint only.
    */
   actions?: ProbeAction[];
+  /**
+   * Per-item rows for probes that surface multiple targets (#251 —
+   * e.g. dangling proxy routes, expired certificates). Each item
+   * declares which probe-level action ids apply to it; the diagnose
+   * route resolves those to full ProbeAction objects in `actions`.
+   * Probes can populate `_items` with raw `ProbeItem[]`; the route
+   * runs `resolveItemActions` and exposes the result as `items` to
+   * the wire / UI. The internal field uses an underscore so it
+   * doesn't get mistaken for the resolved shape.
+   */
+  _items?: ProbeItem[];
+  items?: ResolvedProbeItem[];
 }
 
 /** Attach registry-known actions to a probe. Called once per probe in
  *  the diagnose route. Probes whose status is `ok` skip actions to
- *  avoid noisy "fix it" buttons next to passing checks. */
+ *  avoid noisy "fix it" buttons next to passing checks.
+ *
+ *  When the probe has `_items`, action ids referenced by any item are
+ *  treated as per-item-only and excluded from the probe-level
+ *  `actions` list — otherwise the same button shows up twice (once at
+ *  the probe header, once per row). Probes that want both behaviors
+ *  should register two distinct actions. */
 function withActions(probe: DiagnoseProbe): DiagnoseProbe {
+  let perItemActionIds: Set<string> | null = null;
+  if (probe._items) {
+    perItemActionIds = new Set(probe._items.flatMap(i => i.actionIds));
+    const items = resolveItemActions(probe.id, probe._items);
+    probe = { ...probe, items };
+    // Strip the unresolved shape so we don't ship duplicate data.
+    delete (probe as { _items?: ProbeItem[] })._items;
+  }
   if (probe.status === 'ok') return probe;
-  const actions = actionsForProbe(probe.id);
+  const actions = actionsForProbe(probe.id).filter(a => !perItemActionIds?.has(a.id));
   return actions.length > 0 ? { ...probe, actions } : probe;
 }
 
@@ -323,10 +349,17 @@ export async function POST(request: Request) {
   //     host:port that no managed service or running container actually
   //     publishes. Surfaces stale routes from removed/renamed services
   //     and crash-failed services that NPM still has a path to.
+  //
+  //     #251: each dangling route is exposed as a `ProbeItem` so the UI
+  //     can show one row per route with a per-item "Delete route"
+  //     action. The action handler lives in
+  //     `lib/diagnose/probes/danglingProxy.ts` (registers
+  //     `delete_route`).
   try {
     const twin = DigitalTwinStore.getInstance().nodes[nodeName];
     type ProxyServer = {
       _targetPort?: number;
+      _id?: number;
       variable_fields?: { targetHost?: string; targetPort?: number };
       server_name?: string[];
       locations?: { proxy_pass?: string }[];
@@ -353,7 +386,7 @@ export async function POST(request: Request) {
         if (typeof p.hostPort === 'number') knownPorts.add(p.hostPort);
       }
     }
-    const dangling: string[] = [];
+    const danglingItems: ProbeItem[] = [];
     for (const server of proxyConfig) {
       const targetHost = server.variable_fields?.targetHost;
       const targetPort = server.variable_fields?.targetPort ?? server._targetPort;
@@ -363,22 +396,33 @@ export async function POST(request: Request) {
       const isProxySelfRef = ['127.0.0.1', 'localhost', '::1'].includes(targetHost ?? '');
       if (isProxySelfRef) continue;
       if (!knownPorts.has(targetPort)) {
-        const name = (server.server_name ?? []).join(', ') || `(unnamed)`;
-        dangling.push(`${name} → ${targetHost}:${targetPort}`);
+        const name = (server.server_name ?? []).join(', ') || '(unnamed)';
+        // The proxy host's NPM id is needed for the delete-route
+        // action to target the right host. If the twin sync didn't
+        // capture it, omit the action by using an empty actionIds[].
+        const id = typeof server._id === 'number' ? String(server._id) : '';
+        danglingItems.push({
+          id: id || `${name}-${targetPort}`,
+          label: name,
+          detail: `→ ${targetHost}:${targetPort}`,
+          status: 'warn',
+          actionIds: id ? ['delete_route'] : [],
+        });
       }
     }
     probes.push({
       id: 'dangling_proxy',
       label: 'Reverse-proxy routes',
-      status: !proxyService ? 'info' : (dangling.length === 0 ? 'ok' : 'warn'),
+      status: !proxyService ? 'info' : (danglingItems.length === 0 ? 'ok' : 'warn'),
       detail: !proxyService
         ? 'No managed reverse proxy yet (or its config is not synced to the twin).'
-        : dangling.length === 0
+        : danglingItems.length === 0
           ? `${proxyConfig.length} proxy route(s), all reach a known service.`
-          : `${dangling.length} dangling route(s) — proxy_pass target not published by any managed service or container:\n${dangling.join('\n')}`,
-      hint: dangling.length > 0
-        ? 'Open NPM admin (or Settings → Reverse Proxy) and either fix or delete these routes. Most often caused by a removed/renamed service.'
+          : `${danglingItems.length} dangling route(s) — proxy_pass target not published by any managed service or container.`,
+      hint: danglingItems.length > 0
+        ? 'Click "Delete route" on a row to remove it from NPM. Most often caused by a removed/renamed service.'
         : undefined,
+      _items: danglingItems.length > 0 ? danglingItems : undefined,
     });
   } catch (e) {
     probes.push({

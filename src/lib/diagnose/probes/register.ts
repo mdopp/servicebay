@@ -14,5 +14,6 @@
 
 import './npmDataStale';
 import './routerDnsNotPointing';
+import './danglingProxy';
 
 export {};
