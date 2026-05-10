@@ -1061,24 +1061,44 @@ export default function OnboardingWizard() {
       }
       if (typeof window !== 'undefined') postDeployEnv.HOST = window.location.hostname || 'localhost';
 
-      try {
+      // Single-deploy attempt — extracted so the retry loop below can
+      // reinvoke it without duplicating the streaming-progress parser.
+      // Throws on failure. Sets `fatal: true` on the error when the
+      // server explicitly rejected the request (HTTP 4xx other than
+      // 408/429) so the loop skips backoff and surfaces directly.
+      const attemptDeploy = async (): Promise<void> => {
         const query = stackSelectedNode ? `?node=${stackSelectedNode}&stream=1` : '?stream=1';
-        const res = await fetch(`/api/services${query}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: item.name,
-            kubeContent,
-            yamlContent: content,
-            yamlFileName: `${item.name}.yml`,
-            extraFiles,
-            postDeployScript,
-            postDeployEnv: postDeployScript ? postDeployEnv : undefined,
-          }),
-        });
+        let res: Response;
+        try {
+          res = await fetch(`/api/services${query}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: item.name,
+              kubeContent,
+              yamlContent: content,
+              yamlFileName: `${item.name}.yml`,
+              extraFiles,
+              postDeployScript,
+              postDeployEnv: postDeployScript ? postDeployEnv : undefined,
+            }),
+          });
+        } catch (networkErr) {
+          // fetch-level failure (DNS, connection refused, abort) — always retriable.
+          throw new Error(`network: ${networkErr instanceof Error ? networkErr.message : String(networkErr)}`);
+        }
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Unknown error');
+          const errBody = await res.json().catch(() => ({}));
+          const msg = errBody.error || `HTTP ${res.status}`;
+          // 4xx (other than 408/429) means the server rejected the
+          // request itself — retrying won't fix a validation error or
+          // missing file. Mark fatal so the caller surfaces directly.
+          if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+            const fatal = new Error(msg);
+            (fatal as Error & { fatal?: boolean }).fatal = true;
+            throw fatal;
+          }
+          throw new Error(msg);
         }
 
         // Read streaming progress
@@ -1141,18 +1161,54 @@ export default function OnboardingWizard() {
           }
         }
 
-        setStackLogs(prev => [...prev, `\u2705 ${item.name} deployed (containers may still be starting in background).`]);
+      };
+
+      // Auto-retry transient failures up to 3 attempts with 1s, 4s
+      // backoff. Image-pull flakes, registry rate-limits, NPM cold-
+      // start 502s and the agent's first-connect race are the common
+      // cases — auto-healing them is much less alarming than a hard
+      // "\u274c Failed" with a restart-the-wizard-or-fix-manually
+      // dead-end. Per the UX philosophy: heal silently when possible.
+      // 4xx-other-than-408/429 carries `fatal=true` from attemptDeploy
+      // and skips the retries — retrying a validation error wastes
+      // the user's time without ever succeeding.
+      const MAX_DEPLOY_ATTEMPTS = 3;
+      const BACKOFF_MS = [0, 1000, 4000];
+      let lastDeployErr: Error | null = null;
+      let deployedOk = false;
+      for (let attempt = 1; attempt <= MAX_DEPLOY_ATTEMPTS; attempt++) {
+        if (BACKOFF_MS[attempt - 1] > 0) {
+          await new Promise(r => setTimeout(r, BACKOFF_MS[attempt - 1]));
+        }
+        try {
+          await attemptDeploy();
+          const successMsg = attempt > 1
+            ? `\u2705 ${item.name} deployed on attempt ${attempt}/${MAX_DEPLOY_ATTEMPTS}.`
+            : `\u2705 ${item.name} deployed (containers may still be starting in background).`;
+          setStackLogs(prev => [...prev, successMsg]);
+          deployedOk = true;
+          break;
+        } catch (e) {
+          lastDeployErr = e instanceof Error ? e : new Error(String(e));
+          if ((lastDeployErr as Error & { fatal?: boolean }).fatal) break;
+          if (attempt < MAX_DEPLOY_ATTEMPTS) {
+            setStackLogs(prev => [...prev, `\u23f3 ${item.name} attempt ${attempt}/${MAX_DEPLOY_ATTEMPTS} failed (${lastDeployErr!.message}); retrying in ${BACKOFF_MS[attempt] / 1000}s\u2026`]);
+          }
+        }
+      }
+      if (deployedOk) {
         deployed.push({ name: item.name, checked: true });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setStackLogs(prev => [...prev, `\u274c Failed to install ${item.name}: ${msg}`]);
+      } else {
+        const msg = lastDeployErr?.message ?? 'unknown error';
+        const fatal = lastDeployErr && (lastDeployErr as Error & { fatal?: boolean }).fatal;
+        const tail = fatal ? msg : `after ${MAX_DEPLOY_ATTEMPTS} attempt(s): ${msg}`;
+        setStackLogs(prev => [...prev, `\u274c Failed to install ${item.name} ${tail}`]);
         // Don't add to `deployed` \u2014 post-install will skip seeders /
         // proxy routes for this service.
-      } finally {
-        // Clear in-flight marker so the status strip switches from
-        // "installing" to twin-derived state for the next render tick.
-        setInstallingNow(null);
       }
+      // Clear in-flight marker so the status strip switches from
+      // "installing" to twin-derived state for the next render tick.
+      setInstallingNow(null);
     }
 
     // Post-install (NPM bootstrap, proxy-host creation, credentials banner)
