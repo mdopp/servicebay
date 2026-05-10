@@ -9,7 +9,9 @@
  * `registerProbeAction(probeId, action, handler)` at the top level.
  *
  * Sections B6–B15 of the "Self-healing UX rollout" tracking issue add
- * their probes here. This file is intentionally an empty manifest at
- * the foundation stage so PRs that ship a single probe can be small.
+ * their probes here.
  */
+
+import './npmDataStale';
+
 export {};
