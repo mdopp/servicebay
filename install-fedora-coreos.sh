@@ -991,32 +991,49 @@ load_setting() {
   fi
 }
 
+# Single source of truth for non-secret install settings that get
+# persisted between runs. Add a new variable: append it here once and
+# the saved-settings round-trip (load + save + future-run defaults)
+# picks it up. Remove a variable: drop it here and old values stop
+# being read on the next run — no migration needed.
+#
+# Secrets (passwords, API keys, the bootstrap MCP token) are NEVER
+# saved — they're prompted fresh on every run. They're listed in the
+# prompt blocks below, not here.
+PERSISTED_SETTINGS=(
+  SERVER_NAME
+  HOST_USER
+  SSH_AUTHORIZED_KEY
+  NET_INTERFACE
+  STATIC_IP
+  STATIC_PREFIX
+  GATEWAY
+  DNS_SERVERS
+  SERVICEBAY_PORT
+  SERVICEBAY_CHANNEL
+  SERVICEBAY_ADMIN_USER
+  PUBLIC_DOMAIN
+  GW_HOST
+  GW_USER
+  ENABLE_REGISTRIES
+  ENABLE_EMAIL
+  EMAIL_HOST
+  EMAIL_PORT
+  EMAIL_SECURE
+  EMAIL_USER
+  EMAIL_FROM
+  EMAIL_RECIPIENTS
+  AUTH_SECRET
+)
+
 save_settings() {
-  cat > "$SETTINGS_FILE" <<SETTINGS
-SERVER_NAME=${SERVER_NAME}
-HOST_USER=${HOST_USER}
-SSH_AUTHORIZED_KEY=${SSH_AUTHORIZED_KEY}
-NET_INTERFACE=${NET_INTERFACE}
-STATIC_IP=${STATIC_IP}
-STATIC_PREFIX=${STATIC_PREFIX}
-GATEWAY=${GATEWAY}
-DNS_SERVERS=${DNS_SERVERS}
-SERVICEBAY_PORT=${SERVICEBAY_PORT}
-SERVICEBAY_CHANNEL=${SERVICEBAY_CHANNEL}
-SERVICEBAY_ADMIN_USER=${SERVICEBAY_ADMIN_USER}
-PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-}
-GW_HOST=${GW_HOST}
-GW_USER=${GW_USER}
-ENABLE_REGISTRIES=${ENABLE_REGISTRIES}
-ENABLE_EMAIL=${ENABLE_EMAIL:-N}
-EMAIL_HOST=${EMAIL_HOST:-}
-EMAIL_PORT=${EMAIL_PORT:-587}
-EMAIL_SECURE=${EMAIL_SECURE:-N}
-EMAIL_USER=${EMAIL_USER:-}
-EMAIL_FROM=${EMAIL_FROM:-}
-EMAIL_RECIPIENTS=${EMAIL_RECIPIENTS:-}
-AUTH_SECRET=${AUTH_SECRET:-}
-SETTINGS
+  : > "$SETTINGS_FILE"
+  for key in "${PERSISTED_SETTINGS[@]}"; do
+    # Indirect expansion: ${!key} reads the variable named in $key.
+    # `:-` collapses unset/empty to empty rather than printing
+    # `KEY=` with a literal dash.
+    printf '%s=%s\n' "$key" "${!key:-}" >> "$SETTINGS_FILE"
+  done
   echo "Settings saved to $SETTINGS_FILE"
 }
 
@@ -1051,7 +1068,7 @@ if [[ -f "$SETTINGS_FILE" ]]; then
   fi
   echo "===================================="
   echo ""
-  read -r -p "Accept these settings? (only passwords will be prompted) [Y/n]: " ACCEPT_SAVED
+  read -r -p "Accept these settings? (passwords + the optional MCP bootstrap token will still be prompted) [Y/n]: " ACCEPT_SAVED
   ACCEPT_SAVED=${ACCEPT_SAVED:-Y}
   if [[ "${ACCEPT_SAVED^^}" =~ ^Y ]]; then
     USE_SAVED=true
@@ -1059,29 +1076,13 @@ if [[ -f "$SETTINGS_FILE" ]]; then
 fi
 
 if $USE_SAVED; then
-  # Load all non-secret values from saved settings
-  SERVER_NAME="$(load_setting SERVER_NAME)"
-  HOST_USER="$(load_setting HOST_USER)"
-  SSH_AUTHORIZED_KEY="$(load_setting SSH_AUTHORIZED_KEY)"
-  NET_INTERFACE="$(load_setting NET_INTERFACE)"
-  STATIC_IP="$(load_setting STATIC_IP)"
-  STATIC_PREFIX="$(load_setting STATIC_PREFIX)"
-  GATEWAY="$(load_setting GATEWAY)"
-  DNS_SERVERS="$(load_setting DNS_SERVERS)"
-  SERVICEBAY_PORT="$(load_setting SERVICEBAY_PORT)"
-  SERVICEBAY_CHANNEL="$(load_setting SERVICEBAY_CHANNEL)"
-  SERVICEBAY_ADMIN_USER="$(load_setting SERVICEBAY_ADMIN_USER)"
-  PUBLIC_DOMAIN="$(load_setting PUBLIC_DOMAIN)"
-  GW_HOST="$(load_setting GW_HOST)"
-  GW_USER="$(load_setting GW_USER)"
-  ENABLE_REGISTRIES="$(load_setting ENABLE_REGISTRIES)"
-  ENABLE_EMAIL="$(load_setting ENABLE_EMAIL)"
-  EMAIL_HOST="$(load_setting EMAIL_HOST)"
-  EMAIL_PORT="$(load_setting EMAIL_PORT)"
-  EMAIL_SECURE="$(load_setting EMAIL_SECURE)"
-  EMAIL_USER="$(load_setting EMAIL_USER)"
-  EMAIL_FROM="$(load_setting EMAIL_FROM)"
-  EMAIL_RECIPIENTS="$(load_setting EMAIL_RECIPIENTS)"
+  # Load all non-secret values from saved settings — iterates the
+  # PERSISTED_SETTINGS schema so adding/removing a variable means
+  # touching one place. Variables present in the file but no longer
+  # in the schema are silently dropped on the next save.
+  for key in "${PERSISTED_SETTINGS[@]}"; do
+    printf -v "$key" '%s' "$(load_setting "$key")"
+  done
 
   case "$SERVICEBAY_CHANNEL" in
     test) SERVICEBAY_VERSION="test" ;;
