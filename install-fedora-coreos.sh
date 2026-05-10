@@ -634,6 +634,24 @@ ${SERVICEBAY_SSH_PRIV}
               tmp = OLD + ".merge.tmp"
               with open(tmp, "w") as f:
                   json.dump(merged, f, indent=2)
+              # ServiceBay runs as the host user (uid 1000, `core`).
+              # This service runs as root, so without explicit chown
+              # the merged config.json ends up root:root and the
+              # container gets EACCES when reading it. getConfig()'s
+              # catch then falls back to DEFAULT_CONFIG, migrateConfig
+              # saves that empty default, and every install-time value
+              # (auth, gateway, bootstrap token, setupCompleted,
+              # stackSetupPending) vanishes silently. Match the
+              # ownership setup-raid uses for everything else in
+              # /var/mnt/data/servicebay.
+              try:
+                  import pwd
+                  core = pwd.getpwnam("core")
+                  os.chown(tmp, core.pw_uid, core.pw_gid)
+              except (KeyError, OSError):
+                  # Static fallback — install-fedora-coreos.sh always
+                  # creates `core` with uid/gid 1000.
+                  os.chown(tmp, 1000, 1000)
               os.chmod(tmp, 0o600)
               os.replace(tmp, OLD)
               os.remove(NEW)
