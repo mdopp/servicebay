@@ -4,12 +4,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/config', () => ({
   getConfig: vi.fn(),
 }));
+const mockAgent = { sendCommand: vi.fn() };
+vi.mock('@/lib/agent/manager', () => ({
+  agentManager: { ensureAgent: vi.fn(() => Promise.resolve(mockAgent)) },
+}));
 
 import { getConfig } from '@/lib/config';
-import { generateIosCalendarProfile, generateAudiobookshelfDeepLink, resolveSetupAsset } from './assets';
+import { generateIosCalendarProfile, generateAudiobookshelfDeepLink, fetchSyncthingDeviceId, resolveSetupAsset } from './assets';
 
 beforeEach(() => {
   (getConfig as any).mockReset();
+  mockAgent.sendCommand.mockReset();
 });
 
 describe('generateIosCalendarProfile', () => {
@@ -69,6 +74,34 @@ describe('generateAudiobookshelfDeepLink', () => {
   });
 });
 
+describe('fetchSyncthingDeviceId', () => {
+  const VALID = 'ABCDEFG-HIJKLMN-OPQRSTU-VWXYZ23-4567ABC-DEFGHIJ-KLMNOPQ';
+
+  it('returns the device id when podman exec succeeds', async () => {
+    mockAgent.sendCommand.mockResolvedValueOnce({ code: 0, stdout: `${VALID}\n` });
+    const id = await fetchSyncthingDeviceId('Local');
+    expect(id).toBe(VALID);
+  });
+
+  it('returns null when the container is not running (non-zero exit)', async () => {
+    mockAgent.sendCommand.mockResolvedValueOnce({ code: 1, stdout: '', stderr: 'no such container' });
+    const id = await fetchSyncthingDeviceId('Local');
+    expect(id).toBeNull();
+  });
+
+  it('rejects malformed device-id output (defends against noisy stdout)', async () => {
+    mockAgent.sendCommand.mockResolvedValueOnce({ code: 0, stdout: 'WARNING: foo\n' });
+    const id = await fetchSyncthingDeviceId('Local');
+    expect(id).toBeNull();
+  });
+
+  it('returns null when the agent throws', async () => {
+    mockAgent.sendCommand.mockRejectedValueOnce(new Error('agent down'));
+    const id = await fetchSyncthingDeviceId('Local');
+    expect(id).toBeNull();
+  });
+});
+
 describe('resolveSetupAsset', () => {
   it('routes ios_calendar_profile to the XML generator', async () => {
     (getConfig as any).mockResolvedValue({ reverseProxy: { lanDomain: 'home.arpa' } });
@@ -82,5 +115,13 @@ describe('resolveSetupAsset', () => {
     const out = await resolveSetupAsset('audiobookshelf_deeplink', 'media');
     expect(out?.kind).toBe('audiobookshelf_deeplink');
     expect(out?.data).toMatch(/^abs:\/\//);
+  });
+
+  it('routes syncthing_qr to the device-id fetcher', async () => {
+    const VALID = 'ABCDEFG-HIJKLMN-OPQRSTU-VWXYZ23-4567ABC-DEFGHIJ-KLMNOPQ';
+    mockAgent.sendCommand.mockResolvedValueOnce({ code: 0, stdout: VALID });
+    const out = await resolveSetupAsset('syncthing_qr', 'file-share');
+    expect(out?.kind).toBe('syncthing_qr');
+    expect(out?.data).toBe(VALID);
   });
 });

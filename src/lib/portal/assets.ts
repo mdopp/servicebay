@@ -11,6 +11,8 @@
 import crypto from 'crypto';
 import { getActiveDomain, getMode } from '@/lib/mode';
 import { getConfig, type AppConfig } from '@/lib/config';
+import { agentManager } from '@/lib/agent/manager';
+import { logger } from '@/lib/logger';
 import path from 'path';
 import fs from 'fs/promises';
 import type { SetupAssetKind } from './userGuide';
@@ -176,6 +178,46 @@ export async function generateAudiobookshelfDeepLink(serviceName: string): Promi
   return `abs://${parsed.host}?ssl=${ssl}`;
 }
 
+/**
+ * Read the running Syncthing container's device ID. Uses
+ * `podman exec syncthing cat /var/syncthing/config/config.xml`
+ * (the file-share template mounts the syncthing-config PVC there)
+ * and pulls the `<device id="...">` line that matches the special
+ * "ourselves" entry. Falls back to running `syncthing --device-id`
+ * inside the container if the config file isn't readable yet
+ * (rare cold-start window).
+ *
+ * Returns `null` when the container isn't running, the agent
+ * doesn't respond, or the parse fails — the caller treats that as
+ * "asset not available, hide the button".
+ */
+export async function fetchSyncthingDeviceId(node: string = 'Local'): Promise<string | null> {
+  try {
+    const agent = await agentManager.ensureAgent(node);
+    // The Syncthing CLI prints the device ID directly. We use it
+    // because the config.xml's "ourselves" device ID requires
+    // parsing the XML's myID attribute or matching against the
+    // container's hostname; the CLI is one less moving part.
+    const res = await agent.sendCommand('exec', {
+      command: 'podman exec syncthing syncthing --device-id 2>/dev/null',
+    }, { timeoutMs: 6_000 }) as { code?: number; stdout?: string };
+    if (res.code !== 0) return null;
+    const id = (res.stdout ?? '').trim();
+    // Syncthing device IDs are 56 chars in 7 groups of 7 separated
+    // by hyphens (e.g. ABCDEFG-HIJKLMN-...). Lightly validate so
+    // a noisy stdout (warning lines, etc.) doesn't smuggle junk
+    // into the QR.
+    if (!/^[A-Z2-7]{7}(-[A-Z2-7]{7}){6}$/.test(id)) {
+      logger.warn('portal:assets', `Unexpected syncthing device-id shape: ${id.slice(0, 40)}`);
+      return null;
+    }
+    return id;
+  } catch (e) {
+    logger.warn('portal:assets', `Could not fetch syncthing device id: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
 /** Resolve any setup-asset kind into its concrete artifact. */
 export async function resolveSetupAsset(kind: SetupAssetKind, serviceName: string): Promise<{ kind: SetupAssetKind; data: string } | null> {
   switch (kind) {
@@ -186,6 +228,10 @@ export async function resolveSetupAsset(kind: SetupAssetKind, serviceName: strin
     case 'audiobookshelf_deeplink': {
       const url = await generateAudiobookshelfDeepLink(serviceName);
       return url ? { kind, data: url } : null;
+    }
+    case 'syncthing_qr': {
+      const deviceId = await fetchSyncthingDeviceId('Local');
+      return deviceId ? { kind, data: deviceId } : null;
     }
   }
 }

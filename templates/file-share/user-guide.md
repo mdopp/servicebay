@@ -1,6 +1,10 @@
 ---
 icon: "📁"
 tagline: "Share documents across phones, laptops, and the family — like a private Dropbox."
+setup_assets:
+  - kind: "syncthing_qr"
+    label: "📷 Pair this Syncthing device"
+    description: "Shows a QR code with the home server's device ID. The Android Syncthing app's \"Add Device → Scan QR\" picks it up directly."
 recommended_apps:
   - name: "Syncthing"
     url: "https://syncthing.net/downloads/"

@@ -56,18 +56,20 @@ export interface RecommendedApp {
  *  Whitelist of recognized kinds:
  *    - `ios_calendar_profile` — Apple-standard .mobileconfig that
  *      adds CalDAV + CardDAV accounts to iOS Settings in two taps.
- *    - `audiobookshelf_deeplink` — \`abs://\` URL the official
+ *    - `audiobookshelf_deeplink` — `abs://` URL the official
  *      Audiobookshelf app picks up to pre-configure the server.
- *
- *  Future kinds (deferred):
- *    - `syncthing_qr` — needs Syncthing REST API to read the
- *      server's device ID at request time.
+ *    - `syncthing_qr` — encodes the file-share container's
+ *      device ID into a QR; the Android Syncthing app's "Add
+ *      Device" → "Scan QR" reads it directly. The server fetches
+ *      the device ID at request time via `podman exec` against the
+ *      running syncthing container.
  */
-export type SetupAssetKind = 'ios_calendar_profile' | 'audiobookshelf_deeplink';
+export type SetupAssetKind = 'ios_calendar_profile' | 'audiobookshelf_deeplink' | 'syncthing_qr';
 
 const KNOWN_ASSET_KINDS: ReadonlySet<SetupAssetKind> = new Set([
   'ios_calendar_profile',
   'audiobookshelf_deeplink',
+  'syncthing_qr',
 ]);
 
 export interface SetupAsset {
