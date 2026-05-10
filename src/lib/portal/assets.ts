@@ -9,46 +9,16 @@
  */
 
 import crypto from 'crypto';
-import { getActiveDomain, getMode } from '@/lib/mode';
-import { getConfig, type AppConfig } from '@/lib/config';
+import { getConfig } from '@/lib/config';
 import { agentManager } from '@/lib/agent/manager';
 import { logger } from '@/lib/logger';
-import path from 'path';
-import fs from 'fs/promises';
+import { resolveServiceUrl } from './services';
 import type { SetupAssetKind } from './userGuide';
 
-const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
-
-/**
- * Read a service's `*_SUBDOMAIN` variable default from its
- * variables.json. Mirrors `pickSubdomainDefault` in services.ts;
- * lifted here to avoid a cross-module dep cycle.
- */
-async function readSubdomainDefault(serviceName: string): Promise<string | null> {
-  try {
-    const raw = await fs.readFile(path.join(TEMPLATES_PATH, serviceName, 'variables.json'), 'utf-8');
-    const vars = JSON.parse(raw) as Record<string, { type?: string; default?: string }>;
-    for (const [name, meta] of Object.entries(vars)) {
-      if (meta.type === 'subdomain' && name.endsWith('_SUBDOMAIN') && typeof meta.default === 'string') {
-        return meta.default;
-      }
-    }
-  } catch { /* fall through */ }
-  return null;
-}
-
-/**
- * Derive the externally-reachable URL for a given service in the
- * current install mode. Copies the lookup buildPortalCards uses so
- * assets see the same URL as the "Open" button.
- */
-async function urlForService(config: AppConfig, serviceName: string): Promise<string | null> {
-  const sub = await readSubdomainDefault(serviceName);
-  if (!sub) return null;
-  const domain = getActiveDomain(config);
-  const scheme = getMode(config) === 'public' ? 'https' : 'http';
-  return `${scheme}://${sub}.${domain}`;
-}
+// Asset URLs go through the shared `resolveServiceUrl` helper so the
+// iOS profile hostname + abs:// link always match what the portal's
+// "Open" button renders. Avoids drift between the card URL and the
+// asset URL when the operator customized a subdomain.
 
 /**
  * iOS Configuration Profile (.mobileconfig) that adds CalDAV +
@@ -64,7 +34,7 @@ async function urlForService(config: AppConfig, serviceName: string): Promise<st
  */
 export async function generateIosCalendarProfile(serviceName: string): Promise<string | null> {
   const config = await getConfig();
-  const url = await urlForService(config, serviceName);
+  const url = await resolveServiceUrl(config, serviceName);
   if (!url) return null;
   const parsed = new URL(url);
   const hostname = parsed.hostname;
@@ -171,7 +141,7 @@ export async function generateIosCalendarProfile(serviceName: string): Promise<s
  */
 export async function generateAudiobookshelfDeepLink(serviceName: string): Promise<string | null> {
   const config = await getConfig();
-  const url = await urlForService(config, serviceName);
+  const url = await resolveServiceUrl(config, serviceName);
   if (!url) return null;
   const parsed = new URL(url);
   const ssl = parsed.protocol === 'https:' ? 'true' : 'false';

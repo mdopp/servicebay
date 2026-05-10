@@ -18,6 +18,44 @@ beforeEach(() => {
 });
 
 describe('generateIosCalendarProfile', () => {
+  it('uses the operator-customized subdomain from reverseProxy.hosts when present', async () => {
+    // Operator chose `agenda` instead of the template default `caldav` —
+    // proxy-host entry reflects what got deployed; profile must follow.
+    (getConfig as any).mockResolvedValue({
+      reverseProxy: {
+        lanDomain: 'home.arpa',
+        hosts: [{
+          domain: 'agenda.home.arpa',
+          service: 'radicale',
+          forwardPort: 5232,
+          created: true,
+        }],
+      },
+    });
+    const xml = await generateIosCalendarProfile('radicale');
+    expect(xml).not.toBeNull();
+    expect(xml!).toMatch(/<key>CalDAVHostName<\/key>\s*<string>agenda\.home\.arpa<\/string>/);
+    expect(xml!).not.toMatch(/caldav\.home\.arpa/);
+  });
+
+  it('skips uncreated proxy-host entries and falls back to template default', async () => {
+    // entry exists but failed to create → fallback to default subdomain.
+    (getConfig as any).mockResolvedValue({
+      reverseProxy: {
+        lanDomain: 'home.arpa',
+        hosts: [{
+          domain: 'broken.home.arpa',
+          service: 'radicale',
+          forwardPort: 5232,
+          created: false,
+        }],
+      },
+    });
+    const xml = await generateIosCalendarProfile('radicale');
+    expect(xml).not.toBeNull();
+    expect(xml!).toMatch(/caldav\.home\.arpa/);
+  });
+
   it('produces a well-formed mobileconfig with CalDAV + CardDAV payloads', async () => {
     (getConfig as any).mockResolvedValue({
       reverseProxy: { lanDomain: 'home.arpa' },

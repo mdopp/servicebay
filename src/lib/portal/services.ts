@@ -20,7 +20,7 @@
 
 import path from 'path';
 import fs from 'fs/promises';
-import { getConfig } from '@/lib/config';
+import { getConfig, type AppConfig } from '@/lib/config';
 import { getActiveDomain, getMode } from '@/lib/mode';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { parseTemplateTier } from '@/lib/templateTier';
@@ -82,6 +82,45 @@ function pickSubdomainDefault(variables: Record<string, { type?: string; default
 }
 
 /**
+ * Resolve the externally-reachable URL for a service. Used by both
+ * the portal card builder (Open button) and the asset generators
+ * (iOS profile hostname, abs:// deep link).
+ *
+ * Lookup order:
+ *   1. `config.reverseProxy.hosts[]` — install-time proxy host
+ *      entries reflect *exactly* what got deployed (operator's
+ *      customized subdomain, the right TLD for the install mode).
+ *      Match by service name.
+ *   2. Template default subdomain + active domain — fallback for
+ *      LAN-mode installs that don't create NPM proxy hosts, and
+ *      for cards whose proxy entry is missing for any reason.
+ *
+ * Returns null when no template subdomain variable exists either —
+ * matches the "skip this card" path in the caller.
+ */
+export async function resolveServiceUrl(
+  config: AppConfig,
+  serviceName: string,
+): Promise<string | null> {
+  const scheme = getMode(config) === 'public' ? 'https' : 'http';
+
+  // Prefer the persisted proxy-host entry — it has the operator's
+  // chosen subdomain baked in.
+  const hostEntry = (config.reverseProxy?.hosts ?? []).find(
+    h => h.service === serviceName && h.created,
+  );
+  if (hostEntry) {
+    return `${scheme}://${hostEntry.domain}`;
+  }
+
+  // Fallback: template default subdomain + active domain.
+  const variables = await readVariables(serviceName);
+  const sub = pickSubdomainDefault(variables);
+  if (!sub) return null;
+  return `${scheme}://${sub}.${getActiveDomain(config)}`;
+}
+
+/**
  * Build the portal-card list. Async because it walks per-template
  * files; cheap enough to run on every /portal request (which is
  * already gated by mode).
@@ -95,9 +134,6 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
   if (running.length === 0) return [];
 
   const config = await getConfig();
-  const activeDomain = getActiveDomain(config);
-  const mode = getMode(config);
-  const scheme = mode === 'public' ? 'https' : 'http';
 
   const cards: PortalCard[] = [];
   for (const svc of running) {
@@ -110,22 +146,19 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
     const parsed = parseUserGuide(rawGuide, svc.name);
     if (!parsed) continue; // No guide → not on the portal in v1
 
-    const variables = await readVariables(svc.name);
-    const sub = pickSubdomainDefault(variables);
-    if (!sub) {
-      logger.warn('portal', `Template ${svc.name} has user-guide.md but no subdomain variable — skipping`);
+    const url = await resolveServiceUrl(config, svc.name);
+    if (!url) {
+      logger.warn('portal', `Template ${svc.name} has user-guide.md but no subdomain variable and no proxy-host entry — skipping`);
       continue;
     }
 
-    const label = parsed.frontmatter.tagline
-      ? (parseTemplateLabel(yaml) ?? svc.name)
-      : (parseTemplateLabel(yaml) ?? svc.name);
+    const label = parseTemplateLabel(yaml) ?? svc.name;
     cards.push({
       name: svc.name,
       label,
       icon: parsed.frontmatter.icon ?? '',
       tagline: parsed.frontmatter.tagline ?? '',
-      url: `${scheme}://${sub}.${activeDomain}`,
+      url,
       body: parsed.body,
       recommendedApps: parsed.frontmatter.recommended_apps ?? [],
       setupAssets: parsed.frontmatter.setup_assets ?? [],
