@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -65,6 +66,29 @@ def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tu
         return 0, None
 
 
+def wait_pod_running(pod_name: str, deadline_sec: float = 60.0) -> bool:
+    """Poll `podman pod inspect` until the pod reports Running state, or the
+    deadline expires. Replaces fixed sleep grace-periods — readiness arrives
+    in 1–3s on warm machines and up to ~30s on slow disks / image-extract.
+    Returns True iff the pod transitioned to Running before the deadline.
+    Best-effort: any subprocess failure is treated as 'not ready yet'."""
+    started = time.time()
+    while time.time() - started < deadline_sec:
+        try:
+            r = subprocess.run(
+                ["podman", "pod", "inspect", pod_name, "--format", "{{.State}}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if r.returncode == 0 and r.stdout.strip().lower() == "running":
+                return True
+        except Exception:  # pylint: disable=broad-except
+            pass
+        time.sleep(1)
+    return False
+
+
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
@@ -92,8 +116,16 @@ def main() -> int:
     sb_api = env("SB_API_URL", "http://localhost:3000")
     init_url = f"{sb_api}/api/system/filebrowser/init"
 
-    # Brief grace period for the pod to come up before the first exec.
-    time.sleep(8)
+    # Wait for the pod itself to report Running before the first init
+    # attempt. Replaces the previous `time.sleep(8)` blind wait —
+    # Running typically arrives in 1–3s on a warm machine but can
+    # stretch to 30s+ on slow disks or when the image is still
+    # extracting. Either way, polling stops dead air for fast machines
+    # while still giving slow ones the time they need. Best-effort:
+    # any error in the probe falls through to the existing retry
+    # loop below, which handles the "container exists but FB not
+    # listening yet" case via /api/system/filebrowser/init's own retries.
+    wait_pod_running("file-share", deadline_sec=60.0)
     deadline = time.time() + 3 * 60  # 3 min total budget — covers slow pulls
     last_beat = 0.0
     started = time.time()
