@@ -31,13 +31,27 @@ export async function getBackupHistory(): Promise<BackupRunResult[]> {
     }
 }
 
+// Per-process serialization for backup-history mutations. Concurrent
+// backups completing at the same time would otherwise race here:
+// both read the same history, both prepend their own result, both
+// write — second clobbers the first. Same Promise-chain pattern as
+// updateConfig (#299), NetworkStore (#300), nodes (#301).
+let historyWriteQueue: Promise<unknown> = Promise.resolve();
+function withHistoryLock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = historyWriteQueue.then(fn, fn);
+    historyWriteQueue = next.catch(() => undefined);
+    return next;
+}
+
 async function appendHistory(result: BackupRunResult): Promise<void> {
-    const history = await getBackupHistory();
-    history.unshift(result);
-    if (history.length > MAX_HISTORY_ENTRIES) {
-        history.length = MAX_HISTORY_ENTRIES;
-    }
-    await atomicWriteFile(BACKUP_HISTORY_FILE, JSON.stringify(history, null, 2));
+    return withHistoryLock(async () => {
+        const history = await getBackupHistory();
+        history.unshift(result);
+        if (history.length > MAX_HISTORY_ENTRIES) {
+            history.length = MAX_HISTORY_ENTRIES;
+        }
+        await atomicWriteFile(BACKUP_HISTORY_FILE, JSON.stringify(history, null, 2));
+    });
 }
 
 // ─── Target Resolution ───────────────────────────────────────────────
