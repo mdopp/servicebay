@@ -19,5 +19,6 @@ import './postDeployFailed';
 import './crashLoop';
 import './proxyRouteMissing';
 import './failedUnits';
+import './healthChecks';
 
 export {};
