@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import PluginHelp from './PluginHelp';
 import ConnectionIndicator from './ConnectionIndicator';
+import LocalOnlyBadge from './LocalOnlyBadge';
 
 interface PageHeaderProps {
   title: string;
@@ -49,6 +50,7 @@ export default function PageHeader({ title, children, actions, showBack = false,
 
       <div className={`flex items-center gap-3 shrink-0 ${children ? '' : 'ml-auto'}`}>
         {actions}
+        <LocalOnlyBadge />
         <ConnectionIndicator inline />
       </div>
     </div>
