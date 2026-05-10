@@ -2,7 +2,7 @@ import { agentManager } from '../agent/manager';
 import path from 'path';
 import yaml from 'js-yaml';
 import { logger } from '../logger';
-import { getConfig } from '../config';
+import { getConfig, updateConfig } from '../config';
 import { saveSnapshot } from '../history';
 import { injectServiceDirectives } from './quadletDirectives';
 
@@ -720,6 +720,27 @@ export class ServiceManager {
         }
         if (result.code !== 0) {
             onProgress?.(`⚠️ ${name} post-deploy exited ${result.code}. Service is deployed; the seed step did not finish — check the log lines above for the cause.`);
+        }
+
+        // Persist the run so the diagnose page can surface failed seeds
+        // long after the install log scrolled away (#252). Bound the
+        // stdout tail to ~1KB so config.json stays small. Failures here
+        // are best-effort — the seed result itself was already logged
+        // and shown to the user; losing the persistence just means B8
+        // can't surface this run later.
+        try {
+            const stdoutTail = (result.stdout ?? '').slice(-1024) || undefined;
+            await updateConfig({
+                servicePostDeploy: {
+                    [name]: {
+                        lastRunAt: new Date().toISOString(),
+                        exitCode: result.code,
+                        stdoutTail,
+                    },
+                },
+            });
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not persist post-deploy result for ${name}:`, e);
         }
     }
 
