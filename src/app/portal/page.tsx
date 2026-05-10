@@ -1,3 +1,4 @@
+import ServiceBayLogo from '@/components/ServiceBayLogo';
 import { buildPortalCards } from '@/lib/portal/services';
 import PortalGrid from './PortalGrid';
 import RequestAccessButton from './RequestAccessButton';
@@ -19,9 +20,12 @@ export default async function PortalPage() {
   return (
     <main className="max-w-6xl mx-auto px-6 py-12">
       <header className="mb-10 text-center">
-        <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
-          🏠 Home — your family&apos;s private cloud
-        </h1>
+        <div className="flex items-center justify-center gap-3">
+          <ServiceBayLogo size={36} className="text-violet-600 dark:text-violet-400 shrink-0" />
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
+            Home <span className="text-gray-400 dark:text-gray-600 font-normal">— your family&apos;s private cloud</span>
+          </h1>
+        </div>
         <p className="mt-3 text-base text-gray-600 dark:text-gray-400">
           Pick a service below to get started.
         </p>

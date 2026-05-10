@@ -1,9 +1,9 @@
 ---
-icon: "🎵"
+lucide_icon: "headphones"
 tagline: "Stream your music collection and listen to audiobooks — offline-capable on phones."
 setup_assets:
   - kind: "audiobookshelf_deeplink"
-    label: "📲 Open in Audiobookshelf app"
+    label: "Open in Audiobookshelf app"
     description: "Pre-configures the server URL — works only after you've installed the app from the App Store / Play Store."
 recommended_apps:
   - name: "Audiobookshelf"

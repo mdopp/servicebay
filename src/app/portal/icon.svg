@@ -1,10 +1,19 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <!-- Portal icon for the family-facing /portal route. House-shape on a
-       violet background mirrors the 🏠 emoji that opens the portal page
-       header. Used as the manifest icon for PWA install ("Add to Home
-       Screen") so the family-portal app icon is distinct from the
-       admin dashboard's. -->
+  <!-- PWA app icon for the family-portal route. Uses the ServiceBay
+       logo's line-art style (currentColor stroke, 2px equivalent at
+       this scale) on a violet brand background. Differs from the
+       admin dashboard's icon only by the violet fill — same shape
+       cues so it's recognizable as a ServiceBay product on the
+       home screen. -->
   <rect width="512" height="512" rx="96" fill="#7c3aed"/>
-  <path d="M256 96 L96 224 V416 H192 V288 H320 V416 H416 V224 Z"
-        fill="#fff" stroke="#fff" stroke-width="16" stroke-linejoin="round"/>
+  <g transform="translate(96 96) scale(13.33)" fill="none" stroke="#fff"
+     stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Server unit -->
+    <rect x="4" y="2" width="16" height="10" rx="2" ry="2" />
+    <line x1="8" y1="7" x2="8.01" y2="7" />
+    <line x1="12" y1="7" x2="12.01" y2="7" />
+    <!-- Bay waves -->
+    <path d="M2 17c5.5 0 5.5-3 11-3s5.5 3 11 3" />
+    <path d="M2 21c5.5 0 5.5-3 11-3s5.5 3 11 3" />
+  </g>
 </svg>

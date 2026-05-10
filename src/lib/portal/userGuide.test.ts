@@ -144,6 +144,25 @@ setup_assets:
     expect(result!.frontmatter.setup_assets).toHaveLength(1);
   });
 
+  it('parses lucide_icon when in the allowlist', () => {
+    const raw = `---
+lucide_icon: "camera"
+tagline: "..."
+---
+`;
+    const result = parseUserGuide(raw, 'immich');
+    expect(result!.frontmatter.lucide_icon).toBe('camera');
+  });
+
+  it('drops lucide_icon values not in the allowlist', () => {
+    const raw = `---
+lucide_icon: "<script>"
+---
+`;
+    const result = parseUserGuide(raw, 'evil');
+    expect(result!.frontmatter.lucide_icon).toBeUndefined();
+  });
+
   it('returns null on YAML parse error', () => {
     const raw = `---
 icon: "📷

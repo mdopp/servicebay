@@ -82,7 +82,38 @@ export interface SetupAsset {
   description?: string;
 }
 
+/**
+ * Curated allowlist of Lucide icon names usable on portal cards.
+ * Lucide is the same line-art icon set the dashboard sidebar uses,
+ * so picking from this set keeps the portal visually consistent
+ * with ServiceBay's existing chrome (no emoji, no per-template SVG
+ * imports). The whitelist also acts as a safety boundary —
+ * frontmatter is template-author input but only these names render;
+ * unknown values silently drop to fallback.
+ */
+const PORTAL_ICONS = [
+  'camera', 'image', 'images',          // photos / gallery
+  'folder', 'folder-open', 'files',     // files / sharing
+  'calendar', 'calendar-days',          // calendar / contacts
+  'music', 'headphones', 'book-open',   // music / audiobooks
+  'lock', 'shield', 'key-round',        // passwords / vault
+  'house', 'lightbulb',                 // smart home
+  'globe', 'router',                    // network
+  'mail', 'message-square',             // mail / chat
+  'video', 'film',                      // video / streaming
+  'package',                            // generic fallback
+] as const;
+export type PortalIconName = typeof PORTAL_ICONS[number];
+
+const PORTAL_ICON_SET: ReadonlySet<string> = new Set(PORTAL_ICONS);
+
 export interface UserGuideFrontmatter {
+  /** Lucide icon name (line-art, matches ServiceBay's dashboard
+   *  chrome). Preferred over the legacy emoji `icon` field. */
+  lucide_icon?: PortalIconName;
+  /** Legacy emoji icon (📷 / 🏠 / …). Kept for back-compat;
+   *  templates should migrate to `lucide_icon` for visual
+   *  consistency with the dashboard. */
   icon?: string;
   tagline?: string;
   /** Preferred — richer recommended-apps with platforms + notes. */
@@ -164,6 +195,9 @@ export function parseUserGuide(raw: string | null, templateName: string): Parsed
     const { data, content } = matter(raw);
     const fm: UserGuideFrontmatter = {};
     if (typeof data.icon === 'string') fm.icon = data.icon;
+    if (typeof data.lucide_icon === 'string' && PORTAL_ICON_SET.has(data.lucide_icon)) {
+      fm.lucide_icon = data.lucide_icon as PortalIconName;
+    }
     if (typeof data.tagline === 'string') fm.tagline = data.tagline;
 
     // Prefer `recommended_apps` when present; fall back to lifting

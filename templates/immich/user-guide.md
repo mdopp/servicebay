@@ -1,5 +1,5 @@
 ---
-icon: "📷"
+lucide_icon: "camera"
 tagline: "Auto-backup the photos on your phone and browse them like Google Photos — but private to your family."
 recommended_apps:
   - name: "Immich"

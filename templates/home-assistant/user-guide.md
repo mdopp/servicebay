@@ -1,5 +1,5 @@
 ---
-icon: "🏠"
+lucide_icon: "lightbulb"
 tagline: "Control lights, sensors, and smart-home devices from one app — and keep all the data on your home server."
 recommended_apps:
   - name: "Home Assistant Companion"

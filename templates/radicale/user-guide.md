@@ -1,9 +1,9 @@
 ---
-icon: "📅"
+lucide_icon: "calendar-days"
 tagline: "Calendar and contacts that sync between every device — no separate app, just your phone's built-in Calendar and Contacts."
 setup_assets:
   - kind: "ios_calendar_profile"
-    label: "📲 One-tap iOS setup"
+    label: "One-tap iOS setup"
     description: "Downloads an Apple-standard configuration profile that adds CalDAV + CardDAV accounts. iOS prompts for your username and password during install."
 recommended_apps:
   - name: "iOS Calendar / Contacts"
