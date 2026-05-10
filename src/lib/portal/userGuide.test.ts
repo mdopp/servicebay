@@ -8,69 +8,109 @@ describe('parseUserGuide', () => {
     expect(parseUserGuide('   \n  ', 'x')).toBeNull();
   });
 
-  it('extracts icon, tagline, and mobile_apps', () => {
+  it('extracts icon and tagline', () => {
     const raw = `---
 icon: "📷"
 tagline: "Auto-backup your photos."
+---
+
+# Getting started
+`;
+    const result = parseUserGuide(raw, 'immich');
+    expect(result).not.toBeNull();
+    expect(result!.frontmatter.icon).toBe('📷');
+    expect(result!.frontmatter.tagline).toBe('Auto-backup your photos.');
+    expect(result!.body.trim()).toMatch(/^# Getting started/);
+  });
+
+  it('parses recommended_apps with platforms + note', () => {
+    const raw = `---
+recommended_apps:
+  - name: "Obsidian"
+    url: "https://obsidian.md"
+    platforms: ["desktop", "ios", "android"]
+    note: "Notes app; pair with Syncthing for live sync."
+  - name: "VLC"
+    url: "https://www.videolan.org/"
+    platforms: ["desktop", "android"]
+---
+
+body
+`;
+    const result = parseUserGuide(raw, 'file-share');
+    expect(result!.frontmatter.recommended_apps).toHaveLength(2);
+    expect(result!.frontmatter.recommended_apps?.[0]).toEqual({
+      name: 'Obsidian',
+      url: 'https://obsidian.md',
+      platforms: ['desktop', 'ios', 'android'],
+      note: 'Notes app; pair with Syncthing for live sync.',
+    });
+    expect(result!.frontmatter.recommended_apps?.[1].note).toBeUndefined();
+  });
+
+  it('drops unknown platform values silently', () => {
+    const raw = `---
+recommended_apps:
+  - name: "X"
+    url: "https://x.example"
+    platforms: ["desktop", "smartwatch", "ios"]
+---
+`;
+    const result = parseUserGuide(raw, 'x');
+    expect(result!.frontmatter.recommended_apps?.[0].platforms).toEqual(['desktop', 'ios']);
+  });
+
+  it('rejects non-http(s) URLs in recommended_apps', () => {
+    const raw = `---
+recommended_apps:
+  - name: "Evil"
+    url: "javascript:alert(1)"
+  - name: "Real"
+    url: "https://example.com"
+---
+`;
+    const result = parseUserGuide(raw, 'evil');
+    expect(result!.frontmatter.recommended_apps).toHaveLength(1);
+    expect(result!.frontmatter.recommended_apps?.[0].name).toBe('Real');
+  });
+
+  it('lifts legacy mobile_apps into recommended_apps with inferred platforms', () => {
+    const raw = `---
 mobile_apps:
   - name: "Immich for iOS"
     url: "https://apps.apple.com/app/immich/id1"
   - name: "Immich for Android"
     url: "https://play.google.com/store/apps/details?id=app.immich"
 ---
-
-# Getting started
-
-Step 1.
 `;
-    const result = parseUserGuide(raw, 'immich');
-    expect(result).not.toBeNull();
-    expect(result!.frontmatter.icon).toBe('📷');
-    expect(result!.frontmatter.tagline).toBe('Auto-backup your photos.');
-    expect(result!.frontmatter.mobile_apps).toHaveLength(2);
-    expect(result!.frontmatter.mobile_apps?.[0].name).toBe('Immich for iOS');
-    expect(result!.body.trim()).toMatch(/^# Getting started/);
+    const result = parseUserGuide(raw, 'legacy');
+    const apps = result!.frontmatter.recommended_apps;
+    expect(apps).toHaveLength(2);
+    expect(apps?.[0].platforms).toEqual(['ios']);
+    expect(apps?.[1].platforms).toEqual(['android']);
   });
 
-  it('rejects non-http(s) URLs in mobile_apps', () => {
+  it('prefers recommended_apps over mobile_apps when both are present', () => {
     const raw = `---
+recommended_apps:
+  - name: "New"
+    url: "https://new.example"
 mobile_apps:
-  - name: "Evil"
-    url: "javascript:alert(1)"
-  - name: "Real"
-    url: "https://example.com"
+  - name: "Old"
+    url: "https://apps.apple.com/old"
 ---
-
-body
 `;
-    const result = parseUserGuide(raw, 'evil');
-    expect(result!.frontmatter.mobile_apps).toHaveLength(1);
-    expect(result!.frontmatter.mobile_apps?.[0].name).toBe('Real');
+    const result = parseUserGuide(raw, 'mixed');
+    expect(result!.frontmatter.recommended_apps).toHaveLength(1);
+    expect(result!.frontmatter.recommended_apps?.[0].name).toBe('New');
   });
 
   it('tolerates missing frontmatter (returns body only)', () => {
-    const raw = `# Just a title
-
-Body with no frontmatter.
-`;
+    const raw = `# Just a title\n\nbody\n`;
     const result = parseUserGuide(raw, 'plain');
     expect(result).not.toBeNull();
     expect(result!.frontmatter).toEqual({});
     expect(result!.body).toContain('Just a title');
-  });
-
-  it('drops malformed mobile_apps entries silently', () => {
-    const raw = `---
-mobile_apps:
-  - name: "Missing url"
-  - url: "https://example.com"
-  - "not an object"
-  - name: "Real"
-    url: "https://real.example"
----
-`;
-    const result = parseUserGuide(raw, 'mixed');
-    expect(result!.frontmatter.mobile_apps).toEqual([{ name: 'Real', url: 'https://real.example' }]);
   });
 
   it('returns null on YAML parse error', () => {

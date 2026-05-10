@@ -1,6 +1,19 @@
 ---
 icon: "📅"
 tagline: "Calendar and contacts that sync between every device — no separate app, just your phone's built-in Calendar and Contacts."
+recommended_apps:
+  - name: "iOS Calendar / Contacts"
+    url: "https://support.apple.com/guide/iphone/use-multiple-calendars-iph3d1110d4/ios"
+    platforms: ["ios"]
+    note: "Built-in. Add a CalDAV / CardDAV account in Settings — events appear in the native app."
+  - name: "DAVx⁵"
+    url: "https://www.davx5.com/"
+    platforms: ["android"]
+    note: "Required CalDAV / CardDAV bridge for Android — once set up, calendars + contacts sync to the stock Calendar and Contacts apps."
+  - name: "Thunderbird"
+    url: "https://www.thunderbird.net/"
+    platforms: ["desktop"]
+    note: "Best desktop CalDAV / CardDAV client — works on Windows, macOS, Linux."
 ---
 
 # Getting started with Calendar & Contacts

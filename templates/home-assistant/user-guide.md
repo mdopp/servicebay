@@ -1,11 +1,11 @@
 ---
 icon: "🏠"
 tagline: "Control lights, sensors, and smart-home devices from one app — and keep all the data on your home server."
-mobile_apps:
-  - name: "Home Assistant for iOS"
-    url: "https://apps.apple.com/app/home-assistant/id1099568401"
-  - name: "Home Assistant for Android"
-    url: "https://play.google.com/store/apps/details?id=io.homeassistant.companion.android"
+recommended_apps:
+  - name: "Home Assistant Companion"
+    url: "https://companion.home-assistant.io/"
+    platforms: ["ios", "android"]
+    note: "Official app — exposes your phone's sensors (location, battery) to HA so automations can react to who's home."
 ---
 
 # Getting started with Home Assistant

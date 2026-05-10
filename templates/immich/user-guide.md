@@ -1,11 +1,11 @@
 ---
 icon: "📷"
 tagline: "Auto-backup the photos on your phone and browse them like Google Photos — but private to your family."
-mobile_apps:
-  - name: "Immich for iOS"
-    url: "https://apps.apple.com/app/immich/id1613945652"
-  - name: "Immich for Android"
-    url: "https://play.google.com/store/apps/details?id=app.alextran.immich"
+recommended_apps:
+  - name: "Immich"
+    url: "https://immich.app/"
+    platforms: ["ios", "android"]
+    note: "Official mobile app — does the photo upload from your phone in the background. Install on every family member's phone."
 ---
 
 # Getting started with Photos

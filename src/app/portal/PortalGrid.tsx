@@ -3,8 +3,16 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronDown, ChevronUp, ExternalLink, Smartphone } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import type { PortalCard } from '@/lib/portal/services';
+import type { AppPlatform } from '@/lib/portal/userGuide';
+
+const PLATFORM_LABELS: Record<AppPlatform, string> = {
+  ios: 'iOS',
+  android: 'Android',
+  desktop: 'Desktop',
+  browser: 'Browser',
+};
 
 /**
  * Renders the portal card grid + per-card collapsible Getting-started
@@ -41,19 +49,40 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                 Open <ExternalLink size={16} />
               </a>
 
-              {card.mobileApps.length > 0 && (
-                <div className="flex flex-wrap gap-2 justify-center pt-1">
-                  {card.mobileApps.map(app => (
-                    <a
-                      key={app.url}
-                      href={app.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 hover:text-violet-700 dark:hover:text-violet-300 underline"
-                    >
-                      <Smartphone size={12} /> {app.name}
-                    </a>
-                  ))}
+              {card.recommendedApps.length > 0 && (
+                <div className="pt-2 space-y-1.5">
+                  <div className="text-[11px] uppercase tracking-wide font-medium text-gray-500 dark:text-gray-400">
+                    💡 Recommended apps
+                  </div>
+                  <ul className="space-y-1.5">
+                    {card.recommendedApps.map(app => (
+                      <li key={app.url} className="text-xs">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <a
+                            href={app.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-violet-700 dark:text-violet-300 hover:underline"
+                          >
+                            {app.name}
+                          </a>
+                          {app.platforms?.map(p => (
+                            <span
+                              key={p}
+                              className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+                            >
+                              {PLATFORM_LABELS[p]}
+                            </span>
+                          ))}
+                        </div>
+                        {app.note && (
+                          <p className="text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                            {app.note}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
 

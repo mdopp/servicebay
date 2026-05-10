@@ -22,15 +22,41 @@
 import matter from 'gray-matter';
 import { logger } from '@/lib/logger';
 
-export interface MobileAppLink {
+/** Platforms a recommended app runs on. The UI renders these as
+ *  small text badges next to the app name so visitors can see at a
+ *  glance whether the recommendation applies to their device. */
+export type AppPlatform = 'ios' | 'android' | 'desktop' | 'browser';
+const KNOWN_PLATFORMS: ReadonlySet<AppPlatform> = new Set(['ios', 'android', 'desktop', 'browser']);
+
+/**
+ * Recommended companion software for a service. Replaces the older
+ * narrower `mobile_apps[]` schema — supports desktop apps, browser
+ * extensions, and per-app notes explaining the recommendation
+ * (e.g. "Obsidian for notes, syncs via Syncthing").
+ *
+ * Authors using the old `mobile_apps:` shape still work — the parser
+ * back-fills platforms/notes from name conventions when both fields
+ * are present we use `recommended_apps` and ignore `mobile_apps`.
+ */
+export interface RecommendedApp {
   name: string;
   url: string;
+  /** Platforms this app runs on. Empty/missing = no badge shown. */
+  platforms?: AppPlatform[];
+  /** One-line "why this app" note, rendered small under the name. */
+  note?: string;
 }
 
 export interface UserGuideFrontmatter {
   icon?: string;
   tagline?: string;
-  mobile_apps?: MobileAppLink[];
+  /** Preferred — richer recommended-apps with platforms + notes. */
+  recommended_apps?: RecommendedApp[];
+  /** Legacy mobile-app shape (#242 v1). Lifted into recommended_apps
+   *  by the parser when present and recommended_apps isn't. Kept as
+   *  inline type rather than a named export so knip doesn't flag the
+   *  back-compat-only interface. */
+  mobile_apps?: { name: string; url: string }[];
 }
 
 export interface ParsedUserGuide {
@@ -44,6 +70,57 @@ export interface ParsedUserGuide {
  * the input is empty or the YAML is unparseable; missing fields are
  * tolerated (the caller renders best-effort with whatever's there).
  */
+/** Filter array of unknown entries down to a clean { name, url, ... }
+ *  list, dropping any that fail validation (non-string fields,
+ *  non-http URLs, unknown platforms). Frontmatter is template-author
+ *  input — we do basic sanitization so a hostile guide can't smuggle
+ *  e.g. `javascript:` URLs or arbitrary platform values into the UI. */
+function parseRecommendedApps(input: unknown): RecommendedApp[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry: unknown): RecommendedApp | null => {
+      if (!entry || typeof entry !== 'object') return null;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.name !== 'string' || typeof e.url !== 'string') return null;
+      if (!/^https?:\/\//i.test(e.url)) return null;
+      const out: RecommendedApp = { name: e.name, url: e.url };
+      if (Array.isArray(e.platforms)) {
+        const platforms = e.platforms
+          .filter((p): p is string => typeof p === 'string')
+          .map(p => p.toLowerCase())
+          .filter((p): p is AppPlatform => KNOWN_PLATFORMS.has(p as AppPlatform));
+        if (platforms.length > 0) out.platforms = platforms;
+      }
+      if (typeof e.note === 'string' && e.note.trim()) {
+        out.note = e.note.trim();
+      }
+      return out;
+    })
+    .filter((e): e is RecommendedApp => e !== null);
+}
+
+/** Lift a legacy `mobile_apps[]` entry list into the richer
+ *  `recommended_apps[]` shape — used as a fallback when a template
+ *  hasn't migrated yet. Heuristically infers the platform from the
+ *  link's host (App Store → ios, Play Store → android). */
+function liftMobileApps(input: unknown): RecommendedApp[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry: unknown): RecommendedApp | null => {
+      if (!entry || typeof entry !== 'object') return null;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.name !== 'string' || typeof e.url !== 'string') return null;
+      if (!/^https?:\/\//i.test(e.url)) return null;
+      const platforms: AppPlatform[] = [];
+      if (/apps\.apple\.com|itunes\.apple\.com/.test(e.url)) platforms.push('ios');
+      if (/play\.google\.com/.test(e.url)) platforms.push('android');
+      const out: RecommendedApp = { name: e.name, url: e.url };
+      if (platforms.length > 0) out.platforms = platforms;
+      return out;
+    })
+    .filter((e): e is RecommendedApp => e !== null);
+}
+
 export function parseUserGuide(raw: string | null, templateName: string): ParsedUserGuide | null {
   if (!raw || !raw.trim()) return null;
   try {
@@ -51,20 +128,17 @@ export function parseUserGuide(raw: string | null, templateName: string): Parsed
     const fm: UserGuideFrontmatter = {};
     if (typeof data.icon === 'string') fm.icon = data.icon;
     if (typeof data.tagline === 'string') fm.tagline = data.tagline;
-    if (Array.isArray(data.mobile_apps)) {
-      fm.mobile_apps = data.mobile_apps
-        .map((entry: unknown): MobileAppLink | null => {
-          if (!entry || typeof entry !== 'object') return null;
-          const e = entry as Record<string, unknown>;
-          if (typeof e.name !== 'string' || typeof e.url !== 'string') return null;
-          // Reject anything that isn't an http(s) URL — frontmatter is
-          // template-author input that ends up rendered as a link
-          // attribute. Reject `javascript:` etc.
-          if (!/^https?:\/\//i.test(e.url)) return null;
-          return { name: e.name, url: e.url };
-        })
-        .filter((e): e is MobileAppLink => e !== null);
+
+    // Prefer `recommended_apps` when present; fall back to lifting
+    // legacy `mobile_apps` so older guides keep working.
+    if (Array.isArray(data.recommended_apps)) {
+      const apps = parseRecommendedApps(data.recommended_apps);
+      if (apps.length > 0) fm.recommended_apps = apps;
+    } else if (Array.isArray(data.mobile_apps)) {
+      const lifted = liftMobileApps(data.mobile_apps);
+      if (lifted.length > 0) fm.recommended_apps = lifted;
     }
+
     return { frontmatter: fm, body: content };
   } catch (e) {
     logger.warn('portal:userGuide', `Failed to parse user-guide for ${templateName}: ${e instanceof Error ? e.message : String(e)}`);

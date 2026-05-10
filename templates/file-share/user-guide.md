@@ -1,11 +1,27 @@
 ---
 icon: "📁"
 tagline: "Share documents across phones, laptops, and the family — like a private Dropbox."
-mobile_apps:
-  - name: "Syncthing for Android"
-    url: "https://play.google.com/store/apps/details?id=com.fsck.syncthing"
-  - name: "Möbius Sync for iOS"
+recommended_apps:
+  - name: "Syncthing"
+    url: "https://syncthing.net/downloads/"
+    platforms: ["desktop", "android"]
+    note: "Two-way folder sync between your devices and the home server."
+  - name: "Möbius Sync"
     url: "https://apps.apple.com/app/m%C3%B6bius-sync/id1539203216"
+    platforms: ["ios"]
+    note: "Syncthing-compatible iOS client — Apple doesn't allow Syncthing itself on iOS."
+  - name: "Obsidian"
+    url: "https://obsidian.md"
+    platforms: ["desktop", "ios", "android"]
+    note: "Markdown notes — point your vault at a Syncthing folder and notes auto-sync across every device."
+  - name: "KOReader"
+    url: "https://koreader.rocks/"
+    platforms: ["android"]
+    note: "Beautiful e-reader for PDFs / EPUBs / comics — opens files directly from a Syncthing folder."
+  - name: "VLC"
+    url: "https://www.videolan.org/vlc/"
+    platforms: ["desktop", "ios", "android"]
+    note: "Plays videos from the SMB share without downloading — pick \"Local Network\" → your server."
 ---
 
 # Getting started with Files
