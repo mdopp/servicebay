@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.16.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.16.0...servicebay-v3.16.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* **install:** chown merged config.json to core ([#331](https://github.com/mdopp/servicebay/issues/331) follow-up [#2](https://github.com/mdopp/servicebay/issues/2)) ([#339](https://github.com/mdopp/servicebay/issues/339)) ([60ada03](https://github.com/mdopp/servicebay/commit/60ada03657ca096e4887eaa47a0850a43eaad3d7))
+
 ## [3.16.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.15.1...servicebay-v3.16.0) (2026-05-10)
 
 
