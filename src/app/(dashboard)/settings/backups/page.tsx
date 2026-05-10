@@ -1376,7 +1376,7 @@ export default function BackupsSettingsPage() {
                           { key: 'notifications' as const, label: 'Notifications', summary: restorePreview.config.notifications ? `${restorePreview.config.notifications.host || 'SMTP'} → ${(restorePreview.config.notifications.to || []).join(', ') || 'no recipients'}` : 'Not configured' },
                           { key: 'templateSettings' as const, label: 'Template settings', summary: restorePreview.config.templateSettings.length === 0 ? 'None' : `${restorePreview.config.templateSettings.length} key${restorePreview.config.templateSettings.length !== 1 ? 's' : ''}` },
                           { key: 'logLevel' as const, label: 'Log level', summary: restorePreview.config.logLevel || 'default' },
-                          { key: 'update' as const, label: 'Auto-update', summary: restorePreview.config.update ? `${restorePreview.config.update.channel || 'stable'}${restorePreview.config.update.enabled === false ? ' (disabled)' : ''}` : 'Not configured' },
+                          { key: 'update' as const, label: 'Auto-update', summary: restorePreview.config.update ? (restorePreview.config.update.enabled === false ? 'Disabled' : 'Enabled') : 'Not configured' },
                         ]).map(item => (
                           <label key={item.key} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200 py-1">
                             <input type="checkbox" className="rounded" checked={restoreSelectionState.configFlags[item.key]} onChange={() => toggleRestoreConfigFlag(item.key)} />

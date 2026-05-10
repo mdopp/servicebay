@@ -29,7 +29,6 @@ export interface AppUpdateStatus {
     autoUpdate: {
       enabled: boolean;
       schedule: string;
-      channel?: 'stable' | 'test' | 'dev';
     };
   };
 }

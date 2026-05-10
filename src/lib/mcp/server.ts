@@ -935,7 +935,6 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     autoUpdate: z.object({
       enabled: z.boolean().optional(),
       schedule: z.string().optional(),
-      channel: z.enum(['stable', 'test', 'dev']).optional(),
     }).partial().optional(),
     templateSettings: z.record(z.string(), z.string()).optional(),
   }).strict();

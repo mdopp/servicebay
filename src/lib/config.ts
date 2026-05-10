@@ -105,7 +105,6 @@ export interface AppConfig {
   autoUpdate: {
     enabled: boolean;
     schedule: string; // Cron syntax, e.g. "0 0 * * *" for midnight
-    channel: 'stable' | 'test' | 'dev';
     /**
      * Last version we emailed the operator about. Used to dedupe so the
      * update notifier sends one email per release, not one per check tick.
@@ -213,13 +212,11 @@ const DEFAULT_CONFIG: AppConfig = {
     }
   },
   autoUpdate: {
-    // Auto-update on the stable channel by default for fresh installs. The
-    // home-lab use case strongly prefers "stays patched on its own" over
-    // "asks before every minor security release." Users can flip this off
-    // in Settings → System.
+    // Auto-update by default for fresh installs. The home-lab use case
+    // strongly prefers "stays patched on its own" over "asks before every
+    // minor security release." Users can flip this off in Settings → System.
     enabled: true,
     schedule: '0 0 * * *', // Daily at midnight
-    channel: 'stable'
   }
 };
 
