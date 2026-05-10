@@ -200,7 +200,15 @@ export class AgentHandler extends EventEmitter {
         sessionId ? `export SERVICEBAY_SESSION_ID="${sessionId}"` : ''
       ].filter(Boolean).join('; ');
       const sessionArg = sessionId ? ` --session-id "${sessionId}"` : '';
-      const cmd = `${envSetup}; python3 -u -c 'import base64, sys; exec(base64.b64decode("${script}"))'${sessionArg}`;
+      // Wait up to 90 s for python3 to appear before invoking it. Covers the
+      // FCoS first-boot race where install-python.service hasn't finished
+      // rpm-ostree-installing python3 by the time we SSH in. No-op (~0 ms)
+      // when python3 is already on PATH, so safe for established installs.
+      const waitForPython =
+        'i=0; while ! command -v python3 >/dev/null 2>&1; do i=$((i+1)); ' +
+        '[ $i -ge 90 ] && { echo "python3 not available after 90s" >&2; exit 127; }; ' +
+        'sleep 1; done';
+      const cmd = `${envSetup}; ${waitForPython}; python3 -u -c 'import base64, sys; exec(base64.b64decode("${script}"))'${sessionArg}`;
 
       return new Promise<void>((resolve, reject) => {
         conn.exec(cmd, (err, stream) => {

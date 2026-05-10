@@ -1928,7 +1928,7 @@ class Agent:
                             conn = UnixHTTPConnection(sock_path)
                             from urllib.parse import quote
                             ref = quote(img, safe='')
-                            conn.request('POST', f'/v5.0.0/images/pull?reference={ref}')
+                            conn.request('POST', f'/v5.0.0/libpod/images/pull?reference={ref}')
                             resp = conn.getresponse()
                             if resp.status != 200:
                                 body = resp.read().decode('utf-8', errors='replace')

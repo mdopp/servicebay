@@ -319,6 +319,17 @@ export async function POST(request: Request) {
     const encoder = new TextEncoder();
     const stream = new TransformStream();
     const writer = stream.writable.getWriter();
+    let writerClosed = false;
+    const safeWrite = async (payload: unknown) => {
+      if (writerClosed) return;
+      try {
+        await writer.write(encoder.encode(JSON.stringify(payload) + '\n'));
+      } catch {
+        // Client aborted — mark closed so subsequent writes are no-ops
+        // instead of triggering unhandledRejection.
+        writerClosed = true;
+      }
+    };
 
     (async () => {
       try {
@@ -329,18 +340,17 @@ export async function POST(request: Request) {
           yamlContent,
           yamlFileName,
           extraFiles,
-          (message) => {
-            writer.write(encoder.encode(JSON.stringify({ type: 'progress', message }) + '\n')).catch(() => {});
-          },
+          (message) => { void safeWrite({ type: 'progress', message }); },
           postDeployScript,
           postDeployEnv,
         );
-        await writer.write(encoder.encode(JSON.stringify({ type: 'complete', success: true }) + '\n'));
+        await safeWrite({ type: 'complete', success: true });
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await writer.write(encoder.encode(JSON.stringify({ type: 'error', message: msg }) + '\n'));
+        await safeWrite({ type: 'error', message: e instanceof Error ? e.message : String(e) });
       } finally {
-        await writer.close();
+        if (!writerClosed) {
+          try { await writer.close(); } catch { /* already closed */ }
+        }
       }
     })();
 
