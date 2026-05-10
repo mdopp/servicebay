@@ -67,6 +67,46 @@ export default function SelfDiagnoseSection() {
     }
     const key = `${probe.id}:${action.id}`;
     setActionState(s => ({ ...s, [key]: { running: true } }));
+    // Special case: actions with id `verify_from_device` run as a
+    // browser-side fetch instead of dispatching to the server (#264).
+    // The whole point of "verify from this device" is to test what
+    // *this device's* DNS resolver does — which has to happen in the
+    // browser, not on the ServiceBay backend.
+    if (action.id === 'verify_from_device') {
+      try {
+        // First call /api/system/mode (same-origin, always works) to
+        // learn the active domain — then fetch from `admin.<domain>`
+        // to verify *this device's* DNS routes home.arpa to ServiceBay.
+        const modeRes = await fetch('/api/system/mode');
+        const modeData = await modeRes.json().catch(() => ({}));
+        const activeDomain = modeData.activeDomain ?? 'home.arpa';
+        const verifyRes = await fetch(`http://admin.${activeDomain}/api/system/verify-lan-dns`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(3000),
+        });
+        const data = await verifyRes.json().catch(() => ({}));
+        const ok = verifyRes.ok && data.ok === true;
+        setActionState(s => ({
+          ...s,
+          [key]: {
+            ok,
+            message: ok
+              ? `✅ This device resolves ${activeDomain} → ${data.lanIp ?? 'ok'}.`
+              : `Got HTTP ${verifyRes.status} — DNS may be partially configured.`,
+          },
+        }));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setActionState(s => ({
+          ...s,
+          [key]: {
+            ok: false,
+            message: `❌ This device can't resolve the LAN domain — your router may not be using AdGuard as DNS, or this device has DNS-over-HTTPS overriding it. (${msg})`,
+          },
+        }));
+      }
+      return;
+    }
     try {
       const res = await fetch('/api/system/diagnose/run-action', {
         method: 'POST',
