@@ -1,5 +1,5 @@
 ---
-icon: "🔒"
+lucide_icon: "shield"
 tagline: "Save passwords once, autofill them on every phone, browser, and laptop in the family."
 recommended_apps:
   - name: "Bitwarden"

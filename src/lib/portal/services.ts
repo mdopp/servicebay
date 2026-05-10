@@ -27,7 +27,7 @@ import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getTemplateUserGuide } from '@/lib/registry';
 import { logger } from '@/lib/logger';
-import { parseUserGuide, type RecommendedApp, type SetupAsset } from './userGuide';
+import { parseUserGuide, type PortalIconName, type RecommendedApp, type SetupAsset } from './userGuide';
 
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 
@@ -36,7 +36,12 @@ export interface PortalCard {
   name: string;
   /** User-facing label (from frontmatter title fallback or `servicebay.label`). */
   label: string;
-  /** Frontmatter icon emoji, or empty string. */
+  /** Lucide icon name from `lucide_icon` frontmatter (line-art,
+   *  matches dashboard chrome). Null when only the legacy emoji is
+   *  set or no icon at all. */
+  lucideIcon: PortalIconName | null;
+  /** Legacy emoji icon (`icon` frontmatter). Empty string when only
+   *  lucideIcon is set or no icon at all. */
   icon: string;
   /** Frontmatter tagline, or empty string. */
   tagline: string;
@@ -156,6 +161,7 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
     cards.push({
       name: svc.name,
       label,
+      lucideIcon: parsed.frontmatter.lucide_icon ?? null,
       icon: parsed.frontmatter.icon ?? '',
       tagline: parsed.frontmatter.tagline ?? '',
       url,
