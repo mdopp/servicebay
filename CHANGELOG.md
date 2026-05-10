@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.13.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.12.0...servicebay-v3.13.0) (2026-05-10)
+
+
+### Features
+
+* **credentials:** persist install manifest encrypted at rest ([#19](https://github.com/mdopp/servicebay/issues/19)/A1) ([#293](https://github.com/mdopp/servicebay/issues/293)) ([17a18a0](https://github.com/mdopp/servicebay/commit/17a18a0a509c2030b1d7a63708a250f5c9383dbb))
+* **diagnose:** "Run stale checks now" action on health_checks probe ([#289](https://github.com/mdopp/servicebay/issues/289)) ([2a72771](https://github.com/mdopp/servicebay/commit/2a72771f810faff0006fbbb849e454d445a1511c))
+* **diagnose:** "Show largest directories" action on disk probe ([#292](https://github.com/mdopp/servicebay/issues/292)) ([0c6f9ac](https://github.com/mdopp/servicebay/commit/0c6f9ac7b4e434a99f04a8613facd22463499f93))
+* **diagnose:** action result details for multi-line output ([#291](https://github.com/mdopp/servicebay/issues/291)) ([c9096d3](https://github.com/mdopp/servicebay/commit/c9096d34acf3d6262a1618a3f666dd10265ed7c0))
+* **diagnose:** cert_expiry probe with per-cert Renew action ([#298](https://github.com/mdopp/servicebay/issues/298)) ([3476cdd](https://github.com/mdopp/servicebay/commit/3476cddccef76c3ecad603f4ecd17f8db09af4f1))
+* **diagnose:** inline form inputs for probe actions ([#250](https://github.com/mdopp/servicebay/issues/250), [#255](https://github.com/mdopp/servicebay/issues/255)) ([#280](https://github.com/mdopp/servicebay/issues/280)) ([b594636](https://github.com/mdopp/servicebay/commit/b594636b75b7f2b1e39114ee75ceff4a75a9324f))
+* **diagnose:** per-container actions on crash_loop probe (B15) ([#285](https://github.com/mdopp/servicebay/issues/285)) ([7619f12](https://github.com/mdopp/servicebay/commit/7619f12333901485bc94905c81b1c7e4362e43da))
+* **diagnose:** per-item dynamic actions for probes ([#251](https://github.com/mdopp/servicebay/issues/251)) ([#282](https://github.com/mdopp/servicebay/issues/282)) ([04f20a0](https://github.com/mdopp/servicebay/commit/04f20a0b994e7c8aded0eefcaad96a7e6db99050))
+* **diagnose:** per-unit actions on failed_units probe ([#288](https://github.com/mdopp/servicebay/issues/288)) ([9f6a24b](https://github.com/mdopp/servicebay/commit/9f6a24be0662b961cc95ab7046f252b9468fb565))
+* **diagnose:** persist post-deploy exit + B8 probe ([#252](https://github.com/mdopp/servicebay/issues/252)) ([#284](https://github.com/mdopp/servicebay/issues/284)) ([b2ec444](https://github.com/mdopp/servicebay/commit/b2ec444ac3e54cc30f650c756ead1bbbc40bdb39))
+* **diagnose:** pods Start + podman engine Enable-socket actions ([#294](https://github.com/mdopp/servicebay/issues/294)) ([de1333c](https://github.com/mdopp/servicebay/commit/de1333c4d75b48a69c0747bb828d9c5016b0c2b7))
+* **diagnose:** proxy_route_missing probe (B12) ([#286](https://github.com/mdopp/servicebay/issues/286)) ([03e0ec4](https://github.com/mdopp/servicebay/commit/03e0ec443f42d0d14d302dcf18b488b590322fd2))
+* **portal:** apex + www routing, auto-provisioned ([#242](https://github.com/mdopp/servicebay/issues/242) follow-up) ([#305](https://github.com/mdopp/servicebay/issues/305)) ([a619ecd](https://github.com/mdopp/servicebay/commit/a619ecd32c8ae9885829275608e758383e4ab5c7))
+* **portal:** v1 family-facing card grid ([#242](https://github.com/mdopp/servicebay/issues/242)) ([#304](https://github.com/mdopp/servicebay/issues/304)) ([0bd36f9](https://github.com/mdopp/servicebay/commit/0bd36f9b4dfef18b3f5cb50d5f05d25f16aa62ad))
+
+
+### Bug Fixes
+
+* **backup:** serialize appendHistory writes ([#302](https://github.com/mdopp/servicebay/issues/302)) ([8332f55](https://github.com/mdopp/servicebay/commit/8332f55356a304ef0af302a4e93522b8e3e00736))
+* **config:** serialize updateConfig writes to prevent lost updates ([#299](https://github.com/mdopp/servicebay/issues/299)) ([b3bf872](https://github.com/mdopp/servicebay/commit/b3bf872e08f0d27740ec58b874bf0269c3933da8))
+* **diagnose:** resolve dangling proxy host id by domain at dispatch ([#290](https://github.com/mdopp/servicebay/issues/290)) ([da2389a](https://github.com/mdopp/servicebay/commit/da2389ac44b2c2ad096708eba3934889fd6edd9c))
+* **network:** serialize NetworkStore add/removeEdge writes ([#300](https://github.com/mdopp/servicebay/issues/300)) ([7404809](https://github.com/mdopp/servicebay/commit/7404809ba75c59276639c7452c5f68da4b6791c3))
+* **nodes:** serialize node mutations + atomicWriteFile for crash-safety ([#301](https://github.com/mdopp/servicebay/issues/301)) ([03375ba](https://github.com/mdopp/servicebay/commit/03375ba9425791c2804fc7bd7c86ac2ca336fad0))
+* **updater:** add 8s timeout to GitHub releases fetch ([#303](https://github.com/mdopp/servicebay/issues/303)) ([edfefcc](https://github.com/mdopp/servicebay/commit/edfefcc58415eed844e43a1803c0b716c4b80412))
+* **wizard:** settle-wait reads stale digitalTwin from closure ([#287](https://github.com/mdopp/servicebay/issues/287)) ([1e18be1](https://github.com/mdopp/servicebay/commit/1e18be1d60c522954c158758fa41c6472e61ecaf))
+
+
+### Performance Improvements
+
+* **diagnose:** parallelize independent exec probes ([#296](https://github.com/mdopp/servicebay/issues/296)) ([e8fa131](https://github.com/mdopp/servicebay/commit/e8fa131baa24d451ae53162bcbc0d144ad905e70))
+
 ## [3.12.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.11.0...servicebay-v3.12.0) (2026-05-10)
 
 
