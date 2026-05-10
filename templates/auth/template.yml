@@ -6,6 +6,7 @@ metadata:
     app: auth
   annotations:
     servicebay.label: "Auth (LLDAP + Authelia)"
+    servicebay.tier: "infrastructure"
     servicebay.ports: "{{LLDAP_PORT}}/tcp,{{LLDAP_LDAP_PORT}}/tcp,{{AUTHELIA_PORT}}/tcp"
     # Pin the configuration.yml.mustache target to authelia's /config mount —
     # without this the wizard's path resolver would also consider lldap's

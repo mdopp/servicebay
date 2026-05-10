@@ -608,6 +608,31 @@ describe('stackInstall has no unauthorized per-template branches', () => {
   }
 });
 
+// ─── 11. Template tier classification ─────────────────────────────────────
+describe('Template tier classification', () => {
+  // Per the design conversation in #249, every install ships with the
+  // `infrastructure`-tier templates (DNS, reverse proxy, SSO) auto-
+  // included and locked-checked. Currently three templates fill these
+  // roles. The wizard reads the tier from each template.yml's
+  // `metadata.annotations['servicebay.tier']`.
+  //
+  // Enforce that exactly the expected three templates declare
+  // `infrastructure`. Drift (a 4th infra template appearing without
+  // a design decision, or one of the three losing the annotation)
+  // is a build failure.
+  const EXPECTED_INFRA = new Set(['adguard', 'auth', 'nginx-web']); // post-rename: 'nginx'
+
+  it('exactly the platform templates are tier=infrastructure', async () => {
+    const { parseTemplateTier } = await import('../../src/lib/templateTier');
+    const infraNames = templates
+      .filter(t => parseTemplateTier(t.yamlContent) === 'infrastructure')
+      .map(t => t.name)
+      .sort();
+    const expected = [...EXPECTED_INFRA].sort();
+    expect(infraNames).toEqual(expected);
+  });
+});
+
 // ─── 9. post-deploy.py scripts parse as valid Python ───────────────────────
 describe('Template post-deploy.py syntax', () => {
   // The wizard executes templates/<name>/post-deploy.py on the agent host
