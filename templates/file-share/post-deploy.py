@@ -144,6 +144,10 @@ def main() -> int:
         time.sleep(5)
     if not seeded:
         log("⚠️ Could not pre-seed FileBrowser admin after 3 minutes. Run `podman exec file-share-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db` once the pod is up.")
+        # Non-zero exit so the post-deploy run record + diagnose probe
+        # (post_deploy_failed) surface this. Otherwise the failure
+        # silently disappears with the install log scroll. See #317.
+        return 1
 
     return 0
 

@@ -16,6 +16,8 @@
  */
 
 import { agentManager } from '@/lib/agent/manager';
+import { getConfig, updateConfig } from '@/lib/config';
+import { logger } from '@/lib/logger';
 
 /** Probe the agent for ServiceBay's outbound LAN IP. */
 export async function detectLanIp(node: string): Promise<string | null> {
@@ -32,6 +34,49 @@ export async function detectLanIp(node: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Persist ServiceBay's LAN IP to config. Called at boot from server.ts
+ * so the install-time value (and subsequent changes) actually land in
+ * `config.reverseProxy.lanIp` — without this, the
+ * `lan_ip_changed_since_install` and `router_dns_not_pointing` probes
+ * stay permanently in the `info` "no install-time value recorded yet"
+ * state. See #318.
+ *
+ *   - First call (no stored value): write current IP, no history entry.
+ *   - Subsequent boots, IP unchanged: no-op.
+ *   - IP changed: append the *previous* IP to history (with the time
+ *     this run detected the change) so `recentChanges()` can flag
+ *     drift, and update the stored value.
+ *
+ * Returns the persisted IP, or `null` when detection failed (in which
+ * case nothing is written — leaves the previous value alone so a brief
+ * detection blip doesn't drop a real install-time value).
+ */
+export async function reconcileLanIp(node: string): Promise<string | null> {
+  const current = await detectLanIp(node);
+  if (!current) return null;
+  const config = await getConfig();
+  const stored = config.reverseProxy?.lanIp;
+  if (stored === current) return current;
+
+  const history = [...(config.reverseProxy?.lanIpHistory ?? [])];
+  if (stored && stored !== current) {
+    history.push({ ip: stored, detectedAt: new Date().toISOString() });
+  }
+  await updateConfig({
+    reverseProxy: {
+      lanIp: current,
+      lanIpHistory: history,
+    },
+  });
+  if (!stored) {
+    logger.info('lanIp', `Captured install-time LAN IP: ${current}`);
+  } else {
+    logger.info('lanIp', `LAN IP changed: ${stored} → ${current}`);
+  }
+  return current;
 }
 
 /** Format a yymmdd-cutoff for "the last N days." */
