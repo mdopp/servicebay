@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.15.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.15.0...servicebay-v3.15.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* **install:** single source of truth for persisted settings ([#327](https://github.com/mdopp/servicebay/issues/327)) ([f2b920c](https://github.com/mdopp/servicebay/commit/f2b920cdec0040026e6a401043b1c6fc4fe7ec11))
+
 ## [3.15.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.14.0...servicebay-v3.15.0) (2026-05-10)
 
 
