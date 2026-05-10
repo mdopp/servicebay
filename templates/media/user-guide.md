@@ -1,13 +1,23 @@
 ---
 icon: "🎵"
 tagline: "Stream your music collection and listen to audiobooks — offline-capable on phones."
-mobile_apps:
-  - name: "Audiobookshelf for iOS"
-    url: "https://apps.apple.com/app/audiobookshelf/id1610212799"
-  - name: "Audiobookshelf for Android"
-    url: "https://play.google.com/store/apps/details?id=com.audiobookshelf.app"
-  - name: "Symfonium for Android (music)"
-    url: "https://play.google.com/store/apps/details?id=app.symfonik.music.player"
+recommended_apps:
+  - name: "Audiobookshelf"
+    url: "https://www.audiobookshelf.org/docs#mobile-apps"
+    platforms: ["ios", "android"]
+    note: "Official audiobook + podcast player. Bookmarks and progress sync between phone and tablet."
+  - name: "Symfonium"
+    url: "https://symfonium.app/"
+    platforms: ["android"]
+    note: "Best Subsonic-compatible music client on Android — paid app but well worth it for car audio + offline play."
+  - name: "play:Sub"
+    url: "https://apps.apple.com/app/play-sub-music-streamer/id955329386"
+    platforms: ["ios"]
+    note: "Highly-rated Subsonic music client for iPhone — the iOS counterpart to Symfonium."
+  - name: "Sonixd"
+    url: "https://github.com/jeffvli/sonixd"
+    platforms: ["desktop"]
+    note: "Cross-platform Subsonic desktop client — great for big libraries on a laptop."
 ---
 
 # Getting started with Media

@@ -27,7 +27,7 @@ import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getTemplateUserGuide } from '@/lib/registry';
 import { logger } from '@/lib/logger';
-import { parseUserGuide, type UserGuideFrontmatter } from './userGuide';
+import { parseUserGuide, type RecommendedApp } from './userGuide';
 
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 
@@ -44,8 +44,8 @@ export interface PortalCard {
   url: string;
   /** Markdown body for the expandable Getting-started section. May be empty. */
   body: string;
-  /** Mobile-app download links from frontmatter (validated http/https). */
-  mobileApps: NonNullable<UserGuideFrontmatter['mobile_apps']>;
+  /** Companion apps recommended by the template author (validated). */
+  recommendedApps: RecommendedApp[];
 }
 
 /** Read a template's variables.json (best-effort, returns empty record on miss). */
@@ -125,7 +125,7 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
       tagline: parsed.frontmatter.tagline ?? '',
       url: `${scheme}://${sub}.${activeDomain}`,
       body: parsed.body,
-      mobileApps: parsed.frontmatter.mobile_apps ?? [],
+      recommendedApps: parsed.frontmatter.recommended_apps ?? [],
     });
   }
   return cards;

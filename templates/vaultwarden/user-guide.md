@@ -1,11 +1,15 @@
 ---
 icon: "🔒"
 tagline: "Save passwords once, autofill them on every phone, browser, and laptop in the family."
-mobile_apps:
-  - name: "Bitwarden for iOS"
-    url: "https://apps.apple.com/app/bitwarden-password-manager/id1137397744"
-  - name: "Bitwarden for Android"
-    url: "https://play.google.com/store/apps/details?id=com.x8bit.bitwarden"
+recommended_apps:
+  - name: "Bitwarden"
+    url: "https://bitwarden.com/download/"
+    platforms: ["ios", "android", "desktop"]
+    note: "Official app — set Server URL to your home URL in Settings before logging in."
+  - name: "Bitwarden browser extension"
+    url: "https://bitwarden.com/download/#downloads-web-browser"
+    platforms: ["browser"]
+    note: "Autofill on Chrome, Firefox, Safari, Edge — same self-hosted URL."
 ---
 
 # Getting started with Passwords
