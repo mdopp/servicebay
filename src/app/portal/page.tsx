@@ -1,6 +1,3 @@
-import { notFound } from 'next/navigation';
-import { getConfig } from '@/lib/config';
-import { getMode } from '@/lib/mode';
 import { buildPortalCards } from '@/lib/portal/services';
 import PortalGrid from './PortalGrid';
 
@@ -9,21 +6,13 @@ export const dynamic = 'force-dynamic';
 
 /**
  * /portal — read-only card grid surfacing every running, feature-tier
- * service that ships a `user-guide.md`. Anonymous in LAN mode (per
- * the design conversation in #242); 404 in public mode until #265's
- * soft-handoff lands and we can decide how to expose it outside the
- * LAN safely.
+ * service that ships a `user-guide.md`. Anonymous on the LAN per the
+ * #242 design conversation. Reachable directly at `/portal` and via
+ * the apex/www host rewrite in `proxy.ts`. Same UX in public-domain
+ * mode — visitors typing the apex see the family portal regardless
+ * of mode.
  */
 export default async function PortalPage() {
-  const config = await getConfig();
-  const mode = getMode(config);
-  if (mode === 'public') {
-    // Don't expose the portal on a public hostname — every service
-    // already has its own auth-gated URL there. Public-mode portal
-    // exposure needs its own design pass (filed alongside #265).
-    notFound();
-  }
-
   const cards = await buildPortalCards('Local');
 
   return (

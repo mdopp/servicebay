@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { decrypt } from '@/lib/auth/session';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
+import { getConfig } from '@/lib/config';
+import { getActiveDomain } from '@/lib/mode';
 
 const PUBLIC_API_PREFIXES = [
   '/api/auth/login',
@@ -58,10 +60,49 @@ function isSameOrigin(request: NextRequest): boolean {
   return false;
 }
 
+/**
+ * Detect whether the incoming request is for the family-portal apex
+ * (e.g. `home.arpa` or `www.home.arpa`) or one of the admin
+ * hostnames. Apex/www hosts get their requests rewritten to /portal
+ * regardless of path so a family member typing just the domain
+ * lands on the card grid (#242 follow-up).
+ *
+ * Reads `getActiveDomain(config)` per request — file IO but cached
+ * by the OS, and config.json is small. If the read fails (e.g.
+ * config not yet initialized) we just pass through, deferring to
+ * the page-level handlers.
+ */
+async function isPortalApexHost(host: string): Promise<boolean> {
+  if (!host) return false;
+  // Strip port if present (Host header may include :port for non-80/443).
+  const bareHost = host.split(':')[0].toLowerCase();
+  let activeDomain: string;
+  try {
+    const config = await getConfig();
+    activeDomain = getActiveDomain(config).toLowerCase();
+  } catch {
+    return false;
+  }
+  if (!activeDomain) return false;
+  return bareHost === activeDomain || bareHost === `www.${activeDomain}`;
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const host = request.headers.get('host') ?? '';
 
-  if (!pathname.startsWith('/api/')) return NextResponse.next();
+  // Apex / www host → portal. Rewrite (not redirect) so the URL bar
+  // stays at home.arpa / www.home.arpa per the v2 design call.
+  // Apply to every path on these hosts so URL guessing (home.arpa/services
+  // etc.) can't escape into the admin surface.
+  if (!pathname.startsWith('/api/')) {
+    if (await isPortalApexHost(host) && !pathname.startsWith('/portal')) {
+      const rewritten = request.nextUrl.clone();
+      rewritten.pathname = '/portal';
+      return NextResponse.rewrite(rewritten);
+    }
+    return NextResponse.next();
+  }
 
   // Internal calls (post-deploy scripts on the agent host) bypass
   // both CSRF and session checks — the token authenticates them.
@@ -87,5 +128,12 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/api/:path*'],
+  // `/api/*` keeps the existing auth gating; `/((?!_next/static|_next/image|favicon|icon\\.svg).*)` matches
+  // every page request so the apex/www → /portal rewrite can fire.
+  // Static assets are excluded so they short-circuit without touching
+  // the middleware.
+  matcher: [
+    '/api/:path*',
+    '/((?!_next/static|_next/image|favicon|icon\\.svg|.*\\.(?:png|jpg|jpeg|svg|webp|gif|ico|woff2?|ttf)).*)',
+  ],
 };
