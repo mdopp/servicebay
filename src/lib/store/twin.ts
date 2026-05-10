@@ -210,7 +210,7 @@ export class DigitalTwinStore {
                  if (a.active && !b.active) return -1;
                  if (!a.active && b.active) return 1;
                  // Standard name wins
-                 const standards = ['nginx', 'nginx-web', 'traefik', 'caddy'];
+                 const standards = ['nginx', 'nginx', 'traefik', 'caddy'];
                  const isStandardA = standards.includes(a.name);
                  const isStandardB = standards.includes(b.name);
                  if (isStandardA && !isStandardB) return -1;
@@ -429,7 +429,7 @@ export class DigitalTwinStore {
       });
   }
 
-    private static readonly KNOWN_PROXY_KEYWORDS = ['nginx', 'nginx-web', 'haproxy', 'traefik', 'caddy', 'envoy'];
+    private static readonly KNOWN_PROXY_KEYWORDS = ['nginx', 'nginx', 'haproxy', 'traefik', 'caddy', 'envoy'];
     private static readonly PROXY_EXCLUDE_KEYWORDS = ['mpris-proxy'];
     private static readonly SERVICEBAY_KEYWORDS = ['servicebay', 'service-bay', 'service_bay'];
 

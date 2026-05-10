@@ -141,9 +141,9 @@ class AdguardScript(unittest.TestCase):
         self.assertIn("ADGUARD_ADMIN_PASSWORD missing", out)
 
 
-class NginxWebScript(unittest.TestCase):
+class NginxScript(unittest.TestCase):
     def test_emits_credential_when_password_set(self):
-        m = load_script("nginx-web")
+        m = load_script("nginx")
         env = {
             "HOST": "h",
             "NGINX_ADMIN_PORT": "81",
@@ -160,7 +160,7 @@ class NginxWebScript(unittest.TestCase):
         self.assertEqual(creds[0]["password"], "p4ssw0rd")
 
     def test_no_password_returns_zero_and_emits_nothing(self):
-        m = load_script("nginx-web")
+        m = load_script("nginx")
         with run_with_env({}):
             rc, out = capture_main(m)
         self.assertEqual(rc, 0)

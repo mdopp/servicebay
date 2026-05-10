@@ -22,7 +22,7 @@
  *                             before our backoff has had a chance to
  *                             expand, and systemd marks the unit
  *                             start-limit-hit and stops retrying —
- *                             exactly the symptom that bit nginx-web on
+ *                             exactly the symptom that bit nginx on
  *                             the post-3.4.2 reinstall. 0 = no limit.
  *                             Must live in [Unit]; systemd silently
  *                             ignores it under [Service].

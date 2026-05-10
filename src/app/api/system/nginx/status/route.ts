@@ -15,7 +15,7 @@ export async function GET() {
         for (const nodeName of nodeNames) {
             const services = await ServiceManager.listServices(nodeName);
             const nginxService = services.find(s =>
-                s.name === 'nginx-web' ||
+                s.name === 'nginx' ||
                 (s.name.includes('nginx') && !s.name.startsWith('install-')) ||
                 (s.description?.toLowerCase().includes('nginx') && !s.name.startsWith('install-'))
             );

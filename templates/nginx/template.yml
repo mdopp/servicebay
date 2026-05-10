@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: nginx-web
+  name: nginx
   labels:
-    app: nginx-web
+    app: nginx
     servicebay.role: reverse-proxy
   annotations:
     servicebay.label: "Nginx Proxy Manager"

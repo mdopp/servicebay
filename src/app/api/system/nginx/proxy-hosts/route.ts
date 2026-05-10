@@ -54,7 +54,7 @@ async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
     for (const nodeName of nodeNames) {
         const services = await ServiceManager.listServices(nodeName);
         const nginxService = services.find(s =>
-            s.name === 'nginx-web' ||
+            s.name === 'nginx' ||
             (s.name.includes('nginx') && !s.name.startsWith('install-'))
         );
         if (!nginxService?.active) continue;

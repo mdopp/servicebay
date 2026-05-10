@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-post-deploy hook for the `nginx-web` stack (Nginx Proxy Manager).
+post-deploy hook for the `nginx` stack (Nginx Proxy Manager).
 
 What this replaces (was hardcoded in src/lib/stackInstall/credentialsManifest.ts):
   - NPM admin entry in the SAVE-THESE-NOW banner → __SB_CREDENTIAL__

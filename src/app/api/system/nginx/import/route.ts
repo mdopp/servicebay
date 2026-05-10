@@ -71,7 +71,7 @@ export async function POST(request: Request) {
 
         // Reload nginx if it's running
         try {
-            await executor.exec('podman exec nginx-web nginx -s reload');
+            await executor.exec('podman exec nginx nginx -s reload');
         } catch {
             // nginx might not be running yet
         }

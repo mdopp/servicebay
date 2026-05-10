@@ -107,7 +107,7 @@ export class NodeFactory {
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     static createProxyNode(id: string, rawData: any, nodeName: string, metadata: Record<string, any> = {}): NetworkNode {
-        const label = rawData.name || 'nginx-web';
+        const label = rawData.name || 'nginx';
         const ips = metadata.nodeIPs || [];
         const host = ips[0] || 'localhost';
         const subLabel = nodeName === 'local' 
