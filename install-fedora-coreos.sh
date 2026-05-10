@@ -1361,8 +1361,7 @@ SERVICEBAY_CONFIG='{
   },
   "autoUpdate": {
     "enabled": true,
-    "schedule": "0 0 * * *",
-    "channel": '"$(json_str "$SERVICEBAY_CHANNEL")"'
+    "schedule": "0 0 * * *"
   },
   "templateSettings": {
     "DATA_DIR": '"$(json_str "$DATA_ROOT/stacks")"'
