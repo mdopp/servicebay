@@ -47,7 +47,14 @@ async function getCurrentVersion(): Promise<string> {
 
 async function getLatestRelease(): Promise<Release | null> {
   try {
-    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
+    // Default fetch has no timeout — without this guard a hung GitHub
+    // connection would block the updater (called from a scheduled cron
+    // task) until socket-keepalive eventually killed it tens of
+    // minutes later. 8 s is plenty for a healthy GitHub call; if it
+    // overruns we'll just retry on the next tick.
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
     return await res.json();
   } catch {
