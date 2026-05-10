@@ -18,6 +18,10 @@ const PUBLIC_API_RULES: Array<{ prefix: string; methods?: ReadonlySet<string> }>
   { prefix: '/api/auth/oidc' },
   { prefix: '/api/auth/lldap-url' },
   { prefix: '/api/system/access-requests', methods: new Set(['POST']) },
+  // Family-portal setup assets (#242). GET-only — the route handler
+  // also gates by mode (LAN-only) and validates the service +
+  // asset-kind path params before producing anything.
+  { prefix: '/api/portal/asset', methods: new Set(['GET']) },
 ];
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);

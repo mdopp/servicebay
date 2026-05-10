@@ -47,6 +47,39 @@ export interface RecommendedApp {
   note?: string;
 }
 
+/** Pre-configured setup artifact a card can offer (#242 follow-up).
+ *  Each kind is generated server-side and exposed as a per-template
+ *  asset. The portal card renders one button per asset; clicking
+ *  either downloads the artifact (e.g. iOS .mobileconfig) or opens
+ *  a URL (e.g. abs:// deep link).
+ *
+ *  Whitelist of recognized kinds:
+ *    - `ios_calendar_profile` — Apple-standard .mobileconfig that
+ *      adds CalDAV + CardDAV accounts to iOS Settings in two taps.
+ *    - `audiobookshelf_deeplink` — \`abs://\` URL the official
+ *      Audiobookshelf app picks up to pre-configure the server.
+ *
+ *  Future kinds (deferred):
+ *    - `syncthing_qr` — needs Syncthing REST API to read the
+ *      server's device ID at request time.
+ */
+export type SetupAssetKind = 'ios_calendar_profile' | 'audiobookshelf_deeplink';
+
+const KNOWN_ASSET_KINDS: ReadonlySet<SetupAssetKind> = new Set([
+  'ios_calendar_profile',
+  'audiobookshelf_deeplink',
+]);
+
+export interface SetupAsset {
+  kind: SetupAssetKind;
+  /** Optional override for the button label. Defaults to a per-kind
+   *  built-in label so most templates don't need to set it. */
+  label?: string;
+  /** Optional one-line description rendered as a tooltip + below
+   *  the button on the card. */
+  description?: string;
+}
+
 export interface UserGuideFrontmatter {
   icon?: string;
   tagline?: string;
@@ -57,6 +90,8 @@ export interface UserGuideFrontmatter {
    *  inline type rather than a named export so knip doesn't flag the
    *  back-compat-only interface. */
   mobile_apps?: { name: string; url: string }[];
+  /** Per-template setup artifacts (iOS profile, deep links, …). */
+  setup_assets?: SetupAsset[];
 }
 
 export interface ParsedUserGuide {
@@ -137,6 +172,22 @@ export function parseUserGuide(raw: string | null, templateName: string): Parsed
     } else if (Array.isArray(data.mobile_apps)) {
       const lifted = liftMobileApps(data.mobile_apps);
       if (lifted.length > 0) fm.recommended_apps = lifted;
+    }
+
+    if (Array.isArray(data.setup_assets)) {
+      const assets = data.setup_assets
+        .map((entry: unknown): SetupAsset | null => {
+          if (!entry || typeof entry !== 'object') return null;
+          const e = entry as Record<string, unknown>;
+          if (typeof e.kind !== 'string') return null;
+          if (!KNOWN_ASSET_KINDS.has(e.kind as SetupAssetKind)) return null;
+          const out: SetupAsset = { kind: e.kind as SetupAssetKind };
+          if (typeof e.label === 'string' && e.label.trim()) out.label = e.label.trim();
+          if (typeof e.description === 'string' && e.description.trim()) out.description = e.description.trim();
+          return out;
+        })
+        .filter((e): e is SetupAsset => e !== null);
+      if (assets.length > 0) fm.setup_assets = assets;
     }
 
     return { frontmatter: fm, body: content };

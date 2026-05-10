@@ -1,6 +1,10 @@
 ---
 icon: "📅"
 tagline: "Calendar and contacts that sync between every device — no separate app, just your phone's built-in Calendar and Contacts."
+setup_assets:
+  - kind: "ios_calendar_profile"
+    label: "📲 One-tap iOS setup"
+    description: "Downloads an Apple-standard configuration profile that adds CalDAV + CardDAV accounts. iOS prompts for your username and password during install."
 recommended_apps:
   - name: "iOS Calendar / Contacts"
     url: "https://support.apple.com/guide/iphone/use-multiple-calendars-iph3d1110d4/ios"
