@@ -315,5 +315,27 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   ];
   formatCredentialsBanner(manifest).forEach(onLog);
 
+  // Persist the manifest so the operator can come back to "what's the
+  // LLDAP admin password?" days later without keeping the install log
+  // open. Encrypted at rest via SENSITIVE_KEYS on the password field
+  // (#19 / A1). Best-effort: a failure here doesn't block the install.
+  if (manifest.length > 0) {
+    try {
+      const res = await fetch('/api/system/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credentials: manifest }),
+      });
+      if (res.ok) {
+        onLog(`💾 Saved ${manifest.length} credential${manifest.length === 1 ? '' : 's'} to Settings → Credentials. Wipe them from there once you've stored them safely elsewhere.`);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        onLog(`⚠️ Couldn't persist the credentials manifest (${data.error ?? `HTTP ${res.status}`}) — they're still shown above; copy them now.`);
+      }
+    } catch (e) {
+      onLog(`⚠️ Couldn't reach the credentials endpoint (${e instanceof Error ? e.message : String(e)}) — copy the credentials above before continuing.`);
+    }
+  }
+
   return proxyResult;
 }
