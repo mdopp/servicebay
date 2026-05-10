@@ -211,6 +211,14 @@ export interface AppConfig {
    * `stdoutTail` is bounded to ~1KB so config.json stays small.
    */
   servicePostDeploy?: Record<string, ServicePostDeployRecord>;
+  /**
+   * Credentials the install wizard saved for later retrieval (#19/A1).
+   * Persisted at the end of every install so the operator can come
+   * back to "what's the LLDAP admin password" days later without
+   * having to keep the install log open. Encrypted at rest via the
+   * existing `SENSITIVE_KEYS` regex on the password field.
+   */
+  installManifest?: InstallManifest;
 }
 
 export interface ServicePostDeployRecord {
@@ -220,6 +228,31 @@ export interface ServicePostDeployRecord {
   exitCode: number;
   /** Tail of stdout (last ~1KB). Aids "what failed" diagnosis without bloating config. */
   stdoutTail?: string;
+}
+
+/**
+ * One credential the install wizard saved for the operator. Mirrors
+ * the wire-shape `Credential` in `lib/stackInstall/credentialsManifest.ts`
+ * but kept here to avoid a cross-module import in `AppConfig`.
+ *
+ * Each entry's `password` field is auto-encrypted at rest via
+ * `SENSITIVE_KEYS` — same trust boundary as the kube YAMLs that
+ * already embed plaintext secrets. See #19 / A1.
+ */
+export interface InstalledCredential {
+  service: string;
+  url: string;
+  username: string;
+  /** Auto-encrypted at rest by `transformConfig` (key matches SENSITIVE_KEYS). */
+  password: string;
+  importance: 'critical' | 'system';
+  notes?: string;
+}
+
+export interface InstallManifest {
+  /** ISO timestamp of when this manifest was persisted. */
+  savedAt: string;
+  credentials: InstalledCredential[];
 }
 
 export function getOidcCallbackUrl(config: { reverseProxy?: { publicDomain?: string } }): string {

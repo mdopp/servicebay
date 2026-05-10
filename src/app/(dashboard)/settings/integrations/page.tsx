@@ -1,5 +1,6 @@
 'use client';
 
+import CredentialsSection from '../_lib/sections/CredentialsSection';
 import EmailNotificationsSection from '../_lib/sections/EmailNotificationsSection';
 import McpSection from '../_lib/sections/McpSection';
 import PublicDomainSection from '../_lib/sections/PublicDomainSection';
@@ -11,6 +12,7 @@ export default function IntegrationsSettingsPage() {
   return (
     <>
       <PublicDomainSection />
+      <CredentialsSection />
       <ReverseProxySection />
       <EmailNotificationsSection />
       <McpSection />
