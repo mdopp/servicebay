@@ -68,6 +68,20 @@ export interface ReverseProxyConfig {
    * switches to a public domain — soft-handoff per #249).
    */
   lanDomain?: string;
+  /**
+   * ServiceBay's LAN IP — the address AdGuard rewrites point at.
+   * Set to the install-time detected IP and reconciled on every boot
+   * (#266). Stale entries auto-update; a `lan_ip_changed_since_install`
+   * probe surfaces when the IP differs from install-time so the user
+   * can set up a DHCP reservation if it keeps drifting.
+   */
+  lanIp?: string;
+  /**
+   * Historical record of LAN IP changes. Each entry is
+   * `{ ip, detectedAt }`. Used by the diagnose probe to decide
+   * `info` vs `warn` (more than 1 change in 30 days = unstable).
+   */
+  lanIpHistory?: Array<{ ip: string; detectedAt: string }>;
   /** Proxy hosts created during stack deployment */
   hosts?: ProxyHostEntry[];
   /**
