@@ -5,6 +5,7 @@ import { DigitalTwinStore } from '@/lib/store/twin';
 import { actionsForProbe, type ProbeAction } from '@/lib/diagnose/actions';
 import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
 import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
+import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -427,6 +428,28 @@ export async function POST(request: Request) {
     probes.push({
       id: 'lan_ip_changed_since_install',
       label: 'LAN IP stability',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 14) Router DNS routing for LAN-domain mode (D19-PR6 / #263).
+  //     Detects whether household devices use AdGuard as DNS;
+  //     surfaces fix-buttons (configure FritzBox via TR-064 /
+  //     verify from this device / dismiss for 30 days) when not.
+  try {
+    const router = await checkRouterDnsNotPointing();
+    probes.push({
+      id: 'router_dns_not_pointing',
+      label: 'Router DNS routing',
+      status: router.status,
+      detail: router.detail,
+      hint: router.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'router_dns_not_pointing',
+      label: 'Router DNS routing',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
