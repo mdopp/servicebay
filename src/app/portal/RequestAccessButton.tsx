@@ -61,7 +61,7 @@ export default function RequestAccessButton() {
       <div className="mt-12 text-center">
         <button
           onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 hover:border-violet-500 hover:text-violet-700 dark:hover:text-violet-300 text-sm font-medium text-gray-700 dark:text-gray-300 rounded-full transition-colors"
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 hover:border-blue-500 hover:text-blue-700 dark:hover:text-blue-300 text-sm font-medium text-gray-700 dark:text-gray-300 rounded-full transition-colors"
         >
           <UserPlus size={16} />
           Don&apos;t have an account yet?
@@ -86,7 +86,7 @@ export default function RequestAccessButton() {
                 </p>
                 <button
                   onClick={onClose}
-                  className="mt-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-lg"
+                  className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
                 >
                   Got it
                 </button>
@@ -111,7 +111,7 @@ export default function RequestAccessButton() {
                     required
                     maxLength={120}
                     autoComplete="name"
-                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
@@ -126,7 +126,7 @@ export default function RequestAccessButton() {
                     required
                     maxLength={200}
                     autoComplete="email"
-                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
@@ -140,7 +140,7 @@ export default function RequestAccessButton() {
                     maxLength={1000}
                     rows={3}
                     placeholder="e.g. which services you'd like access to"
-                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
@@ -161,7 +161,7 @@ export default function RequestAccessButton() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
                   >
                     {submitting && <Loader2 size={14} className="animate-spin" />}
                     Send request

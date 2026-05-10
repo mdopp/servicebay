@@ -52,7 +52,12 @@ export async function GET(
     return new NextResponse('Invalid service name', { status: 400 });
   }
 
-  const asset = await resolveSetupAsset(kind as SetupAssetKind, service);
+  const url = new URL(request.url);
+  const subdomainVarRaw = url.searchParams.get('subdomain_var');
+  const subdomainVar = subdomainVarRaw && /^[A-Z][A-Z0-9_]*_SUBDOMAIN$/.test(subdomainVarRaw)
+    ? subdomainVarRaw
+    : undefined;
+  const asset = await resolveSetupAsset(kind as SetupAssetKind, service, subdomainVar);
   if (!asset) {
     return new NextResponse('Asset not available — service may not be installed yet.', { status: 404 });
   }

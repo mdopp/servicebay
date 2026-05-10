@@ -96,7 +96,7 @@ export default function AccessRequestsSection() {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 bg-violet-100 dark:bg-violet-900/30 rounded-lg text-violet-600 dark:text-violet-400">
+        <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
           <UserPlus size={20} />
         </div>
         <div className="flex-1 min-w-0">
@@ -117,7 +117,7 @@ export default function AccessRequestsSection() {
             href={lldapUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg"
+            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
           >
             Open LLDAP <ExternalLink size={14} />
           </a>
@@ -190,7 +190,7 @@ function RequestRow({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 text-sm">
             <span className="font-medium text-gray-900 dark:text-white">{r.name}</span>
-            <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 text-violet-700 dark:text-violet-300 hover:underline text-xs">
+            <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300 hover:underline text-xs">
               <Mail size={12} /> {r.email}
             </a>
           </div>

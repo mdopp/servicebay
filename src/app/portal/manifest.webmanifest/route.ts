@@ -29,7 +29,7 @@ export async function GET() {
     display: 'standalone',
     orientation: 'portrait',
     background_color: '#fafafa',
-    theme_color: '#7c3aed',
+    theme_color: '#2563eb',
     icons: [
       {
         src: '/portal/icon.svg',

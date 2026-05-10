@@ -83,7 +83,7 @@ export function formatCredentialsBanner(manifest: Credential[]): string[] {
   const lines: string[] = [
     '',
     '═══════════════════════════════════════════════════',
-    '🔑 SAVE THESE NOW — they are not shown again',
+    'CREDENTIALS — saved encrypted at Settings → Integrations → Saved credentials',
     '═══════════════════════════════════════════════════',
   ];
   for (const c of critical) {
@@ -102,7 +102,7 @@ export function formatCredentialsBanner(manifest: Credential[]): string[] {
     }
     lines.push('');
   }
-  lines.push('💡 You can also download a Bitwarden-compatible CSV from the Done step.');
+  lines.push('Visible in Settings → Integrations → Saved credentials, or download a Bitwarden CSV from the Done step.');
   lines.push('═══════════════════════════════════════════════════');
   return lines;
 }

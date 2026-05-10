@@ -72,29 +72,42 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
   return (
     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
       {cards.map(card => {
-        const isExpanded = !!expanded[card.name];
+        const isExpanded = !!expanded[card.id];
         return (
           <div
-            key={card.name}
+            key={card.id}
             className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden flex flex-col"
           >
-            <div className="p-6 flex-1">
+            {/* Header — icon + title + tagline. The tagline area is
+                clamped to 3 lines + min-h so the Open button below
+                lands at the same Y on every card in a row. */}
+            <div className="p-6 pb-3">
               <CardIcon card={card} />
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">{card.label}</h2>
-              {card.tagline && (
-                <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{card.tagline}</p>
-              )}
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 line-clamp-3 min-h-[3.75rem]">
+                {card.tagline ?? ''}
+              </p>
             </div>
 
-            <div className="px-6 pb-6 space-y-3">
+            {/* Open button — at fixed offset from card top thanks to
+                the clamped header above. Consistent Y across cards. */}
+            <div className="px-6">
               <a
                 href={card.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full bg-violet-600 hover:bg-violet-700 text-white font-medium py-2.5 rounded-lg transition-colors"
+                className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors"
               >
                 Open <ExternalLink size={16} />
               </a>
+            </div>
+
+            {/* Variable content below — fills the rest of the card so
+                grid-cell heights stay equal even with different
+                amounts of recommended apps / setup assets. */}
+            <div className="px-6 pt-3 pb-6 space-y-3 flex-1">
+              {/* (the original wrapper continues; adjusted closing
+                   tag is below — left here so the diff is contained.) */}
 
               {card.setupAssets.length > 0 && (
                 <div className="space-y-1.5">
@@ -106,7 +119,7 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                       return (
                         <div key={asset.kind}>
                           <a
-                            href={`/api/portal/asset/${card.name}/${asset.kind}`}
+                            href={`/api/portal/asset/${card.name}/${asset.kind}?subdomain_var=${encodeURIComponent(card.subdomainVar)}`}
                             className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
                           >
                             <Icon size={14} /> {label}
@@ -145,7 +158,7 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                             href={app.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="font-medium text-violet-700 dark:text-violet-300 hover:underline"
+                            className="font-medium text-blue-700 dark:text-blue-300 hover:underline"
                           >
                             {app.name}
                           </a>
@@ -172,8 +185,8 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
               {card.body.trim().length > 0 && (
                 <div>
                   <button
-                    onClick={() => setExpanded(s => ({ ...s, [card.name]: !s[card.name] }))}
-                    className="flex items-center gap-1 text-sm text-violet-700 dark:text-violet-300 hover:underline mt-2"
+                    onClick={() => setExpanded(s => ({ ...s, [card.id]: !s[card.id] }))}
+                    className="flex items-center gap-1 text-sm text-blue-700 dark:text-blue-300 hover:underline mt-2"
                     aria-expanded={isExpanded}
                   >
                     {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -217,7 +230,7 @@ function DeepLinkButton({
   const onClick = async () => {
     setError(null);
     try {
-      const res = await fetch(`/api/portal/asset/${card.name}/${kind}`);
+      const res = await fetch(`/api/portal/asset/${card.name}/${kind}?subdomain_var=${encodeURIComponent(card.subdomainVar)}`);
       if (!res.ok) {
         setError(`Couldn't load the link (HTTP ${res.status}).`);
         return;
@@ -282,7 +295,7 @@ function SyncthingQrButton({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/portal/asset/${card.name}/syncthing_qr`);
+      const res = await fetch(`/api/portal/asset/${card.name}/syncthing_qr?subdomain_var=${encodeURIComponent(card.subdomainVar)}`);
       if (!res.ok) {
         setError(`Couldn't read the device id (HTTP ${res.status}). The Syncthing container might not be running yet — try again in a minute.`);
         return;
@@ -323,7 +336,7 @@ function SyncthingQrButton({
             </p>
 
             <div className="mt-5 flex justify-center min-h-[12rem] items-center">
-              {loading && <Loader2 className="animate-spin text-violet-500" size={32} />}
+              {loading && <Loader2 className="animate-spin text-blue-500" size={32} />}
               {!loading && error && (
                 <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
               )}
@@ -367,7 +380,7 @@ function CardIcon({ card }: { card: PortalCard }) {
   if (card.lucideIcon) {
     const Icon = PORTAL_ICON_MAP[card.lucideIcon];
     return (
-      <div className="mb-3 inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">
+      <div className="mb-3 inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
         <Icon size={28} strokeWidth={1.75} />
       </div>
     );

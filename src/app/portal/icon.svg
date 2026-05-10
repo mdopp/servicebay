@@ -1,11 +1,10 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <!-- PWA app icon for the family-portal route. Uses the ServiceBay
-       logo's line-art style (currentColor stroke, 2px equivalent at
-       this scale) on a violet brand background. Differs from the
-       admin dashboard's icon only by the violet fill — same shape
-       cues so it's recognizable as a ServiceBay product on the
-       home screen. -->
-  <rect width="512" height="512" rx="96" fill="#7c3aed"/>
+  <!-- PWA app icon for the family-portal route. ServiceBay's
+       server-on-waves logo in line-art on the blue brand fill
+       (Tailwind blue-600 = #2563eb, the same color the dashboard
+       uses for the sidebar logo + primary actions). Recognizable
+       as a ServiceBay product on the home screen. -->
+  <rect width="512" height="512" rx="96" fill="#2563eb"/>
   <g transform="translate(96 96) scale(13.33)" fill="none" stroke="#fff"
      stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <!-- Server unit -->
