@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.12.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.11.0...servicebay-v3.12.0) (2026-05-10)
+
+
+### Features
+
+* **wizard:** two-mode domain prompt — public default, lan fallback (D19-PR5) ([#278](https://github.com/mdopp/servicebay/issues/278)) ([4032cb0](https://github.com/mdopp/servicebay/commit/4032cb0f76c67fbfb4eead90bffb048743e0d030))
+
 ## [3.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.10.0...servicebay-v3.11.0) (2026-05-10)
 
 
