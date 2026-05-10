@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.9.3...servicebay-v3.10.0) (2026-05-10)
+
+
+### Features
+
+* **agent:** tag bootstrap-window errors separately (A4) ([#245](https://github.com/mdopp/servicebay/issues/245)) ([4d5b89e](https://github.com/mdopp/servicebay/commit/4d5b89e5ca2735648dc18212bbbb4a39d5cb485c))
+* **diagnose:** npm_data_stale probe with reset action (B6) ([#270](https://github.com/mdopp/servicebay/issues/270)) ([6aad275](https://github.com/mdopp/servicebay/commit/6aad27587b21340383c9f1d95eaedce5421e824f))
+* **diagnose:** probe-actions schema + dispatcher (F1) ([#243](https://github.com/mdopp/servicebay/issues/243)) ([0e549f0](https://github.com/mdopp/servicebay/commit/0e549f00e34a7ed35ce02476cca13d672a89c2e8))
+* **templates:** infrastructure-tier flag + locked wizard include (D19-PR1) ([#267](https://github.com/mdopp/servicebay/issues/267)) ([ea1a0d7](https://github.com/mdopp/servicebay/commit/ea1a0d72cb5b130847f31b5af484201ebb224fe6))
+* **ui:** persistent Local-only mode badge in header (A5) ([#247](https://github.com/mdopp/servicebay/issues/247)) ([4c74690](https://github.com/mdopp/servicebay/commit/4c74690c7ecb81b76332e450a460bc172697fd54))
+* **wizard:** auto-retry transient deploy failures (A2) ([#246](https://github.com/mdopp/servicebay/issues/246)) ([c79d8d1](https://github.com/mdopp/servicebay/commit/c79d8d1fb2dff68bd851d20aab14f58af87f2d27))
+* **wizard:** rename 'Install a Stack' → 'Install services' (C16) ([#257](https://github.com/mdopp/servicebay/issues/257)) ([56329ab](https://github.com/mdopp/servicebay/commit/56329abeca2a53faf15f967979fb221f4e4af774))
+
+
+### Bug Fixes
+
+* **file-share:** replace fixed 8s sleep with pod-readiness poll (A3) ([#244](https://github.com/mdopp/servicebay/issues/244)) ([3449138](https://github.com/mdopp/servicebay/commit/3449138e0b86fcbc2aa120e7ed3c0f2967a88da6))
+* five fresh-install issues found via MCP diagnostics ([#238](https://github.com/mdopp/servicebay/issues/238)) ([b05e6be](https://github.com/mdopp/servicebay/commit/b05e6be1877390ca03990fc9a5dc9845aee5559c))
+
 ## [3.9.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.9.2...servicebay-v3.9.3) (2026-05-09)
 
 
