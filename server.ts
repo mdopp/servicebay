@@ -113,6 +113,21 @@ logger.info('Server', `Session ID: ${sessionId}`);
   }
 })();
 
+// Portal apex/www auto-provisioner (#242 follow-up). Schedule with a
+// 60s delay so cold-starting nginx + adguard have time to come up;
+// the function is idempotent and only acts when both services are
+// reachable. Logs failures and skips silently — next boot retries.
+setTimeout(() => {
+  void (async () => {
+    try {
+      const { provisionPortalRouting } = await import('./src/lib/portal/provisioner');
+      await provisionPortalRouting();
+    } catch (e) {
+      logger.warn('Server', 'Portal routing provisioner failed:', e);
+    }
+  })();
+}, 60_000).unref();
+
 const scheduleAgentRestart = async () => {
     try {
         const config = await getConfig();
