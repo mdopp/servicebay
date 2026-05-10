@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.16.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.15.1...servicebay-v3.16.0) (2026-05-10)
+
+
+### Features
+
+* **settings:** Gateway (FritzBox) edit section + fix wrong link ([#333](https://github.com/mdopp/servicebay/issues/333)) ([#335](https://github.com/mdopp/servicebay/issues/335)) ([7672a7f](https://github.com/mdopp/servicebay/commit/7672a7f7bd63bc8bcbaff4daf8ecd9d4b44fd38b))
+
+
+### Bug Fixes
+
+* **install:** enable setup-config-merge.service on first boot ([#331](https://github.com/mdopp/servicebay/issues/331) follow-up) ([#338](https://github.com/mdopp/servicebay/issues/338)) ([5174445](https://github.com/mdopp/servicebay/commit/5174445c5ce29498095e5d8d396811b3c82774c1))
+* **install:** smart config-merge on re-install ([#331](https://github.com/mdopp/servicebay/issues/331)) ([#332](https://github.com/mdopp/servicebay/issues/332)) ([13ddb9d](https://github.com/mdopp/servicebay/commit/13ddb9d719400fe126c5135742d757910d54c6f2))
+
 ## [3.15.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.15.0...servicebay-v3.15.1) (2026-05-10)
 
 
