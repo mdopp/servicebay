@@ -7,6 +7,7 @@ import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
 import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
 import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
+import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -507,6 +508,28 @@ export async function POST(request: Request) {
     probes.push({
       id: 'router_dns_not_pointing',
       label: 'Router DNS routing',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 14b) Proxy route create-failures (B12). Surfaces config entries
+  //     where install-time NPM creation came back unconfirmed; per-item
+  //     "Retry create" action pushes the route into NPM again.
+  try {
+    const prm = await checkProxyRouteMissing();
+    probes.push({
+      id: 'proxy_route_missing',
+      label: 'Proxy hosts created',
+      status: prm.status,
+      detail: prm.detail,
+      hint: prm.hint,
+      _items: prm.items,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'proxy_route_missing',
+      label: 'Proxy hosts created',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
