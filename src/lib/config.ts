@@ -59,6 +59,15 @@ export interface ProxyHostEntry {
 export interface ReverseProxyConfig {
   /** Public domain used for subdomains (e.g. "dopp.cloud") */
   publicDomain?: string;
+  /**
+   * LAN domain (RFC 8375 reserved `home.arpa` by default) — services
+   * are reachable on `<sub>.<lanDomain>` via AdGuard DNS rewrites in
+   * `lan` install mode. Used as a fallback when `publicDomain` isn't
+   * set, and as a survives-after-migration fallback in `public` mode
+   * (LAN devices can keep hitting `vault.home.arpa` after the user
+   * switches to a public domain — soft-handoff per #249).
+   */
+  lanDomain?: string;
   /** Proxy hosts created during stack deployment */
   hosts?: ProxyHostEntry[];
   /**
