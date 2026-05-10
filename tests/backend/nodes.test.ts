@@ -11,6 +11,15 @@ vi.mock('fs/promises', () => ({
         access: vi.fn(),
     }
 }));
+// nodes.ts uses atomicWriteFile (#fix/nodes-race) for crash-safety;
+// for these unit tests we route it back to the existing fs.writeFile
+// mock so the existing assertions still observe the call.
+vi.mock('../../src/lib/util/atomicWrite', () => ({
+    atomicWriteFile: vi.fn(async (...args: unknown[]) => {
+        const { default: mockedFs } = await import('fs/promises');
+        return (mockedFs.writeFile as unknown as (...a: unknown[]) => Promise<void>)(...args);
+    }),
+}));
 vi.mock('../../src/lib/executor', () => ({
   SSHExecutor: vi.fn(),
   getExecutor: vi.fn()
