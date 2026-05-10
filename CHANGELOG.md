@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.15.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.14.0...servicebay-v3.15.0) (2026-05-10)
+
+
+### Features
+
+* redact MCP secrets + LAN-only bootstrap token ([#321](https://github.com/mdopp/servicebay/issues/321), [#322](https://github.com/mdopp/servicebay/issues/322)) ([#323](https://github.com/mdopp/servicebay/issues/323)) ([5902578](https://github.com/mdopp/servicebay/commit/5902578971102818b3b3a3f816980bc69d7bc517))
+
+
+### Bug Fixes
+
+* file-share seed timeout, SSO defaults to true, portal polish ([#315](https://github.com/mdopp/servicebay/issues/315)) ([6b93142](https://github.com/mdopp/servicebay/commit/6b93142bc0048bc7da2cbcccb4fda8efcad382c9))
+* **portal:** modal "How do I use this?" + OS-aware assets ([#324](https://github.com/mdopp/servicebay/issues/324), [#325](https://github.com/mdopp/servicebay/issues/325)) ([#326](https://github.com/mdopp/servicebay/issues/326)) ([2b75468](https://github.com/mdopp/servicebay/commit/2b75468e56e045e3a667a4d6963072d6a21c586f))
+* surface install-time failures ([#317](https://github.com/mdopp/servicebay/issues/317), [#318](https://github.com/mdopp/servicebay/issues/318), [#319](https://github.com/mdopp/servicebay/issues/319)) ([#320](https://github.com/mdopp/servicebay/issues/320)) ([0e62128](https://github.com/mdopp/servicebay/commit/0e6212883ffe7a076d22ac555079f21b144b80ba))
+
 ## [3.14.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.13.0...servicebay-v3.14.0) (2026-05-10)
 
 
