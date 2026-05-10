@@ -1,5 +1,6 @@
 import { buildPortalCards } from '@/lib/portal/services';
 import PortalGrid from './PortalGrid';
+import RequestAccessButton from './RequestAccessButton';
 
 export const revalidate = 0;
 export const dynamic = 'force-dynamic';
@@ -36,6 +37,8 @@ export default async function PortalPage() {
       ) : (
         <PortalGrid cards={cards} />
       )}
+
+      <RequestAccessButton />
     </main>
   );
 }
