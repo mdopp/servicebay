@@ -25,6 +25,31 @@
 
 import { logger } from '@/lib/logger';
 
+/**
+ * Inline form field for an action that needs user input before it can
+ * run (e.g. "use existing NPM password" needs the operator to type the
+ * password). Without `inputs[]` an action dispatches on click; with
+ * `inputs[]` the UI expands a small form first and submits the values
+ * as the dispatch payload.
+ */
+export interface ProbeActionInput {
+  /** Form field name — passed back as `payload[name]` to the handler. */
+  name: string;
+  /** Short label shown above the input. */
+  label: string;
+  /**
+   * Field input type. `password` masks the value; `email`/`text` are
+   * surface differences only — the handler should still validate.
+   */
+  type: 'text' | 'password' | 'email';
+  /** Placeholder hint inside the input. */
+  placeholder?: string;
+  /** Helper text shown below the field. */
+  hint?: string;
+  /** Defaults to true. Required fields are validated before submit. */
+  required?: boolean;
+}
+
 /** Surface a fix the user can apply for a probe in `warn` or `fail` state. */
 export interface ProbeAction {
   /** Stable id (referenced by the dispatch endpoint). */
@@ -43,6 +68,15 @@ export interface ProbeAction {
    * behind a confirm dialog. Default false.
    */
   destructive?: boolean;
+  /**
+   * Optional inline form fields. When present, clicking the action
+   * button reveals a small form rather than dispatching immediately;
+   * the form's values are sent as `payload`. Use for actions that
+   * legitimately need operator input (credentials, free-text values).
+   * Hide expert-only knobs entirely instead of asking for them — see
+   * the UX philosophy.
+   */
+  inputs?: ProbeActionInput[];
 }
 
 /** Result payload returned to the UI after an action runs. */
@@ -131,6 +165,24 @@ export async function dispatchProbeAction(params: {
       message: `Unknown probe action: ${k}`,
       refresh: false,
     };
+  }
+  // Validate required inline-form inputs are present before invoking
+  // the handler. Handlers still need to validate types/values, but
+  // missing-required is uniform and surfaces a clear message.
+  const required = (entry.action.inputs ?? []).filter(i => i.required !== false);
+  if (required.length > 0) {
+    const payload = params.payload ?? {};
+    const missing = required.filter(i => {
+      const v = payload[i.name];
+      return v === undefined || v === null || (typeof v === 'string' && v.length === 0);
+    });
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        message: `Missing required field${missing.length === 1 ? '' : 's'}: ${missing.map(i => i.label).join(', ')}.`,
+        refresh: false,
+      };
+    }
   }
   try {
     const result = await entry.handler({ node: params.node, payload: params.payload });
