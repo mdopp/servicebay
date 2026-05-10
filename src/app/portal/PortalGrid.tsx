@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronDown, ChevronUp, Download, ExternalLink, Smartphone } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, ExternalLink, Loader2, QrCode, Smartphone } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import type { PortalCard } from '@/lib/portal/services';
 import type { AppPlatform, SetupAssetKind } from '@/lib/portal/userGuide';
 
@@ -17,6 +18,7 @@ const PLATFORM_LABELS: Record<AppPlatform, string> = {
 const ASSET_LABELS: Record<SetupAssetKind, { label: string; icon: typeof Download }> = {
   ios_calendar_profile: { label: 'Add to iPhone (Calendar + Contacts)', icon: Download },
   audiobookshelf_deeplink: { label: 'Open in Audiobookshelf app', icon: Smartphone },
+  syncthing_qr: { label: 'Pair Syncthing device', icon: QrCode },
 };
 
 /**
@@ -78,6 +80,11 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                     if (asset.kind === 'audiobookshelf_deeplink') {
                       return (
                         <DeepLinkButton key={asset.kind} card={card} kind={asset.kind} label={label} description={asset.description} Icon={Icon} />
+                      );
+                    }
+                    if (asset.kind === 'syncthing_qr') {
+                      return (
+                        <SyncthingQrButton key={asset.kind} card={card} label={label} description={asset.description} Icon={Icon} />
                       );
                     }
                     return null;
@@ -203,5 +210,105 @@ function DeepLinkButton({
         <p className="text-[11px] text-red-600 dark:text-red-400 mt-1 leading-snug text-center">{error}</p>
       )}
     </div>
+  );
+}
+
+/**
+ * Syncthing QR pairing button. Fetches the server's device ID
+ * lazily on click (it's a podman-exec round-trip, so we don't
+ * pre-fetch it on every card render) and opens a modal with the QR
+ * code rendered client-side. The Android Syncthing app's "Add
+ * Device → Scan QR" reads it directly.
+ */
+function SyncthingQrButton({
+  card,
+  label,
+  description,
+  Icon,
+}: {
+  card: PortalCard;
+  label: string;
+  description?: string;
+  Icon: typeof QrCode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onOpen = async () => {
+    setOpen(true);
+    if (deviceId || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/portal/asset/${card.name}/syncthing_qr`);
+      if (!res.ok) {
+        setError(`Couldn't read the device id (HTTP ${res.status}). The Syncthing container might not be running yet — try again in a minute.`);
+        return;
+      }
+      const data = await res.json() as { deviceId?: string };
+      if (typeof data.deviceId !== 'string') {
+        setError('No device id returned.');
+        return;
+      }
+      setDeviceId(data.deviceId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <div>
+        <button
+          onClick={onOpen}
+          className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+        >
+          <Icon size={14} /> {label}
+        </button>
+        {description && (
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-snug text-center">{description}</p>
+        )}
+      </div>
+
+      {open && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setOpen(false)}>
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl max-w-sm w-full p-6 text-center" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">Pair this device</h2>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+              In the Syncthing Android app, tap <strong>+</strong> → <strong>Add Device</strong> → <strong>Scan QR</strong>, then point your camera here.
+            </p>
+
+            <div className="mt-5 flex justify-center min-h-[12rem] items-center">
+              {loading && <Loader2 className="animate-spin text-violet-500" size={32} />}
+              {!loading && error && (
+                <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+              )}
+              {!loading && deviceId && (
+                <div className="bg-white p-4 rounded-lg">
+                  <QRCodeSVG value={deviceId} size={192} level="M" />
+                </div>
+              )}
+            </div>
+
+            {deviceId && (
+              <p className="mt-3 text-[10px] font-mono text-gray-500 dark:text-gray-400 break-all">
+                {deviceId}
+              </p>
+            )}
+
+            <button
+              onClick={() => setOpen(false)}
+              className="mt-4 px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

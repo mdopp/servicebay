@@ -6,7 +6,7 @@ import type { SetupAssetKind } from '@/lib/portal/userGuide';
 
 export const dynamic = 'force-dynamic';
 
-const KIND_VALUES: SetupAssetKind[] = ['ios_calendar_profile', 'audiobookshelf_deeplink'];
+const KIND_VALUES: SetupAssetKind[] = ['ios_calendar_profile', 'audiobookshelf_deeplink', 'syncthing_qr'];
 
 /**
  * Public asset endpoint for the family portal (#242 follow-up).
@@ -65,6 +65,12 @@ export async function GET(
         'Content-Disposition': `attachment; filename="${service}.mobileconfig"`,
       },
     });
+  }
+  if (asset.kind === 'syncthing_qr') {
+    // Return the device ID; the client renders the QR code itself.
+    // Keeping QR generation client-side avoids shipping a server-
+    // side QR library + lets the modal scale the QR responsively.
+    return NextResponse.json({ deviceId: asset.data });
   }
   // audiobookshelf_deeplink — return JSON so the client controls
   // navigation (location.href = url, with a fallback message).
