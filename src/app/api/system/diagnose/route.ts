@@ -120,8 +120,43 @@ export async function POST(request: Request) {
     return NextResponse.json({ node: nodeName, probes });
   }
 
+  // Probes 2-9 each shell out to the agent independently. Earlier
+  // versions awaited them sequentially, which made the total wait
+  // ~the sum of every probe's timeout (worst-case ~30s on a slow
+  // agent). Fanning them out via Promise.all collapses the wall-clock
+  // to ~the slowest single probe (~5s) while preserving the rest of
+  // the inline analysis as straight-line code.
+  //
+  // Probe 9 (crash_loop) needs uptime + ps for its analysis but the
+  // per-container log fetches (already a Promise.all) stay deferred
+  // because they depend on which containers `podman ps` flags as
+  // looping.
+  const [
+    podmanInfo,
+    pods,
+    failed,
+    listen,
+    serial,
+    disk,
+    firstBoot,
+    uptimeRes,
+    psStatus,
+  ] = await Promise.all([
+    exec('podman info --format "{{.Host.Arch}} {{.Host.OS}} {{.Version.Version}}"', 4000),
+    exec('podman pod ps --format "{{.Name}}|{{.Status}}|{{.NumberOfContainers}}"', 5000),
+    exec('systemctl --user --failed --no-legend --no-pager 2>&1', 5000),
+    exec('ss -ltn 2>/dev/null | tail -n +2 | awk \'{print $4}\' | awk -F: \'{print $NF}\' | sort -nu', 4000),
+    exec('ls -la /dev/serial/by-id/ 2>/dev/null | grep -v "^total" | awk \'{print $NF}\' | grep -v "^$"', 3000),
+    exec('df -h /mnt/data 2>/dev/null | tail -1', 3000),
+    exec(
+      'systemctl --no-pager status setup-raid install-python install-nginx 2>&1 | grep -E "(●|Active:)" | head -20',
+      5000,
+    ),
+    exec('cat /proc/uptime 2>/dev/null', 1500),
+    exec('podman ps --format "{{.Names}}|{{.Status}}" 2>/dev/null', 4000),
+  ]);
+
   // 2) Container engine
-  const podmanInfo = await exec('podman info --format "{{.Host.Arch}} {{.Host.OS}} {{.Version.Version}}"', 4000);
   probes.push({
     id: 'podman',
     label: 'Podman engine',
@@ -134,7 +169,6 @@ export async function POST(request: Request) {
   //    action (per podsAndEngine.ts). Pods whose containers crash-loop
   //    are surfaced separately by the crash_loop probe with their own
   //    actions; this row catches the pod-level "Created/Exited" cases.
-  const pods = await exec('podman pod ps --format "{{.Name}}|{{.Status}}|{{.NumberOfContainers}}"', 5000);
   const podLines = trimOutput(pods.stdout, 30).split('\n').filter(Boolean);
   const failedPods = podLines.filter(l => !/Running/i.test(l.split('|')[1] ?? ''));
   const podItems: ProbeItem[] = failedPods.map((line): ProbeItem | null => {
@@ -177,7 +211,6 @@ export async function POST(request: Request) {
   //     unhealthy probe; the *container* state is already covered by the
   //     crash_loop probe below, so flagging the wrapper unit too is
   //     duplicative.
-  const failed = await exec('systemctl --user --failed --no-legend --no-pager 2>&1', 5000);
   const failedRaw = trimOutput(failed.stdout, 30).split('\n').filter(Boolean);
   const isBenignFailedUnit = (line: string) =>
     /\binstall-nginx\.service\b/.test(line) ||
@@ -218,7 +251,6 @@ export async function POST(request: Request) {
   });
 
   // 5) Listening ports for known services
-  const listen = await exec('ss -ltn 2>/dev/null | tail -n +2 | awk \'{print $4}\' | awk -F: \'{print $NF}\' | sort -nu', 4000);
   const ports = trimOutput(listen.stdout, 50).split('\n').filter(Boolean);
   probes.push({
     id: 'ports',
@@ -228,7 +260,6 @@ export async function POST(request: Request) {
   });
 
   // 6) USB serial devices (Z-Wave / Zigbee sticks)
-  const serial = await exec('ls -la /dev/serial/by-id/ 2>/dev/null | grep -v "^total" | awk \'{print $NF}\' | grep -v "^$"', 3000);
   const serialDevices = trimOutput(serial.stdout, 20).split('\n').filter(Boolean);
   probes.push({
     id: 'serial',
@@ -238,7 +269,6 @@ export async function POST(request: Request) {
   });
 
   // 7) Disk usage on /mnt/data (where ServiceBay stores everything)
-  const disk = await exec('df -h /mnt/data 2>/dev/null | tail -1', 3000);
   const diskLine = trimOutput(disk.stdout, 1);
   let diskStatus: ProbeStatus = 'ok';
   let diskHint: string | undefined;
@@ -262,10 +292,6 @@ export async function POST(request: Request) {
   });
 
   // 8) First-boot oneshot units (FCOS only)
-  const firstBoot = await exec(
-    'systemctl --no-pager status setup-raid install-python install-nginx 2>&1 | grep -E "(●|Active:)" | head -20',
-    5000,
-  );
   const fbLines = trimOutput(firstBoot.stdout, 20).split('\n').filter(Boolean);
   const fbStuck = fbLines.some(l => /activating/i.test(l));
   probes.push({
@@ -286,7 +312,6 @@ export async function POST(request: Request) {
   //    can't have been up *longer* than the kernel. Auto-running the probe
   //    right after first boot used to flag every fresh container as
   //    "may be in a restart loop" purely because it had only just started.
-  const uptimeRes = await exec('cat /proc/uptime 2>/dev/null', 1500);
   const systemUptimeSec = (() => {
     const first = (uptimeRes.stdout ?? '').trim().split(/\s+/)[0];
     const n = parseFloat(first);
@@ -298,7 +323,6 @@ export async function POST(request: Request) {
   const recentBootGrace = 90;
   const treatYoungAsLoop = systemUptimeSec > recentBootGrace;
 
-  const psStatus = await exec('podman ps --format "{{.Names}}|{{.Status}}" 2>/dev/null', 4000);
   const psLines = trimOutput(psStatus.stdout, 80).split('\n').filter(Boolean);
   const looping = psLines.filter(l => {
     const status = (l.split('|')[1] ?? '').trim();
