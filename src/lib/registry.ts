@@ -311,6 +311,12 @@ export interface VariableMeta {
    * used by the UI to group the configure step by service.
    */
   templateName?: string;
+  /**
+   * Friendly display label for the template that first declared this
+   * variable, read from `metadata.annotations['servicebay.label']` in the
+   * template.yml. Set alongside templateName by the wizard / installer.
+   */
+  templateLabel?: string;
 }
 
 export async function getTemplateVariables(name: string, source?: string): Promise<Record<string, VariableMeta> | null> {

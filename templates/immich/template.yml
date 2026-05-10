@@ -4,6 +4,8 @@ metadata:
   name: immich
   labels:
     app: immich
+  annotations:
+    servicebay.label: "Immich (Photos)"
 spec:
   containers:
     - name: immich-server

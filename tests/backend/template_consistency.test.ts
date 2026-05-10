@@ -3,7 +3,7 @@
  *
  * Catches the class of bugs we hit during the file-share / home-assistant /
  * auth / media merges: a template gets renamed or merged, but `isSelected('X')`
- * / SERVICE_DEPS / DISPLAY_NAMES / getServiceFiles still references the old
+ * / SERVICE_DEPS / servicebay.label / getServiceFiles still references the old
  * name. None of those fail at compile time, only at runtime when the wizard
  * runs and the deploy step skips the seed/credential surfacing.
  *
@@ -188,20 +188,26 @@ describe('Template ↔ source-name consistency', () => {
     expect(offenders, `Stale SERVICE_DEPS entries:\n  ${offenders.join('\n  ')}`).toEqual([]);
   });
 
-  it('groupVariables.DISPLAY_NAMES keys reference real templates only', () => {
-    const groupPath = path.join(SRC_DIR, 'lib', 'stackInstall', 'groupVariables.ts');
-    const content = fs.readFileSync(groupPath, 'utf-8');
-    const block = content.match(/DISPLAY_NAMES:\s*Record<string,\s*string>\s*=\s*\{([\s\S]*?)\n\};/);
-    expect(block, 'DISPLAY_NAMES block not found').toBeTruthy();
-
-    const body = block![1];
-    const keyRe = /^\s*['"]([\w-]+)['"]\s*:/gm;
+  it('every template.yml declares a servicebay.label annotation', async () => {
+    // Friendly template labels live in the template itself
+    // (metadata.annotations['servicebay.label']), so a new template
+    // doesn't need to touch core code to get a non-default UI label.
+    // The wizard / installer modal extracts the label at variable-
+    // collection time via parseTemplateLabel(); the test exercises the
+    // same parser to guarantee consistency.
+    const { parseTemplateLabel } = await import('../../src/lib/templateLabel');
     const offenders: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = keyRe.exec(body)) !== null) {
-      if (!templateNames.has(m[1])) offenders.push(m[1]);
+    for (const t of templates) {
+      const label = parseTemplateLabel(t.yamlContent);
+      if (!label) {
+        offenders.push(`${t.name}: parseTemplateLabel returned no label`);
+      }
     }
-    expect(offenders, `DISPLAY_NAMES keys without a matching template:\n  ${offenders.join('\n  ')}`).toEqual([]);
+    expect(
+      offenders,
+      `Templates missing the servicebay.label annotation:\n  ${offenders.join('\n  ')}\n\n` +
+      `Add \`servicebay.label: "<friendly name>"\` under metadata.annotations in template.yml.`,
+    ).toEqual([]);
   });
 });
 
@@ -547,6 +553,59 @@ describe('OIDC client_id single source of truth', () => {
       );
     }
   });
+});
+
+// ─── 10. No new per-template branches in stackInstall/ ────────────────────
+describe('stackInstall has no unauthorized per-template branches', () => {
+  // Per-template glue (credential surfacing, admin seeding, etc.) lives in
+  // each template's own post-deploy.py. The engine only keeps branches that
+  // genuinely need core knowledge — currently nginx-web's bootstrapNpmAdmin,
+  // because it returns a tri-state result that drives the wizard's
+  // credential-prompt UI (a script can't cleanly express that).
+  //
+  // Every other `isSelected('X')` is dead code or a regression in waiting.
+  // This test fails if a new template name shows up in stackInstall/* —
+  // forcing the author to either (a) extend post-deploy.py or (b) document
+  // why their case can't live in a script and add it to ALLOWED below.
+  const STACKINSTALL_DIR = path.join(SRC_DIR, 'lib', 'stackInstall');
+
+  /** Map of file → set of template names allowed to appear in
+   *  `isSelected(...)` calls. Anything else is a violation. */
+  const ALLOWED: Record<string, Set<string>> = {
+    'postInstall.ts': new Set([
+      // bootstrapNpmAdmin returns a tri-state result that drives the
+      // wizard's NPM-credentials-prompt UI when the auto-bootstrap
+      // fails. A post-deploy.py script can't cleanly express that, so
+      // the NPM bootstrap stays in the engine.
+      'nginx-web',
+    ]),
+    'credentialsManifest.ts': new Set(),
+    'groupVariables.ts': new Set(),
+  };
+
+  for (const [file, allowed] of Object.entries(ALLOWED)) {
+    it(`${file}: no isSelected/get('X') calls outside the allow-list`, () => {
+      const fullPath = path.join(STACKINSTALL_DIR, file);
+      if (!fs.existsSync(fullPath)) return;
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      const re = /isSelected\(\s*['"]([\w-]+)['"]\s*\)/g;
+      const offenders: string[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content)) !== null) {
+        const name = m[1];
+        if (!allowed.has(name)) offenders.push(name);
+      }
+      if (offenders.length > 0) {
+        const unique = [...new Set(offenders)].sort();
+        throw new Error(
+          `${file} references template name(s) not in the allow-list: ${unique.join(', ')}\n\n` +
+          `Per-template glue should live in templates/<name>/post-deploy.py, not in core. ` +
+          `Either migrate the logic (preferred) or, if the case genuinely needs core access, ` +
+          `add the name to ALLOWED in this test with a one-line comment explaining why.`,
+        );
+      }
+    });
+  }
 });
 
 // ─── 9. post-deploy.py scripts parse as valid Python ───────────────────────

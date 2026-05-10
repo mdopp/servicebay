@@ -4,6 +4,8 @@ metadata:
   name: vaultwarden
   labels:
     app: vaultwarden
+  annotations:
+    servicebay.label: "Vaultwarden (Passwords)"
 spec:
   containers:
   - name: vaultwarden

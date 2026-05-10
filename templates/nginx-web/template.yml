@@ -5,6 +5,8 @@ metadata:
   labels:
     app: nginx-web
     servicebay.role: reverse-proxy
+  annotations:
+    servicebay.label: "Nginx Proxy Manager"
 spec:
   containers:
   - name: nginx-proxy-manager

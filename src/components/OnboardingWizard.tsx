@@ -16,6 +16,7 @@ import {
 } from '@/app/actions/onboarding';
 import { generateLocalKey } from '@/app/actions/ssh';
 import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles, fetchTemplatePostDeployScript } from '@/app/actions';
+import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getNodes } from '@/app/actions/system';
 import { Template, VariableMeta } from '@/lib/registry';
 import {
@@ -745,13 +746,14 @@ export default function OnboardingWizard() {
         const matches = yaml.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
         for (const match of matches) vars.add(match[1]);
         const meta = await fetchTemplateVariables(item.name, selectedStack?.source || 'Built-in');
+        const templateLabel = parseTemplateLabel(yaml);
         if (meta) {
           // First template that declares a variable owns it for grouping —
           // shared vars (LLDAP_ADMIN_PASSWORD, LLDAP_HOST, ...) live under
           // the originator and are inherited by other templates' YAMLs.
           for (const [key, value] of Object.entries(meta)) {
             if (!allMeta[key]) {
-              allMeta[key] = { ...value, templateName: item.name };
+              allMeta[key] = { ...value, templateName: item.name, templateLabel };
             }
           }
         }
@@ -980,12 +982,6 @@ export default function OnboardingWizard() {
     // hung for 3 min on a container that was never going to start.
     const deployed: { name: string; checked: boolean }[] = [];
 
-    // Templates that supplied a post-deploy.py \u2014 for those we skip the
-    // hardcoded helpers in postInstall.ts (the script handles credentials,
-    // admin seeding, etc. for that service). See templates/<name>/post-deploy.py
-    // and the script-protocol comment in lib/registry.ts.
-    const templatesWithScript = new Set<string>();
-
     // Credentials parsed from `__SB_CREDENTIAL__ {json}` markers the scripts
     // emit on stdout \u2014 appended to the SAVE-THESE-NOW banner at the end.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1054,9 +1050,8 @@ export default function OnboardingWizard() {
           Mustache.escape = (text: string) => text;
           postDeployScript = Mustache.render(raw, view);
           Mustache.escape = savedEscape2;
-          templatesWithScript.add(item.name);
         }
-      } catch { /* template ships no script — fall through to hardcoded helpers */ }
+      } catch { /* template ships no post-deploy script — that's fine, no per-service glue runs */ }
 
       // Variables exported as env vars to the script. Scoped to string-shaped
       // entries; the engine in ServiceManager handles bash-quote escaping.
@@ -1160,22 +1155,19 @@ export default function OnboardingWizard() {
       }
     }
 
-    // Post-install (LLDAP seed, ABS/Navidrome/FileBrowser admin seed, OIDC
-    // client registration, NPM bootstrap, proxy-host creation) runs only
-    // for services that actually deployed cleanly. A failed deploy is
-    // dropped from `deployed` above so its post-install steps don't hang
+    // Post-install (NPM bootstrap, proxy-host creation, credentials banner)
+    // runs only for services that actually deployed cleanly. A failed deploy
+    // is dropped from `deployed` above so its post-install steps don't hang
     // on a container that was never going to start.
     //
-    // `skipDefaults` lets per-template post-deploy.py scripts replace the
-    // hardcoded helpers in postInstall.ts. `extraCredentials` are the
-    // entries those scripts emitted via `__SB_CREDENTIAL__` markers, to
-    // be appended to the final SAVE-THESE-NOW banner.
+    // `extraCredentials` are the `__SB_CREDENTIAL__` entries each template's
+    // post-deploy.py emitted on stdout, appended to the SAVE-THESE-NOW
+    // banner alongside the variable-driven OIDC entries.
     const proxyResult = await runPostInstall({
       selected: deployed,
       variables: varsBase,
       node: stackSelectedNode || undefined,
       onLog: (msg) => setStackLogs(prev => [...prev, msg]),
-      skipDefaults: templatesWithScript,
       extraCredentials: scriptCredentials,
     });
 
@@ -2481,9 +2473,8 @@ export default function OnboardingWizard() {
                                 const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
                                 const subdomains = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
                                 const hasProxyRoutes = domain && subdomains.length > 0;
-                                const selected = stackItems.filter(i => i.checked && !i.alreadyInstalled);
                                 const host = typeof window !== 'undefined' ? window.location.hostname : '<server-ip>';
-                                const manifest = buildCredentialsManifest({ selected, variables: stackVariables, host });
+                                const manifest = buildCredentialsManifest({ variables: stackVariables, host });
                                 const downloadCsv = () => {
                                     const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });
                                     const a = document.createElement('a');

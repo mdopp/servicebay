@@ -6,6 +6,7 @@ import { runPostInstall } from '@/lib/stackInstall/postInstall';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { buildCredentialsManifest, buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
 import { fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
+import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
 import { Layers, Loader2, AlertCircle, X, Folder, Server, RefreshCw } from 'lucide-react';
@@ -176,10 +177,11 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
 
             // Fetch variable metadata
             const meta = await fetchTemplateVariables(item.name, template.source);
+            const templateLabel = parseTemplateLabel(yaml);
             if (meta) {
               for (const [key, value] of Object.entries(meta)) {
                 if (!allMeta[key]) {
-                  allMeta[key] = { ...value, templateName: item.name };
+                  allMeta[key] = { ...value, templateName: item.name, templateLabel };
                 }
               }
             }
@@ -756,9 +758,8 @@ WantedBy=default.target`;
                             const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
                             const subdomains = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
                             const hasProxyRoutes = !!domain && subdomains.length > 0;
-                            const selected = items.filter(i => i.checked);
                             const host = typeof window !== 'undefined' ? window.location.hostname : '<server-ip>';
-                            const manifest = buildCredentialsManifest({ selected, variables, host });
+                            const manifest = buildCredentialsManifest({ variables, host });
                             if (!hasProxyRoutes && manifest.length === 0) return null;
                             const downloadCsv = () => {
                                 const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });
