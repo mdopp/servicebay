@@ -40,7 +40,7 @@ class TestAgent(unittest.TestCase):
         # Mock Systemctl Output
         mock_output = json.dumps([
             {
-                "unit": "nginx-web.service",
+                "unit": "nginx.service",
                 "active": "active",
                 "sub": "running",
                 "load": "loaded",
@@ -50,13 +50,13 @@ class TestAgent(unittest.TestCase):
         mock_run_command.return_value = mock_output
 
         # Mock ~/.config/containers/systemd existence
-        with patch('glob.glob', return_value=['/home/user/.config/containers/systemd/nginx-web.kube']):
+        with patch('glob.glob', return_value=['/home/user/.config/containers/systemd/nginx.kube']):
              with patch('os.path.exists', return_value=True):
                  with patch('os.path.isfile', return_value=True):
                     services = agent.fetch_services()
 
         self.assertEqual(len(services), 1)
-        self.assertEqual(services[0]['name'], "nginx-web")
+        self.assertEqual(services[0]['name'], "nginx")
 
     @patch('os.path.isdir')
     def test_get_nginx_config_dirs(self, mock_isdir):

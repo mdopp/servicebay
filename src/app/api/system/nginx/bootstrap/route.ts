@@ -83,7 +83,7 @@ async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
   for (const nodeName of nodeNames) {
     const services = await ServiceManager.listServices(nodeName);
     const nginxService = services.find(s =>
-      s.name === 'nginx-web' ||
+      s.name === 'nginx' ||
       (s.name.includes('nginx') && !s.name.startsWith('install-'))
     );
     if (!nginxService?.active) continue;
@@ -165,7 +165,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'Nginx Proxy Manager not found or not running' }, { status: 404 });
     }
 
-    // The nginx-web pod sets INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD
+    // The nginx pod sets INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD
     // env vars, which NPM honours on first init: it seeds the admin user
     // with the wizard's chosen credentials, NOT admin@example.com/changeme.
     // So the happy path on a fresh install is "wait for NPM to finish

@@ -284,7 +284,7 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   // proxy-route step — the user can finish the NPM piece via the
   // credentials prompt.
   let npmBootstrap: 'ok' | 'needs_credentials' | 'skipped' = 'skipped';
-  if (isSelected('nginx-web')) {
+  if (isSelected('nginx')) {
     // NPM cold-starts the SQLite schema after the container is ready, so the
     // very first /api/tokens call sometimes 502s. Wait until it's reachable
     // before bootstrapping; configureProxyRoutes below would do the same wait

@@ -380,7 +380,7 @@ export class ServiceManager {
         );
 
         for (const serviceUnit of specialServices) {
-            const baseName = serviceUnit.name; // e.g. nginx-web (agent strips .service)
+            const baseName = serviceUnit.name; // e.g. nginx (agent strips .service)
             // Determine expected container names for these system services
             const expectedNames = [baseName];
             
@@ -388,9 +388,9 @@ export class ServiceManager {
             if (serviceUnit.isReverseProxy) {
                 expectedNames.push(baseName);
                 expectedNames.push('nginx');
-                expectedNames.push('nginx-web');
+                expectedNames.push('nginx');
                 expectedNames.push('systemd-nginx');
-                expectedNames.push('systemd-nginx-web');
+                expectedNames.push('systemd-nginx');
             }
             if (serviceUnit.isServiceBay) {
                 expectedNames.push('servicebay');
@@ -407,7 +407,7 @@ export class ServiceManager {
             });
             const container = candidates[0]; // Simple best match
 
-            const isProxy = serviceUnit?.isReverseProxy ?? (proxyState?.provider === 'nginx' && (baseName === 'nginx-web' || baseName === 'nginx'));
+            const isProxy = serviceUnit?.isReverseProxy ?? (proxyState?.provider === 'nginx' && (baseName === 'nginx' || baseName === 'nginx'));
             const isServiceBay = serviceUnit?.isServiceBay ?? (baseName === 'servicebay');
 
             // Find Verified Domains
@@ -536,6 +536,11 @@ export class ServiceManager {
         'media':          ['audiobookshelf', 'navidrome'],
         'home-assistant': ['home-assistant-stack'],
         'file-share':     ['filebrowser'],
+        // D19-PR2 (#259) renamed `nginx` → `nginx`. Existing
+        // installs that ran the old template have a `nginx.kube`
+        // unit on disk; deploying the new `nginx` template trashes
+        // the predecessor so the host ports are free.
+        'nginx': ['nginx-web'],
     };
 
     private static async migratePredecessors(
@@ -751,7 +756,7 @@ export class ServiceManager {
         // every .kube unit, single-image or multi-image. The previous
         // multi-image-only gate was a leftover from when only the
         // TimeoutStartSec was injected; it caused single-image services
-        // (radicale, filebrowser, nginx-web, …) to land *without* any
+        // (radicale, filebrowser, nginx, …) to land *without* any
         // restart directives, so a transient image-pull failure or any
         // crash put the unit permanently in `failed` state with no auto-
         // recovery. injectServiceDirectives is idempotent per-directive,

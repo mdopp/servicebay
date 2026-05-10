@@ -5,7 +5,7 @@ Passwort-Manager, Foto-Verwaltung, Dateifreigabe und Smart-Home.
 
 ## Included Services
 
-- [x] nginx-web — Reverse-Proxy + automatische Let's-Encrypt-Zertifikate für alle Services
+- [x] nginx — Reverse-Proxy + automatische Let's-Encrypt-Zertifikate für alle Services
 - [x] auth — LLDAP-Verzeichnisdienst + Authelia-SSO/2FA-Portal (zusammen, gemeinsamer Pod)
 - [x] adguard — Netzwerkweiter DNS-Werbe- und Tracker-Blocker (DNS-Sinkhole)
 - [x] vaultwarden — Selbst gehostetes Bitwarden: Passwörter, Notizen, TOTP, mit Apps für alle Plattformen

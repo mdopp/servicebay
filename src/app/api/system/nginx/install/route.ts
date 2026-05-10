@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
 export async function POST() {
     try {
         // 1. Get the template content
-        const templateContent = await getTemplateYaml('nginx-web');
+        const templateContent = await getTemplateYaml('nginx');
         if (!templateContent) {
             throw new Error('Nginx template not found');
         }
@@ -24,7 +24,7 @@ export async function POST() {
         const nodeName = targetNode?.Name || 'Local';
 
         // 4. Prepare the service configuration
-        const name = 'nginx-web';
+        const name = 'nginx';
         // Replace variables (8080/8443/8081 standard for rootless)
         const yamlContent = templateContent
             .replace(/\{\{NGINX_PORT\}\}/g, '8080')

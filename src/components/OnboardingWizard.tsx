@@ -2048,25 +2048,25 @@ export default function OnboardingWizard() {
                                         }
                                     }
                                 }
-                                // nginx-web is implicitly required as soon as the operator commits
+                                // nginx is implicitly required as soon as the operator commits
                                 // to a public domain — every other service publishes via a
                                 // *_SUBDOMAIN variable that needs the proxy to reach the host. We
                                 // don't put this in SERVICE_DEPS because it would mean adding
-                                // `requires: ['nginx-web']` to ~10 services and cluttering each row
+                                // `requires: ['nginx']` to ~10 services and cluttering each row
                                 // with a redundant red badge. Surface it once here instead.
                                 const wantsDomain = stackDomain.trim().length > 0 && !stackNoDomain;
-                                const hasPublishedService = checked.some(i => i.name !== 'nginx-web');
-                                const nginxAvailable = stackItems.some(i => i.name === 'nginx-web');
+                                const hasPublishedService = checked.some(i => i.name !== 'nginx');
+                                const nginxAvailable = stackItems.some(i => i.name === 'nginx');
                                 if (
                                     wantsDomain &&
                                     nginxAvailable &&
                                     hasPublishedService &&
-                                    !checkedNames.has('nginx-web') &&
-                                    !installedNames.has('nginx-web')
+                                    !checkedNames.has('nginx') &&
+                                    !installedNames.has('nginx')
                                 ) {
                                     missing.push({
                                         from: 'public domain',
-                                        needs: 'nginx-web',
+                                        needs: 'nginx',
                                         reason: 'Nginx Proxy Manager terminates HTTPS for every <subdomain>.' + stackDomain.trim() + ' route',
                                     });
                                 }
@@ -2172,12 +2172,12 @@ export default function OnboardingWizard() {
                                                     {item.alreadyInstalled && (
                                                         <span className="text-xs text-green-600 dark:text-green-400">already installed</span>
                                                     )}
-                                                    {/* Static role hint for nginx-web — every other
+                                                    {/* Static role hint for nginx — every other
                                                         service routes through it for HTTPS subdomain
                                                         access, but spelling that out as a per-service
-                                                        "with nginx-web" badge would clutter ~10 rows.
+                                                        "with nginx" badge would clutter ~10 rows.
                                                         Surface the role here instead. */}
-                                                    {item.name === 'nginx-web' && (
+                                                    {item.name === 'nginx' && (
                                                         <span
                                                             className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60"
                                                             title="Required for HTTPS subdomain access. Every service with a *.<your-domain> subdomain proxies through here."

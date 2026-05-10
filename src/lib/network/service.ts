@@ -623,7 +623,7 @@ export class NetworkService {
     const proxyService = services.find(s => s.isPrimaryProxy);
 
     // If we found a proxy, its name is THE Truth.
-    const proxyServiceName = proxyService?.name || 'nginx-web';
+    const proxyServiceName = proxyService?.name || 'nginx';
 
     // logger.info('NetworkService', `Scanning ${nodeName} for proxy service: "${proxyServiceName}" (Active: ${proxyService?.active}). Found ${containers.length} containers.`);
 
@@ -1413,8 +1413,8 @@ export class NetworkService {
                             // 127.0.0.1:<internal-port> for the admin UI backend (port 3000
                             // by default). The internal port isn't published on the host, so
                             // the previous check above never matches. Since these locations
-                            // are *inside* nginx-web's own config — `proxyService` IS the
-                            // emitter — attribute the edge back to nginx-web rather than
+                            // are *inside* nginx's own config — `proxyService` IS the
+                            // emitter — attribute the edge back to nginx rather than
                             // inventing a virtual "Local Service :3000" ghost node.
                             if (!targetId && proxyService) {
                                 const isLoopback = ['localhost', '127.0.0.1', '::1'].includes(targetHost);
@@ -1611,7 +1611,7 @@ export class NetworkService {
         const containerId = prefix(cId);
         
         const isProxy = (cLabels['servicebay.role'] === 'reverse-proxy') ||
-                        (cNames.some((n: string) => n.includes('/nginx-web') || n.includes('/nginx')));
+                        (cNames.some((n: string) => n.includes('/nginx') || n.includes('/nginx')));
 
         if (isProxy) {
             const nginxNode = nodes.find(n => n.id === nginxId);
@@ -1783,7 +1783,7 @@ export class NetworkService {
         let serviceGroupId: string | null = null;
 
         if (parentService) {
-            const isProxyService = parentService.name === 'nginx' || parentService.name === 'nginx-web' || !!parentService.isReverseProxy;
+            const isProxyService = parentService.name === 'nginx' || parentService.name === 'nginx' || !!parentService.isReverseProxy;
             // If proxy, parent is the Nginx Group/Node (nginxId)
             // If service, parent is the Service Group/Node
             serviceGroupId = isProxyService ? nginxId : prefix(`service-${parentService.name}`);

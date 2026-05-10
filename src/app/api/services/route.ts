@@ -188,7 +188,7 @@ export async function GET(request: Request) {
       // Inject virtual service
       services.push({
           name: 'Reverse Proxy',
-          id: 'nginx-web',
+          id: 'nginx',
           active: false,
           status: 'not-installed',
           kubeFile: '',

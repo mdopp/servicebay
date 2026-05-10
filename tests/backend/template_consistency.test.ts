@@ -559,7 +559,7 @@ describe('OIDC client_id single source of truth', () => {
 describe('stackInstall has no unauthorized per-template branches', () => {
   // Per-template glue (credential surfacing, admin seeding, etc.) lives in
   // each template's own post-deploy.py. The engine only keeps branches that
-  // genuinely need core knowledge — currently nginx-web's bootstrapNpmAdmin,
+  // genuinely need core knowledge — currently nginx's bootstrapNpmAdmin,
   // because it returns a tri-state result that drives the wizard's
   // credential-prompt UI (a script can't cleanly express that).
   //
@@ -577,7 +577,7 @@ describe('stackInstall has no unauthorized per-template branches', () => {
       // wizard's NPM-credentials-prompt UI when the auto-bootstrap
       // fails. A post-deploy.py script can't cleanly express that, so
       // the NPM bootstrap stays in the engine.
-      'nginx-web',
+      'nginx',
     ]),
     'credentialsManifest.ts': new Set(),
     'groupVariables.ts': new Set(),
@@ -620,7 +620,7 @@ describe('Template tier classification', () => {
   // `infrastructure`. Drift (a 4th infra template appearing without
   // a design decision, or one of the three losing the annotation)
   // is a build failure.
-  const EXPECTED_INFRA = new Set(['adguard', 'auth', 'nginx-web']); // post-rename: 'nginx'
+  const EXPECTED_INFRA = new Set(['adguard', 'auth', 'nginx']);
 
   it('exactly the platform templates are tier=infrastructure', async () => {
     const { parseTemplateTier } = await import('../../src/lib/templateTier');

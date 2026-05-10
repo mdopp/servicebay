@@ -1044,7 +1044,7 @@ def fetch_services(containers=None):
             is_fuzzy_proxy = 'proxy' in clean_lower and 'mpris-proxy' not in clean_lower
 
             is_proxy = is_known_proxy or is_fuzzy_proxy
-            if clean_name == 'nginx' or clean_name == 'nginx-web': is_proxy = True
+            if clean_name == 'nginx' or clean_name == 'nginx': is_proxy = True
 
             # Exclude installer/oneshot helper services (e.g. install-nginx)
             if clean_lower.startswith('install-'):
@@ -1058,7 +1058,7 @@ def fetch_services(containers=None):
             source_ext = service_sources.get(name)
             is_managed = (source_ext == '.kube')
             
-            # Handle Nginx Alias for Managed detection (nginx-web -> nginx.kube)
+            # Handle Nginx Alias for Managed detection (nginx -> nginx.kube)
             if not is_managed and is_proxy:
                  if 'nginx.service' in service_sources and service_sources['nginx.service'] == '.kube':
                       is_managed = True
@@ -1506,7 +1506,7 @@ def fetch_proxy_routes():
 
     # Try Candidates
     if not container_name:
-        candidates = ['nginx-web', 'nginx', 'nginx-reverse-proxy', 'proxy']
+        candidates = ['nginx', 'nginx', 'nginx-reverse-proxy', 'proxy']
         for c in candidates:
             cmd = ['podman', 'ps', '--filter', f'name={c}', '--format', '{{.Names}}']
             output = run_command(cmd)
