@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink, Sparkles, Home } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import PluginHelp from './PluginHelp';
 import pkg from '../../package.json';
@@ -120,6 +120,25 @@ export default function Sidebar() {
                     )}
                 </a>
             )}
+            {/* "View as user" — preview the family-facing /portal that
+                lists every running service with a friendly card and
+                user-guide. Opens in a new tab so the admin's session
+                stays put. */}
+            <a
+                href="/portal"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+                title={isCollapsed ? 'View as user' : ''}
+            >
+                <Home size={20} className="shrink-0 text-gray-500 dark:text-gray-500" />
+                {!isCollapsed && (
+                    <span className="font-medium whitespace-nowrap overflow-hidden flex items-center gap-1.5">
+                        View as user
+                        <ExternalLink size={12} className="text-gray-400" />
+                    </span>
+                )}
+            </a>
         </div>
 
         <div className="p-2 space-y-1">
