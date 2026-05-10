@@ -4,16 +4,30 @@ import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { getConfig } from '@/lib/config';
 import { getActiveDomain } from '@/lib/mode';
 
-const PUBLIC_API_PREFIXES = [
-  '/api/auth/login',
-  '/api/auth/oidc',
-  '/api/auth/lldap-url',
+/**
+ * Routes that bypass the session-cookie check. Each rule can pin
+ * which HTTP methods are public — without `methods`, every method
+ * is allowed.
+ *
+ * `/api/system/access-requests` POST is public so the anonymous
+ * family-portal visitor can submit a request without a session;
+ * GET/PATCH/DELETE on the same path stay admin-only (#242 follow-up).
+ */
+const PUBLIC_API_RULES: Array<{ prefix: string; methods?: ReadonlySet<string> }> = [
+  { prefix: '/api/auth/login' },
+  { prefix: '/api/auth/oidc' },
+  { prefix: '/api/auth/lldap-url' },
+  { prefix: '/api/system/access-requests', methods: new Set(['POST']) },
 ];
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-function isPublicApi(pathname: string): boolean {
-  return PUBLIC_API_PREFIXES.some(p => pathname === p || pathname.startsWith(p + '/'));
+function isPublicApi(pathname: string, method: string): boolean {
+  return PUBLIC_API_RULES.some(rule => {
+    const matches = pathname === rule.prefix || pathname.startsWith(rule.prefix + '/');
+    if (!matches) return false;
+    return !rule.methods || rule.methods.has(method);
+  });
 }
 
 // Server-to-server calls from ServiceBay's own post-deploy scripts on
@@ -112,7 +126,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: 'Forbidden: cross-site request' }, { status: 403 });
   }
 
-  if (isPublicApi(pathname)) return NextResponse.next();
+  if (isPublicApi(pathname, request.method)) return NextResponse.next();
 
   const token = request.cookies.get('session')?.value;
   if (!token) {

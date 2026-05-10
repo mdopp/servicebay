@@ -219,6 +219,13 @@ export interface AppConfig {
    * existing `SENSITIVE_KEYS` regex on the password field.
    */
   installManifest?: InstallManifest;
+  /**
+   * Anonymous "request access" submissions from the family portal
+   * (#242). Public POST endpoint appends here; admin Settings page
+   * reads + resolves. Capped at 50 pending so spam can't fill the
+   * disk.
+   */
+  accessRequests?: AccessRequest[];
 }
 
 export interface ServicePostDeployRecord {
@@ -253,6 +260,28 @@ export interface InstallManifest {
   /** ISO timestamp of when this manifest was persisted. */
   savedAt: string;
   credentials: InstalledCredential[];
+}
+
+/**
+ * "Request access" submission from the family portal (#242 follow-up).
+ * Anonymous family-LAN visitors fill a form with their name + email
+ * and the admin sees pending requests in Settings, then creates an
+ * LLDAP user. Persisted in `config.accessRequests` so they survive
+ * reboots; auto-capped at 50 pending so a hostile LAN visitor can't
+ * fill the disk.
+ */
+export interface AccessRequest {
+  /** Random uuid; the route handler generates it. */
+  id: string;
+  /** ISO timestamp of when the form was submitted. */
+  requestedAt: string;
+  name: string;
+  email: string;
+  /** Optional "why" note from the requester. */
+  message?: string;
+  status: 'pending' | 'resolved';
+  /** ISO timestamp of when the admin marked it resolved. */
+  resolvedAt?: string;
 }
 
 export function getOidcCallbackUrl(config: { reverseProxy?: { publicDomain?: string } }): string {
