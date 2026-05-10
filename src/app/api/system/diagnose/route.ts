@@ -288,9 +288,20 @@ export async function POST(request: Request) {
       return { line, snippet };
     }),
   );
-  const offenderDetail = offenderDiagnostics.map(o =>
-    o.snippet ? `${o.line}\n      ↳ ${o.snippet.split('\n').join('\n        ')}` : o.line,
-  ).join('\n');
+  // Build per-container items so the UI can attach Restart / Show
+  // recent logs actions to each looping container individually
+  // (B15 / #251 items[] schema).
+  const crashLoopItems: ProbeItem[] = offenderDiagnostics.map((o): ProbeItem => {
+    const name = (o.line.split('|')[0] ?? '').trim();
+    const podmanStatus = (o.line.split('|')[1] ?? '').trim();
+    return {
+      id: name,
+      label: name,
+      detail: o.snippet ? `${podmanStatus} — ${o.snippet.split('\n').slice(-2).join(' | ')}` : podmanStatus,
+      status: 'warn',
+      actionIds: ['restart_pod', 'show_recent_logs'],
+    };
+  }).filter(item => item.id);
 
   probes.push({
     id: 'crash_loop',
@@ -304,10 +315,11 @@ export async function POST(request: Request) {
             ? (treatYoungAsLoop
                 ? `${psLines.length} container(s), all stable.`
                 : `${psLines.length} container(s) — system booted ${systemUptimeSec}s ago, young containers expected. Re-run after ~2 min for a real restart-loop check.`)
-            : `${looping.length} of ${psLines.length} container(s) may be in a restart loop:\n${offenderDetail}`),
+            : `${looping.length} of ${psLines.length} container(s) may be in a restart loop.`),
     hint: looping.length > 0
-      ? 'The lines under `↳` are the last 3 stderr lines from `podman logs`. Common causes: bind-mount permission mismatch (rootless UID), missing config file, port conflicts, image entrypoint argv errors.'
+      ? 'Each row shows the last log lines from the container. Click "Restart" after fixing the root cause (bind-mount perms, missing config, port conflict). "Show recent logs" pulls the last 5 lines for a quick triage without SSH.'
       : undefined,
+    _items: crashLoopItems.length > 0 ? crashLoopItems : undefined,
   });
 
   // 10) Health-check coverage. After a few minutes since boot every enabled
