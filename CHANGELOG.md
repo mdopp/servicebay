@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.10.0...servicebay-v3.11.0) (2026-05-10)
+
+
+### Features
+
+* **adguard:** wildcard DNS rewrite client (D19-PR4) ([#274](https://github.com/mdopp/servicebay/issues/274)) ([f00e065](https://github.com/mdopp/servicebay/commit/f00e065a75896201d612898a9b0daa4215e15ac0))
+* **diagnose:** lan_ip_changed_since_install probe (D19-PR9) ([#277](https://github.com/mdopp/servicebay/issues/277)) ([c23aa17](https://github.com/mdopp/servicebay/commit/c23aa17e5afb2fc37b3d0d52101a4e76d37c3077))
+* **diagnose:** verify-from-this-device action endpoint (D19-PR7) ([#276](https://github.com/mdopp/servicebay/issues/276)) ([c7855b1](https://github.com/mdopp/servicebay/commit/c7855b100ef2a2d4148f4f002ec99102563f0ecb))
+* **mode:** two-mode model + public-domain Settings page (D19-PR3) ([#271](https://github.com/mdopp/servicebay/issues/271)) ([804e9c8](https://github.com/mdopp/servicebay/commit/804e9c87e0e20d8147fc7ebc1935f956dc0ad30f))
+
 ## [3.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.9.3...servicebay-v3.10.0) (2026-05-10)
 
 
