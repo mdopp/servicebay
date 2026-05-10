@@ -28,7 +28,7 @@ import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { buildCredentialsManifest, buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
 import Mustache from 'mustache';
 
-import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive } from 'lucide-react';
+import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
@@ -203,13 +203,31 @@ export default function OnboardingWizard() {
   const [stackNodes, setStackNodes] = useState<{ Name: string; URI: string }[]>([]);
   const [stackSelectedNode, setStackSelectedNode] = useState('');
   const [stacksLoading, setStacksLoading] = useState(false);
-  const [stackDomain, setStackDomain] = useState('');
-  // Operator can opt out of providing a public domain. When true, services
-  // are deployed in LAN-only mode (no SSL, accessible only by IP+port). The
-  // wizard's "Continue" button is gated until either a domain is set or
-  // this flag is checked, so the operator can't accidentally finish without
-  // making a deliberate choice.
-  const [stackNoDomain, setStackNoDomain] = useState(false);
+  // Two-mode classification per #249 / #262. The wizard's domain step
+  // surfaces a 2-way picker:
+  //   🌍 'public' (default, recommended): user has a real domain →
+  //      services land on <sub>.publicDomain with Let's Encrypt + external.
+  //   🏡 'lan': no public domain → services land on <sub>.home.arpa via
+  //      AdGuard rewrites; HTTP-only on the LAN. Switchable later in
+  //      Settings → Reverse Proxy.
+  // `publicDomain` only matters when `installMode === 'public'`.
+  // `stackNoDomain` and `stackDomain` (derived below for back-compat
+  // with the rest of the wizard) reflect the new state.
+  const [installMode, setInstallMode] = useState<'public' | 'lan'>('public');
+  const [publicDomain, setPublicDomain] = useState('');
+  /** True when the operator picked the LAN-only path. Derived from
+   *  `installMode` so the rest of the wizard's existing references
+   *  keep working without site-wide renames. */
+  const stackNoDomain = installMode === 'lan';
+  /** Effective public-domain value to fan out to deploy templates +
+   *  PUBLIC_DOMAIN var injection. Empty when LAN-only. Setter mutates
+   *  `publicDomain` (which only matters in public-mode); legacy callers
+   *  that previously did `setStackDomain('foo')` still work. */
+  const stackDomain = installMode === 'public' ? publicDomain : '';
+  const setStackDomain = (val: string) => {
+    setPublicDomain(val);
+    if (val) setInstallMode('public');
+  };
   const [stackDeviceOptions, setStackDeviceOptions] = useState<Record<string, string[]>>({});
   const [stackLoadingDevices, setStackLoadingDevices] = useState(false);
 
@@ -1692,30 +1710,55 @@ export default function OnboardingWizard() {
                             We&apos;ll install the recommended stack with sensible defaults. Adjust the two questions below or click <em>Edit details</em> for the full wizard.
                         </p>
 
-                        {/* Domain — required, inline */}
-                        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-2">
+                        {/* Domain — 2-mode picker per #249. Public is the
+                            default; LAN is the explicit fallback. */}
+                        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-3">
                             <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200">
-                                <Globe className="w-4 h-4" /> Public domain
+                                <Globe className="w-4 h-4" /> How will you reach this server?
                             </label>
-                            <input
-                                type="text"
-                                value={stackDomain}
-                                onChange={(e) => { setStackDomain(e.target.value); if (e.target.value) setStackNoDomain(false); }}
-                                disabled={stackNoDomain}
-                                className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
-                                placeholder="example.com"
-                            />
-                            <p className="text-xs text-blue-600 dark:text-blue-400">
-                                Services will be reachable at <span className="font-mono">photos.{stackDomain || 'yourdomain.com'}</span>, <span className="font-mono">vault.{stackDomain || 'yourdomain.com'}</span>, … with automatic Let&apos;s Encrypt SSL.
-                            </p>
-                            <label className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300 cursor-pointer">
+                            {/* Public option */}
+                            <label className={`flex items-start gap-3 p-2 rounded cursor-pointer transition-colors ${installMode === 'public' ? 'bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700' : 'hover:bg-blue-100/50 dark:hover:bg-blue-900/30'}`}>
                                 <input
-                                    type="checkbox"
-                                    checked={stackNoDomain}
-                                    onChange={e => { setStackNoDomain(e.target.checked); if (e.target.checked) setStackDomain(''); }}
-                                    className="rounded"
+                                    type="radio"
+                                    name="install-mode-confirm"
+                                    checked={installMode === 'public'}
+                                    onChange={() => setInstallMode('public')}
+                                    className="mt-1"
                                 />
-                                I don&apos;t have a public domain — install LAN-only.
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+                                        <Globe className="w-4 h-4" /> Yes, I have a public domain <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">recommended</span>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        value={publicDomain}
+                                        onChange={e => { setPublicDomain(e.target.value); if (e.target.value) setInstallMode('public'); }}
+                                        onFocus={() => setInstallMode('public')}
+                                        className="w-full mt-1.5 px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                        placeholder="example.com"
+                                    />
+                                    <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
+                                        Enables HTTPS via Let&apos;s Encrypt + external access. Services live at <span className="font-mono">vault.{publicDomain || 'example.com'}</span>, <span className="font-mono">photos.{publicDomain || 'example.com'}</span>, …
+                                    </p>
+                                </div>
+                            </label>
+                            {/* LAN option */}
+                            <label className={`flex items-start gap-3 p-2 rounded cursor-pointer transition-colors ${installMode === 'lan' ? 'bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700' : 'hover:bg-blue-100/50 dark:hover:bg-blue-900/30'}`}>
+                                <input
+                                    type="radio"
+                                    name="install-mode-confirm"
+                                    checked={installMode === 'lan'}
+                                    onChange={() => setInstallMode('lan')}
+                                    className="mt-1"
+                                />
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+                                        <Home className="w-4 h-4" /> No, internal only for now
+                                    </div>
+                                    <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
+                                        Services live at <span className="font-mono">vault.home.arpa</span> via AdGuard DNS rewrites. HTTP-only on the LAN; no external access. You can switch to a public domain later in Settings.
+                                    </p>
+                                </div>
                             </label>
                         </div>
 
@@ -1820,30 +1863,55 @@ export default function OnboardingWizard() {
                         Before installing services, decide how this machine should be reachable, whether to wipe any existing service data, and confirm the storage we plan to use.
                     </p>
 
-                    {/* Domain */}
-                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-2">
+                    {/* Domain — 2-mode picker per #249. Public is the
+                        default; LAN is the explicit fallback. */}
+                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-3">
                         <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200">
-                            <Globe className="w-4 h-4" /> Public Domain
+                            <Globe className="w-4 h-4" /> How will you reach this server?
                         </label>
-                        <p className="text-xs text-blue-600 dark:text-blue-400">
-                            Your services will be reachable as subdomains (photos.{stackDomain || 'yourdomain.com'}, vault.{stackDomain || 'yourdomain.com'}, …) with automatic Let&apos;s Encrypt SSL.
-                        </p>
-                        <input
-                            type="text"
-                            value={stackDomain}
-                            onChange={(e) => { setStackDomain(e.target.value); if (e.target.value) setStackNoDomain(false); }}
-                            disabled={stackNoDomain}
-                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
-                            placeholder="example.com"
-                        />
-                        <label className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300 cursor-pointer">
+                        {/* Public option */}
+                        <label className={`flex items-start gap-3 p-2 rounded cursor-pointer transition-colors ${installMode === 'public' ? 'bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700' : 'hover:bg-blue-100/50 dark:hover:bg-blue-900/30'}`}>
                             <input
-                                type="checkbox"
-                                checked={stackNoDomain}
-                                onChange={e => { setStackNoDomain(e.target.checked); if (e.target.checked) setStackDomain(''); }}
-                                className="rounded"
+                                type="radio"
+                                name="install-mode-machine"
+                                checked={installMode === 'public'}
+                                onChange={() => setInstallMode('public')}
+                                className="mt-1"
                             />
-                            I don&apos;t have a public domain — install services in LAN-only mode (no SSL, no subdomains; access by IP:port).
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+                                    <Globe className="w-4 h-4" /> Yes, I have a public domain <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">recommended</span>
+                                </div>
+                                <input
+                                    type="text"
+                                    value={publicDomain}
+                                    onChange={e => { setPublicDomain(e.target.value); if (e.target.value) setInstallMode('public'); }}
+                                    onFocus={() => setInstallMode('public')}
+                                    className="w-full mt-1.5 px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                    placeholder="example.com"
+                                />
+                                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
+                                    Enables HTTPS via Let&apos;s Encrypt + external access. Services live at <span className="font-mono">vault.{publicDomain || 'example.com'}</span>, <span className="font-mono">photos.{publicDomain || 'example.com'}</span>, …
+                                </p>
+                            </div>
+                        </label>
+                        {/* LAN option */}
+                        <label className={`flex items-start gap-3 p-2 rounded cursor-pointer transition-colors ${installMode === 'lan' ? 'bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700' : 'hover:bg-blue-100/50 dark:hover:bg-blue-900/30'}`}>
+                            <input
+                                type="radio"
+                                name="install-mode-machine"
+                                checked={installMode === 'lan'}
+                                onChange={() => setInstallMode('lan')}
+                                className="mt-1"
+                            />
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+                                    <Home className="w-4 h-4" /> No, internal only for now
+                                </div>
+                                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
+                                    Services live at <span className="font-mono">vault.home.arpa</span> via AdGuard DNS rewrites. HTTP-only on the LAN; no external access. You can switch to a public domain later in Settings → Reverse Proxy.
+                                </p>
+                            </div>
                         </label>
                     </div>
 

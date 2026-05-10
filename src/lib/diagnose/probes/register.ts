@@ -13,5 +13,6 @@
  */
 
 import './npmDataStale';
+import './routerDnsNotPointing';
 
 export {};

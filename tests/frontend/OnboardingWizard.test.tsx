@@ -73,21 +73,25 @@ vi.mock('mustache', () => ({
   },
 }));
 
-// Tick the "I don't have a public domain" checkbox so the wizard's
+// Click the "No, internal only for now" radio so the wizard's
 // Continue gate releases. The machine step blocks Continue until the
-// operator either fills in a domain or actively opts out.
+// operator either fills in a domain or picks the internal-only option
+// (D19-PR5 replaced the legacy checkbox with a 2-mode radio picker).
 const optOutOfDomain = () => {
-  const cb = screen.getByLabelText(/I don't have a public domain/i) as HTMLInputElement;
-  if (!cb.checked) fireEvent.click(cb);
+  const radios = screen.getAllByRole('radio', { name: /No, internal only/i }) as HTMLInputElement[];
+  // Click the first visible LAN-mode radio. Wizard renders it on both
+  // the express-confirm and machine steps, so getAllByRole picks them
+  // up; clicking either flips the shared state.
+  if (!radios[0].checked) fireEvent.click(radios[0]);
 };
 
 // stacksOnlyMode now lands on the express 'install-confirm' screen.
 // The existing stack-picker tests want the verbose wizard, so this
-// helper opts out of the public domain (state is shared with the
-// machine step), clicks Edit details to drop into the wizard, then
-// clicks Continue on the machine step — ending up on the stack picker.
+// helper picks internal-only (state is shared with the machine step),
+// clicks Edit details to drop into the wizard, then clicks Continue on
+// the machine step — ending up on the stack picker.
 const advancePastMachineStep = async () => {
-  await waitFor(() => screen.getByLabelText(/I don't have a public domain/i));
+  await waitFor(() => screen.getAllByRole('radio', { name: /No, internal only/i }));
   optOutOfDomain();
   fireEvent.click(screen.getByRole('button', { name: /Edit details/i }));
   await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
@@ -457,10 +461,12 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             // Domain prompt is now on the machine step (the first step
-            // stacksOnlyMode lands on), not the services sub-step.
+            // stacksOnlyMode lands on), not the services sub-step. The
+            // 2-mode picker (D19-PR5) renders both the public-domain
+            // text input + the internal-only radio.
             await waitFor(() => {
-                expect(screen.getByPlaceholderText('example.com')).toBeDefined();
-                expect(screen.getByLabelText(/I don't have a public domain/i)).toBeDefined();
+                expect(screen.getAllByPlaceholderText('example.com').length).toBeGreaterThan(0);
+                expect(screen.getAllByRole('radio', { name: /No, internal only/i }).length).toBeGreaterThan(0);
             });
         });
 

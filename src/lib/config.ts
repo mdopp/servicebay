@@ -82,6 +82,12 @@ export interface ReverseProxyConfig {
    * `info` vs `warn` (more than 1 change in 30 days = unstable).
    */
   lanIpHistory?: Array<{ ip: string; detectedAt: string }>;
+  /**
+   * ISO timestamp set when the operator clicks "I'll handle it
+   * manually" on the `router_dns_not_pointing` probe. Re-checks
+   * resume 30 days after this timestamp. See D19-PR6 / #263.
+   */
+  routerDnsDismissedAt?: string;
   /** Proxy hosts created during stack deployment */
   hosts?: ProxyHostEntry[];
   /**
