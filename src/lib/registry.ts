@@ -463,3 +463,36 @@ export async function getTemplatePostDeployScript(name: string, source?: string)
 
   return tryRead(path.join(TEMPLATES_PATH, name));
 }
+
+/**
+ * Read a template's `user-guide.md` for the user-facing portal (#242).
+ * The file is optional — templates without one are skipped on /portal.
+ * Same registry-fallback semantics as `getTemplatePostDeployScript`:
+ * source pinned → only that registry; no source → walk every
+ * configured registry then fall through to the bundled templates.
+ *
+ * Returns the raw markdown content (frontmatter intact) or null when
+ * no guide is found.
+ */
+export async function getTemplateUserGuide(name: string, source?: string): Promise<string | null> {
+  const tryRead = async (dir: string): Promise<string | null> => {
+    try {
+      return await fs.readFile(path.join(dir, 'user-guide.md'), 'utf-8');
+    } catch { return null; }
+  };
+
+  if (source && source !== 'Built-in') {
+    return tryRead(path.join(REGISTRIES_DIR, source, 'templates', name));
+  }
+
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      const found = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      if (found !== null) return found;
+    }
+  }
+
+  return tryRead(path.join(TEMPLATES_PATH, name));
+}
