@@ -6,10 +6,14 @@
  * `delete_route` action (#251) so each row in the items list gets a
  * "Delete route" button.
  *
- * The action handler authenticates against NPM with stored credentials
- * (or the wizard defaults) and DELETEs the proxy host by id. The id
- * is threaded through as `itemId` per the F1 per-item-actions
- * extension.
+ * itemId is the host's primary domain (server_name from the digital
+ * twin). The action handler queries NPM's GET /api/nginx/proxy-hosts
+ * to map the domain back to NPM's numeric id, then DELETEs by id.
+ * Earlier versions tried to read the id straight from the digital
+ * twin (`server._id`), but the agent doesn't actually populate that
+ * field — twin proxy entries come from parsing nginx config files
+ * on disk, which don't carry NPM's primary key. Looking the id up
+ * at dispatch time keeps the action working end-to-end.
  */
 
 import { getConfig } from '@/lib/config';
@@ -69,6 +73,30 @@ async function getNpmToken(adminUrl: string): Promise<string | null> {
   return null;
 }
 
+/**
+ * Map a domain (server_name) to NPM's numeric proxy_host id by
+ * fetching the host list. Returns null when no host matches the
+ * domain, or the request fails.
+ */
+async function resolveProxyHostId(adminUrl: string, token: string, domain: string): Promise<number | null> {
+  try {
+    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts?expand=owner`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const hosts = await res.json() as Array<{ id?: number; domain_names?: string[] }>;
+    if (!Array.isArray(hosts)) return null;
+    for (const h of hosts) {
+      const names = h.domain_names ?? [];
+      if (names.includes(domain) && typeof h.id === 'number') return h.id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function deleteRoute({
   node,
   itemId,
@@ -77,7 +105,7 @@ async function deleteRoute({
   itemId?: string;
 }): Promise<ProbeActionResult> {
   if (!itemId) {
-    return { ok: false, message: 'No proxy-host id supplied — cannot delete.', refresh: false };
+    return { ok: false, message: 'No domain supplied — cannot delete.', refresh: false };
   }
   const adminUrl = await findNpmAdminUrl(node);
   if (!adminUrl) {
@@ -95,18 +123,26 @@ async function deleteRoute({
       refresh: false,
     };
   }
+  const id = await resolveProxyHostId(adminUrl, token, itemId);
+  if (id === null) {
+    return {
+      ok: false,
+      message: `Couldn't find an NPM proxy host for ${itemId} — it may have been deleted between the probe run and your click.`,
+      refresh: true,
+    };
+  }
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts/${encodeURIComponent(itemId)}`, {
+    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      logger.warn('diagnose:dangling_proxy', `DELETE ${itemId} returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:dangling_proxy', `DELETE id=${id} (${itemId}) returned HTTP ${res.status}: ${body.slice(0, 200)}`);
       return {
         ok: false,
-        message: `NPM returned HTTP ${res.status} when deleting the route.`,
+        message: `NPM returned HTTP ${res.status} when deleting ${itemId}.`,
         refresh: false,
       };
     }

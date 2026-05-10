@@ -430,17 +430,30 @@ export async function POST(request: Request) {
       const isProxySelfRef = ['127.0.0.1', 'localhost', '::1'].includes(targetHost ?? '');
       if (isProxySelfRef) continue;
       if (!knownPorts.has(targetPort)) {
-        const name = (server.server_name ?? []).join(', ') || '(unnamed)';
-        // The proxy host's NPM id is needed for the delete-route
-        // action to target the right host. If the twin sync didn't
-        // capture it, omit the action by using an empty actionIds[].
-        const id = typeof server._id === 'number' ? String(server._id) : '';
+        const names = server.server_name ?? [];
+        const primaryDomain = names[0];
+        const label = names.join(', ') || '(unnamed)';
+        if (!primaryDomain) {
+          // No server_name — nothing to dispatch against. Surface as a
+          // read-only row instead of skipping entirely.
+          danglingItems.push({
+            id: `unnamed-${targetHost}-${targetPort}`,
+            label,
+            detail: `→ ${targetHost}:${targetPort}`,
+            status: 'warn',
+            actionIds: [],
+          });
+          continue;
+        }
+        // The action handler maps domain → NPM proxy_host id at
+        // dispatch time (the digital twin doesn't track NPM's primary
+        // key — see danglingProxy.ts header comment).
         danglingItems.push({
-          id: id || `${name}-${targetPort}`,
-          label: name,
+          id: primaryDomain,
+          label,
           detail: `→ ${targetHost}:${targetPort}`,
           status: 'warn',
-          actionIds: id ? ['delete_route'] : [],
+          actionIds: ['delete_route'],
         });
       }
     }
