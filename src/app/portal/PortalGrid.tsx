@@ -1,15 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  BookOpen, Calendar, CalendarDays, Camera, ChevronDown, ChevronUp,
+  BookOpen, Calendar, CalendarDays, Camera,
   Download, ExternalLink, Files, Film, Folder, FolderOpen, Globe,
   Headphones, House, Image as ImageIcon, Images, KeyRound, Lightbulb,
   Lightbulb as LightbulbIcon, Loader2, Lock, Mail, MessageSquare,
   Music, Package, QrCode, Router, Shield, Smartphone, Video,
-  Sparkles,
+  Sparkles, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PortalCard } from '@/lib/portal/services';
@@ -61,18 +61,102 @@ const ASSET_LABELS: Record<SetupAssetKind, { label: string; icon: IconComponent 
   syncthing_qr: { label: 'Pair Syncthing device', icon: QrCode },
 };
 
+/** Coarse user-agent sniff for iOS devices — iPhone / iPad / iPod.
+ *  SSR snapshot is `false` (treat as non-iOS during the static paint)
+ *  so iOS-only assets briefly hide on hydration mismatch rather than
+ *  being shown then yanked. We deliberately *don't* try to detect
+ *  Android specifically — the rule is "iOS or not", with desktop
+ *  treated as not-iOS but still showing all assets (operator may be
+ *  evaluating from a laptop with the phone next to them). See #325.
+ *
+ *  useSyncExternalStore avoids a setState-in-effect that the
+ *  `react-hooks/set-state-in-effect` rule flags. The empty subscribe
+ *  is fine — UA doesn't change at runtime so we never need to notify. */
+const noopSubscribe = () => () => {};
+
+function useIsIOS(): boolean {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => /iPhone|iPad|iPod/.test(navigator.userAgent),
+    () => false,
+  );
+}
+
+/** Coarse "is this a phone/tablet" detector. Used together with
+ *  `isIOS` to decide whether a `desktop` user gets all assets shown
+ *  (yes — they may be evaluating before grabbing the phone) or only
+ *  the per-OS subset. */
+function useIsMobile(): boolean {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent),
+    () => false,
+  );
+}
+
+/** Decide whether to render an asset for the current device. The rule
+ *  set is intentionally minimal — the few assets we ship today break
+ *  cleanly along OS lines:
+ *    - ios_calendar_profile: only useful on iOS (the .mobileconfig is
+ *      iOS-only). Hide on Android phones; keep visible on desktop so
+ *      the operator can demo it.
+ *    - audiobookshelf_deeplink, syncthing_qr: cross-platform (the
+ *      iOS Syncthing client is shaky but exists; abs:// works on
+ *      both). Always visible.
+ */
+function shouldShowAsset(kind: SetupAssetKind, isIOS: boolean, isMobile: boolean): boolean {
+  if (kind === 'ios_calendar_profile') {
+    if (isMobile && !isIOS) return false; // Android phone — hide
+    return true; // iOS phone or desktop
+  }
+  return true;
+}
+
+/** Per-asset label that adapts to the rendering device. Helps the
+ *  Android-primary operator see Android-framed CTAs while still
+ *  giving iOS visitors the iPhone-flavored copy. See #325. */
+function assetLabel(kind: SetupAssetKind, override: string | undefined, isIOS: boolean): string {
+  if (override) return override;
+  const base = ASSET_LABELS[kind].label;
+  if (kind === 'syncthing_qr' && !isIOS) {
+    return 'Pair with Android Syncthing';
+  }
+  return base;
+}
+
 /**
  * Renders the portal card grid + per-card collapsible Getting-started
  * section. Server passes the per-card payload pre-built (incl. parsed
  * markdown body) — this component handles only the UI state.
  */
 export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const isIOS = useIsIOS();
+  const isMobile = useIsMobile();
+
+  const activeCard = cards.find(c => c.id === activeCardId) ?? null;
+
+  // Esc + body-scroll lock while modal is open. Pure UX — the markdown
+  // body inside is read-only, so no focus-trap escape hatches needed
+  // beyond the explicit Close button. See #324.
+  useEffect(() => {
+    if (!activeCard) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setActiveCardId(null);
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [activeCard]);
 
   return (
+    <>
     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
       {cards.map(card => {
-        const isExpanded = !!expanded[card.id];
         return (
           <div
             key={card.id}
@@ -112,9 +196,10 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
               {card.setupAssets.length > 0 && (
                 <div className="space-y-1.5">
                   {card.setupAssets.map(asset => {
+                    if (!shouldShowAsset(asset.kind, isIOS, isMobile)) return null;
                     const meta = ASSET_LABELS[asset.kind];
                     const Icon = meta.icon;
-                    const label = asset.label ?? meta.label;
+                    const label = assetLabel(asset.kind, asset.label, isIOS);
                     if (asset.kind === 'ios_calendar_profile') {
                       return (
                         <div key={asset.kind}>
@@ -185,24 +270,77 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
               {card.body.trim().length > 0 && (
                 <div>
                   <button
-                    onClick={() => setExpanded(s => ({ ...s, [card.id]: !s[card.id] }))}
+                    onClick={() => setActiveCardId(card.id)}
                     className="flex items-center gap-1 text-sm text-blue-700 dark:text-blue-300 hover:underline mt-2"
-                    aria-expanded={isExpanded}
+                    aria-haspopup="dialog"
                   >
-                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    {isExpanded ? 'Hide getting-started' : 'How do I use this?'}
+                    How do I use this?
                   </button>
-                  {isExpanded && (
-                    <div className="prose prose-sm dark:prose-invert mt-3 max-w-none text-gray-700 dark:text-gray-300">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{card.body}</ReactMarkdown>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
           </div>
         );
       })}
+    </div>
+
+    {activeCard && (
+      <CardHelpModal card={activeCard} onClose={() => setActiveCardId(null)} />
+    )}
+    </>
+  );
+}
+
+/**
+ * Centered modal that renders the markdown getting-started body at a
+ * comfortable reading width. Replaces the inline-expand which was
+ * unreadable on a 3-column desktop grid (#324).
+ *
+ * Dismisses on outside-click, Esc (handled by parent), and the close
+ * button. We keep the focus-management minimal — the body is read-only
+ * + has a single close action, so a full focus-trap library wasn't
+ * worth pulling in.
+ */
+function CardHelpModal({ card, onClose }: { card: PortalCard; onClose: () => void }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={`help-${card.id}-title`}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 sm:p-8"
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+      >
+        <div className="flex items-start justify-between gap-4 p-5 border-b border-gray-100 dark:border-gray-800">
+          <div className="flex items-center gap-3 min-w-0">
+            <CardIcon card={card} compact />
+            <div className="min-w-0">
+              <h2 id={`help-${card.id}-title`} className="text-lg font-bold text-gray-900 dark:text-white truncate">
+                {card.label}
+              </h2>
+              {card.tagline && (
+                <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{card.tagline}</p>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="shrink-0 p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <div className="overflow-y-auto px-6 py-5">
+          <div className="prose prose-sm dark:prose-invert max-w-none text-gray-700 dark:text-gray-300">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{card.body}</ReactMarkdown>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -376,21 +514,28 @@ function SyncthingQrButton({
  * (Sidebar, header logos) so the family portal feels like the
  * same product, not a separate emoji-themed surface.
  */
-function CardIcon({ card }: { card: PortalCard }) {
+function CardIcon({ card, compact = false }: { card: PortalCard; compact?: boolean }) {
+  // The modal header reuses CardIcon at a smaller size — `compact`
+  // shrinks the chip + drops the trailing margin so the icon sits
+  // flush with the title block. The card grid keeps the original size.
+  const wrapper = compact
+    ? 'inline-flex items-center justify-center w-10 h-10 rounded-xl'
+    : 'mb-3 inline-flex items-center justify-center w-14 h-14 rounded-2xl';
+  const iconSize = compact ? 22 : 28;
   if (card.lucideIcon) {
     const Icon = PORTAL_ICON_MAP[card.lucideIcon];
     return (
-      <div className="mb-3 inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-        <Icon size={28} strokeWidth={1.75} />
+      <div className={`${wrapper} bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400`}>
+        <Icon size={iconSize} strokeWidth={1.75} />
       </div>
     );
   }
   if (card.icon) {
-    return <div className="text-5xl mb-3" aria-hidden>{card.icon}</div>;
+    return <div className={compact ? 'text-3xl' : 'text-5xl mb-3'} aria-hidden>{card.icon}</div>;
   }
   return (
-    <div className="mb-3 inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
-      <Package size={28} strokeWidth={1.75} />
+    <div className={`${wrapper} bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400`}>
+      <Package size={iconSize} strokeWidth={1.75} />
     </div>
   );
 }
