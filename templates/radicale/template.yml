@@ -6,6 +6,7 @@ metadata:
     app: radicale
   annotations:
     servicebay.label: "Radicale (CalDAV + CardDAV)"
+    servicebay.schema-version: "1"
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
 spec:
   hostNetwork: true

@@ -6,6 +6,7 @@ metadata:
     app: immich
   annotations:
     servicebay.label: "Immich (Photos)"
+    servicebay.schema-version: "1"
 spec:
   containers:
     - name: immich-server
