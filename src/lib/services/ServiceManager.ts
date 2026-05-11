@@ -1146,6 +1146,82 @@ export class ServiceManager {
 
                 for (const container of containers) {
                     const image = container.image || '';
+
+                    // Home Assistant self-healing trusted_proxies hook.
+                    // HA's `http.forwarded` middleware rejects every
+                    // reverse-proxied request with HTTP 400 unless
+                    // configuration.yaml contains an `http:` block with
+                    // `use_x_forwarded_for: true` and a trusted_proxies
+                    // list including NPM's source IP.
+                    //
+                    // We seed this block at install time via the template's
+                    // configuration.yaml.mustache (template v3+), but a
+                    // backup-restore via HA's UI overwrites
+                    // /config/configuration.yaml with the snapshot version
+                    // — which usually has no `http:` block. The result:
+                    // home.<domain> goes back to 400 after every restore.
+                    //
+                    // Run on every deploy: if configuration.yaml is missing
+                    // an `http:` block, append our default. Idempotent —
+                    // skips when the block already exists. Self-heals after
+                    // restores at the next service redeploy.
+                    if (image.includes('home-assistant') && container.name !== 'matter-server' && container.name !== 'zwave-js') {
+                        const configMount = (container.volumeMounts || []).find(
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            (m: any) => m.mountPath === '/config'
+                        );
+                        const configHostPath = configMount ? volumePaths.get(configMount.name) : null;
+                        if (!configHostPath) continue;
+                        const cfgFile = `${configHostPath}/configuration.yaml`;
+
+                        const agent = await agentManager.ensureAgent(nodeName);
+
+                        // Only act when the file already exists. On a
+                        // first-install the template's mustache config is
+                        // about to be written by the deploy flow — let that
+                        // path own initial seeding. On every subsequent
+                        // deploy (including post-restore), the file is
+                        // there and we get to fix it.
+                        const exists = await agent.sendCommand('exec', { command: `test -f ${cfgFile} && echo yes` });
+                        if (exists.stdout?.trim() !== 'yes') continue;
+
+                        // grep -E for an unindented `http:` key. Multiline
+                        // anchors would be cleaner but the shell context
+                        // here is simpler.
+                        const probe = await agent.sendCommand('exec', { command: `grep -E '^http:' ${cfgFile} || echo MISSING` });
+                        if (!probe.stdout?.includes('MISSING')) {
+                            logger.debug('ServiceManager', `HA configuration.yaml already has http: block, leaving it alone`);
+                            continue;
+                        }
+
+                        logger.info('ServiceManager', `HA configuration.yaml has no http: block — appending trusted_proxies (likely after a backup-restore)`);
+                        const trustedProxiesBlock = [
+                            '',
+                            '# Re-added by ServiceBay: NPM forwards X-Forwarded-For; HA needs',
+                            '# trusted_proxies to accept proxied requests. Safe to edit, but',
+                            '# ServiceBay will re-append this block on every deploy when the',
+                            '# `http:` key is missing (e.g. after a HA backup-restore).',
+                            'http:',
+                            '  use_x_forwarded_for: true',
+                            '  trusted_proxies:',
+                            '    - 127.0.0.1',
+                            '    - 192.168.0.0/16',
+                            '    - 10.0.0.0/8',
+                            '    - 172.16.0.0/12',
+                        ].join('\n');
+                        // Heredoc keeps the YAML indentation intact and
+                        // avoids shell-quote escaping. >> appends, so any
+                        // restored content above stays untouched.
+                        const appendCmd = `cat >> ${cfgFile} <<'EOF'\n${trustedProxiesBlock}\nEOF`;
+                        const res = await agent.sendCommand('exec', { command: appendCmd, timeout: 10 });
+                        if (res.code === 0) {
+                            logger.info('ServiceManager', 'HA trusted_proxies block appended');
+                        } else {
+                            logger.warn('ServiceManager', `HA trusted_proxies append failed: ${res.stderr || res.stdout}`);
+                        }
+                        continue;
+                    }
+
                     if (!image.includes('filebrowser')) continue;
 
                     // Find the database volume mount. file-share/template.yml
