@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.19.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.19.0...servicebay-v3.19.1) (2026-05-11)
+
+
+### Bug Fixes
+
+* install regressions — nginx hostPort + wizard Mustache sections ([#370](https://github.com/mdopp/servicebay/issues/370)) ([2b21815](https://github.com/mdopp/servicebay/commit/2b218157279c15c5b2efc0cf1b6403022361184f))
+
 ## [3.19.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.18.2...servicebay-v3.19.0) (2026-05-11)
 
 
