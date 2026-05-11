@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.16.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.16.1...servicebay-v3.16.2) (2026-05-11)
+
+
+### Bug Fixes
+
+* **file-share:** surface seed-attempt errors + bump per-call timeout ([#343](https://github.com/mdopp/servicebay/issues/343)) ([1385045](https://github.com/mdopp/servicebay/commit/1385045c45478962a18364e4e62e76cb555013c7))
+* **wizard:** unify chrome + self-heal stale persisted state ([#341](https://github.com/mdopp/servicebay/issues/341) phase 1) ([#342](https://github.com/mdopp/servicebay/issues/342)) ([d3b5edb](https://github.com/mdopp/servicebay/commit/d3b5edb01d219beea86a879c758240460ad9c43c))
+
 ## [3.16.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.16.0...servicebay-v3.16.1) (2026-05-10)
 
 
