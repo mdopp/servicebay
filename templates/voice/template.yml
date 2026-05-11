@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: voice
+  labels:
+    app: voice
+  annotations:
+    servicebay.label: "Voice (Wyoming: Whisper + Piper + openWakeWord)"
+    # No `servicebay.tier` — voice is optional plumbing, not platform
+    # infrastructure (DNS / proxy / SSO are tier=infrastructure and
+    # auto-included by the wizard; voice should be opt-in). The pod
+    # is hidden from the family portal anyway because it ships no
+    # user-guide.md (the portal-card builder only includes templates
+    # that declare one).
+    servicebay.ports: "10300/tcp,10200/tcp,10400/tcp"
+spec:
+  # hostNetwork so other pods (Home Assistant primarily) reach the
+  # Wyoming endpoints at localhost on the standard ports — keeping the
+  # existing HA voice-pipeline configuration working without changes
+  # after the split from #348.
+  hostNetwork: true
+  containers:
+  # 1. Faster Whisper — speech-to-text via Wyoming protocol
+  - name: faster-whisper
+    image: docker.io/rhasspy/wyoming-whisper:latest
+    args:
+    - --model
+    - "{{WHISPER_MODEL}}"
+    - --language
+    - "{{WHISPER_LANGUAGE}}"
+    - --data-dir
+    - /data
+    - --uri
+    - tcp://0.0.0.0:10300
+    volumeMounts:
+    - mountPath: /data
+      name: whisper-data
+
+  # 2. Piper — text-to-speech via Wyoming protocol
+  - name: piper
+    image: docker.io/rhasspy/wyoming-piper:latest
+    args:
+    - --voice
+    - "{{PIPER_VOICE}}"
+    - --data-dir
+    - /data
+    - --uri
+    - tcp://0.0.0.0:10200
+    volumeMounts:
+    - mountPath: /data
+      name: piper-data
+
+  # 3. openWakeWord — wake-word detection via Wyoming protocol
+  - name: openwakeword
+    image: docker.io/rhasspy/wyoming-openwakeword:latest
+    args:
+    - --uri
+    - tcp://0.0.0.0:10400
+
+  volumes:
+  - name: whisper-data
+    hostPath:
+      path: {{DATA_DIR}}/voice/whisper
+      type: DirectoryOrCreate
+  - name: piper-data
+    hostPath:
+      path: {{DATA_DIR}}/voice/piper
+      type: DirectoryOrCreate
