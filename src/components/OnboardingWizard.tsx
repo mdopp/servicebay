@@ -15,23 +15,17 @@ import {
     OnboardingStatus
 } from '@/app/actions/onboarding';
 import { generateLocalKey } from '@/app/actions/ssh';
-import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles, fetchTemplatePostDeployScript } from '@/app/actions';
-import { parseTemplateLabel } from '@/lib/templateLabel';
+import { fetchTemplates, fetchReadme } from '@/app/actions';
 import { isValidOperatorEmail, operatorEmailIssue } from '@/lib/operatorEmail';
 import { getNodes } from '@/app/actions/system';
-import { Template, VariableMeta } from '@/lib/registry';
+import { Template } from '@/lib/registry';
 import type { TemplateTier } from '@/lib/templateTier';
-import {
-  runPostInstall,
-  configureProxyRoutes as sharedConfigureProxyRoutes,
-} from '@/lib/stackInstall/postInstall';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
-import { buildCredentialsManifest, buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
-import Mustache from 'mustache';
+import { useStackInstall } from '@/lib/stackInstall/useStackInstall';
 
 import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home } from 'lucide-react';
 import StackVariableField from './StackVariableField';
-import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
+import { StackInstallProgress, StackInstallSummary } from './StackInstallFlow';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
@@ -92,17 +86,6 @@ async function fetchExistingServices(node?: string): Promise<Set<string>> {
     return new Set();
   }
 }
-
-interface Variable {
-  name: string;
-  value: string;
-  global?: boolean;
-  meta?: VariableMeta;
-}
-
-// `generateSecret` lives in src/lib/stackInstall/randomSecret.ts as
-// `generateRandomSecret` since #341 phase-2-step-1 — same helper that
-// InstallerModal and the shared <StackVariableField> use.
 
 const WIZARD_STATE_KEY = 'sb.onboarding.v1';
 
@@ -197,9 +180,10 @@ export default function OnboardingWizard() {
   const [templateTiers, setTemplateTiers] = useState<Map<string, TemplateTier>>(new Map());
   const [selectedStack, setSelectedStack] = useState<Template | null>(null);
   const [stackItems, setStackItems] = useState<StackItem[]>([]);
-  const [stackVariables, setStackVariables] = useState<Variable[]>([]);
-  const [stackInstallStep, setStackInstallStep] = useState<'select' | 'services' | 'configure' | 'installing' | 'done'>('select');
-  const [stackLogs, setStackLogs] = useState<string[]>([]);
+  /** Stage in the install sub-flow. 'select' and 'services' are wizard-
+   *  specific UIs (stack picker + per-service dependency resolution); the
+   *  shared engine takes over from 'configure' onwards via `installFlow`. */
+  const [wizardSubStep, setWizardSubStep] = useState<'select' | 'services' | 'flow'>('select');
   const [stackNodes, setStackNodes] = useState<{ Name: string; URI: string }[]>([]);
   const [stackSelectedNode, setStackSelectedNode] = useState('');
   const [stacksLoading, setStacksLoading] = useState(false);
@@ -261,12 +245,6 @@ export default function OnboardingWizard() {
   // Track whether we're in stacks-only mode (post-install first boot)
   const [stacksOnlyMode, setStacksOnlyMode] = useState(false);
 
-  // NPM credentials (shown when default auth fails during proxy setup).
-  // Empty defaults — the prompt pre-fills from stackVariables when it opens.
-  const [npmCredPrompt, setNpmCredPrompt] = useState(false);
-  const [npmEmail, setNpmEmail] = useState('');
-  const [npmPassword, setNpmPassword] = useState('');
-
   // Service-dependency map. Hard deps must be installed together; soft
   // deps just enable optional integrations (typically OIDC SSO). Keep
   // this in sync with what the templates assume — eventually we should
@@ -286,18 +264,6 @@ export default function OnboardingWizard() {
     'file-share':     { recommendedWith: ['auth'], reason: 'FileBrowser uses authelia forward-auth for family-facing access' },
   };
 
-  // Sentinel at the bottom of the install log. The single scrollbar lives on
-  // the modal body, so when new log lines append we scrollIntoView this
-  // anchor to bring the latest text under the user's eyes without their
-  // having to manually scroll the modal.
-  const logTailRef = useRef<HTMLDivElement | null>(null);
-
-  // Track which service is currently mid-deploy. The deploy loop sets
-  // this before the API call and clears after — the install-progress
-  // strip below reads this to show "installing" while the API is in
-  // flight, falling back to digital-twin live state for everything else.
-  const [installingNow, setInstallingNow] = useState<string | null>(null);
-
   // Live container/service state from the agent. The status strip
   // ABOVE the log panel uses this — NOT log-parsing — so a service
   // counts as "deployed" only when its container is actually Up, not
@@ -313,6 +279,63 @@ export default function OnboardingWizard() {
   // though services are actually coming up.
   const digitalTwinRef = useRef(digitalTwin);
   useEffect(() => { digitalTwinRef.current = digitalTwin; }, [digitalTwin]);
+
+  // Settle-wait — don't transition to 'done' until each newly-deployed
+  // service shows up as active in the digital twin. Previously inline in
+  // handleStackInstall; now passed to the shared engine via onBeforeDone
+  // so the wizard's "(N/M up)" log lines still appear before the Done
+  // credentials banner renders. Cap the wait at 3 minutes — long enough
+  // for cold-start image pulls on a normal connection — then transition
+  // either way and let the diagnose probe report what's genuinely stuck.
+  //
+  // Skip if there's no twin connection (tests, or a disconnected agent —
+  // in either case hanging the wizard for 3 min helps no one) or nothing
+  // was deployed.
+  const settleWait = useCallback(async (
+    deployed: { name: string }[],
+    appendLog: (msg: string) => void,
+  ) => {
+    if (!digitalTwinRef.current || deployed.length === 0) return;
+    const expected = deployed.map(i => i.name);
+    const SETTLE_TIMEOUT_MS = 3 * 60_000;
+    const SETTLE_POLL_MS = 5_000;
+    const startedAt = Date.now();
+    let lastReady = -1;
+    while (Date.now() - startedAt < SETTLE_TIMEOUT_MS) {
+      const node = stackSelectedNode || 'Local';
+      const twinNode = digitalTwinRef.current?.nodes?.[node];
+      const services = twinNode?.services ?? [];
+      const ready = expected.filter(name =>
+        services.some(s => (s.name === name || s.name === `${name}.service`) && s.active),
+      ).length;
+      if (ready !== lastReady) {
+        appendLog(`Waiting for services to become active... (${ready}/${expected.length} up)`);
+        lastReady = ready;
+      }
+      if (ready === expected.length) break;
+      await new Promise(r => setTimeout(r, SETTLE_POLL_MS));
+    }
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    if (lastReady === expected.length) {
+      appendLog(`✅ All ${expected.length} services active after ${elapsed}s.`);
+    } else {
+      appendLog(
+        `⚠️ ${lastReady}/${expected.length} services active after ${elapsed}s — slow image pulls or a real failure. Self-diagnose below will tell you which.`,
+      );
+    }
+  }, [stackSelectedNode]);
+
+  /**
+   * Shared install engine — owns the configure / installing / done state
+   * machine, variable resolution, streaming deploys, and post-install
+   * pipeline. The wizard provides the digital-twin settle-wait via
+   * onBeforeDone so the credentials banner renders only after the
+   * services actually came up. See `useStackInstall.ts` and #341.
+   */
+  const installFlow = useStackInstall({
+    templateSource: selectedStack?.source || 'Built-in',
+    onBeforeDone: settleWait,
+  });
 
   // Configure-step tab. Variables are categorised so the operator isn't
   // staring at a 50-line flat list — the "subdomains" tab shows the
@@ -333,9 +356,26 @@ export default function OnboardingWizard() {
   const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
   const [diagnoseRanOnce, setDiagnoseRanOnce] = useState(false);
 
-  // Clean install — wipe existing service data before deploying.
-  const [cleanInstall, setCleanInstall] = useState(false);
-  const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
+  // Clean install + log state live in the install-flow controller now —
+  // the local aliases below keep the JSX readable without touching every
+  // call site.
+  const cleanInstall = installFlow.cleanInstall;
+  const cleanInstallConfirm = installFlow.cleanInstallConfirm;
+  const setCleanInstall = installFlow.setCleanInstall;
+  const setCleanInstallConfirm = installFlow.setCleanInstallConfirm;
+  const stackVariables = installFlow.variables;
+  const stackLogs = installFlow.logs;
+  const installingNow = installFlow.installingNow;
+  /** Display-only union that lets the existing JSX guards
+   *  (`stackInstallStep === 'configure'` etc.) keep working without
+   *  rewriting every site. Drives off the wizard's sub-step plus the
+   *  controller's phase. */
+  const stackInstallStep: 'select' | 'services' | 'configure' | 'installing' | 'done' =
+    wizardSubStep === 'select' ? 'select'
+    : wizardSubStep === 'services' ? 'services'
+    : installFlow.phase === 'idle' ? 'select'
+    : installFlow.phase === 'error' ? 'done'
+    : installFlow.phase;
 
   useEffect(() => {
     fetch('/api/system/version')
@@ -464,18 +504,6 @@ export default function OnboardingWizard() {
     const id = setInterval(tick, 20_000);
     return () => clearInterval(id);
   }, [stackInstallStep]);
-
-  // Keep the install log tail in view as new lines arrive. Only fires while
-  // the install is actually streaming — not during 'done' or other steps —
-  // so the modal doesn't snap-jump on unrelated re-renders. Guard the call
-  // because jsdom (and some older browsers) don't implement scrollIntoView.
-  useEffect(() => {
-    if (stackInstallStep !== 'installing') return;
-    const el = logTailRef.current;
-    if (typeof el?.scrollIntoView === 'function') {
-      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }
-  }, [stackLogs, stackInstallStep]);
 
   // Auto-run the self-diagnose once the install pipeline lands on 'done'.
   // Gated by `diagnoseRanOnce` so reopening the panel doesn't re-fire and
@@ -732,22 +760,14 @@ export default function OnboardingWizard() {
 
       // Auto-pick the single device per path. Only fills variables that
       // are still empty — never overwrites an explicit operator choice.
-      setStackVariables(prev => {
-        let changed = false;
-        const next = prev.map(v => {
-          if (v.meta?.type !== 'device' || v.value) return v;
-          const path = v.meta?.devicePath || '/dev/serial/by-id';
-          const devices = opts[path] ?? [];
-          if (devices.length === 1) {
-            changed = true;
-            return { ...v, value: devices[0] };
-          }
-          return v;
-        });
-        return changed ? next : prev;
-      });
+      for (const v of stackVariables) {
+        if (v.meta?.type !== 'device' || v.value) continue;
+        const path = v.meta?.devicePath || '/dev/serial/by-id';
+        const devices = opts[path] ?? [];
+        if (devices.length === 1) installFlow.setVariableValue(v.name, devices[0]);
+      }
     });
-  }, [stackSelectedNode, stackVariables]);
+  }, [stackSelectedNode, stackVariables, installFlow]);
 
   // Detect unmounted RAID arrays when node is selected
   useEffect(() => {
@@ -769,7 +789,7 @@ export default function OnboardingWizard() {
   // value within the same async chain.
   const handleSelectStack = async (stack: Template): Promise<StackItem[]> => {
     setSelectedStack(stack);
-    setStackInstallStep('services');
+    setWizardSubStep('services');
     setStacksLoading(true);
 
     try {
@@ -812,641 +832,88 @@ export default function OnboardingWizard() {
     }
   };
 
-  // itemsOverride: when called from the express flow inside the same
-  // render's closure, we can't rely on stackItems being populated by
-  // the preceding setStackItems — pass them through directly. Returns
-  // the items with .yaml hydrated and the resolved variables so the
-  // caller can hand them straight to handleStackInstall without
-  // another closure round-trip.
+  // Pre-flow → configure transition. Delegates yaml/variable/config-file
+  // hydration + secret/rsa/bcrypt fill to the shared engine. The wizard's
+  // own pre-fills (PUBLIC_DOMAIN, NGINX_ADMIN_EMAIL) ride in via the
+  // `prefilled` argument and end up marked `global` in the resolved set,
+  // so they're hidden from the configure step's per-service tabs.
+  //
+  // itemsOverride: same closure-bypass story as before — express install
+  // threads items in directly because the setStackItems from
+  // handleSelectStack isn't visible to the next call's stale closure.
   const handleStackFetchVars = async (
       itemsOverride?: StackItem[],
-  ): Promise<{ items: StackItem[]; variables: Variable[] }> => {
-    setStackInstallStep('configure');
+  ): Promise<{ items: StackItem[]; variables: import('@/lib/stackInstall/useStackInstall').StackVariable[] }> => {
+    setWizardSubStep('flow');
     setStacksLoading(true);
-
-    const baseItems = itemsOverride ?? stackItems;
-    const selected = baseItems.filter(i => i.checked && !i.alreadyInstalled);
-    const vars = new Set<string>();
-    const newItems = [...baseItems];
-    const allMeta: Record<string, VariableMeta> = {};
-
-    let globalSettings: Record<string, string> = {};
     try {
-      const settingsRes = await fetch('/api/settings');
-      if (settingsRes.ok) {
-        const settings = await settingsRes.json();
-        globalSettings = settings.templateSettings || {};
-        // The install script can pre-bake reverseProxy.publicDomain into
-        // config.json — pull it here so the wizard's domain prompt shows
-        // it as default and the user doesn't have to retype it.
-        const bakedDomain = settings.reverseProxy?.publicDomain;
-        if (bakedDomain && !stackDomain) {
-          setStackDomain(bakedDomain);
-        }
-      }
-    } catch { /* use empty defaults */ }
-
-    for (const item of selected) {
+      // The install script can pre-bake reverseProxy.publicDomain into
+      // config.json — pull it here so the wizard's domain prompt shows
+      // it as default and the user doesn't have to retype it.
       try {
-        const yaml = await fetchTemplateYaml(item.name, selectedStack?.source || 'Built-in');
-        if (!yaml) continue;
-        const idx = newItems.findIndex(i => i.name === item.name);
-        if (idx !== -1) newItems[idx].yaml = yaml;
-        const matches = yaml.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
-        for (const match of matches) vars.add(match[1]);
-        const meta = await fetchTemplateVariables(item.name, selectedStack?.source || 'Built-in');
-        const templateLabel = parseTemplateLabel(yaml);
-        if (meta) {
-          // First template that declares a variable owns it for grouping —
-          // shared vars (LLDAP_ADMIN_PASSWORD, LLDAP_HOST, ...) live under
-          // the originator and are inherited by other templates' YAMLs.
-          for (const [key, value] of Object.entries(meta)) {
-            if (!allMeta[key]) {
-              allMeta[key] = { ...value, templateName: item.name, templateLabel };
-            }
-          }
+        const settingsRes = await fetch('/api/settings');
+        if (settingsRes.ok) {
+          const settings = await settingsRes.json();
+          const bakedDomain = settings.reverseProxy?.publicDomain;
+          if (bakedDomain && !stackDomain) setStackDomain(bakedDomain);
         }
+      } catch { /* operator can type the values */ }
 
-        // Fetch extra config files (.mustache) and resolve target paths from YAML volumes.
-        // We parse the YAML properly so multi-container pods (e.g. file-share with
-        // syncthing+samba+filebrowser) can map a config file to the correct
-        // hostPath even when the same `/config` mountPath appears in multiple
-        // volumeMounts. The previous index-based regex lined up only when each
-        // volume had exactly one mount — fragile and broken for merged stacks.
-        const cfgFiles = await fetchTemplateConfigFiles(item.name, selectedStack?.source || 'Built-in');
-        if (cfgFiles.length > 0) {
-          // Build name→hostPath map from the volumes section, then mountPath→hostPath
-          // by chasing the `name` reference on each volumeMount across all containers.
-          const nameToHostPath = new Map<string, string>();
-          const mountPathToHostPath = new Map<string, string>();
-          // YAML-parse the template so we can chase volume names instead of
-          // doing fragile regex matching. Mustache placeholders need to be
-          // pre-escaped (raw {{X}} isn't valid YAML in some positions like
-          // `containerPort: {{X}}`), but we can't just substitute them with
-          // junk values — earlier versions replaced `{{X}}` with `0`, which
-          // poisoned the host-path strings: `path: {{DATA_DIR}}/auth/...`
-          // became `path: 0/auth/...`, and the resolver then computed
-          // targetPath = "0/auth/authelia-config/configuration.yml" — a
-          // RELATIVE path the agent's mkdir resolved under ~, leaving the
-          // actual /mnt/data/stacks/auth/authelia-config/ empty for
-          // authelia to fill with its 71KB upstream-sample default. Live-
-          // debugged this exact pathology twice.
-          //
-          // Round-trip the placeholders: encode `{{X}}` to a YAML-safe
-          // sentinel that preserves the variable name, parse, then decode
-          // back to `{{X}}` in the extracted strings. Mustache.render at
-          // deploy time resolves them with the user's actual values.
-          // Mustache section tags (`{{#NAME}}` / `{{/NAME}}` / `{{^NAME}}`)
-          // must be stripped before YAML parsing — the sentinel below only
-          // covers bare `{{VAR}}` placeholders, so section tokens slip
-          // through, land mid-list, and js-yaml chokes with
-          // "missed comma between flow collection entries". The volume map
-          // then stays empty and any `.mustache` config file fails to map
-          // a hostPath, tripping the ServiceManager extraFiles guard with
-          // a misleading "didn't send to deploy step" error. Stripping is
-          // safe here: we only need the unconditional volumes/mounts to
-          // discover the config-mount hostPath.
-          const SECTION_RE = /\{\{\s*[#^/]\s*[\w\d_]+\s*\}\}/g;
-          const SENTINEL_RE_OUT = /\{\{\s*([\w\d_]+)\s*\}\}/g;
-          const SENTINEL_RE_IN = /__SBVAR_([\w\d_]+)__/g;
-          const safeYaml = yaml
-            .replace(SECTION_RE, '')
-            .replace(SENTINEL_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
-          const restorePlaceholders = (s: string): string =>
-            s.replace(SENTINEL_RE_IN, (_m, n) => `{{${n}}}`);
-          // Multi-doc support — file-share ships Pod + PVC since 3.6.4.
-          // js-yaml's `load()` throws on multi-doc, so use `loadAll`.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let docs: any[] = [];
-          try {
-            docs = (await import('js-yaml')).loadAll(safeYaml);
-          } catch {
-            docs = [];
-          }
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const doc = docs.find((d: any) => d?.kind === 'Pod') ?? docs[0];
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const volumes: any[] = doc?.spec?.volumes ?? [];
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const containers: any[] = doc?.spec?.containers ?? [];
-          const annotations: Record<string, string> = doc?.metadata?.annotations ?? {};
-          for (const v of volumes) {
-            if (typeof v?.name === 'string' && typeof v?.hostPath?.path === 'string') {
-              // Restore {{VAR}} placeholders that we sentinel-encoded for
-              // YAML parsing. The deploy step's Mustache.render then
-              // expands them against the wizard's view.
-              nameToHostPath.set(v.name, restorePlaceholders(v.hostPath.path));
-            }
-          }
-          for (const c of containers) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            for (const m of (c?.volumeMounts ?? []) as any[]) {
-              if (typeof m?.mountPath === 'string' && typeof m?.name === 'string') {
-                const hp = nameToHostPath.get(m.name);
-                if (hp && !mountPathToHostPath.has(m.mountPath)) {
-                  mountPathToHostPath.set(m.mountPath, hp);
-                }
-              }
-            }
-          }
-          // Honour an explicit `servicebay.config-mount` annotation; templates
-          // whose config dir isn't `/config` (e.g. AdGuard mounts
-          // `/opt/adguardhome/conf`) declare their target this way.
-          const explicitMount = annotations['servicebay.config-mount'];
-          for (const cf of cfgFiles) {
-            let hp: string | undefined;
-            if (explicitMount) {
-              hp = mountPathToHostPath.get(explicitMount);
-            }
-            if (!hp) {
-              for (const [mp, h] of mountPathToHostPath.entries()) {
-                if (mp === '/config' || mp.endsWith('/config') || mp.endsWith('/conf')) {
-                  hp = h;
-                  break;
-                }
-              }
-            }
-            if (hp) cf.targetPath = `${hp}/${cf.filename}`;
-            // Also extract variables from config file templates
-            const cfgMatches = cf.content.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
-            for (const m of cfgMatches) vars.add(m[1]);
-          }
-          if (idx !== -1) newItems[idx].configFiles = cfgFiles;
-        }
-      } catch { /* skip */ }
+      const baseItems = itemsOverride ?? stackItems;
+      const prefilled: Record<string, string> = {};
+      if (stackDomain) prefilled.PUBLIC_DOMAIN = stackDomain;
+      if (operatorEmail) prefilled.NGINX_ADMIN_EMAIL = operatorEmail;
+
+      const result = await installFlow.startConfigure(
+        baseItems.map(i => ({
+          name: i.name,
+          checked: i.checked,
+          alreadyInstalled: i.alreadyInstalled,
+        })),
+        prefilled,
+        { node: stackSelectedNode || undefined },
+      );
+
+      // Mirror yaml/configFiles back into the wizard's stackItems so the
+      // status strip and dependency-display in the services step keep
+      // working off the same data shape they had before.
+      const merged = baseItems.map(i => {
+        const hydrated = result.items.find(x => x.name === i.name);
+        return hydrated ? { ...i, yaml: hydrated.yaml, configFiles: hydrated.configFiles } : i;
+      });
+      setStackItems(merged);
+      return { items: merged, variables: result.variables };
+    } finally {
+      setStacksLoading(false);
     }
-
-    for (const key of Object.keys(allMeta)) vars.add(key);
-
-    setStackItems(newItems);
-    const resolvedVars = Array.from(vars).map(v => {
-      const meta = allMeta[v];
-      let value = globalSettings[v] || '';
-      let isGlobal = !!globalSettings[v];
-      // Pre-fill PUBLIC_DOMAIN from the domain prompt and hide it
-      if (v === 'PUBLIC_DOMAIN' && stackDomain) { value = stackDomain; isGlobal = true; }
-      // Auto-fill LLDAP_HOST — always localhost when installing in the same stack
-      if (v === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
-      // Pre-fill NGINX_ADMIN_EMAIL from the operator-email prompt and
-      // hide it from the configure step (#365). Doubles as NPM admin
-      // login + LE ACME registration email — both need a real address.
-      if (v === 'NGINX_ADMIN_EMAIL' && operatorEmail) { value = operatorEmail; isGlobal = true; }
-      if (!value && meta?.default) value = meta.default;
-      if (!value && meta?.type === 'secret') value = generateRandomSecret();
-      return { name: v, value, global: isGlobal, meta };
-    });
-    // Async fill for rsa-private types — needs server-side crypto.generateKeyPair.
-    // The PEM is pre-indented with 10 spaces so it can be dropped under a
-    // YAML `key: |` block scalar without further mustache gymnastics.
-    await Promise.all(resolvedVars.map(async v => {
-      if (v.value || v.meta?.type !== 'rsa-private') return;
-      try {
-        const res = await fetch('/api/system/keys/rsa');
-        if (res.ok) {
-          const data = await res.json();
-          if (typeof data.pem === 'string') {
-            v.value = data.pem.trimEnd().split('\n').map((l: string) => '          ' + l).join('\n');
-          }
-        }
-      } catch { /* leave empty — install will fail with a clearer error */ }
-    }));
-    // Async fill for bcrypt types — derives from another variable's plaintext
-    // (e.g. ADGUARD_ADMIN_PASSWORD_HASH ← bcrypt(ADGUARD_ADMIN_PASSWORD)).
-    // Runs after the secret pass above so the source value is already populated.
-    await Promise.all(resolvedVars.map(async v => {
-      if (v.value || v.meta?.type !== 'bcrypt') return;
-      const sourceName = v.meta?.bcryptSource;
-      if (!sourceName) return;
-      const source = resolvedVars.find(x => x.name === sourceName);
-      if (!source?.value) return;
-      try {
-        const res = await fetch('/api/system/keys/bcrypt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: source.value }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (typeof data.hash === 'string') v.value = data.hash;
-        }
-      } catch { /* leave empty */ }
-    }));
-    // Auto-derive VAULTWARDEN_DOMAIN from subdomain + PUBLIC_DOMAIN
-    const pubDomain = resolvedVars.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-    const vwSub = resolvedVars.find(v => v.name === 'VAULTWARDEN_SUBDOMAIN')?.value;
-    if (pubDomain && vwSub) {
-      const vwDomain = resolvedVars.find(v => v.name === 'VAULTWARDEN_DOMAIN');
-      if (vwDomain) { vwDomain.value = `https://${vwSub}.${pubDomain}`; vwDomain.global = true; }
-    }
-    setStackVariables(resolvedVars);
-    setStacksLoading(false);
-    return { items: newItems, variables: resolvedVars };
   };
 
-  // itemsOverride / variablesOverride: same closure-bypass story as
-  // handleStackFetchVars. Express install threads the freshly-computed
-  // items + variables through so we don't read stale state.
+  // Configure → installing → done. The shared engine owns variable
+  // resolution, streaming deploys, post-install pipeline, and the NPM
+  // credentials prompt; the wizard contributes the digital-twin settle-
+  // wait via the `settleWait` callback passed to `useStackInstall`.
+  //
+  // itemsOverride / variablesOverride: closure-bypass story — the
+  // express flow threads the freshly-computed items/variables through
+  // because the controller.startConfigure setters aren't visible to
+  // the next call's stale closure.
   const handleStackInstall = async (
       itemsOverride?: StackItem[],
-      variablesOverride?: Variable[],
+      variablesOverride?: import('@/lib/stackInstall/useStackInstall').StackVariable[],
   ) => {
-    setStackInstallStep('installing');
-    setStackLogs([]);
-
-    // Bind locals so every read below uses the override when the
-    // express flow passed one. The setState calls (setStackItems /
-    // setStackVariables) elsewhere don't affect this closure.
-    const itemsBase = itemsOverride ?? stackItems;
-    const varsBase = variablesOverride ?? stackVariables;
-
-    // Optional: wipe existing service data before deploying.
-    if (cleanInstall && cleanInstallConfirm === 'RESET') {
-      setStackLogs(prev => [...prev, '🧹 Clean install — wiping existing service data...']);
-      try {
-        const res = await fetch('/api/system/stacks/reset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: 'RESET', node: stackSelectedNode || undefined }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-          const removed = data.deleted?.length ?? 0;
-          setStackLogs(prev => [...prev, `✅ Reset done — removed ${removed} service${removed === 1 ? '' : 's'}, wiped ${data.dataDir}.`]);
-          if (data.failed?.length) {
-            setStackLogs(prev => [...prev, `⚠️ Some services could not be cleanly removed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
-          }
-        } else {
-          setStackLogs(prev => [...prev, `⚠️ Reset failed: ${data.error || 'unknown error'}. Continuing with install — existing data may remain.`]);
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'unknown error';
-        setStackLogs(prev => [...prev, `⚠️ Reset call failed: ${msg}. Continuing with install.`]);
-      }
-    }
-
-    const selected = itemsBase.filter(i => i.checked);
-
-    // Surface the empty-selected case loudly. If we get here with zero
-    // items, something upstream produced an empty stackItems list (a
-    // README that didn't parse, or — more commonly — the express
-    // flow's old closure race). Without this branch the install loop
-    // ran zero iterations and "Stack installation complete" printed
-    // with nothing actually deployed, which looked like a silent
-    // success on top of an Agent-disconnected reset failure.
-    if (selected.length === 0) {
-      setStackLogs(prev => [...prev, '⚠️ No services selected to install — aborting. Try Edit details to pick services manually.']);
-      setStackInstallStep('done');
-      return;
-    }
-
-    // Track which services actually deployed cleanly. The post-install
-    // pipeline (NPM bootstrap, LLDAP/ABS/Navidrome/FileBrowser admin
-    // seeding, OIDC client registration) iterates this list instead of
-    // the user's *intended* selection \u2014 without this, a failed deploy
-    // (e.g. the wizard's defensive guard refusing a misconfigured
-    // file-share) still kicked off the FileBrowser seeder which then
-    // hung for 3 min on a container that was never going to start.
-    const deployed: { name: string; checked: boolean }[] = [];
-
-    // Credentials parsed from `__SB_CREDENTIAL__ {json}` markers the scripts
-    // emit on stdout \u2014 appended to the SAVE-THESE-NOW banner at the end.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const scriptCredentials: any[] = [];
-
-    for (const item of selected) {
-      // Skip already-installed services
-      if (item.alreadyInstalled) {
-        setStackLogs(prev => [...prev, `\u2705 ${item.name} already installed, skipping.`]);
-        deployed.push({ name: item.name, checked: true });
-        continue;
-      }
-      if (!item.yaml) continue;
-      setStackLogs(prev => [...prev, `Installing ${item.name}...`]);
-      setInstallingNow(item.name);
-
-      const view = varsBase.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {});
-      // Disable HTML escaping for all Mustache renders (YAML + config files)
-      const savedEscape = Mustache.escape;
-      Mustache.escape = (text: string) => text;
-      const content = Mustache.render(item.yaml, view);
-
-      const kubeContent = `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
-
-      // Render extra config files (.mustache) with the same variables.
-      // First sanity-check that every {{VAR}} the config references has a
-      // value in the view — Mustache renders an undefined var as empty
-      // string by default, which is exactly how the user's auth pod ended
-      // up with a configuration.yml that loaded but had session.cookies
-      // and storage.* collapsed to empty (authelia rejected it and the
-      // pod crash-looped, with no breadcrumb back to the wizard step
-      // that produced the broken config). Failing loudly here turns that
-      // class of bug into a deploy-time error message instead.
-      const refRe = /\{\{\s*[#^/{]?\s*([A-Z_][A-Z0-9_]*)\s*\}{1,3}/g;
-      for (const cf of (item.configFiles || [])) {
-        if (!cf.targetPath) continue;
-        const refs = new Set<string>();
-        for (const m of cf.content.matchAll(refRe)) refs.add(m[1]);
-        const missing = [...refs].filter(r => !(r in view) || view[r as keyof typeof view] === '');
-        if (missing.length > 0) {
-          Mustache.escape = savedEscape;
-          throw new Error(
-            `Cannot deploy ${item.name}: ${cf.filename} references variable(s) with no value: ${missing.join(', ')}. ` +
-            `Go back to the Configure step and fill them in (or check the template's variables.json defaults).`,
-          );
-        }
-      }
-      const extraFiles = (item.configFiles || [])
-        .filter(cf => cf.targetPath)
-        .map(cf => {
-          const rendered = Mustache.render(cf.content, view);
-          const resolvedPath = Mustache.render(cf.targetPath!, view);
-          return { path: resolvedPath, content: rendered };
-        });
-      Mustache.escape = savedEscape;
-
-      // Optional per-template post-deploy.py — rendered with the same view
-      // and shipped to the agent inside the deploy POST. Server runs it
-      // after the unit starts; output streams back as `progress` events
-      // and gets parsed for `__SB_CREDENTIAL__ {json}` markers below.
-      let postDeployScript: string | undefined;
-      try {
-        const raw = await fetchTemplatePostDeployScript(item.name, selectedStack?.source || 'Built-in');
-        if (raw) {
-          const savedEscape2 = Mustache.escape;
-          Mustache.escape = (text: string) => text;
-          postDeployScript = Mustache.render(raw, view);
-          Mustache.escape = savedEscape2;
-        }
-      } catch { /* template ships no post-deploy script — that's fine, no per-service glue runs */ }
-
-      // Variables exported as env vars to the script. Scoped to string-shaped
-      // entries; the engine in ServiceManager handles bash-quote escaping.
-      const postDeployEnv: Record<string, string> = {};
-      for (const v of varsBase) {
-        if (typeof v.value === 'string') postDeployEnv[v.name] = v.value;
-      }
-      if (typeof window !== 'undefined') postDeployEnv.HOST = window.location.hostname || 'localhost';
-
-      // Single-deploy attempt — extracted so the retry loop below can
-      // reinvoke it without duplicating the streaming-progress parser.
-      // Throws on failure. Sets `fatal: true` on the error when the
-      // server explicitly rejected the request (HTTP 4xx other than
-      // 408/429) so the loop skips backoff and surfaces directly.
-      const attemptDeploy = async (): Promise<void> => {
-        const query = stackSelectedNode ? `?node=${stackSelectedNode}&stream=1` : '?stream=1';
-        let res: Response;
-        try {
-          res = await fetch(`/api/services${query}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: item.name,
-              kubeContent,
-              yamlContent: content,
-              yamlFileName: `${item.name}.yml`,
-              extraFiles,
-              postDeployScript,
-              postDeployEnv: postDeployScript ? postDeployEnv : undefined,
-            }),
-          });
-        } catch (networkErr) {
-          // fetch-level failure (DNS, connection refused, abort) — always retriable.
-          throw new Error(`network: ${networkErr instanceof Error ? networkErr.message : String(networkErr)}`);
-        }
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          const msg = errBody.error || `HTTP ${res.status}`;
-          // 4xx (other than 408/429) means the server rejected the
-          // request itself — retrying won't fix a validation error or
-          // missing file. Mark fatal so the caller surfaces directly.
-          if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
-            const fatal = new Error(msg);
-            (fatal as Error & { fatal?: boolean }).fatal = true;
-            throw fatal;
-          }
-          throw new Error(msg);
-        }
-
-        // Read streaming progress
-        const reader = res.body?.getReader();
-        if (reader) {
-          const decoder = new TextDecoder();
-          let buf = '';
-          let lastProgressLine = '';
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            const lines = buf.split('\n');
-            buf = lines.pop() || '';
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              try {
-                const evt = JSON.parse(line);
-                if (evt.type === 'progress') {
-                  // Intercept `__SB_CREDENTIAL__ {json}` markers from the
-                  // post-deploy.py script: park the parsed entry in
-                  // scriptCredentials so it lands in the SAVE-THESE-NOW
-                  // banner. Don't echo the raw marker to the install log.
-                  if (typeof evt.message === 'string' && evt.message.startsWith('__SB_CREDENTIAL__ ')) {
-                    try {
-                      scriptCredentials.push(JSON.parse(evt.message.slice('__SB_CREDENTIAL__ '.length)));
-                    } catch { /* malformed marker — drop it */ }
-                    continue;
-                  }
-                  // In-place collapse — ONLY for image-pull progress lines
-                  // (which tick once a second per layer and would otherwise
-                  // bury everything else). Anything else — including
-                  // post-deploy.py stdout — appends a new log entry so the
-                  // operator can see what's actually happening.
-                  //
-                  // Earlier this collapsed every consecutive progress event
-                  // indiscriminately. Once any line came through, every
-                  // subsequent line replaced it, and the only visible trace
-                  // of a post-deploy.py was the final summary line — so
-                  // every script appeared to "exit 1" with no breadcrumb to
-                  // the actual error.
-                  const isPullProgress = /Pulling image \d+\/\d+|MB\s*\/\s*[\d.]+\s*MB/.test(evt.message ?? '');
-                  if (isPullProgress && lastProgressLine && /Pulling image \d+\/\d+|MB\s*\/\s*[\d.]+\s*MB/.test(lastProgressLine)) {
-                    setStackLogs(prev => {
-                      const next = [...prev];
-                      next[next.length - 1] = evt.message;
-                      return next;
-                    });
-                  } else {
-                    setStackLogs(prev => [...prev, evt.message]);
-                  }
-                  lastProgressLine = evt.message;
-                } else if (evt.type === 'error') {
-                  throw new Error(evt.message);
-                }
-              } catch (parseErr) {
-                if (parseErr instanceof Error && parseErr.message !== line.trim()) throw parseErr;
-              }
-            }
-          }
-        }
-
-      };
-
-      // Auto-retry transient failures up to 3 attempts with 1s, 4s
-      // backoff. Image-pull flakes, registry rate-limits, NPM cold-
-      // start 502s and the agent's first-connect race are the common
-      // cases — auto-healing them is much less alarming than a hard
-      // "\u274c Failed" with a restart-the-wizard-or-fix-manually
-      // dead-end. Per the UX philosophy: heal silently when possible.
-      // 4xx-other-than-408/429 carries `fatal=true` from attemptDeploy
-      // and skips the retries — retrying a validation error wastes
-      // the user's time without ever succeeding.
-      const MAX_DEPLOY_ATTEMPTS = 3;
-      const BACKOFF_MS = [0, 1000, 4000];
-      let lastDeployErr: Error | null = null;
-      let deployedOk = false;
-      for (let attempt = 1; attempt <= MAX_DEPLOY_ATTEMPTS; attempt++) {
-        if (BACKOFF_MS[attempt - 1] > 0) {
-          await new Promise(r => setTimeout(r, BACKOFF_MS[attempt - 1]));
-        }
-        try {
-          await attemptDeploy();
-          const successMsg = attempt > 1
-            ? `\u2705 ${item.name} deployed on attempt ${attempt}/${MAX_DEPLOY_ATTEMPTS}.`
-            : `\u2705 ${item.name} deployed (containers may still be starting in background).`;
-          setStackLogs(prev => [...prev, successMsg]);
-          deployedOk = true;
-          break;
-        } catch (e) {
-          lastDeployErr = e instanceof Error ? e : new Error(String(e));
-          if ((lastDeployErr as Error & { fatal?: boolean }).fatal) break;
-          if (attempt < MAX_DEPLOY_ATTEMPTS) {
-            setStackLogs(prev => [...prev, `\u23f3 ${item.name} attempt ${attempt}/${MAX_DEPLOY_ATTEMPTS} failed (${lastDeployErr!.message}); retrying in ${BACKOFF_MS[attempt] / 1000}s\u2026`]);
-          }
-        }
-      }
-      if (deployedOk) {
-        deployed.push({ name: item.name, checked: true });
-      } else {
-        const msg = lastDeployErr?.message ?? 'unknown error';
-        const fatal = lastDeployErr && (lastDeployErr as Error & { fatal?: boolean }).fatal;
-        const tail = fatal ? msg : `after ${MAX_DEPLOY_ATTEMPTS} attempt(s): ${msg}`;
-        setStackLogs(prev => [...prev, `\u274c Failed to install ${item.name} ${tail}`]);
-        // Don't add to `deployed` \u2014 post-install will skip seeders /
-        // proxy routes for this service.
-      }
-      // Clear in-flight marker so the status strip switches from
-      // "installing" to twin-derived state for the next render tick.
-      setInstallingNow(null);
-    }
-
-    // Post-install (NPM bootstrap, proxy-host creation, credentials banner)
-    // runs only for services that actually deployed cleanly. A failed deploy
-    // is dropped from `deployed` above so its post-install steps don't hang
-    // on a container that was never going to start.
-    //
-    // `extraCredentials` are the `__SB_CREDENTIAL__` entries each template's
-    // post-deploy.py emitted on stdout, appended to the SAVE-THESE-NOW
-    // banner alongside the variable-driven OIDC entries.
-    const proxyResult = await runPostInstall({
-      selected: deployed,
-      variables: varsBase,
+    await installFlow.runInstall({
+      items: itemsOverride
+        ? itemsOverride.map(i => ({
+            name: i.name,
+            checked: i.checked,
+            yaml: i.yaml,
+            configFiles: i.configFiles,
+            alreadyInstalled: i.alreadyInstalled,
+          }))
+        : undefined,
+      variables: variablesOverride,
       node: stackSelectedNode || undefined,
-      onLog: (msg) => setStackLogs(prev => [...prev, msg]),
-      extraCredentials: scriptCredentials,
     });
-
-    if (proxyResult === 'needs_credentials') {
-      // Pre-fill the prompt with whatever the wizard configured — usually
-      // the auto-generated values are correct but NPM rejected them
-      // because of a stale data volume from a previous install. Showing
-      // the user the values they meant to use lets them just hit "Retry"
-      // (which will fail again) or paste a real password if they reset
-      // NPM manually.
-      const fallbackEmail = varsBase.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value;
-      const fallbackPassword = varsBase.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value;
-      if (fallbackEmail) setNpmEmail(fallbackEmail);
-      if (fallbackPassword) setNpmPassword(fallbackPassword);
-      setNpmCredPrompt(true);
-    } else {
-      // Settle wait — don't transition to 'done' until each newly-deployed
-      // service shows up as active in the digital twin. Previously we
-      // declared 'done' the moment the deploy API + post-install pipeline
-      // returned, then the auto self-diagnose ran ~immediately and saw
-      // containers still pulling their images, flagging them as restart-
-      // looping ghosts. Cap the wait at 3 minutes — long enough for
-      // cold-start image pulls on a normal connection — then transition
-      // either way and let the diagnose probe report what's genuinely stuck.
-      //
-      // Skip the wait entirely if there's no twin connection (tests, or a
-      // disconnected agent — in either case hanging the wizard for 3 min
-      // helps no one) or if nothing was deployed.
-      // Same rationale as runPostInstall — wait only for services that
-      // actually deployed. A failed deploy isn't going to become active
-      // and a stuck "0/9 up" heartbeat is just noise.
-      const expected = deployed.map(i => i.name);
-      // Read via the ref so each poll iteration sees fresh SSE updates
-      // — `digitalTwin` from the closure is the snapshot at handler-
-      // start time and never changes for the duration of this loop.
-      if (digitalTwinRef.current && expected.length > 0) {
-        const SETTLE_TIMEOUT_MS = 3 * 60_000;
-        const SETTLE_POLL_MS = 5_000;
-        const startedAt = Date.now();
-        let lastReady = -1;
-        while (Date.now() - startedAt < SETTLE_TIMEOUT_MS) {
-          const node = stackSelectedNode || 'Local';
-          const twinNode = digitalTwinRef.current?.nodes?.[node];
-          const services = twinNode?.services ?? [];
-          const ready = expected.filter(name =>
-            services.some(s => (s.name === name || s.name === `${name}.service`) && s.active),
-          ).length;
-          if (ready !== lastReady) {
-            setStackLogs(prev => [...prev, `Waiting for services to become active... (${ready}/${expected.length} up)`]);
-            lastReady = ready;
-          }
-          if (ready === expected.length) break;
-          await new Promise(r => setTimeout(r, SETTLE_POLL_MS));
-        }
-        const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-        if (lastReady === expected.length) {
-          setStackLogs(prev => [...prev, `✅ All ${expected.length} services active after ${elapsed}s.`]);
-        } else {
-          setStackLogs(prev => [
-            ...prev,
-            `⚠️ ${lastReady}/${expected.length} services active after ${elapsed}s — slow image pulls or a real failure. Self-diagnose below will tell you which.`,
-          ]);
-        }
-      }
-      setStackInstallStep('done');
-    }
-  };
-
-  /** Retry proxy route creation with user-provided NPM credentials. */
-  const handleNpmCredentialSubmit = async () => {
-    if (!npmEmail || !npmPassword) return;
-    setNpmCredPrompt(false);
-    setStackLogs(prev => [...prev, 'Retrying with provided credentials...']);
-    const result = await sharedConfigureProxyRoutes({
-      variables: stackVariables,
-      node: stackSelectedNode || undefined,
-      onLog: (msg) => setStackLogs(prev => [...prev, msg]),
-      credentials: { email: npmEmail, password: npmPassword },
-      skipWait: true,
-    });
-    if (result === 'needs_credentials') {
-      setStackLogs(prev => [...prev, '❌ Authentication failed. Please check your credentials.']);
-      setNpmCredPrompt(true);
-      return;
-    }
-    // Persist the working creds so future installs don't prompt.
-    try {
-      await fetch('/api/system/nginx/credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: npmEmail, password: npmPassword }),
-      });
-      setStackLogs(prev => [...prev, 'Saved NPM credentials for future installs.']);
-    } catch {
-      /* ignore — install succeeded, just won't auto-sync next time */
-    }
-    setStackInstallStep('done');
   };
 
   // Express install path. Runs the same install steps the operator
@@ -1509,9 +976,9 @@ export default function OnboardingWizard() {
     // actually deployed.
     const items = await handleSelectStack(fullStack);
     if (items.length === 0) {
-      // handleSelectStack already nudged stackInstallStep to 'services'
-      // — bring it back to a clean state on install-confirm.
-      setStackInstallStep('select');
+      // handleSelectStack already nudged sub-step to 'services' — bring
+      // it back to a clean state on install-confirm.
+      setWizardSubStep('select');
       addToast('error', 'Stack readme empty', 'Could not parse any services from the full-stack README. Try Edit details.');
       return;
     }
@@ -2528,7 +1995,6 @@ export default function OnboardingWizard() {
                                       <div key={group.key} className="space-y-3">
                                         <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 pb-1">{group.label}</h4>
                                         {filtered.map((v) => {
-                                            const idx = stackVariables.findIndex(x => x.name === v.name);
                                             // Humanise the visible label so the operator sees
                                             // "Subdomain" inside "Immich (Photos)" instead of
                                             // SCREAMING_SNAKE_CASE. Strip the group-key prefix
@@ -2564,11 +2030,7 @@ export default function OnboardingWizard() {
                                                     <StackVariableField>, shared with InstallerModal since #341. */}
                                                 <StackVariableField
                                                     variable={v}
-                                                    onChange={(value) => {
-                                                        const nv = [...stackVariables];
-                                                        nv[idx].value = value;
-                                                        setStackVariables(nv);
-                                                    }}
+                                                    onChange={(value) => installFlow.setVariableValue(v.name, value)}
                                                     publicDomain={stackVariables.find(x => x.name === 'PUBLIC_DOMAIN')?.value}
                                                     inputClassName="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
                                                     deviceContext={{
@@ -2596,306 +2058,184 @@ export default function OnboardingWizard() {
                         </>
                     )}
 
-                    {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (
-                        <div>
-                            {/* Per-service status strip — REAL state, not log parsing.
-                                The previous version parsed install logs and marked
-                                services "deployed" the moment the API call returned,
-                                even while the container was still pulling its image.
-                                Now we use the digital twin: a service counts as
-                                "deployed" only when its systemd unit reports active.
-                                "installing" comes from the in-flight deploy loop
-                                via installingNow + log parsing for "Installing X..."
-                                until the twin catches up. "failed" if either the
-                                deploy log says ❌ or the twin reports the unit
-                                inactive after deploy completed. */}
-                            {stackItems.filter(i => i.checked && !i.alreadyInstalled).length > 0 && (() => {
-                                const joined = stackLogs.join('\n');
-                                const node = stackSelectedNode || 'Local';
-                                const twinNode = digitalTwin?.nodes?.[node];
-                                const twinServices = twinNode?.services ?? [];
-                                const findService = (name: string) =>
-                                    twinServices.find(s => s.name === name || s.name === `${name}.service` || s.name?.replace(/\.service$/, '') === name);
-                                const statusOf = (name: string): 'pending' | 'installing' | 'deployed' | 'failed' => {
-                                    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                                    // 1. Deploy loop is currently calling /api/services for this name.
-                                    if (installingNow === name) return 'installing';
-                                    // 2. Hard fail logged by the install pipeline.
-                                    if (new RegExp(`(?:❌|✗|Failed to install)\\s+${esc}\\b`, 'i').test(joined)) return 'failed';
-                                    // 3. Real state from the digital twin.
-                                    const svc = findService(name);
-                                    if (svc) {
-                                        if (svc.active) return 'deployed';
-                                        // Deploy returned + unit known to systemd but not active —
-                                        // could be mid-pull (activating) or genuinely failed.
-                                        // Treat as 'installing' until the deploy log declares
-                                        // failure, so a fast-pulling stack doesn't flicker red.
-                                        if (new RegExp(`Installing\\s+${esc}\\.\\.\\.`, 'i').test(joined)) return 'installing';
-                                        if (new RegExp(`✅\\s+${esc}\\s+deployed\\b`, 'i').test(joined)) return 'installing';
-                                        return 'pending';
-                                    }
-                                    // 4. Service not yet in twin. If the deploy log mentions it,
-                                    // it's mid-deploy; otherwise it's still queued.
-                                    if (new RegExp(`(?:Installing\\s+|✅\\s+)${esc}`, 'i').test(joined)) return 'installing';
-                                    return 'pending';
-                                };
-                                const dotClass: Record<string, string> = {
-                                    pending:    'bg-gray-300 dark:bg-gray-600',
-                                    installing: 'bg-blue-500 animate-pulse',
-                                    deployed:   'bg-emerald-500',
-                                    failed:     'bg-red-500',
-                                };
-                                const items = stackItems.filter(i => i.checked && !i.alreadyInstalled);
-                                const counts = items.reduce<Record<string, number>>((a, i) => {
-                                    const s = statusOf(i.name);
-                                    a[s] = (a[s] ?? 0) + 1;
-                                    return a;
-                                }, {});
-                                return (
-                                    <div className="mb-3 p-3 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Service status</p>
-                                            <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                                                {counts.deployed ?? 0}/{items.length} deployed
-                                                {counts.failed ? ` · ${counts.failed} failed` : ''}
-                                            </p>
-                                        </div>
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {items.map(item => {
-                                                const s = statusOf(item.name);
-                                                return (
-                                                    <span
-                                                        key={item.name}
-                                                        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border ${
-                                                            s === 'pending'
-                                                                ? 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 opacity-70'
-                                                                : s === 'failed'
-                                                                    ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-                                                                    : s === 'deployed'
-                                                                        ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
-                                                                        : 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                                                        }`}
-                                                        title={`${item.name}: ${s}`}
-                                                    >
-                                                        <span className={`w-2 h-2 rounded-full ${dotClass[s]}`}></span>
-                                                        {item.name}
-                                                    </span>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-                            {/* Log panel grows with its content; the modal-level
-                                scrollbar is the only one. Earlier this had its own
-                                fixed height + overflow, which produced two stacked
-                                vertical scrollbars (modal + log) — confusing and
-                                fiddly to drive. The min-height keeps the box from
-                                visually collapsing when the log is just a couple
-                                of lines, and the bottom sentinel auto-scrolls the
-                                modal so new lines stay visible without manual
-                                scrolling. */}
-                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs min-h-[12rem] border border-gray-800">
-                                {stackLogs.map((log, i) => <div key={i} className="mb-1">{log}</div>)}
-                                {stackInstallStep === 'installing' && (
-                                    <div className="flex items-center gap-2 text-gray-400 mt-2">
-                                        <Loader2 size={14} className="animate-spin" /> Processing...
-                                    </div>
-                                )}
-                                <div ref={logTailRef} />
-                            </div>
-                            {npmCredPrompt && (
-                                <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                                    <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">NPM admin login required</p>
-                                    <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">
-                                        We pre-filled the credentials this wizard generated, but Nginx Proxy Manager rejected them — usually because the data volume on this host carries an admin password from a previous install. Either click <span className="font-semibold">Authenticate &amp; Retry</span> with the values below, or paste the existing NPM admin password if you remember it. Skip to configure proxy routes manually later.
+                    {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (() => {
+                        // Per-service status strip — REAL state from the digital twin,
+                        // not log parsing. Service counts as "deployed" only when its
+                        // systemd unit reports active; "installing" comes from the
+                        // hook's `installingNow` + log parsing for "Installing X..."
+                        // until the twin catches up; "failed" if either the deploy
+                        // log says ❌ or the twin reports the unit inactive after
+                        // deploy completed.
+                        const installItems = stackItems.filter(i => i.checked && !i.alreadyInstalled);
+                        const joined = stackLogs.join('\n');
+                        const node = stackSelectedNode || 'Local';
+                        const twinNode = digitalTwin?.nodes?.[node];
+                        const twinServices = twinNode?.services ?? [];
+                        const findService = (name: string) =>
+                            twinServices.find(s => s.name === name || s.name === `${name}.service` || s.name?.replace(/\.service$/, '') === name);
+                        const statusOf = (name: string): 'pending' | 'installing' | 'deployed' | 'failed' => {
+                            const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                            if (installingNow === name) return 'installing';
+                            if (new RegExp(`(?:❌|✗|Failed to install)\\s+${esc}\\b`, 'i').test(joined)) return 'failed';
+                            const svc = findService(name);
+                            if (svc) {
+                                if (svc.active) return 'deployed';
+                                if (new RegExp(`Installing\\s+${esc}\\.\\.\\.`, 'i').test(joined)) return 'installing';
+                                if (new RegExp(`✅\\s+${esc}\\s+deployed\\b`, 'i').test(joined)) return 'installing';
+                                return 'pending';
+                            }
+                            if (new RegExp(`(?:Installing\\s+|✅\\s+)${esc}`, 'i').test(joined)) return 'installing';
+                            return 'pending';
+                        };
+                        const dotClass: Record<string, string> = {
+                            pending:    'bg-gray-300 dark:bg-gray-600',
+                            installing: 'bg-blue-500 animate-pulse',
+                            deployed:   'bg-emerald-500',
+                            failed:     'bg-red-500',
+                        };
+                        const counts = installItems.reduce<Record<string, number>>((a, i) => {
+                            const s = statusOf(i.name);
+                            a[s] = (a[s] ?? 0) + 1;
+                            return a;
+                        }, {});
+                        const statusStrip = installItems.length === 0 ? null : (
+                            <div className="mb-3 p-3 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40">
+                                <div className="flex items-center justify-between mb-2">
+                                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Service status</p>
+                                    <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                                        {counts.deployed ?? 0}/{installItems.length} deployed
+                                        {counts.failed ? ` · ${counts.failed} failed` : ''}
                                     </p>
-                                    <div className="space-y-2">
-                                        <input
-                                            type="email"
-                                            value={npmEmail}
-                                            onChange={(e) => setNpmEmail(e.target.value)}
-                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-md text-sm"
-                                            placeholder="NPM admin email"
-                                        />
-                                        <input
-                                            type="text"
-                                            value={npmPassword}
-                                            onChange={(e) => setNpmPassword(e.target.value)}
-                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-md text-sm font-mono"
-                                            placeholder="NPM admin password"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                        />
-                                        <div className="flex gap-2">
-                                            <button
-                                                onClick={handleNpmCredentialSubmit}
-                                                disabled={!npmPassword}
-                                                className="flex-1 px-3 py-2 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
-                                            >
-                                                Authenticate &amp; Retry
-                                            </button>
-                                            <button
-                                                onClick={() => { setNpmCredPrompt(false); setStackInstallStep('done'); }}
-                                                className="px-3 py-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm"
-                                            >
-                                                Skip
-                                            </button>
-                                        </div>
-                                    </div>
                                 </div>
-                            )}
-                            {stackInstallStep === 'done' && (() => {
-                                const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-                                const subdomains = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
-                                const hasProxyRoutes = domain && subdomains.length > 0;
-                                const host = typeof window !== 'undefined' ? window.location.hostname : '<server-ip>';
-                                const manifest = buildCredentialsManifest({ variables: stackVariables, host });
-                                const downloadCsv = () => {
-                                    const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });
-                                    const a = document.createElement('a');
-                                    a.href = URL.createObjectURL(blob);
-                                    a.download = `servicebay-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
-                                    a.click();
-                                    URL.revokeObjectURL(a.href);
-                                };
-                                const counts = (diagnoseProbes ?? []).reduce<Record<ProbeStatus, number>>(
-                                    (a, p) => { a[p.status] = (a[p.status] ?? 0) + 1; return a; },
-                                    { ok: 0, warn: 0, fail: 0, info: 0 },
-                                );
-                                const overall: ProbeStatus = counts.fail > 0 ? 'fail' : counts.warn > 0 ? 'warn' : counts.ok > 0 ? 'ok' : 'info';
-                                const overallStyle = {
-                                    ok:   { bg: 'bg-emerald-50 dark:bg-emerald-900/20', border: 'border-emerald-200 dark:border-emerald-800', text: 'text-emerald-800 dark:text-emerald-200', label: 'Self-test passed' },
-                                    warn: { bg: 'bg-amber-50 dark:bg-amber-900/20',     border: 'border-amber-200 dark:border-amber-800',     text: 'text-amber-800 dark:text-amber-200',     label: 'Self-test: warnings' },
-                                    fail: { bg: 'bg-red-50 dark:bg-red-900/20',         border: 'border-red-200 dark:border-red-800',         text: 'text-red-800 dark:text-red-200',         label: 'Self-test: failures' },
-                                    info: { bg: 'bg-gray-50 dark:bg-gray-900/40',       border: 'border-gray-200 dark:border-gray-800',       text: 'text-gray-700 dark:text-gray-200',       label: 'Self-test: indeterminate' },
-                                }[overall];
-                                return (
-                                    <div className="mt-3 space-y-3 max-h-[60vh] overflow-y-auto">
-                                        {/* Auto self-test verdict — first thing the operator
-                                            sees on the Done screen. Same probes as
-                                            Health → Self-Diagnose, run automatically against
-                                            the just-deployed install. */}
-                                        <div className={`p-3 rounded border text-sm ${overallStyle.bg} ${overallStyle.border}`}>
-                                            <div className="flex items-center justify-between mb-1.5">
-                                                <p className={`font-medium ${overallStyle.text}`}>
-                                                    {diagnoseRunning
-                                                        ? '⏳ Running self-test…'
-                                                        : diagnoseError
-                                                            ? '⚠️ Self-test failed to run'
-                                                            : `${overall === 'ok' ? '✅' : overall === 'warn' ? '⚠️' : overall === 'fail' ? '❌' : 'ℹ️'} ${overallStyle.label}${diagnoseProbes ? ` — ${counts.ok} ok · ${counts.warn} warn · ${counts.fail} fail` : ''}`}
-                                                </p>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => { setDiagnoseRanOnce(false); }}
-                                                    disabled={diagnoseRunning}
-                                                    className="text-xs px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
-                                                    title="Re-run self-test"
-                                                >
-                                                    {diagnoseRunning ? 'Running…' : 'Run again'}
-                                                </button>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {installItems.map(item => {
+                                        const s = statusOf(item.name);
+                                        return (
+                                            <span
+                                                key={item.name}
+                                                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border ${
+                                                    s === 'pending'
+                                                        ? 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 opacity-70'
+                                                        : s === 'failed'
+                                                            ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                                                            : s === 'deployed'
+                                                                ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                                                                : 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                                                }`}
+                                                title={`${item.name}: ${s}`}
+                                            >
+                                                <span className={`w-2 h-2 rounded-full ${dotClass[s]}`}></span>
+                                                {item.name}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        );
+
+                        // Done-screen extras: self-test verdict (auto-runs on
+                        // phase=done, see effect above) + DNS/SSL/access-list
+                        // next-step panels when the install produced any proxy
+                        // routes. Rendered via the StackInstallSummary slot below.
+                        const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+                        const subdomains = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
+                        const hasProxyRoutes = !!domain && subdomains.length > 0;
+                        const diagCounts = (diagnoseProbes ?? []).reduce<Record<ProbeStatus, number>>(
+                            (a, p) => { a[p.status] = (a[p.status] ?? 0) + 1; return a; },
+                            { ok: 0, warn: 0, fail: 0, info: 0 },
+                        );
+                        const overall: ProbeStatus = diagCounts.fail > 0 ? 'fail' : diagCounts.warn > 0 ? 'warn' : diagCounts.ok > 0 ? 'ok' : 'info';
+                        const overallStyle = {
+                            ok:   { bg: 'bg-emerald-50 dark:bg-emerald-900/20', border: 'border-emerald-200 dark:border-emerald-800', text: 'text-emerald-800 dark:text-emerald-200', label: 'Self-test passed' },
+                            warn: { bg: 'bg-amber-50 dark:bg-amber-900/20',     border: 'border-amber-200 dark:border-amber-800',     text: 'text-amber-800 dark:text-amber-200',     label: 'Self-test: warnings' },
+                            fail: { bg: 'bg-red-50 dark:bg-red-900/20',         border: 'border-red-200 dark:border-red-800',         text: 'text-red-800 dark:text-red-200',         label: 'Self-test: failures' },
+                            info: { bg: 'bg-gray-50 dark:bg-gray-900/40',       border: 'border-gray-200 dark:border-gray-800',       text: 'text-gray-700 dark:text-gray-200',       label: 'Self-test: indeterminate' },
+                        }[overall];
+                        const doneFooter = (
+                            <>
+                                <div className={`p-3 rounded border text-sm ${overallStyle.bg} ${overallStyle.border}`}>
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <p className={`font-medium ${overallStyle.text}`}>
+                                            {diagnoseRunning
+                                                ? '⏳ Running self-test…'
+                                                : diagnoseError
+                                                    ? '⚠️ Self-test failed to run'
+                                                    : `${overall === 'ok' ? '✅' : overall === 'warn' ? '⚠️' : overall === 'fail' ? '❌' : 'ℹ️'} ${overallStyle.label}${diagnoseProbes ? ` — ${diagCounts.ok} ok · ${diagCounts.warn} warn · ${diagCounts.fail} fail` : ''}`}
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setDiagnoseRanOnce(false); }}
+                                            disabled={diagnoseRunning}
+                                            className="text-xs px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                                            title="Re-run self-test"
+                                        >
+                                            {diagnoseRunning ? 'Running…' : 'Run again'}
+                                        </button>
+                                    </div>
+                                    {diagnoseError && (
+                                        <p className="text-xs text-red-700 dark:text-red-300">{diagnoseError}</p>
+                                    )}
+                                    {diagnoseProbes && (diagCounts.warn > 0 || diagCounts.fail > 0) && (
+                                        <details className="mt-1 text-xs">
+                                            <summary className={`cursor-pointer ${overallStyle.text}`}>Details ({diagCounts.warn + diagCounts.fail} issue{diagCounts.warn + diagCounts.fail === 1 ? '' : 's'})</summary>
+                                            <ul className="mt-1 space-y-1.5">
+                                                {diagnoseProbes.filter(p => p.status === 'warn' || p.status === 'fail').map(p => (
+                                                    <li key={p.id} className="border-l-2 border-current pl-2 opacity-90">
+                                                        <div className="font-semibold">{p.status === 'fail' ? '❌' : '⚠️'} {p.label}</div>
+                                                        <div className="font-mono whitespace-pre-wrap break-words">{p.detail}</div>
+                                                        {p.hint && <div className="italic mt-0.5 opacity-90">💡 {p.hint}</div>}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </details>
+                                    )}
+                                    <p className={`text-xs mt-1 ${overallStyle.text} opacity-70`}>
+                                        Re-run any time at <span className="font-mono">Health → Self-Diagnose</span>.
+                                    </p>
+                                </div>
+                                {hasProxyRoutes && (
+                                    <>
+                                        <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-1.5">
+                                            <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
+                                            <p className="text-xs text-blue-700 dark:text-blue-300">
+                                                Create A records pointing to your server IP:
+                                            </p>
+                                            <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
+                                                {subdomains.map(sv => (
+                                                    <div key={sv.name}>{sv.value}.{domain} &rarr; {'<SERVER-IP>'}</div>
+                                                ))}
                                             </div>
-                                            {diagnoseError && (
-                                                <p className="text-xs text-red-700 dark:text-red-300">{diagnoseError}</p>
-                                            )}
-                                            {diagnoseProbes && (counts.warn > 0 || counts.fail > 0) && (
-                                                <details className="mt-1 text-xs">
-                                                    <summary className={`cursor-pointer ${overallStyle.text}`}>Details ({counts.warn + counts.fail} issue{counts.warn + counts.fail === 1 ? '' : 's'})</summary>
-                                                    <ul className="mt-1 space-y-1.5">
-                                                        {diagnoseProbes.filter(p => p.status === 'warn' || p.status === 'fail').map(p => (
-                                                            <li key={p.id} className="border-l-2 border-current pl-2 opacity-90">
-                                                                <div className="font-semibold">{p.status === 'fail' ? '❌' : '⚠️'} {p.label}</div>
-                                                                <div className="font-mono whitespace-pre-wrap break-words">{p.detail}</div>
-                                                                {p.hint && <div className="italic mt-0.5 opacity-90">💡 {p.hint}</div>}
-                                                            </li>
-                                                        ))}
-                                                    </ul>
-                                                </details>
-                                            )}
-                                            <p className={`text-xs mt-1 ${overallStyle.text} opacity-70`}>
-                                                Re-run any time at <span className="font-mono">Health → Self-Diagnose</span>.
+                                        </div>
+                                        <div className="p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-1.5">
+                                            <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
+                                            <p className="text-xs text-amber-700 dark:text-amber-300">
+                                                Open Nginx Proxy Manager and request Let&apos;s Encrypt SSL certificates for each proxy host.
                                             </p>
                                         </div>
-                                        {manifest.length > 0 && (
-                                            <div className="p-3 bg-rose-50 dark:bg-rose-900/20 rounded border border-rose-200 dark:border-rose-800 text-sm">
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <p className="font-medium text-rose-800 dark:text-rose-200">🔑 Credentials — save now</p>
-                                                    <button
-                                                        type="button"
-                                                        onClick={downloadCsv}
-                                                        className="text-xs px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded"
-                                                        title="Download as Bitwarden / Vaultwarden CSV"
-                                                    >
-                                                        ⬇ Download CSV
-                                                    </button>
-                                                </div>
-                                                <p className="text-xs text-rose-700 dark:text-rose-300 mb-2">
-                                                    Won&apos;t be shown again. Either copy them into your password manager now or use the CSV button: Vaultwarden → Tools → Import → Bitwarden (csv).
-                                                </p>
-                                                <div className="space-y-1.5 font-mono text-xs">
-                                                    {manifest.filter(c => c.importance === 'critical').map(c => (
-                                                        <div key={c.service} className="border-l-2 border-rose-300 dark:border-rose-700 pl-2">
-                                                            <div className="font-sans font-medium text-rose-900 dark:text-rose-100">{c.service}</div>
-                                                            <div className="text-rose-700 dark:text-rose-300 break-all">{c.url}</div>
-                                                            <div className="text-rose-600 dark:text-rose-400">{c.username} / {c.password}</div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                {manifest.some(c => c.importance === 'system') && (
-                                                    <details className="mt-2 text-xs">
-                                                        <summary className="cursor-pointer text-rose-700 dark:text-rose-300">System / DR secrets ({manifest.filter(c => c.importance === 'system').length})</summary>
-                                                        <div className="mt-1 space-y-1 font-mono">
-                                                            {manifest.filter(c => c.importance === 'system').map(c => (
-                                                                <div key={c.service} className="text-rose-600 dark:text-rose-400 pl-2">
-                                                                    <span className="font-sans">{c.service}:</span> {c.password}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </details>
-                                                )}
-                                            </div>
-                                        )}
-
-                                        {hasProxyRoutes && (
-                                            <>
-                                                <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-1.5">
-                                                    <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
-                                                    <p className="text-xs text-blue-700 dark:text-blue-300">
-                                                        Create A records pointing to your server IP:
-                                                    </p>
-                                                    <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
-                                                        {subdomains.map(sv => (
-                                                            <div key={sv.name}>{sv.value}.{domain} &rarr; {'<SERVER-IP>'}</div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-
-                                                <div className="p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-1.5">
-                                                    <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
-                                                    <p className="text-xs text-amber-700 dark:text-amber-300">
-                                                        Open Nginx Proxy Manager and request Let&apos;s Encrypt SSL certificates for each proxy host.
-                                                    </p>
-                                                </div>
-
-                                                <div className="p-2.5 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-1.5">
-                                                    <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (recommended)</p>
-                                                    <p className="text-xs text-gray-600 dark:text-gray-400">
-                                                        In NPM, add IP-based access lists for admin services (Nginx Admin, AdGuard) to restrict LAN-only access.
-                                                    </p>
-                                                </div>
-                                            </>
-                                        )}
-
-                                        {!hasProxyRoutes && manifest.length === 0 && (
-                                            <p className="text-sm text-green-600 dark:text-green-400 font-medium">
-                                                Stack installation complete.
+                                        <div className="p-2.5 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-1.5">
+                                            <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (recommended)</p>
+                                            <p className="text-xs text-gray-600 dark:text-gray-400">
+                                                In NPM, add IP-based access lists for admin services (Nginx Admin, AdGuard) to restrict LAN-only access.
                                             </p>
-                                        )}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                    )}
+                                        </div>
+                                    </>
+                                )}
+                                {!hasProxyRoutes && installFlow.credentialsManifest.length === 0 && (
+                                    <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                                        Stack installation complete.
+                                    </p>
+                                )}
+                            </>
+                        );
+                        return (
+                            <div>
+                                <StackInstallProgress controller={installFlow} beforeLog={statusStrip} />
+                                {stackInstallStep === 'done' && (
+                                    <StackInstallSummary controller={installFlow} doneFooter={doneFooter} />
+                                )}
+                            </div>
+                        );
+                    })()}
                 </div>
             )}
 
@@ -3030,7 +2370,7 @@ export default function OnboardingWizard() {
             )}
             {currentStep === 'stacks' && stackInstallStep === 'services' && (
                 <div className="flex gap-2 items-center">
-                    <button onClick={() => { setStackInstallStep('select'); setSelectedStack(null); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+                    <button onClick={() => { setWizardSubStep('select'); setSelectedStack(null); installFlow.reset(); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
                     <Button
                         onClick={() => { void handleStackFetchVars(); }}
                         disabled={
@@ -3044,7 +2384,7 @@ export default function OnboardingWizard() {
             )}
             {currentStep === 'stacks' && stackInstallStep === 'configure' && (
                 <div className="flex gap-2">
-                    <button onClick={() => setStackInstallStep('services')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+                    <button onClick={() => { setWizardSubStep('services'); installFlow.reset(); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
                     <Button
                         onClick={() => { void handleStackInstall(); }}
                         disabled={(!stackSelectedNode && stackNodes.length > 1)}
