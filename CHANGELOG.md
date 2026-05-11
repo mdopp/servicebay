@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.18.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.18.0...servicebay-v3.18.1) (2026-05-11)
+
+
+### Bug Fixes
+
+* **filebrowser:** pre-start DB init must set auth.method=proxy ([#359](https://github.com/mdopp/servicebay/issues/359)) ([be62169](https://github.com/mdopp/servicebay/commit/be62169c0e8f80fa0dda89a1214cca94d7399dd3))
+
 ## [3.18.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.17.0...servicebay-v3.18.0) (2026-05-11)
 
 
