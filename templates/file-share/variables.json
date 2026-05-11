@@ -21,7 +21,7 @@
   },
   "FILEBROWSER_PORT": {
     "type": "text",
-    "description": "FileBrowser HTTP port — bound to 127.0.0.1 so it's only reachable through NPM (which terminates Authelia SSO).",
+    "description": "FileBrowser HTTP port. FB binds on 0.0.0.0 because NPM lives in its own pod netns and can't reach the host loopback. Direct LAN hits without the Remote-User header set by NPM/Authelia are rejected by FB's proxy-auth mode (403), so this is not an auth-bypass.",
     "default": "8088"
   },
   "FILEBROWSER_ADMIN_USER": {

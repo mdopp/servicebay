@@ -6,7 +6,7 @@ metadata:
     app: file-share
   annotations:
     servicebay.label: "File Share (Syncthing + Samba + FileBrowser)"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
     servicebay.ports: "8384/tcp,22000/tcp,139/tcp,445/tcp,{{FILEBROWSER_PORT}}/tcp"
     # Pin the .filebrowser.json.mustache target to filebrowser's /config
     # mount — without this the wizard's path resolver would also consider
@@ -83,10 +83,12 @@ spec:
         name: shared-data
 
   # 3. FileBrowser — Family-facing web file manager over the shared volume.
-  # Bound to loopback only — Authelia forward-auth at the NPM layer is the
-  # gate. Direct host-IP access on this port is intentionally unreachable
-  # so a misconfigured proxy can't accidentally expose an unauth-allowing
-  # service.
+  # Binds on 0.0.0.0 — NPM lives in its own pod netns and can't reach the
+  # host's 127.0.0.1, so loopback-only would make FB unreachable to the
+  # reverse proxy. FB runs in proxy-auth mode (auth.method=proxy with
+  # Remote-User), so a request without that header is rejected with 403 —
+  # direct LAN hits on :8088 can't bypass Authelia, only NPM-proxied
+  # requests with a valid forward-auth response get through.
   - name: filebrowser
     image: docker.io/filebrowser/filebrowser:latest
     # Run as container UID 0. Under rootless podman that maps to the host
@@ -112,12 +114,12 @@ spec:
       - name: FB_PORT
         value: "{{FILEBROWSER_PORT}}"
       - name: FB_ADDRESS
-        value: "127.0.0.1"
+        value: "0.0.0.0"
     args:
       - "--config=/config/.filebrowser.json"
       - "--database=/database/filebrowser.db"
       - "--root=/srv"
-      - "--address=127.0.0.1"
+      - "--address=0.0.0.0"
       - "--port={{FILEBROWSER_PORT}}"
     ports:
       - containerPort: {{FILEBROWSER_PORT}}

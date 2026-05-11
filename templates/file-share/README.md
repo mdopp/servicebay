@@ -29,7 +29,7 @@ Files added through any of the three (Samba, Syncthing, FileBrowser) are immedia
 | Syncthing UI | 8384 | HTTP |
 | Syncthing Sync | 22000 | TCP/QUIC |
 | Samba | 445 | TCP |
-| FileBrowser | 8088 (loopback) | HTTP |
+| FileBrowser | 8088 | HTTP (proxy-auth: needs Remote-User header) |
 
 ## Getting Started
 
