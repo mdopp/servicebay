@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.19.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.19.2...servicebay-v3.19.3) (2026-05-11)
+
+
+### Bug Fixes
+
+* **install:** stop wizard device-poll runaway during install ([#376](https://github.com/mdopp/servicebay/issues/376)) ([f08f3d3](https://github.com/mdopp/servicebay/commit/f08f3d3c8c4316095404d3995b31628d969211fb))
+
 ## [3.19.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.19.1...servicebay-v3.19.2) (2026-05-11)
 
 
