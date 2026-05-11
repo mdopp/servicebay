@@ -631,6 +631,14 @@ ${SERVICEBAY_SSH_PRIV}
                   if found:
                       set_path(merged, path, val)
                       kept += 1
+              # Tag the merge so the dashboard can show a "Welcome
+              # back — services restoring" banner instead of a silent
+              # boot (#337). Only set on the merge path; a true fresh
+              # install (no prior config.json) goes through the
+              # promote-in-place branch above and leaves `reinstall`
+              # unset.
+              import datetime
+              merged["reinstall"] = {"completedAt": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
               tmp = OLD + ".merge.tmp"
               with open(tmp, "w") as f:
                   json.dump(merged, f, indent=2)

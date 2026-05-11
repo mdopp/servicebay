@@ -229,6 +229,22 @@ export interface AppConfig {
   setupCompleted?: boolean;
   stackSetupPending?: boolean;
   /**
+   * Set by `setup-config-merge.service` on re-install when an existing
+   * config.json was merged with a freshly-staged ISO config. The
+   * dashboard reads `reinstall.completedAt` to show a "Welcome back —
+   * services restoring" banner so an operator who just re-flashed
+   * doesn't stare at "Loading services…" with no signal that work is
+   * happening in the background. Cleared via `POST
+   * /api/system/reinstall/ack` (operator dismissal) or by auto-decay
+   * once the timestamp is older than 10 min. See #337.
+   *
+   * Absent on a true fresh install (the promote-in-place branch of
+   * setup-config-merge skips it).
+   */
+  reinstall?: {
+    completedAt: string;
+  };
+  /**
    * Per-service record of the last `post-deploy.py` run. Written by
    * `ServiceManager.runPostDeployScript` after every run; read by the
    * `post_deploy_failed` probe (B8 / #241) so it can surface
