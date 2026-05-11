@@ -1,8 +1,8 @@
 {
   "NGINX_ADMIN_EMAIL": {
     "type": "text",
-    "description": "Initial NPM admin email (used as the login for ServiceBay's auto-sync of proxy routes)",
-    "default": "admin@servicebay.local"
+    "description": "NPM admin email + Let's Encrypt ACME registration. The wizard hoists this from the Domain step (operatorEmail) so it stays hidden in the Configure step under normal installs; this entry is only edited directly via the MCP / single-template installer paths. Real address required — LE rejects `.local` / `.example` / `.test`.",
+    "example": "you@example.com"
   },
   "NGINX_ADMIN_PASSWORD": {
     "type": "secret",
