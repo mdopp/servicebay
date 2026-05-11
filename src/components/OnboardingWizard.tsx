@@ -29,6 +29,8 @@ import { buildCredentialsManifest, buildBitwardenCsv } from '@/lib/stackInstall/
 import Mustache from 'mustache';
 
 import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home } from 'lucide-react';
+import StackVariableField from './StackVariableField';
+import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
@@ -97,12 +99,9 @@ interface Variable {
   meta?: VariableMeta;
 }
 
-function generateSecret(length = 32): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  return Array.from(crypto.getRandomValues(new Uint8Array(length)))
-    .map(b => chars[b % chars.length])
-    .join('');
-}
+// `generateSecret` lives in src/lib/stackInstall/randomSecret.ts as
+// `generateRandomSecret` since #341 phase-2-step-1 — same helper that
+// InstallerModal and the shared <StackVariableField> use.
 
 const WIZARD_STATE_KEY = 'sb.onboarding.v1';
 
@@ -952,7 +951,7 @@ export default function OnboardingWizard() {
       // Auto-fill LLDAP_HOST — always localhost when installing in the same stack
       if (v === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
       if (!value && meta?.default) value = meta.default;
-      if (!value && meta?.type === 'secret') value = generateSecret();
+      if (!value && meta?.type === 'secret') value = generateRandomSecret();
       return { name: v, value, global: isGlobal, meta };
     });
     // Async fill for rsa-private types — needs server-side crypto.generateKeyPair.
@@ -2466,75 +2465,30 @@ export default function OnboardingWizard() {
                                                     </span>
                                                 </div>
                                                 {desc && !isRedundant && <p className="text-xs text-gray-500 mb-1">{desc}</p>}
-                                                {v.meta?.type === 'password' ? (
-                                                    <input
-                                                        type="password"
-                                                        value={v.value}
-                                                        onChange={(e) => {
-                                                            const newVars = [...stackVariables];
-                                                            newVars[idx].value = e.target.value;
-                                                            setStackVariables(newVars);
-                                                        }}
-                                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
-                                                        autoComplete="new-password"
-                                                    />
-                                                ) : v.meta?.type === 'secret' ? (
-                                                    <div className="flex gap-2">
-                                                        <input
-                                                            type="text"
-                                                            value={v.value}
-                                                            onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }}
-                                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-xs font-mono flex-1"
-                                                            spellCheck={false}
-                                                            autoComplete="off"
-                                                        />
-                                                        <button type="button" onClick={() => { const nv = [...stackVariables]; nv[idx].value = generateSecret(); setStackVariables(nv); }} title="Regenerate" className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700"><RefreshCw size={14} /></button>
-                                                    </div>
-                                                ) : v.meta?.type === 'select' && v.meta.options ? (
-                                                    <select value={v.value} onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }} className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm">
-                                                        <option value="" disabled>Select...</option>
-                                                        {v.meta.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                                                    </select>
-                                                ) : v.meta?.type === 'subdomain' ? (
-                                                    <div className="flex items-center gap-0">
-                                                        <input type="text" value={v.value} onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }} className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-l-md text-sm border-r-0" placeholder={v.meta.default || 'subdomain'} />
-                                                        <span className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 text-gray-500 text-xs rounded-r-md whitespace-nowrap">.{stackVariables.find(x => x.name === 'PUBLIC_DOMAIN')?.value || 'example.com'}</span>
-                                                    </div>
-                                                ) : v.meta?.type === 'device' ? (() => {
-                                                    const devPath = v.meta?.devicePath || '/dev/serial/by-id';
-                                                    const devices = stackDeviceOptions[devPath] || [];
-                                                    return (
-                                                        <div className="flex gap-2">
-                                                            <select value={v.value} onChange={(e) => { const nv = [...stackVariables]; nv[idx].value = e.target.value; setStackVariables(nv); }} className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm flex-1">
-                                                                <option value="" disabled>{stackLoadingDevices ? 'Loading devices...' : !stackSelectedNode ? 'Select a node first' : devices.length === 0 ? 'No devices found' : 'Select device...'}</option>
-                                                                {devices.map(dev => <option key={dev} value={dev}>{dev.replace(`${devPath}/`, '')}</option>)}
-                                                            </select>
-                                                            {stackSelectedNode && (
-                                                                <button type="button" onClick={() => {
-                                                                    setStackLoadingDevices(true);
-                                                                    fetch(`/api/system/devices?node=${stackSelectedNode}&path=${encodeURIComponent(devPath)}`)
-                                                                        .then(r => r.json())
-                                                                        .then(data => { setStackDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] })); setStackLoadingDevices(false); })
-                                                                        .catch(() => setStackLoadingDevices(false));
-                                                                }} className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700" title="Refresh device list">
-                                                                    <RefreshCw size={14} className={stackLoadingDevices ? 'animate-spin' : ''} />
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })() : (
-                                                    <input
-                                                        type="text"
-                                                        value={v.value}
-                                                        onChange={(e) => {
-                                                            const newVars = [...stackVariables];
-                                                            newVars[idx].value = e.target.value;
-                                                            setStackVariables(newVars);
-                                                        }}
-                                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
-                                                        placeholder={v.meta?.example ? `e.g. ${v.meta.example}` : (v.meta?.default ? `Default: ${v.meta.default}` : `Value for ${v.name}`)}
-                                                    />
-                                                )}
+                                                {/* Variable input dispatch — type-specific UI lives in
+                                                    <StackVariableField>, shared with InstallerModal since #341. */}
+                                                <StackVariableField
+                                                    variable={v}
+                                                    onChange={(value) => {
+                                                        const nv = [...stackVariables];
+                                                        nv[idx].value = value;
+                                                        setStackVariables(nv);
+                                                    }}
+                                                    publicDomain={stackVariables.find(x => x.name === 'PUBLIC_DOMAIN')?.value}
+                                                    inputClassName="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
+                                                    deviceContext={{
+                                                        deviceOptions: stackDeviceOptions,
+                                                        loadingDevices: stackLoadingDevices,
+                                                        canRefresh: !!stackSelectedNode,
+                                                        onRefresh: (devPath) => {
+                                                            setStackLoadingDevices(true);
+                                                            fetch(`/api/system/devices?node=${stackSelectedNode}&path=${encodeURIComponent(devPath)}`)
+                                                                .then(r => r.json())
+                                                                .then(data => { setStackDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] })); setStackLoadingDevices(false); })
+                                                                .catch(() => setStackLoadingDevices(false));
+                                                        },
+                                                    }}
+                                                />
                                             </div>
                                             );
                                         })}
