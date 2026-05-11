@@ -1,21 +1,27 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Template, VariableMeta } from '@/lib/registry';
-import { runPostInstall } from '@/lib/stackInstall/postInstall';
-import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
-import { buildCredentialsManifest, buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
-import { fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } from '@/app/actions';
-import { parseTemplateLabel } from '@/lib/templateLabel';
+import { Template } from '@/lib/registry';
+import { useStackInstall } from '@/lib/stackInstall/useStackInstall';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
-import { Layers, Loader2, AlertCircle, X, Folder, Server } from 'lucide-react';
+import { Layers, Folder, X } from 'lucide-react';
 import TemplateUpgradeBanner from './TemplateUpgradeBanner';
-import StackVariableField from './StackVariableField';
-import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
+import StackInstallFlow from './StackInstallFlow';
 import { useRouter } from 'next/navigation';
-import Mustache from 'mustache';
 
+/**
+ * Registry-side install entry point. Used when an operator clicks a stack
+ * tile on /registry post-onboarding. Owns the modal chrome + the stack/
+ * template select step; everything from configure onwards is delegated to
+ * the shared `useStackInstall` engine and rendered by `<StackInstallFlow>`.
+ *
+ * History: pre-#341 phase-2-step-2 this component carried its own ~830-line
+ * copy of the install pipeline. Both that copy and the wizard's copy kept
+ * drifting on auto-fill rules, Mustache section-tag handling, OIDC client
+ * registration, and post-deploy.py support. The shared engine fixes those
+ * once.
+ */
 interface InstallerModalProps {
   template: Template;
   readme: string;
@@ -23,113 +29,62 @@ interface InstallerModalProps {
   onClose: () => void;
 }
 
-interface ConfigFile {
-  filename: string;
-  content: string;
-  targetPath?: string;
-}
-
-interface StackItem {
+interface SelectItem {
   name: string;
   checked: boolean;
-  yaml?: string;
-  configFiles?: ConfigFile[];
 }
-
-interface Variable {
-  name: string;
-  value: string;
-  global?: boolean;
-  meta?: VariableMeta;
-}
-
-// `generateSecret` lives in src/lib/stackInstall/randomSecret.ts as
-// `generateRandomSecret` since #341 phase-2-step-1 — same helper that
-// OnboardingWizard and the new <StackVariableField> share.
 
 export default function InstallerModal({ template, readme, isOpen, onClose }: InstallerModalProps) {
   const router = useRouter();
-  const [step, setStep] = useState<'select' | 'configure' | 'installing' | 'done'>('select');
-  const [items, setItems] = useState<StackItem[]>([]);
-  const [variables, setVariables] = useState<Variable[]>([]);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const controller = useStackInstall({ templateSource: template.source });
+  const [selectItems, setSelectItems] = useState<SelectItem[]>([]);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [selectedNode, setSelectedNode] = useState('');
   const [deviceOptions, setDeviceOptions] = useState<Record<string, string[]>>({});
   const [loadingDevices, setLoadingDevices] = useState(false);
-
-  // Clean install — wipe existing service data before deploying.
-  const [cleanInstall, setCleanInstall] = useState(false);
-  const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
+  const [advancing, setAdvancing] = useState(false);
 
   // Per-template ready-to-install state, tracked by TemplateUpgradeBanner
-  // for any item that has a pending breaking-change banner. `undefined`
-  // = preview still loading or banner deferred its decision; `false` =
-  // operator hasn't acknowledged yet; `true` = nothing to acknowledge
-  // OR acknowledged. Map keys are item.name (template names). The
-  // Continue button stays disabled while any entry is not `true`.
-  // See #353 / #354.
+  // for any item that has a pending breaking-change banner. See #353 / #354.
   const [upgradeReady, setUpgradeReady] = useState<Record<string, boolean | undefined>>({});
   const reportUpgradeReady = useCallback((name: string, ready: boolean | undefined) => {
     setUpgradeReady(prev => (prev[name] === ready ? prev : { ...prev, [name]: ready }));
   }, []);
-  const checkedItems = items.filter(i => i.checked);
+  const checkedItems = selectItems.filter(i => i.checked);
   const allUpgradesReady = checkedItems.length > 0 && checkedItems.every(i => upgradeReady[i.name] === true);
 
   useEffect(() => {
     getNodes().then(setNodes);
   }, []);
 
-  // Initialize items based on type
+  // Reset state when re-opening (modal persists in the DOM between opens).
   useEffect(() => {
     if (!isOpen) return;
-
-    // Reset state when opening
-    setStep('select');
-    setVariables([]);
-    setLogs([]);
-    setError(null);
+    controller.reset();
     setDeviceOptions({});
-
     if (template.type === 'stack') {
-        const lines = readme.split('\n');
-        const parsedItems: StackItem[] = [];
-        const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)/;
-
-        lines.forEach(line => {
-            const match = line.match(regex);
-            if (match) {
-                parsedItems.push({
-                    name: match[2].trim(),
-                    checked: match[1].toLowerCase() === 'x'
-                });
-            }
-        });
-        setItems(parsedItems);
+      const parsed: SelectItem[] = [];
+      const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)/;
+      for (const line of readme.split('\n')) {
+        const match = line.match(regex);
+        if (match) {
+          parsed.push({ name: match[2].trim(), checked: match[1].toLowerCase() === 'x' });
+        }
+      }
+      setSelectItems(parsed);
     } else {
-        // Single template
-        setItems([{ name: template.name, checked: true }]);
-    }
-  }, [isOpen, template, readme]);
-
-  // Auto-advance for single templates
-  useEffect(() => {
-    if (isOpen && template.type === 'template' && items.length > 0 && step === 'select') {
-        fetchYamlsAndExtractVars();
+      setSelectItems([{ name: template.name, checked: true }]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, isOpen, template, step]);
+  }, [isOpen, template, readme]);
 
-  // Fetch devices when node is selected and there are device-type variables
+  // Fetch devices when node is selected and there are device-type variables.
   useEffect(() => {
     if (!selectedNode) return;
-    const deviceVars = variables.filter(v => v.meta?.type === 'device');
+    const deviceVars = controller.variables.filter(v => v.meta?.type === 'device');
     if (deviceVars.length === 0) return;
-
     const paths = new Set(deviceVars.map(v => v.meta?.devicePath || '/dev/serial/by-id'));
     setLoadingDevices(true);
-
     Promise.all(
       Array.from(paths).map(async (devicePath) => {
         try {
@@ -140,700 +95,206 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
           }
         } catch { /* ignore */ }
         return { path: devicePath, devices: [] as string[] };
-      })
+      }),
     ).then(results => {
       const opts: Record<string, string[]> = {};
       for (const r of results) opts[r.path] = r.devices;
       setDeviceOptions(opts);
       setLoadingDevices(false);
     });
-  }, [selectedNode, variables]);
+  }, [selectedNode, controller.variables]);
 
-
-  const handleToggle = (index: number) => {
-    const newItems = [...items];
-    newItems[index].checked = !newItems[index].checked;
-    setItems(newItems);
+  const handleToggle = (idx: number) => {
+    setSelectItems(prev => prev.map((item, i) => (i === idx ? { ...item, checked: !item.checked } : item)));
   };
 
-  const fetchYamlsAndExtractVars = async () => {
-    setStep('configure');
-    setError(null);
-    const selectedItems = items.filter(i => i.checked);
-    const vars = new Set<string>();
-    const newItems = [...items];
-    const allMeta: Record<string, VariableMeta> = {};
-
-    // Fetch global template settings (DATA_DIR, etc.)
-    let globalSettings: Record<string, string> = {};
+  const advanceToConfigure = async () => {
+    setAdvancing(true);
     try {
-        const settingsRes = await fetch('/api/settings');
-        if (settingsRes.ok) {
-            const settings = await settingsRes.json();
-            globalSettings = settings.templateSettings || {};
-        }
-    } catch { /* use empty defaults */ }
-
-    for (const item of selectedItems) {
-        try {
-            const yaml = await fetchTemplateYaml(item.name, template.source);
-            if (!yaml) {
-                throw new Error(`Could not fetch template for ${item.name}`);
-            }
-
-            const idx = newItems.findIndex(i => i.name === item.name);
-            if (idx !== -1) newItems[idx].yaml = yaml;
-
-            const matches = yaml.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
-            for (const match of matches) {
-                vars.add(match[1]);
-            }
-
-            // Fetch variable metadata
-            const meta = await fetchTemplateVariables(item.name, template.source);
-            const templateLabel = parseTemplateLabel(yaml);
-            if (meta) {
-              for (const [key, value] of Object.entries(meta)) {
-                if (!allMeta[key]) {
-                  allMeta[key] = { ...value, templateName: item.name, templateLabel };
-                }
-              }
-            }
-
-            // Fetch extra config files (.mustache) and resolve target paths
-            // by parsing the rendered YAML and chasing volume names. The
-            // earlier regex-based resolver broke on multi-container pods
-            // (first-match-wins for same-suffix mountPaths) and on multi-
-            // doc YAML (Pod + PersistentVolumeClaim — file-share ships
-            // both since 3.6.4). Mirrors the OnboardingWizard's resolver
-            // — both code paths must stay in sync or one of them silently
-            // drops mustache configs and the deploy aborts via the
-            // ServiceManager extraFiles consistency guard.
-            const cfgFiles = await fetchTemplateConfigFiles(item.name, template.source);
-            if (cfgFiles.length > 0) {
-              // Sentinel-encode mustache placeholders so YAML parses but
-              // we don't poison host-path strings. See the matching
-              // comment in OnboardingWizard.tsx for the live-debugged
-              // pathology that made `{{DATA_DIR}}` end up as a literal
-              // `0` in `targetPath`, writing config files under `~/0/`.
-              // Mustache section tags (`{{#NAME}}` / `{{/NAME}}` / `{{^NAME}}`)
-              // must be stripped first — the sentinel below only covers
-              // bare `{{VAR}}` placeholders, so section tokens slip
-              // through, break js-yaml ("missed comma between flow
-              // collection entries"), and any `.mustache` config file
-              // fails to map a hostPath. Stripping is safe here: we only
-              // need the unconditional volumes/mounts to discover the
-              // config-mount hostPath. Mirrors OnboardingWizard.tsx.
-              const SECTION_RE = /\{\{\s*[#^/]\s*[\w\d_]+\s*\}\}/g;
-              const SENTINEL_RE_OUT = /\{\{\s*([\w\d_]+)\s*\}\}/g;
-              const SENTINEL_RE_IN = /__SBVAR_([\w\d_]+)__/g;
-              const safeYaml = yaml
-                .replace(SECTION_RE, '')
-                .replace(SENTINEL_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
-              const restorePlaceholders = (s: string): string =>
-                s.replace(SENTINEL_RE_IN, (_m, n) => `{{${n}}}`);
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              let docs: any[] = [];
-              try {
-                docs = (await import('js-yaml')).loadAll(safeYaml);
-              } catch {
-                docs = [];
-              }
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const doc = docs.find((d: any) => d?.kind === 'Pod') ?? docs[0];
-              const nameToHostPath = new Map<string, string>();
-              const mountPathToHostPath = new Map<string, string>();
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              for (const v of (doc?.spec?.volumes ?? []) as any[]) {
-                if (typeof v?.name === 'string' && typeof v?.hostPath?.path === 'string') {
-                  nameToHostPath.set(v.name, restorePlaceholders(v.hostPath.path));
-                }
-              }
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              for (const c of (doc?.spec?.containers ?? []) as any[]) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                for (const m of (c?.volumeMounts ?? []) as any[]) {
-                  if (typeof m?.mountPath === 'string' && typeof m?.name === 'string') {
-                    const hp = nameToHostPath.get(m.name);
-                    if (hp && !mountPathToHostPath.has(m.mountPath)) {
-                      mountPathToHostPath.set(m.mountPath, hp);
-                    }
-                  }
-                }
-              }
-              const annotations: Record<string, string> = doc?.metadata?.annotations ?? {};
-              const explicitMount = annotations['servicebay.config-mount'];
-              for (const cf of cfgFiles) {
-                let hp: string | undefined;
-                if (explicitMount) {
-                  hp = mountPathToHostPath.get(explicitMount);
-                }
-                if (!hp) {
-                  for (const [mp, h] of mountPathToHostPath.entries()) {
-                    if (mp === '/config' || mp.endsWith('/config') || mp.endsWith('/conf')) {
-                      hp = h;
-                      break;
-                    }
-                  }
-                }
-                if (hp) cf.targetPath = `${hp}/${cf.filename}`;
-                const cfgMatches = cf.content.matchAll(/\{\{\s*([\w\d_]+)\s*\}\}/g);
-                for (const m of cfgMatches) vars.add(m[1]);
-              }
-              if (idx !== -1) newItems[idx].configFiles = cfgFiles;
-            }
-
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setError(msg);
-            return;
-        }
-    }
-
-    // Include variables from metadata that aren't referenced in YAML
-    // (e.g. subdomain variables used only for proxy configuration)
-    for (const key of Object.keys(allMeta)) {
-        vars.add(key);
-    }
-
-    setItems(newItems);
-    const resolvedVars = Array.from(vars).map(v => {
-        const meta = allMeta[v];
-        let value = globalSettings[v] || '';
-        let isGlobal = !!globalSettings[v];
-        // Auto-fill LLDAP_HOST — always localhost when on same node
-        if (v === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
-        // Auto-fill defaults from metadata
-        if (!value && meta?.default) value = meta.default;
-        // Auto-generate secrets
-        if (!value && meta?.type === 'secret') value = generateRandomSecret();
-        return { name: v, value, global: isGlobal, meta };
-    });
-    // Async fill for rsa-private types — needs server-side crypto.generateKeyPair.
-    // The PEM is pre-indented with 10 spaces so it can be dropped under a
-    // YAML `key: |` block scalar without further mustache gymnastics.
-    await Promise.all(resolvedVars.map(async v => {
-        if (v.value || v.meta?.type !== 'rsa-private') return;
-        try {
-            const res = await fetch('/api/system/keys/rsa');
-            if (res.ok) {
-                const data = await res.json();
-                if (typeof data.pem === 'string') {
-                    v.value = data.pem.trimEnd().split('\n').map((l: string) => '          ' + l).join('\n');
-                }
-            }
-        } catch { /* leave empty */ }
-    }));
-    // Async fill for bcrypt types — derives from another variable's plaintext.
-    await Promise.all(resolvedVars.map(async v => {
-        if (v.value || v.meta?.type !== 'bcrypt') return;
-        const sourceName = v.meta?.bcryptSource;
-        if (!sourceName) return;
-        const source = resolvedVars.find(x => x.name === sourceName);
-        if (!source?.value) return;
-        try {
-            const res = await fetch('/api/system/keys/bcrypt', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password: source.value }),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                if (typeof data.hash === 'string') v.value = data.hash;
-            }
-        } catch { /* leave empty */ }
-    }));
-    // Auto-derive VAULTWARDEN_DOMAIN from subdomain + PUBLIC_DOMAIN
-    const pubDomain = resolvedVars.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-    const vwSub = resolvedVars.find(v => v.name === 'VAULTWARDEN_SUBDOMAIN')?.value;
-    if (pubDomain && vwSub) {
-      const vwDomain = resolvedVars.find(v => v.name === 'VAULTWARDEN_DOMAIN');
-      if (vwDomain) { vwDomain.value = `https://${vwSub}.${pubDomain}`; vwDomain.global = true; }
-    }
-    setVariables(resolvedVars);
-  };
-
-  const registerOidcClients = async () => {
-    if (!variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value) return;
-
-    // Check if any templates have OIDC clients (subdomain vars with oidcClient metadata)
-    const hasOidcClients = variables.some(v => v.meta?.oidcClient && v.meta?.type === 'subdomain' && v.value);
-    if (!hasOidcClients) return;
-
-    setLogs(prev => [...prev, 'Registering OIDC clients with Authelia...']);
-
-    const selectedItems = items.filter(i => i.checked);
-    const variableValues = variables.reduce<Record<string, string>>((acc, v) => {
-      acc[v.name] = v.value;
-      return acc;
-    }, {});
-
-    try {
-      const res = await fetch('/api/system/authelia/oidc-clients', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          templates: selectedItems.map(i => ({ name: i.name, source: template.source })),
-          variables: variableValues,
-        }),
-      });
-      const data = await res.json();
-
-      if (res.ok) {
-        if (data.added?.length) {
-          setLogs(prev => [...prev, `\u2705 OIDC clients registered: ${data.added.join(', ')}`]);
-        }
-        if (data.skipped?.length) {
-          setLogs(prev => [...prev, `\u2139\ufe0f Already registered: ${data.skipped.join(', ')}`]);
-        }
-      } else if (res.status === 404) {
-        setLogs(prev => [...prev, '\u26a0\ufe0f Authelia not deployed — OIDC clients not registered. Deploy Authelia first, then redeploy this service.']);
-      } else {
-        setLogs(prev => [...prev, `\u26a0\ufe0f Could not register OIDC clients: ${data.error || 'unknown error'}`]);
-      }
-    } catch {
-      setLogs(prev => [...prev, '\u26a0\ufe0f Could not reach Authelia. Register OIDC clients manually.']);
+      await controller.startConfigure(
+        selectItems.filter(i => i.checked).map(i => ({ name: i.name, checked: true })),
+        {},
+      );
+    } finally {
+      setAdvancing(false);
     }
   };
 
-  const handleInstall = async () => {
-    setStep('installing');
-    setLogs([]);
-
-    if (cleanInstall && cleanInstallConfirm === 'RESET') {
-      setLogs(prev => [...prev, '🧹 Clean install — wiping existing service data...']);
-      try {
-        const res = await fetch('/api/system/stacks/reset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: 'RESET', node: selectedNode || undefined }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-          const removed = data.deleted?.length ?? 0;
-          setLogs(prev => [...prev, `✅ Reset done — removed ${removed} service${removed === 1 ? '' : 's'}, wiped ${data.dataDir}.`]);
-          if (data.failed?.length) {
-            setLogs(prev => [...prev, `⚠️ Some services could not be cleanly removed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`]);
-          }
-        } else {
-          setLogs(prev => [...prev, `⚠️ Reset failed: ${data.error || 'unknown error'}. Continuing — existing data may remain.`]);
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'unknown error';
-        setLogs(prev => [...prev, `⚠️ Reset call failed: ${msg}. Continuing.`]);
-      }
+  // Auto-advance single-template installs past the select step — there's
+  // nothing to choose between when only one service exists.
+  useEffect(() => {
+    if (isOpen && template.type === 'template' && selectItems.length > 0 && controller.phase === 'idle' && !advancing) {
+      void advanceToConfigure();
     }
-
-    const selectedItems = items.filter(i => i.checked);
-
-    for (const item of selectedItems) {
-        if (!item.yaml) continue;
-
-        setLogs(prev => [...prev, `Installing ${item.name}...`]);
-
-        const view = variables.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {});
-        // Disable HTML escaping — we're rendering YAML, not HTML
-        const savedEscape = Mustache.escape;
-        Mustache.escape = (text: string) => text;
-        const content = Mustache.render(item.yaml, view);
-
-        const kubeContent = `[Kube]
-Yaml=${item.name}.yml
-AutoUpdate=registry
-
-[Install]
-WantedBy=default.target`;
-
-        // Render extra config files (.mustache) with the same variables
-        const extraFiles = (item.configFiles || [])
-          .filter(cf => cf.targetPath)
-          .map(cf => {
-            const rendered = Mustache.render(cf.content, view);
-            const resolvedPath = Mustache.render(cf.targetPath!, view);
-            return { path: resolvedPath, content: rendered };
-          });
-        Mustache.escape = savedEscape;
-
-        try {
-            const query = selectedNode ? `?node=${selectedNode}` : '';
-            const res = await fetch(`/api/services${query}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: item.name,
-                    kubeContent,
-                    yamlContent: content,
-                    yamlFileName: `${item.name}.yml`,
-                    extraFiles,
-                }),
-            });
-
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || 'Unknown error');
-            }
-            setLogs(prev => [...prev, `✅ ${item.name} installed successfully.`]);
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setLogs(prev => [...prev, `❌ Failed to install ${item.name}: ${msg}`]);
-        }
-    }
-
-    await runPostInstall({
-      selected: selectedItems.map(i => ({ name: i.name, checked: true })),
-      variables,
-      node: selectedNode || undefined,
-      onLog: (msg) => setLogs(prev => [...prev, msg]),
-    });
-
-        await registerOidcClients();
-
-    setStep('done');
-  };
-
-  const renderVariableInput = (v: Variable, idx: number) => {
-    const update = (value: string) => {
-      const newVars = [...variables];
-      newVars[idx].value = value;
-      setVariables(newVars);
-    };
-
-    // Type dispatch (select / device / subdomain / password / secret /
-    // text) lives in <StackVariableField>, shared with OnboardingWizard
-    // since #341.
-    return (
-      <StackVariableField
-        variable={v}
-        onChange={update}
-        publicDomain={variables.find(x => x.name === 'PUBLIC_DOMAIN')?.value}
-        deviceContext={{
-          deviceOptions,
-          loadingDevices,
-          canRefresh: !!selectedNode,
-          onRefresh: (devPath) => {
-            setLoadingDevices(true);
-            fetch(`/api/system/devices?node=${selectedNode}&path=${encodeURIComponent(devPath)}`)
-              .then(r => r.json())
-              .then(data => {
-                setDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] }));
-                setLoadingDevices(false);
-              })
-              .catch(() => setLoadingDevices(false));
-          },
-        }}
-      />
-    );
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectItems, isOpen, template, controller.phase]);
 
   if (!isOpen) return null;
 
+  const phase = controller.phase;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-
-            {/* Header */}
-            <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                    {template.type === 'stack' ? <Layers className="text-purple-600 dark:text-purple-400" /> : <Folder className="text-blue-600 dark:text-blue-400" />}
-                    Install {template.type === 'stack' ? 'Stack' : 'Template'}: {template.name}
-                </h3>
-                <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
-                    <X size={24} />
-                </button>
-            </div>
-
-            {/* Content */}
-            <div className="p-6 overflow-y-auto flex-1">
-                {step === 'select' && (
-                    <div>
-                        {items.length === 0 ? (
-                             <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 rounded border border-yellow-200 dark:border-yellow-800">
-                                No service definitions found in this stack&apos;s README.
-                                <br/>
-                                <small>Expected format: <code>- [x] service-name</code></small>
-                            </div>
-                        ) : (
-                            <>
-                                <p className="mb-4 text-gray-600 dark:text-gray-400">Select the services you want to include:</p>
-                                <div className="space-y-2 mb-6">
-                                    {items.map((item, i) => (
-                                        <label key={item.name} className="flex items-center gap-3 p-3 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors">
-                                            <input
-                                                type="checkbox"
-                                                checked={item.checked}
-                                                onChange={() => handleToggle(i)}
-                                                className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
-                                            />
-                                            <span className="font-medium text-gray-900 dark:text-gray-200">{item.name}</span>
-                                        </label>
-                                    ))}
-                                </div>
-                                {/* Upgrade banners — one per checked item that has a
-                                    breaking-change or non-breaking changelog entry between
-                                    the operator's installed schema-version and the
-                                    template's current. See #353 / #354. */}
-                                {checkedItems.map(item => (
-                                    <TemplateUpgradeBanner
-                                        key={item.name}
-                                        templateName={item.name}
-                                        source={template.source}
-                                        onReadyToInstall={ready => reportUpgradeReady(item.name, ready)}
-                                    />
-                                ))}
-                            </>
-                        )}
-                    </div>
-                )}
-
-                {step === 'configure' && (
-                    <div>
-                        <div className="mb-6">
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Target Node</label>
-                            <div className="relative">
-                                <select
-                                    value={selectedNode}
-                                    onChange={(e) => setSelectedNode(e.target.value)}
-                                    className="w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500 appearance-none"
-                                >
-                                    <option value="" disabled>Select a node</option>
-                                    {nodes.map(n => (
-                                        <option key={n.Name} value={n.Name}>{n.Name} ({n.URI})</option>
-                                    ))}
-                                </select>
-                                <Server className="absolute right-3 top-2.5 text-gray-400 pointer-events-none" size={16} />
-                            </div>
-                        </div>
-
-                        <div className="mb-6 border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3">
-                            <label className="flex items-start gap-2 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={cleanInstall}
-                                    onChange={(e) => { setCleanInstall(e.target.checked); if (!e.target.checked) setCleanInstallConfirm(''); }}
-                                    className="mt-0.5"
-                                />
-                                <div className="text-sm text-amber-900 dark:text-amber-100">
-                                    <strong>Clean install</strong> — wipe existing service data first.
-                                    <p className="text-xs text-amber-800 dark:text-amber-200/80 mt-1">
-                                        Stops every stack service, deletes their Quadlet definitions and the contents of <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. ServiceBay itself is not affected.
-                                    </p>
-                                </div>
-                            </label>
-                            {cleanInstall && (
-                                <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
-                                    <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
-                                        Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={cleanInstallConfirm}
-                                        onChange={(e) => setCleanInstallConfirm(e.target.value)}
-                                        className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
-                                        placeholder="RESET"
-                                        autoComplete="off"
-                                    />
-                                </div>
-                            )}
-                        </div>
-
-                        {variables.length > 0 ? (
-                            <div className="space-y-4 mb-6">
-                                {/* Global settings (read-only, from Settings > Template Settings) */}
-                                {variables.filter(v => v.global).length > 0 && (
-                                    <div>
-                                        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">From Settings</p>
-                                        <div className="grid gap-2">
-                                            {variables.filter(v => v.global).map(v => (
-                                                <div key={v.name} className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
-                                                    <span className="text-sm font-medium text-gray-500 dark:text-gray-400 min-w-[100px]">{v.name}</span>
-                                                    <span className="text-sm text-gray-700 dark:text-gray-300 font-mono">{v.value}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* User-configurable variables, grouped by service */}
-                                {groupVariablesByTemplate(variables).filter(g => g.key !== '_global').map(group => (
-                                    <div key={group.key}>
-                                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 pb-1 mb-3">{group.label}</h4>
-                                        <div className="grid gap-4">
-                                            {group.variables.map((v) => {
-                                                const idx = variables.findIndex(x => x.name === v.name);
-                                                return (
-                                                <div key={v.name}>
-                                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
-                                                    {v.meta?.description && (
-                                                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">{v.meta.description}</p>
-                                                    )}
-                                                    {renderVariableInput(v, idx)}
-                                                </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="p-4 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded mb-6">
-                                No variables found. You can proceed.
-                            </div>
-                        )}
-
-                        {error && (
-                            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-200 rounded flex items-center gap-2">
-                                <AlertCircle size={18} /> {error}
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {(step === 'installing' || step === 'done') && (
-                    <div>
-                        <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-sm h-96 overflow-y-auto mb-4 border border-gray-800">
-                            {logs.map((log, i) => (
-                                <div key={i} className="mb-1">{log}</div>
-                            ))}
-                            {step === 'installing' && (
-                                <div className="flex items-center gap-2 text-gray-400 mt-2">
-                                    <Loader2 size={14} className="animate-spin" /> Processing...
-                                </div>
-                            )}
-                        </div>
-
-                        {step === 'done' && (() => {
-                            const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-                            const subdomains = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
-                            const hasProxyRoutes = !!domain && subdomains.length > 0;
-                            const host = typeof window !== 'undefined' ? window.location.hostname : '<server-ip>';
-                            const manifest = buildCredentialsManifest({ variables, host });
-                            if (!hasProxyRoutes && manifest.length === 0) return null;
-                            const downloadCsv = () => {
-                                const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });
-                                const a = document.createElement('a');
-                                a.href = URL.createObjectURL(blob);
-                                a.download = `servicebay-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
-                                a.click();
-                                URL.revokeObjectURL(a.href);
-                            };
-                            return (
-                                <div className="space-y-3">
-                                    <p className="text-sm font-bold text-gray-700 dark:text-gray-300">Next steps</p>
-
-                                    {manifest.length > 0 && (
-                                        <div className="p-3 bg-rose-50 dark:bg-rose-900/20 rounded border border-rose-200 dark:border-rose-800 text-sm">
-                                            <div className="flex items-center justify-between mb-2">
-                                                <p className="font-medium text-rose-800 dark:text-rose-200">🔑 Credentials — save now</p>
-                                                <button
-                                                    type="button"
-                                                    onClick={downloadCsv}
-                                                    className="text-xs px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded"
-                                                    title="Download as Bitwarden / Vaultwarden CSV"
-                                                >
-                                                    ⬇ Download CSV
-                                                </button>
-                                            </div>
-                                            <p className="text-xs text-rose-700 dark:text-rose-300 mb-2">
-                                                Won&apos;t be shown again. Copy now, or use the CSV: Vaultwarden → Tools → Import → Bitwarden (csv).
-                                            </p>
-                                            <div className="space-y-1.5 font-mono text-xs">
-                                                {manifest.filter(c => c.importance === 'critical').map(c => (
-                                                    <div key={c.service} className="border-l-2 border-rose-300 dark:border-rose-700 pl-2">
-                                                        <div className="font-sans font-medium text-rose-900 dark:text-rose-100">{c.service}</div>
-                                                        <div className="text-rose-700 dark:text-rose-300 break-all">{c.url}</div>
-                                                        <div className="text-rose-600 dark:text-rose-400">{c.username} / {c.password}</div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {hasProxyRoutes && (
-                                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-2">
-                                        <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
-                                        <p className="text-blue-700 dark:text-blue-300">
-                                            Point these domains to your server IP:
-                                        </p>
-                                        <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
-                                            {subdomains.map(sv => (
-                                                <div key={sv.name}>{sv.value}.{domain}</div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    )}
-
-                                    {hasProxyRoutes && (
-                                    <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-2">
-                                        <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
-                                        <p className="text-amber-700 dark:text-amber-300">
-                                            Open Nginx Proxy Manager and add Let&apos;s Encrypt SSL certificates for each proxy host.
-                                        </p>
-                                    </div>
-                                    )}
-
-                                    {hasProxyRoutes && (
-                                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-2">
-                                        <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (optional)</p>
-                                        <p className="text-gray-600 dark:text-gray-400">
-                                            Add IP-based access lists in NPM for admin-only services (Nginx Admin, AdGuard).
-                                        </p>
-                                    </div>
-                                    )}
-                                </div>
-                            );
-                        })()}
-                    </div>
-                )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-6 border-t border-gray-200 dark:border-gray-800 flex justify-end gap-3 bg-gray-50 dark:bg-gray-900/50 rounded-b-lg">
-                {step === 'select' && (
-                    <>
-                        <button onClick={onClose} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors">Cancel</button>
-                        <button
-                            onClick={fetchYamlsAndExtractVars}
-                            disabled={!allUpgradesReady}
-                            title={!allUpgradesReady && checkedItems.length > 0 ? 'Acknowledge the breaking-change banner(s) above to continue.' : undefined}
-                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
-                        >
-                            Continue
-                        </button>
-                    </>
-                )}
-                {step === 'configure' && (
-                    <>
-                        <button
-                            onClick={() => template.type === 'stack' ? setStep('select') : onClose()}
-                            className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors"
-                        >
-                            {template.type === 'stack' ? 'Back' : 'Cancel'}
-                        </button>
-                        <button
-                            onClick={handleInstall}
-                            disabled={!selectedNode || (cleanInstall && cleanInstallConfirm !== 'RESET')}
-                            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {cleanInstall ? 'Reset & Install' : 'Install'}
-                        </button>
-                    </>
-                )}
-                {step === 'installing' && (
-                    <button disabled className="px-4 py-2 bg-gray-400 text-white rounded cursor-not-allowed">Installing...</button>
-                )}
-                {step === 'done' && (
-                    <button
-                        onClick={() => {
-                            onClose();
-                            router.push('/');
-                        }}
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors"
-                    >
-                        Go to Dashboard
-                    </button>
-                )}
-            </div>
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+        <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
+          <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            {template.type === 'stack'
+              ? <Layers className="text-purple-600 dark:text-purple-400" />
+              : <Folder className="text-blue-600 dark:text-blue-400" />}
+            Install {template.type === 'stack' ? 'Stack' : 'Template'}: {template.name}
+          </h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+            <X size={24} />
+          </button>
         </div>
+
+        <div className="p-6 overflow-y-auto flex-1">
+          {(phase === 'idle' || (phase === 'configure' && selectItems.length === 0)) && template.type === 'stack' && (
+            <div>
+              {selectItems.length === 0 ? (
+                <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 rounded border border-yellow-200 dark:border-yellow-800">
+                  No service definitions found in this stack&apos;s README.
+                  <br/>
+                  <small>Expected format: <code>- [x] service-name</code></small>
+                </div>
+              ) : (
+                <>
+                  <p className="mb-4 text-gray-600 dark:text-gray-400">Select the services you want to include:</p>
+                  <div className="space-y-2 mb-6">
+                    {selectItems.map((item, i) => (
+                      <label key={item.name} className="flex items-center gap-3 p-3 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={item.checked}
+                          onChange={() => handleToggle(i)}
+                          className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
+                        />
+                        <span className="font-medium text-gray-900 dark:text-gray-200">{item.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {checkedItems.map(item => (
+                    <TemplateUpgradeBanner
+                      key={item.name}
+                      templateName={item.name}
+                      source={template.source}
+                      onReadyToInstall={ready => reportUpgradeReady(item.name, ready)}
+                    />
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+
+          {(phase === 'configure' || phase === 'installing' || phase === 'done' || phase === 'error') && (
+            <StackInstallFlow
+              controller={controller}
+              nodes={nodes}
+              selectedNode={selectedNode}
+              onSelectNode={setSelectedNode}
+              deviceContext={{
+                deviceOptions,
+                loadingDevices,
+                canRefresh: !!selectedNode,
+                onRefresh: (devPath) => {
+                  setLoadingDevices(true);
+                  fetch(`/api/system/devices?node=${selectedNode}&path=${encodeURIComponent(devPath)}`)
+                    .then(r => r.json())
+                    .then(data => {
+                      setDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] }));
+                      setLoadingDevices(false);
+                    })
+                    .catch(() => setLoadingDevices(false));
+                },
+              }}
+              doneFooter={(() => {
+                const domain = controller.variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+                const subdomains = controller.variables.filter(v => v.meta?.type === 'subdomain' && v.value);
+                if (!domain || subdomains.length === 0) return null;
+                return (
+                  <div className="space-y-3">
+                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-2">
+                      <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
+                      <p className="text-blue-700 dark:text-blue-300">
+                        Point these domains to your server IP:
+                      </p>
+                      <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
+                        {subdomains.map(sv => (
+                          <div key={sv.name}>{sv.value}.{domain}</div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-2">
+                      <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
+                      <p className="text-amber-700 dark:text-amber-300">
+                        Open Nginx Proxy Manager and add Let&apos;s Encrypt SSL certificates for each proxy host.
+                      </p>
+                    </div>
+                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-2">
+                      <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (optional)</p>
+                      <p className="text-gray-600 dark:text-gray-400">
+                        Add IP-based access lists in NPM for admin-only services (Nginx Admin, AdGuard).
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+            />
+          )}
+        </div>
+
+        <div className="p-6 border-t border-gray-200 dark:border-gray-800 flex justify-end gap-3 bg-gray-50 dark:bg-gray-900/50 rounded-b-lg">
+          {phase === 'idle' && template.type === 'stack' && (
+            <>
+              <button onClick={onClose} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors">Cancel</button>
+              <button
+                onClick={() => { void advanceToConfigure(); }}
+                disabled={!allUpgradesReady || advancing}
+                title={!allUpgradesReady && checkedItems.length > 0 ? 'Acknowledge the breaking-change banner(s) above to continue.' : undefined}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+              >
+                Continue
+              </button>
+            </>
+          )}
+          {phase === 'configure' && (
+            <>
+              <button
+                onClick={() => template.type === 'stack' ? controller.reset() : onClose()}
+                className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors"
+              >
+                {template.type === 'stack' ? 'Back' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => { void controller.runInstall({ node: selectedNode }); }}
+                disabled={!selectedNode || (controller.cleanInstall && controller.cleanInstallConfirm !== 'RESET')}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {controller.cleanInstall ? 'Reset & Install' : 'Install'}
+              </button>
+            </>
+          )}
+          {phase === 'installing' && (
+            <button disabled className="px-4 py-2 bg-gray-400 text-white rounded cursor-not-allowed">Installing...</button>
+          )}
+          {phase === 'done' && (
+            <button
+              onClick={() => { onClose(); router.push('/'); }}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors"
+            >
+              Go to Dashboard
+            </button>
+          )}
+          {phase === 'error' && (
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium transition-colors"
+            >
+              Close
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
