@@ -292,7 +292,7 @@ export async function POST(request: Request) {
   }
 
   // Handle Container Creation
-  const { name, kubeContent, yamlContent, yamlFileName, extraFiles, postDeployScript, postDeployEnv } = body;
+  const { name, kubeContent, yamlContent, yamlFileName, extraFiles, postDeployScript, postDeployEnv, migrations } = body;
 
   if (!name || !kubeContent || !yamlContent || !yamlFileName) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
@@ -343,6 +343,7 @@ export async function POST(request: Request) {
           (message) => { void safeWrite({ type: 'progress', message }); },
           postDeployScript,
           postDeployEnv,
+          migrations,
         );
         await safeWrite({ type: 'complete', success: true });
       } catch (e) {
@@ -372,6 +373,7 @@ export async function POST(request: Request) {
     undefined,
     postDeployScript,
     postDeployEnv,
+    migrations,
   );
   return NextResponse.json({ success: true });
 }

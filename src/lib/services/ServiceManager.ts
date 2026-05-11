@@ -583,6 +583,164 @@ export class ServiceManager {
      * line and continue. Restart-loop / config-broken issues will surface
      * via the diagnose probe instead.
      */
+    /**
+     * Run a single template migration script on the host (#352 phase 3).
+     *
+     * Mirrors `runPostDeployScript` for transport (env file → bash
+     * `source` → python3, optionally streaming), but with two important
+     * differences:
+     *
+     *   1. **Fail-fast.** A non-zero exit *aborts the deploy*. Migration
+     *      scripts move/transform on-disk data the new container shape
+     *      depends on; continuing past a failed migration would deploy
+     *      a service into an inconsistent state with no breadcrumb to
+     *      the cause. The caller catches the throw, surfaces it in the
+     *      install log, and leaves the operator at the old running unit.
+     *
+     *   2. **Audit log persisted to `config.serviceMigrations[name]`.**
+     *      Both successful and failed runs land in the append-only list
+     *      so the diagnose page can surface "v2-to-v3 failed" later
+     *      without trawling install logs. Capped at 20 entries.
+     *
+     * Script env includes everything `post-deploy.py` gets plus:
+     *   - `OLD_DATA_DIR` / `NEW_DATA_DIR`  — defaults to the wizard's
+     *     `DATA_DIR` for both (today they're always the same; the slot
+     *     is reserved for future migrations that need to move data
+     *     between distinct roots).
+     *   - `OLD_SCHEMA_VERSION` / `NEW_SCHEMA_VERSION` — the hop we're
+     *     running (e.g. `1` / `2` for `v1-to-v2.py`).
+     */
+    private static async runMigrationScript(
+        nodeName: string,
+        serviceName: string,
+        script: { filename: string; fromVersion: number; toVersion: number; content: string },
+        env: Record<string, string>,
+        onProgress?: (message: string) => void,
+    ): Promise<void> {
+        const agent = await agentManager.ensureAgent(nodeName);
+        const scriptDir = `~/.local/share/servicebay/migrations/${serviceName}`;
+        const scriptPath = `${scriptDir}/${script.filename}`;
+        try {
+            await agent.sendCommand('exec', { command: `mkdir -p ${scriptDir}` });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            onProgress?.(`❌ ${serviceName} migration ${script.filename}: could not prepare script dir (${msg}).`);
+            throw new Error(`migration ${script.filename}: agent could not create ${scriptDir}: ${msg}`);
+        }
+        const writeRes = await agent.sendCommand('write_file', { path: scriptPath, content: script.content });
+        if (writeRes !== 'ok') {
+            const msg = JSON.stringify(writeRes);
+            onProgress?.(`❌ ${serviceName} migration ${script.filename}: write_file returned ${msg}.`);
+            throw new Error(`migration ${script.filename}: write_file failed: ${msg}`);
+        }
+
+        // Mirror the post-deploy env shape — same wizard variables, same
+        // SB_NODE / SB_API_URL / SB_API_TOKEN. Adds OLD/NEW DATA_DIR +
+        // SCHEMA_VERSION so the script can branch on which hop it's
+        // running. DATA_DIR slot stays the same for OLD and NEW today;
+        // future migrations that move data between roots can pass distinct
+        // values via the env arg.
+        const sbPort = process.env.PORT || '5888';
+        const sbApiUrl = `http://localhost:${sbPort}`;
+        const { getInternalApiToken } = await import('@/lib/auth/internalToken');
+        const sbApiToken = getInternalApiToken();
+        const dataDir = env.DATA_DIR || env.NEW_DATA_DIR || '/mnt/data';
+        const envLines = [
+            `SB_NODE=${nodeName}`,
+            `SB_API_URL=${sbApiUrl}`,
+            `SB_API_TOKEN=${sbApiToken}`,
+            `OLD_DATA_DIR=${env.OLD_DATA_DIR || dataDir}`,
+            `NEW_DATA_DIR=${env.NEW_DATA_DIR || dataDir}`,
+            `OLD_SCHEMA_VERSION=${script.fromVersion}`,
+            `NEW_SCHEMA_VERSION=${script.toVersion}`,
+            ...Object.entries(env).map(([k, v]) => {
+                // Skip the OLD/NEW slots we've already written explicitly,
+                // and skip anything non-string (same filter as post-deploy).
+                if (k === 'OLD_DATA_DIR' || k === 'NEW_DATA_DIR' || k === 'OLD_SCHEMA_VERSION' || k === 'NEW_SCHEMA_VERSION') return null;
+                if (typeof v !== 'string') return null;
+                const esc = v.replace(/'/g, `'\\''`);
+                return `${k}='${esc}'`;
+            }).filter((l): l is string => l !== null),
+        ].join('\n');
+        const envPath = `${scriptDir}/${script.filename}.env`;
+        const envWrite = await agent.sendCommand('write_file', { path: envPath, content: envLines + '\n' });
+        if (envWrite !== 'ok') {
+            const msg = JSON.stringify(envWrite);
+            onProgress?.(`❌ ${serviceName} migration ${script.filename}: env file write failed (${msg}).`);
+            throw new Error(`migration ${script.filename}: env write_file failed: ${msg}`);
+        }
+
+        onProgress?.(`Running ${serviceName} migration ${script.filename} (v${script.fromVersion}→v${script.toVersion})...`);
+        let streamed = false;
+        let result: { code: number; stdout: string; stderr: string };
+        try {
+            result = await agent.sendCommand(
+                'exec_stream',
+                {
+                    command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
+                    timeout: 1200,
+                },
+                {
+                    timeoutMs: 1_200_000,
+                    onChunk: (line: string) => {
+                        streamed = true;
+                        if (line.length > 0) onProgress?.(line);
+                    },
+                },
+            );
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (/exec_stream|Unknown|action/i.test(msg)) {
+                result = await agent.sendCommand('exec', {
+                    command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
+                    timeout: 1200,
+                }, { timeoutMs: 1_200_000 });
+            } else {
+                throw e;
+            }
+        }
+        if (!streamed) {
+            const stdout = (result.stdout || '').replace(/\r/g, '');
+            for (const line of stdout.split('\n')) {
+                if (line.length > 0) onProgress?.(line);
+            }
+        }
+
+        // Persist the audit entry before deciding whether to throw — even
+        // failed migrations should land in the log.
+        const stdoutTail = (result.stdout ?? '').slice(-1024) || undefined;
+        try {
+            const cfg = await getConfig();
+            const existing = cfg.serviceMigrations?.[serviceName] ?? [];
+            // Most-recent-first; cap at 20 so config.json stays small.
+            const next = [
+                {
+                    ranAt: new Date().toISOString(),
+                    fromVersion: script.fromVersion,
+                    toVersion: script.toVersion,
+                    exitCode: result.code,
+                    stdoutTail,
+                },
+                ...existing,
+            ].slice(0, 20);
+            await updateConfig({
+                serviceMigrations: {
+                    ...(cfg.serviceMigrations ?? {}),
+                    [serviceName]: next,
+                },
+            });
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not persist migration audit for ${serviceName} ${script.filename}:`, e);
+        }
+
+        if (result.code !== 0) {
+            const msg = `migration ${script.filename} (v${script.fromVersion}→v${script.toVersion}) exited ${result.code}; deploy aborted to avoid landing the new container on un-migrated data. Investigate the log above, fix the on-disk state, then re-run the install.`;
+            onProgress?.(`❌ ${msg}`);
+            throw new Error(msg);
+        }
+        onProgress?.(`✅ Migration ${script.filename} complete.`);
+    }
+
     private static async runPostDeployScript(
         nodeName: string,
         name: string,
@@ -754,6 +912,16 @@ export class ServiceManager {
         onProgress?: (message: string) => void,
         postDeployScript?: string,
         postDeployEnv?: Record<string, string>,
+        /**
+         * Ordered chain of migration scripts to run before the new yaml
+         * lands. Built client-side by `selectMigrationChain` from the
+         * delta between `config.installedTemplates[name].schemaVersion`
+         * and the target template's schema-version. Each script is
+         * pre-rendered (Mustache placeholders already substituted) so
+         * the server only has to execute. Non-zero exit on any step
+         * aborts the deploy. See #352 phase 3.
+         */
+        migrations?: { filename: string; fromVersion: number; toVersion: number; content: string }[],
     ) {
         // Migrate any pre-rename predecessor units first so their host-port
         // ownership is released before the port-collision pre-flight runs.
@@ -785,6 +953,18 @@ export class ServiceManager {
         kubeContent = injectServiceDirectives(kubeContent);
 
         const images = this.extractImages(yamlContent);
+
+        // Run the template's migration chain BEFORE the new yaml lands so
+        // the existing service (still on the old unit) doesn't already see
+        // moved/transformed data while the migration is in flight. The
+        // chain is fail-fast: any non-zero exit throws and the deploy
+        // never touches the existing unit. See #352 phase 3.
+        if (migrations && migrations.length > 0) {
+            onProgress?.(`Running ${migrations.length} migration step(s) for ${name}...`);
+            for (const m of migrations) {
+                await this.runMigrationScript(nodeName, name, m, postDeployEnv ?? {}, onProgress);
+            }
+        }
 
         await this.writeFile(nodeName, yamlName, yamlContent);
         await this.writeFile(nodeName, `${name}.kube`, kubeContent);

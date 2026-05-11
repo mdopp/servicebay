@@ -524,3 +524,87 @@ export async function getTemplateChangelog(name: string, source?: string): Promi
 
   return tryRead(path.join(TEMPLATES_PATH, name));
 }
+
+/**
+ * One template migration script — the discoverable unit of a `migrations/`
+ * directory. Each file is named `v{N}-to-v{M}.py` (e.g. `v1-to-v2.py`)
+ * and contains the script content with `{{MUSTACHE}}` placeholders.
+ *
+ * `fromVersion` and `toVersion` are parsed out of the filename; the
+ * chain selector (`selectMigrationChain` in
+ * `src/lib/stackInstall/migrations.ts`) walks them to figure out which
+ * to run when an operator's installed version is older than the
+ * template's current. See #352 phase 3.
+ */
+export interface TemplateMigrationScript {
+  /** Original filename (e.g. `v1-to-v2.py`). */
+  filename: string;
+  /** Schema version this migration upgrades from. */
+  fromVersion: number;
+  /** Schema version this migration upgrades to. */
+  toVersion: number;
+  /** Un-rendered script body. Mustache placeholders intact. */
+  content: string;
+}
+
+/**
+ * Discover a template's `migrations/v{N}-to-v{M}.py` scripts. Same
+ * registry-fallback semantics as `getTemplatePostDeployScript`: a
+ * pinned `source` looks in that registry only; no source walks every
+ * configured registry, then the built-in templates.
+ *
+ * Files whose names don't match the `v{N}-to-v{M}.py` pattern are
+ * ignored — the consistency test
+ * (`tests/backend/template_consistency.test.ts`) rejects illegal
+ * filenames at build time so they never reach here.
+ *
+ * Returns an unsorted array — chain selection is the caller's job (see
+ * `selectMigrationChain`). See #352 phase 3.
+ */
+export async function getTemplateMigrationScripts(
+  name: string,
+  source?: string,
+): Promise<TemplateMigrationScript[]> {
+  const filenameRe = /^v(\d+)-to-v(\d+)\.py$/;
+
+  const scanDir = async (dir: string): Promise<TemplateMigrationScript[]> => {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(path.join(dir, 'migrations'));
+    } catch {
+      return [];
+    }
+    const out: TemplateMigrationScript[] = [];
+    for (const entry of entries) {
+      const m = filenameRe.exec(entry);
+      if (!m) continue;
+      const fromVersion = parseInt(m[1], 10);
+      const toVersion = parseInt(m[2], 10);
+      if (!Number.isFinite(fromVersion) || !Number.isFinite(toVersion)) continue;
+      try {
+        const content = await fs.readFile(path.join(dir, 'migrations', entry), 'utf-8');
+        out.push({ filename: entry, fromVersion, toVersion, content });
+      } catch {
+        // Unreadable migration — skip rather than block the whole template;
+        // the deploy will still run, just without that step. Logged at the
+        // call site if missing-step ends up biting.
+      }
+    }
+    return out;
+  };
+
+  if (source && source !== 'Built-in') {
+    return scanDir(path.join(REGISTRIES_DIR, source, 'templates', name));
+  }
+
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      const found = await scanDir(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      if (found.length > 0) return found;
+    }
+  }
+
+  return scanDir(path.join(TEMPLATES_PATH, name));
+}
