@@ -11,7 +11,8 @@ Passwort-Manager, Foto-Verwaltung, Dateifreigabe und Smart-Home.
 - [x] vaultwarden — Selbst gehostetes Bitwarden: Passwörter, Notizen, TOTP, mit Apps für alle Plattformen
 - [x] immich — Selbst gehostete Foto- und Video-Sicherung mit AI-Suche, Mobile-Apps und Auto-Upload
 - [x] file-share — Datei-Sync (Syncthing) + Windows-Netzlaufwerk (Samba) + Web-Dateimanager (FileBrowser, SSO via Authelia)
-- [x] home-assistant — Smart-Home-Hub, lokaler Sprachassistent, Z-Wave-/Matter-Bridges
+- [x] home-assistant — Smart-Home-Hub, Z-Wave-/Matter-Bridges (Sprachassistent läuft im separaten `voice`-Template)
+- [x] voice — Lokale Sprach-Pipeline (Wyoming: Faster Whisper STT + Piper TTS + openWakeWord); HA verbindet sich via `localhost:10300/10200/10400`
 - [x] media — Musik (Navidrome / Subsonic-API) + Hörbücher & Podcasts (Audiobookshelf, eigene Mobile-Apps)
 - [x] radicale — CalDAV/CardDAV-Server, authentifiziert direkt gegen LLDAP (DAVx⁵, iOS, Thunderbird)
 

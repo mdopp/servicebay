@@ -1,40 +1,39 @@
 # Home Assistant Stack
 
-This stack combines the core components of a modern smart home into a single, highly integrated unit:
+This stack combines the core smart-home components into a single pod:
 
 1.  **Home Assistant**: The core automation hub
-2.  **Z-Wave JS UI**: Driver for Z-Wave USB sticks
+2.  **Z-Wave JS UI**: Driver for Z-Wave USB sticks (only when `ZWAVE_DEVICE` is set)
 3.  **Matter Server**: Connectivity layer for Matter/Thread devices
-4.  **Faster Whisper**: Local speech-to-text (Wyoming protocol, CTranslate2-accelerated)
-5.  **Piper**: Local text-to-speech (Wyoming protocol)
-6.  **openWakeWord**: Wake-word detection ("Hey Jarvis", "Ok Nabu")
+
+The voice pipeline (Faster Whisper + Piper + openWakeWord) lives in the separate `voice` template since #348 — deploy it alongside HA when you want a local voice assistant. HA's voice-pipeline config points at `localhost:10300/10200/10400` regardless of which pod hosts those services.
 
 ## Features
 *   **Host Network**: All services run on the host network for optimal auto-discovery (mDNS, UPnP, Thread)
 *   **Integrated Storage**: All data is persisted under `${DATA_DIR}/home-assistant/`
 *   **USB Passthrough**: The Z-Wave stick is mapped via the `ZWAVE_DEVICE` variable
-*   **Voice Pipeline**: Faster Whisper + Piper + openWakeWord provide a fully local voice assistant (no cloud)
 
 ## Variables
 *   **DATA_DIR**: Base directory for stack data (default: `/mnt/data`)
-*   **ZWAVE_SECRET**: A random string for Z-Wave JS session security
+*   **TZ**: Timezone (default: `Europe/Berlin`)
+*   **ZWAVE_SECRET**: A random string for Z-Wave JS session security (auto-generated)
 *   **ZWAVE_DEVICE**: Absolute path to the USB device (e.g., `/dev/serial/by-id/usb-0658_0200-if00`)
-*   **WHISPER_MODEL**: Faster Whisper model size (`tiny-int8`, `base-int8`, `small-int8`, `medium-int8`, `tiny`, `base`, `small`, `medium` — default: `base-int8`)
-*   **WHISPER_LANGUAGE**: Language code for speech recognition (default: `de`)
-*   **PIPER_VOICE**: TTS voice (default: `de_DE-thorsten-high`)
+
+Voice-related variables (Whisper model, Piper voice, language) now live in the `voice` template.
 
 ## Ports
 *   Home Assistant: `http://<server-ip>:8123`
 *   Z-Wave JS UI: `http://<server-ip>:8091`
-*   Faster Whisper (Wyoming): `10300`
-*   Piper (Wyoming): `10200`
-*   openWakeWord (Wyoming): `10400`
 
 ## Voice Setup
-After installation, go to Home Assistant > Settings > Voice Assistants and add:
-1. Speech-to-text: Wyoming > `localhost:10300`
-2. Text-to-speech: Wyoming > `localhost:10200`
-3. Wake word: Wyoming > `localhost:10400`
+
+Deploy the `voice` template alongside this one, then in HA go to *Settings → Voice Assistants* and add:
+
+1. Speech-to-text: Wyoming → `localhost:10300`
+2. Text-to-speech: Wyoming → `localhost:10200`
+3. Wake word: Wyoming → `localhost:10400`
+
+Because voice runs on host network on the same node, `localhost` resolves to the voice pod directly — no Wyoming-over-LAN setup needed.
 
 ## SSO (Authelia)
 

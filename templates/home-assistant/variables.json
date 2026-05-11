@@ -13,18 +13,6 @@
     "description": "USB device path for your Z-Wave stick",
     "devicePath": "/dev/serial/by-id"
   },
-  "WHISPER_MODEL": {
-    "type": "select",
-    "description": "Faster Whisper speech-to-text model size (int8 variants are faster with minimal quality loss)",
-    "options": ["tiny-int8", "base-int8", "small-int8", "medium-int8", "tiny", "base", "small", "medium"],
-    "default": "base-int8"
-  },
-  "WHISPER_LANGUAGE": {
-    "type": "select",
-    "description": "Language for speech recognition",
-    "options": ["de", "en", "fr", "es", "it", "nl", "pl", "pt", "ru", "zh", "ja", "ko"],
-    "default": "de"
-  },
   "HA_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for Home Assistant",
@@ -43,26 +31,5 @@
       "redirect_uris": ["/auth/oidc/callback"],
       "scopes": ["openid", "profile", "email", "groups"]
     }
-  },
-  "PIPER_VOICE": {
-    "type": "select",
-    "description": "Text-to-speech voice",
-    "options": [
-      "de_DE-thorsten-high",
-      "de_DE-thorsten-medium",
-      "de_DE-thorsten-low",
-      "en_US-lessac-high",
-      "en_US-lessac-medium",
-      "en_US-amy-medium",
-      "en_GB-alan-medium",
-      "fr_FR-siwis-medium",
-      "es_ES-sharvard-medium",
-      "it_IT-riccardo-x_low",
-      "nl_NL-mls-medium",
-      "pl_PL-darkman-medium",
-      "pt_BR-edresson-low",
-      "ru_RU-denis-medium"
-    ],
-    "default": "de_DE-thorsten-high"
   }
 }
