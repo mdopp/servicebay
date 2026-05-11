@@ -32,12 +32,14 @@ import { logger } from '@/lib/logger';
 
 const LOG = 'portal:provisioner';
 
+type RewriteResult = 'added' | 'updated' | 'unchanged' | 'failed';
+
 interface ProvisionResult {
   ok: boolean;
   detail: string;
   proxyHost?: 'created' | 'unchanged' | 'failed' | 'skipped';
-  apexRewrite?: 'added' | 'updated' | 'unchanged' | 'failed';
-  wwwRewrite?: 'added' | 'updated' | 'unchanged' | 'failed';
+  /** Per-rewrite outcomes, keyed by AdGuard domain pattern. */
+  rewrites?: Record<string, RewriteResult>;
 }
 
 /** Locate ServiceBay's own LAN IP from config. Used as the rewrite
@@ -47,10 +49,20 @@ async function findServiceBayLanIp(): Promise<string | null> {
   return config.reverseProxy?.lanIp ?? null;
 }
 
-/** Find AdGuard admin URL + password from config. Mirrors the
- *  pattern used by the router-DNS probe. */
+/** Find AdGuard admin URL + password from config. Prefer the dedicated
+ *  `config.adguard` block (written by AdGuard's post-deploy via
+ *  /api/system/adguard/credentials) and fall back to the legacy
+ *  templateSettings lookup for installs that predate the credentials
+ *  endpoint. */
 async function findAdguardCreds(): Promise<{ adminUrl: string; username: string; password: string } | null> {
   const config = await getConfig();
+  if (config.adguard?.password) {
+    return {
+      adminUrl: config.adguard.adminUrl || `http://localhost:${config.templateSettings?.ADGUARD_ADMIN_PORT ?? '8083'}`,
+      username: config.adguard.username || 'admin',
+      password: config.adguard.password,
+    };
+  }
   const password = config.templateSettings?.ADGUARD_ADMIN_PASSWORD;
   const port = config.templateSettings?.ADGUARD_ADMIN_PORT ?? '8083';
   if (!password) return null;
@@ -163,8 +175,8 @@ async function provisionAdguardRewrite(name: string, lanIp: string): Promise<'ad
  */
 export async function provisionPortalRouting(): Promise<ProvisionResult> {
   const config = await getConfig();
-  const domain = getActiveDomain(config);
-  if (!domain) {
+  const activeDomain = getActiveDomain(config);
+  if (!activeDomain) {
     return { ok: false, detail: 'No active domain configured.' };
   }
   const lanIp = await findServiceBayLanIp();
@@ -172,19 +184,44 @@ export async function provisionPortalRouting(): Promise<ProvisionResult> {
     return { ok: false, detail: 'No LAN IP recorded in config — install-time detection hasn\'t run yet.' };
   }
 
-  const proxyHost = await provisionNpmProxyHost(domain);
-  // AdGuard rewrites only matter in LAN mode (or as a soft-fallback
-  // alongside a public domain). Add them whenever AdGuard's running;
-  // they're harmless when the domain is also externally-routable.
-  const apexRewrite = await provisionAdguardRewrite(domain, lanIp);
-  const wwwRewrite = await provisionAdguardRewrite(`www.${domain}`, lanIp);
+  // NPM apex+www proxy host. Only the active domain needs an NPM
+  // host — that's where browser traffic actually hits ServiceBay.
+  const proxyHost = await provisionNpmProxyHost(activeDomain);
 
-  const ok = proxyHost !== 'failed' && apexRewrite !== 'failed' && wwwRewrite !== 'failed';
-  const summary = `proxy:${proxyHost} apex:${apexRewrite} www:${wwwRewrite}`;
-  if (ok) {
-    logger.info(LOG, `Portal routing provisioned for ${domain} (${summary})`);
-  } else {
-    logger.warn(LOG, `Portal routing provisioning had failures for ${domain} (${summary})`);
+  // AdGuard rewrites. Two-domain split-horizon for typical home installs:
+  //   * `lanDomain` (default `home.arpa`) — always present. Devices
+  //     resolving `<lan>` or `*.<lan>` need to hit ServiceBay directly.
+  //   * `publicDomain` (e.g. `dopp.cloud`) — when set, LAN devices
+  //     resolving `<public>` or `*.<public>` should bypass the
+  //     FritzBox-hairpin-NAT and reach ServiceBay over the LAN.
+  // For each domain we install three rewrites:
+  //   - <domain> → lanIp                       (portal apex)
+  //   - www.<domain> → lanIp                   (portal apex, with www)
+  //   - *.<domain> → lanIp                     (subdomain catch-all)
+  // AdGuard accepts both literal and wildcard patterns at the same
+  // endpoint; the wildcard pattern is the standard catch-all for any
+  // service subdomain (vault, immich, dns, …) that NPM routes by
+  // Host-header behind ServiceBay.
+  const rewriteDomains = new Set<string>();
+  const lanDomain = config.reverseProxy?.lanDomain ?? 'home.arpa';
+  const publicDomain = config.reverseProxy?.publicDomain;
+  if (lanDomain) rewriteDomains.add(lanDomain);
+  if (publicDomain) rewriteDomains.add(publicDomain);
+
+  const rewrites: Record<string, RewriteResult> = {};
+  for (const d of rewriteDomains) {
+    rewrites[d] = await provisionAdguardRewrite(d, lanIp);
+    rewrites[`www.${d}`] = await provisionAdguardRewrite(`www.${d}`, lanIp);
+    rewrites[`*.${d}`] = await provisionAdguardRewrite(`*.${d}`, lanIp);
   }
-  return { ok, detail: summary, proxyHost, apexRewrite, wwwRewrite };
+
+  const anyRewriteFailed = Object.values(rewrites).some(r => r === 'failed');
+  const ok = proxyHost !== 'failed' && !anyRewriteFailed;
+  const summary = `proxy:${proxyHost} rewrites=${Object.entries(rewrites).map(([k, v]) => `${k}:${v}`).join(',')}`;
+  if (ok) {
+    logger.info(LOG, `Portal routing provisioned for ${activeDomain} (${summary})`);
+  } else {
+    logger.warn(LOG, `Portal routing provisioning had failures for ${activeDomain} (${summary})`);
+  }
+  return { ok, detail: summary, proxyHost, rewrites };
 }

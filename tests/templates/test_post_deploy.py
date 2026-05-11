@@ -120,8 +120,15 @@ class AdguardScript(unittest.TestCase):
             "ADGUARD_ADMIN_USER": "admin",
             "ADGUARD_ADMIN_PASSWORD": "s3cret",
             "ADGUARD_ADMIN_PORT": "8083",
+            "SB_API_URL": "http://sb.test",
         }
-        with run_with_env(env):
+        # Mock the credentials-persist POST so the script doesn't try
+        # urllib against a real localhost (would block 10s+ in CI).
+        responses = {
+            "/api/system/adguard/credentials": {"status": 200, "body": {"ok": True}},
+        }
+        import urllib.request
+        with run_with_env(env), mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)):
             rc, out = capture_main(m)
         self.assertEqual(rc, 0)
         creds = parse_credentials(out)
@@ -140,6 +147,9 @@ class AdguardScript(unittest.TestCase):
             if not line.startswith("__SB_CREDENTIAL__ ")
         )
         self.assertNotIn("s3cret", log_only)
+        # Confirm the credentials-persist call was made (status 200
+        # → success log line).
+        self.assertIn("ServiceBay registered AdGuard credentials", out)
 
     def test_no_password_skips_credential_silently(self):
         m = load_script("adguard")
