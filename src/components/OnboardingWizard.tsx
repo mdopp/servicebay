@@ -767,7 +767,12 @@ export default function OnboardingWizard() {
         if (devices.length === 1) installFlow.setVariableValue(v.name, devices[0]);
       }
     });
-  }, [stackSelectedNode, stackVariables, installFlow]);
+    // Depend on the specific stable callback, NOT the whole `installFlow`
+    // object — the hook's return literal is recreated every render, which
+    // would otherwise re-fire this effect on every appendLog during install
+    // and saturate the browser's HTTP connection pool with
+    // /api/system/devices polls.
+  }, [stackSelectedNode, stackVariables, installFlow.setVariableValue]);
 
   // Detect unmounted RAID arrays when node is selected
   useEffect(() => {

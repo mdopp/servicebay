@@ -462,6 +462,77 @@ spec:
     });
   });
 
+  describe('referential stability — no-op writes preserve array reference', () => {
+    // Regression guard for the wizard device-poll runaway loop. The
+    // OnboardingWizard's "fetch USB devices" effect depends on
+    // `stackVariables` (the hook's `variables`). Pre-refactor (v3.19.1)
+    // the wizard owned variables state and used `prev.map → changed ? next : prev`
+    // so no-op writes returned the same array reference. The v3.19.2
+    // refactor moved state into this hook but the new setter always
+    // allocated a new array, which made the effect re-fire on every
+    // render and hammered `/api/system/devices` at ~90Hz during install
+    // — saturating the browser HTTP pool and causing intermittent
+    // `Failed to fetch` on the streaming `/api/services` POST.
+    //
+    // The contract: `setVariableValue(name, sameValue)` and
+    // `setItemChecked(name, sameChecked)` MUST NOT change the array
+    // reference. Any future refactor that breaks this regresses the
+    // wizard's install reliability.
+    it('setItemChecked keeps the same items reference when checked is unchanged', () => {
+      const { result } = renderHook(() =>
+        useStackInstall({ templateSource: 'Built-in' }),
+      );
+      act(() => {
+        result.current.setItems([
+          { name: 'a', checked: true },
+          { name: 'b', checked: false },
+        ]);
+      });
+      const before = result.current.items;
+      act(() => result.current.setItemChecked('a', true));
+      expect(result.current.items).toBe(before);
+      act(() => result.current.setItemChecked('unknown', true));
+      expect(result.current.items).toBe(before);
+      act(() => result.current.setItemChecked('a', false));
+      expect(result.current.items).not.toBe(before);
+      expect(result.current.items.find(i => i.name === 'a')?.checked).toBe(false);
+    });
+
+    it('setVariableValue keeps the same variables reference when value is unchanged', async () => {
+      (fetchTemplateYaml as any).mockResolvedValue(
+        'apiVersion: v1\nkind: Pod\nmetadata:\n  name: x\nspec:\n  containers:\n  - name: x\n    env:\n    - name: FOO\n      value: "{{FOO}}"',
+      );
+      (fetchTemplateVariables as any).mockResolvedValue({
+        FOO: { type: 'text', default: 'bar' },
+      });
+      (fetchTemplateConfigFiles as any).mockResolvedValue([]);
+      (fetchTemplatePostDeployScript as any).mockResolvedValue(null);
+      global.fetch = buildFetchMock({
+        '/api/settings': () => ({ jsonBody: { templateSettings: {} } }),
+      });
+
+      const { result } = renderHook(() =>
+        useStackInstall({ templateSource: 'Built-in' }),
+      );
+      await act(async () => {
+        await result.current.startConfigure(
+          [{ name: 'x', checked: true }],
+          {},
+        );
+      });
+      expect(result.current.variables.find(v => v.name === 'FOO')?.value).toBe('bar');
+
+      const before = result.current.variables;
+      act(() => result.current.setVariableValue('FOO', 'bar'));
+      expect(result.current.variables).toBe(before);
+      act(() => result.current.setVariableValue('UNKNOWN_VAR', 'whatever'));
+      expect(result.current.variables).toBe(before);
+      act(() => result.current.setVariableValue('FOO', 'baz'));
+      expect(result.current.variables).not.toBe(before);
+      expect(result.current.variables.find(v => v.name === 'FOO')?.value).toBe('baz');
+    });
+  });
+
   describe('OIDC client registration', () => {
     it('POSTs to authelia/oidc-clients when subdomain vars carry oidcClient metadata', async () => {
       (fetchTemplateYaml as any).mockResolvedValue(
