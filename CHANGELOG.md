@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.19.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.18.2...servicebay-v3.19.0) (2026-05-11)
+
+
+### Features
+
+* **home-assistant:** self-heal trusted_proxies after HA backup-restore ([#368](https://github.com/mdopp/servicebay/issues/368)) ([79e60a9](https://github.com/mdopp/servicebay/commit/79e60a9515a5216fbf3f63a3935848b9d5111b14))
+* **wizard:** hoist operator email into Domain step ([#365](https://github.com/mdopp/servicebay/issues/365)) ([#369](https://github.com/mdopp/servicebay/issues/369)) ([692c632](https://github.com/mdopp/servicebay/commit/692c632044e7c693c7934dea9d8928c27c6a7236))
+
+
+### Bug Fixes
+
+* **home-assistant:** seed configuration.yaml with trusted_proxies ([#366](https://github.com/mdopp/servicebay/issues/366)) ([86a7ca8](https://github.com/mdopp/servicebay/commit/86a7ca8aa3b1d0169baba5b413868bb40bf0ca77))
+* **nginx:** bind NPM on hostNetwork so it reaches hostNetwork upstreams ([#364](https://github.com/mdopp/servicebay/issues/364)) ([917c9cb](https://github.com/mdopp/servicebay/commit/917c9cb939b8a8643f076af2e84b893ffb622d60))
+
 ## [3.18.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.18.1...servicebay-v3.18.2) (2026-05-11)
 
 
