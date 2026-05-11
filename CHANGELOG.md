@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.17.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.16.2...servicebay-v3.17.0) (2026-05-11)
+
+
+### Features
+
+* **adguard:** wildcard DNS rewrites for LAN + public domains ([#349](https://github.com/mdopp/servicebay/issues/349)) ([126f168](https://github.com/mdopp/servicebay/commit/126f16877ba134dab72325fedc75036f332fadc1))
+* **reinstall:** welcome-back banner with live restore progress ([#337](https://github.com/mdopp/servicebay/issues/337)) ([#350](https://github.com/mdopp/servicebay/issues/350)) ([5d1450b](https://github.com/mdopp/servicebay/commit/5d1450b8252172b6f323b75a4da539c0b9867f46))
+
+
+### Bug Fixes
+
+* **filebrowser:** seed via HTTP API instead of CLI to avoid BoltDB lock ([#345](https://github.com/mdopp/servicebay/issues/345)) ([224a19e](https://github.com/mdopp/servicebay/commit/224a19e3c6d73a3539cd02c5558c8f4f7b27cd20))
+
 ## [3.16.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.16.1...servicebay-v3.16.2) (2026-05-11)
 
 
