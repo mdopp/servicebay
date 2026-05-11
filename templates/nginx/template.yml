@@ -7,9 +7,10 @@ metadata:
     servicebay.role: reverse-proxy
   annotations:
     servicebay.label: "Nginx Proxy Manager"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
     servicebay.tier: "infrastructure"
 spec:
+  hostNetwork: true
   containers:
   - name: nginx-proxy-manager
     image: docker.io/jc21/nginx-proxy-manager:latest
