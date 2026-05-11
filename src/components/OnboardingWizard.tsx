@@ -17,6 +17,7 @@ import {
 import { generateLocalKey } from '@/app/actions/ssh';
 import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles, fetchTemplatePostDeployScript } from '@/app/actions';
 import { parseTemplateLabel } from '@/lib/templateLabel';
+import { isValidOperatorEmail, operatorEmailIssue } from '@/lib/operatorEmail';
 import { getNodes } from '@/app/actions/system';
 import { Template, VariableMeta } from '@/lib/registry';
 import type { TemplateTier } from '@/lib/templateTier';
@@ -227,6 +228,16 @@ export default function OnboardingWizard() {
     setPublicDomain(val);
     if (val) setInstallMode('public');
   };
+  /** Operator e-mail. Used as NPM's admin login + Let's Encrypt ACME
+   *  registration. Mandatory in public mode (LE rejects `.local` and
+   *  empty values); ignored in LAN-only mode. Pre-filled from
+   *  `config.notifications.email.to[0]` so the operator doesn't retype
+   *  the address they already gave us during bootstrap.
+   *
+   *  Fans out at variable-collection time (#365): any template variable
+   *  named `NGINX_ADMIN_EMAIL` is overridden with this value and marked
+   *  global so it disappears from the configure step. */
+  const [operatorEmail, setOperatorEmail] = useState('');
   const [stackDeviceOptions, setStackDeviceOptions] = useState<Record<string, string[]>>({});
   const [stackLoadingDevices, setStackLoadingDevices] = useState(false);
 
@@ -546,19 +557,32 @@ export default function OnboardingWizard() {
   // the operator passed --domain to the bootstrap). Same setting that
   // handleStackFetchVars reads later — pulling it eagerly here just
   // means the operator sees their domain rather than an empty input.
+  //
+  // Same call pre-fills `operatorEmail` from
+  // `config.notifications.email.to[0]` — the operator already gave us
+  // this during bootstrap so they don't have to retype.
   useEffect(() => {
     if (currentStep !== 'install-confirm') return;
-    if (stackDomain || stackNoDomain) return;
+    if (stackDomain && operatorEmail) return;
     let cancelled = false;
     fetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
       if (cancelled) return;
-      const baked = s?.reverseProxy?.publicDomain;
-      if (typeof baked === 'string' && baked.length > 0) {
-        setStackDomain(baked);
+      if (!stackDomain && !stackNoDomain) {
+        const baked = s?.reverseProxy?.publicDomain;
+        if (typeof baked === 'string' && baked.length > 0) {
+          setStackDomain(baked);
+        }
       }
-    }).catch(() => { /* silent — operator can type the domain */ });
+      if (!operatorEmail) {
+        const notifyTo = s?.notifications?.email?.to;
+        const firstTo = Array.isArray(notifyTo) ? notifyTo[0] : undefined;
+        if (typeof firstTo === 'string' && firstTo.includes('@')) {
+          setOperatorEmail(firstTo);
+        }
+      }
+    }).catch(() => { /* silent — operator can type the values */ });
     return () => { cancelled = true; };
-  }, [currentStep, stackDomain, stackNoDomain]);
+  }, [currentStep, stackDomain, stackNoDomain, operatorEmail]);
 
   const navigateTo = (step: WizardStep) => {
       setStepHistory(prev => [...prev, currentStep]);
@@ -950,6 +974,10 @@ export default function OnboardingWizard() {
       if (v === 'PUBLIC_DOMAIN' && stackDomain) { value = stackDomain; isGlobal = true; }
       // Auto-fill LLDAP_HOST — always localhost when installing in the same stack
       if (v === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
+      // Pre-fill NGINX_ADMIN_EMAIL from the operator-email prompt and
+      // hide it from the configure step (#365). Doubles as NPM admin
+      // login + LE ACME registration email — both need a real address.
+      if (v === 'NGINX_ADMIN_EMAIL' && operatorEmail) { value = operatorEmail; isGlobal = true; }
       if (!value && meta?.default) value = meta.default;
       if (!value && meta?.type === 'secret') value = generateRandomSecret();
       return { name: v, value, global: isGlobal, meta };
@@ -1771,6 +1799,35 @@ export default function OnboardingWizard() {
                                     <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
                                         Enables HTTPS via Let&apos;s Encrypt + external access. Services live at <span className="font-mono">vault.{publicDomain || 'example.com'}</span>, <span className="font-mono">photos.{publicDomain || 'example.com'}</span>, …
                                     </p>
+                                    {/* Operator-email input (#365). NPM admin
+                                        login + Let's Encrypt ACME registration.
+                                        Pre-filled from notifications.email.to[0]
+                                        so the operator doesn't retype. */}
+                                    {installMode === 'public' && (
+                                      <div className="mt-2">
+                                        <label className="block text-[11px] font-medium text-blue-800 dark:text-blue-200 mb-1">
+                                            Email for Let&apos;s Encrypt + NPM admin
+                                        </label>
+                                        <input
+                                            type="email"
+                                            value={operatorEmail}
+                                            onChange={e => setOperatorEmail(e.target.value)}
+                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                            placeholder="you@example.com"
+                                            autoComplete="email"
+                                        />
+                                        {operatorEmail && !isValidOperatorEmail(operatorEmail) && (
+                                            <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+                                                {operatorEmailIssue(operatorEmail)}
+                                            </p>
+                                        )}
+                                        {!operatorEmail && (
+                                            <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
+                                                Required so Let&apos;s Encrypt can issue certificates. Use a real address — <span className="font-mono">.local</span>/<span className="font-mono">.example</span>/<span className="font-mono">.test</span> are rejected.
+                                            </p>
+                                        )}
+                                      </div>
+                                    )}
                                 </div>
                             </label>
                             {/* LAN option */}
@@ -1924,6 +1981,31 @@ export default function OnboardingWizard() {
                                 <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
                                     Enables HTTPS via Let&apos;s Encrypt + external access. Services live at <span className="font-mono">vault.{publicDomain || 'example.com'}</span>, <span className="font-mono">photos.{publicDomain || 'example.com'}</span>, …
                                 </p>
+                                {installMode === 'public' && (
+                                  <div className="mt-2">
+                                    <label className="block text-[11px] font-medium text-blue-800 dark:text-blue-200 mb-1">
+                                        Email for Let&apos;s Encrypt + NPM admin
+                                    </label>
+                                    <input
+                                        type="email"
+                                        value={operatorEmail}
+                                        onChange={e => setOperatorEmail(e.target.value)}
+                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                        placeholder="you@example.com"
+                                        autoComplete="email"
+                                    />
+                                    {operatorEmail && !isValidOperatorEmail(operatorEmail) && (
+                                        <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+                                            {operatorEmailIssue(operatorEmail)}
+                                        </p>
+                                    )}
+                                    {!operatorEmail && (
+                                        <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
+                                            Required so Let&apos;s Encrypt can issue certificates. Use a real address — <span className="font-mono">.local</span>/<span className="font-mono">.example</span>/<span className="font-mono">.test</span> are rejected.
+                                        </p>
+                                    )}
+                                  </div>
+                                )}
                             </div>
                         </label>
                         {/* LAN option */}
@@ -2883,6 +2965,9 @@ export default function OnboardingWizard() {
                     {!stackDomain.trim() && !stackNoDomain && (
                         <span className="text-xs text-amber-700 dark:text-amber-300">Enter a domain or check LAN-only.</span>
                     )}
+                    {installMode === 'public' && stackDomain.trim() && !isValidOperatorEmail(operatorEmail) && (
+                        <span className="text-xs text-amber-700 dark:text-amber-300">{operatorEmailIssue(operatorEmail)}.</span>
+                    )}
                     {cleanInstall && cleanInstallConfirm !== 'RESET' && (
                         <span className="text-xs text-amber-700 dark:text-amber-300">Type RESET to confirm clean install.</span>
                     )}
@@ -2890,6 +2975,7 @@ export default function OnboardingWizard() {
                         onClick={handleExpressInstall}
                         disabled={
                             (!stackDomain.trim() && !stackNoDomain)
+                            || (installMode === 'public' && !isValidOperatorEmail(operatorEmail))
                             || (cleanInstall && cleanInstallConfirm !== 'RESET')
                             || availableStacks.length === 0
                         }
@@ -2907,6 +2993,9 @@ export default function OnboardingWizard() {
                     {!stackDomain.trim() && !stackNoDomain && (
                         <span className="text-xs text-amber-700 dark:text-amber-300">Set a public domain (or check the LAN-only box) to continue.</span>
                     )}
+                    {installMode === 'public' && stackDomain.trim() && !isValidOperatorEmail(operatorEmail) && (
+                        <span className="text-xs text-amber-700 dark:text-amber-300">{operatorEmailIssue(operatorEmail)}.</span>
+                    )}
                     {cleanInstall && cleanInstallConfirm !== 'RESET' && (
                         <span className="text-xs text-amber-700 dark:text-amber-300">Type RESET to confirm the clean install.</span>
                     )}
@@ -2914,6 +3003,7 @@ export default function OnboardingWizard() {
                         onClick={handleNext}
                         disabled={
                             (!stackDomain.trim() && !stackNoDomain)
+                            || (installMode === 'public' && !isValidOperatorEmail(operatorEmail))
                             || (cleanInstall && cleanInstallConfirm !== 'RESET')
                         }
                     >
