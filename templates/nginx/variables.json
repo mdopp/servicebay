@@ -1,8 +1,8 @@
 {
   "NGINX_ADMIN_EMAIL": {
     "type": "text",
-    "description": "NPM admin email. Also used as the Let's Encrypt account email — must be a real address you can receive at, and Let's Encrypt rejects `.local` / `.example` / IP-literal addresses.",
-    "example": "you@example.com"
+    "description": "Initial NPM admin email (used as the login for ServiceBay's auto-sync of proxy routes)",
+    "default": "admin@servicebay.local"
   },
   "NGINX_ADMIN_PASSWORD": {
     "type": "secret",
