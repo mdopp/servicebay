@@ -11,11 +11,14 @@ with a `README.md` whose `- [x] foo` lines reference template names).
 
 ```
 templates/<name>/
-├── template.yml          # required — kube Pod manifest with mustache placeholders
-├── variables.json        # required — variable schema
-├── README.md             # required — short description for the wizard
-├── post-deploy.py        # optional — runs on the host after the unit starts
-└── *.mustache            # optional — companion config files (e.g. authelia config)
+├── template.yml                       # required — kube Pod manifest with mustache placeholders
+├── variables.json                     # required — variable schema
+├── README.md                          # required — short description for the wizard
+├── CHANGELOG.md                       # optional — human-readable upgrade notes (Phase 1 of #352)
+├── post-deploy.py                     # optional — runs on the host after the unit starts
+├── migrations/                        # optional — schema-version migration scripts (Phase 3 of #352)
+│   └── v1-to-v2.py                    # one file per one-step hop
+└── *.mustache                         # optional — companion config files (e.g. authelia config)
 ```
 
 ### `template.yml`
@@ -29,6 +32,7 @@ the wizard substitutes at deploy time. Use these annotations under
 | `servicebay.label` | yes | Friendly UI label shown in the wizard's configure step (e.g. `"Vaultwarden (Passwords)"`). Without it the section header falls back to the raw template name. |
 | `servicebay.ports` | recommended | Comma-separated `port/proto` list. Drives gateway probes + the network graph. |
 | `servicebay.config-mount` | required if any `*.mustache` files | Container mountPath that companion config files should land in. Avoids the `/config`-suffix heuristic picking the wrong volume in multi-container pods. |
+| `servicebay.schema-version` | recommended (default `"1"`) | Bump when the pod structure or variable shape changes in a way operators need to be aware of (containers extracted, variables renamed, data paths moved). Plain image-tag bumps don't need this — Quadlet's `AutoUpdate=registry` handles those silently. Each bump should ship a `CHANGELOG.md` section + (if data needs to move) a `migrations/v{N-1}-to-v{N}.py` script. See #352. |
 
 Use `metadata.labels` for `servicebay.role` (`dns`, `reverse-proxy`,
 `media`, …) — those steer health-check defaults.
@@ -173,6 +177,123 @@ seeding (LLDAP, FileBrowser, ABS), follow the pattern in the existing
 scripts: 5-minute deadline, 10-second heartbeat log, sleep between
 retries. The agent budget is 20 minutes, so leave slack.
 
+### `CHANGELOG.md`
+
+Optional but strongly recommended. Each `## v{N}` H2 section is one
+schema version. Append `(breaking)` to the heading when the bump
+*requires* operator action (data has moved, a variable was renamed,
+a container was split out). The wizard surfaces every section
+between the operator's currently-deployed version and the
+template's current version, and gates the deploy on an
+acknowledgement checkbox for every breaking section.
+
+```markdown
+## v2 (breaking)
+- Voice extracted into the `voice` template. Required action:
+  install the `voice` template from the registry if you want
+  whisper/piper back.
+
+## v1
+Initial release.
+```
+
+There is no enforced field set inside each section — the body is
+markdown and rendered verbatim. Two conventions worth following:
+- Lead with the **required action** in one sentence if the section
+  is breaking; everything else is supporting context.
+- Reference the data paths that moved by absolute path
+  (`${DATA_DIR}/...`) so operators can correlate with their host
+  filesystem.
+
+### `migrations/v{N}-to-v{M}.py`
+
+Optional. Python scripts in the `migrations/` directory run on the
+host **before** the new pod manifest lands when the operator's
+installed schema-version is older than the template's current. One
+file per one-step hop (`v1-to-v2.py`, `v2-to-v3.py`, …) — the
+engine walks the chain in order if an operator's box is multiple
+versions behind. See #352 phase 3.
+
+The script protocol is identical to `post-deploy.py` (env file →
+`source` → `python3`, stdout streamed live to the install log)
+with two important differences:
+
+1. **Migrations are fail-fast.** A non-zero exit aborts the deploy
+   *before* the new yaml lands — the existing service keeps running
+   and the operator is left with a clear error in the install log.
+   This is the inverse of `post-deploy.py`, which logs a warning
+   and continues. The reason: a half-completed data migration with
+   the new container then booting on un-migrated data is the worst
+   failure mode possible (silent data corruption); we'd rather fail
+   loudly and let the operator inspect.
+2. **Idempotent by contract.** Migrations *will* re-run on every
+   deploy where the version delta hasn't been stamped to disk yet
+   (a partial migration that didn't update `config.installedTemplates`).
+   Always check the on-disk state before transforming it. The
+   canonical pattern: probe for the source path, exit 0 with a
+   "nothing to do" log line if it's absent, mutate only when the
+   precondition is met.
+
+```python
+#!/usr/bin/env python3
+import os, shutil, sys
+
+def main() -> int:
+    data_dir = os.environ.get("DATA_DIR") or os.environ.get("NEW_DATA_DIR") or "/mnt/data"
+    legacy = os.path.join(data_dir, "myapp", "old-dir")
+    current = os.path.join(data_dir, "myapp", "new-dir")
+    if not os.path.isdir(legacy):
+        print(f"v1→v2: no legacy data at {legacy}; nothing to migrate.")
+        return 0
+    if os.path.isdir(current) and any(os.scandir(current)):
+        # New path already populated — treat as already-migrated.
+        print(f"v1→v2: {current} is already populated; leaving {legacy} alone.")
+        return 0
+    os.makedirs(os.path.dirname(current), exist_ok=True)
+    if os.path.exists(current):
+        os.rmdir(current)  # empty placeholder
+    shutil.move(legacy, current)
+    print(f"v1→v2: moved {legacy} → {current}.")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+#### Environment available to the script
+
+All of the `post-deploy.py` env (every wizard variable, `HOST`,
+`SB_NODE`, `SB_API_URL`, `SB_API_TOKEN`), plus:
+
+- `OLD_SCHEMA_VERSION` / `NEW_SCHEMA_VERSION` — the hop this run
+  represents (e.g. `1` / `2` for `v1-to-v2.py`).
+- `OLD_DATA_DIR` / `NEW_DATA_DIR` — both default to the operator's
+  `DATA_DIR`. The slot exists for future migrations that move data
+  between distinct roots; today they're always equal.
+
+#### Audit log
+
+Every migration run (success or failure) is appended to
+`config.serviceMigrations[<name>]` with `ranAt`, `fromVersion`,
+`toVersion`, `exitCode`, and a `stdoutTail`. Capped at 20 entries
+per service, most-recent first. The diagnose page surfaces failed
+entries so operators can act on a half-completed upgrade without
+trawling install logs.
+
+#### Cross-template data moves
+
+If the migration moves data *out of this template* and into another
+(the voice extraction in #348 was this shape), put the move logic
+in the **destination** template's `post-deploy.py`, not in this
+template's migration. That way:
+- The move runs exactly once, when the destination is first
+  installed — regardless of whether the operator installs it
+  immediately after this template's upgrade or weeks later.
+- The source template's migration script stays a simple "voice has
+  been extracted; install `voice` for it" notice.
+
+`templates/voice/post-deploy.py` is the canonical example.
+
 ## What stays in core
 
 These behaviours live in the engine and **cannot** be moved to a
@@ -200,6 +321,8 @@ template script — don't try:
 1. Create `templates/<my-name>/template.yml` with:
    - `metadata.annotations['servicebay.label']: "<friendly name>"`
    - `metadata.annotations['servicebay.ports']: "<port>/<proto>,..."`
+   - `metadata.annotations['servicebay.schema-version']: "1"` (bump
+     it later when you ship a breaking change; see Migrations above)
 2. Create `templates/<my-name>/variables.json` declaring every
    `{{MUSTACHE}}` placeholder you used.
 3. Write a one-paragraph `templates/<my-name>/README.md`.
@@ -212,7 +335,18 @@ template script — don't try:
    `stacks/<stack>/README.md` should offer it in the wizard.
 7. Run `npm test` — the consistency suite catches the common typos
    (undeclared variables, dangling proxyPort references, missing
-   labels, kube manifests that don't render to a valid Pod).
+   labels, kube manifests that don't render to a valid Pod,
+   migration filenames that don't match `v{N}-to-v{M}.py`).
+
+When you later bump the schema-version of an existing template:
+
+1. Bump `servicebay.schema-version` in `template.yml`.
+2. Add a `## v{N} (breaking?)` section at the top of `CHANGELOG.md`
+   describing what changed and what the operator needs to do. Mark
+   it `(breaking)` if it requires manual action.
+3. If on-disk data needs to move/transform, add a
+   `templates/<name>/migrations/v{N-1}-to-v{N}.py` script. Keep it
+   idempotent (probe before mutating).
 
 ## Editing or replacing a built-in template
 

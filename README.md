@@ -58,6 +58,8 @@ The twelve stacks that ship are just YAML + Mustache templates in a Git repo. Wa
 
 Your stack now shows up in the install wizard alongside the built-ins, with the same SSO + DNS + reverse-proxy + auto-backup wiring. No code changes to ServiceBay required.
 
+When a template needs to evolve, the layout supports it without breaking running installs: bump `servicebay.schema-version` in `template.yml`, add a `## v{N}` section to `CHANGELOG.md` (the wizard surfaces it before deploy), and drop a `migrations/v{N-1}-to-v{N}.py` script alongside if data needs to move. The full contract lives in [docs/TEMPLATE_AUTHORING.md](docs/TEMPLATE_AUTHORING.md).
+
 Or skip the manual step entirely: *"Claude, write a template for Paperless-ngx based on the Vaultwarden one and deploy it."* The LLM has full read access to the existing templates as references and can submit the new one through the same MCP path.
 
 ### Safety rails so the AI can't trash your data
