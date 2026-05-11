@@ -226,6 +226,18 @@ export interface AppConfig {
     username: string;
     password: string;
   };
+  /**
+   * AdGuard Home admin credentials, persisted by the AdGuard post-deploy
+   * after a successful login probe. ServiceBay reads these when it needs
+   * to manage DNS rewrites (split-horizon wildcards for the LAN + public
+   * domains, FritzBox-DNS hand-off probe), without prompting the operator
+   * again. Same trust class as `reverseProxy.npm` and `lldap`.
+   */
+  adguard?: {
+    adminUrl: string;
+    username: string;
+    password: string;
+  };
   setupCompleted?: boolean;
   stackSetupPending?: boolean;
   /**

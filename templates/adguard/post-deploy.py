@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
 
 
 def env(key: str, default: str = "") -> str:
@@ -34,6 +36,29 @@ def emit_credential(**fields: object) -> None:
 def log(msg: str) -> None:
     sys.stdout.write(msg + "\n")
     sys.stdout.flush()
+
+
+def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tuple[int, dict[str, object] | None]:
+    body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    token = os.environ.get("SB_API_TOKEN", "")
+    if token:
+        headers["X-SB-Internal-Token"] = token
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read().decode("utf-8")
+            try:
+                return resp.status, json.loads(data) if data else None
+            except json.JSONDecodeError:
+                return resp.status, None
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8"))
+        except Exception:  # pylint: disable=broad-except
+            return e.code, None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0, None
 
 
 def main() -> int:
@@ -55,6 +80,30 @@ def main() -> int:
         importance="critical",
         notes="DNS console. Add custom rewrites + manage blocklists.",
     )
+
+    # Persist the admin credentials into ServiceBay's config so the
+    # provisioner can pick them up later for DNS rewrites + the
+    # FritzBox-DNS hand-off probe. Mirrors what nginx + lldap post-
+    # deploys do. The endpoint also triggers provisionPortalRouting()
+    # in the background, which installs the wildcard rewrites
+    # (`*.<lan>`, `*.<public>`) the operator expects to land
+    # automatically after install. See #341 + the AdGuard-rewrites
+    # follow-up.
+    sb_api = env("SB_API_URL", "http://localhost:3000")
+    persist_status, _ = post_json(
+        f"{sb_api}/api/system/adguard/credentials",
+        {
+            "adminUrl": f"http://localhost:{port}",
+            "username": user,
+            "password": password,
+        },
+        timeout=10,
+    )
+    if persist_status == 200:
+        log("ServiceBay registered AdGuard credentials — wildcard DNS rewrites will be provisioned.")
+    else:
+        log(f"⚠️ Could not register AdGuard credentials with ServiceBay (HTTP {persist_status}). Wildcard rewrites won't auto-install; add them manually in AdGuard if subdomains don't resolve.")
+
     return 0
 
 
