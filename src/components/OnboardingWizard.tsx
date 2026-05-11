@@ -896,9 +896,22 @@ export default function OnboardingWizard() {
           // sentinel that preserves the variable name, parse, then decode
           // back to `{{X}}` in the extracted strings. Mustache.render at
           // deploy time resolves them with the user's actual values.
+          // Mustache section tags (`{{#NAME}}` / `{{/NAME}}` / `{{^NAME}}`)
+          // must be stripped before YAML parsing — the sentinel below only
+          // covers bare `{{VAR}}` placeholders, so section tokens slip
+          // through, land mid-list, and js-yaml chokes with
+          // "missed comma between flow collection entries". The volume map
+          // then stays empty and any `.mustache` config file fails to map
+          // a hostPath, tripping the ServiceManager extraFiles guard with
+          // a misleading "didn't send to deploy step" error. Stripping is
+          // safe here: we only need the unconditional volumes/mounts to
+          // discover the config-mount hostPath.
+          const SECTION_RE = /\{\{\s*[#^/]\s*[\w\d_]+\s*\}\}/g;
           const SENTINEL_RE_OUT = /\{\{\s*([\w\d_]+)\s*\}\}/g;
           const SENTINEL_RE_IN = /__SBVAR_([\w\d_]+)__/g;
-          const safeYaml = yaml.replace(SENTINEL_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
+          const safeYaml = yaml
+            .replace(SECTION_RE, '')
+            .replace(SENTINEL_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
           const restorePlaceholders = (s: string): string =>
             s.replace(SENTINEL_RE_IN, (_m, n) => `{{${n}}}`);
           // Multi-doc support — file-share ships Pod + PVC since 3.6.4.
