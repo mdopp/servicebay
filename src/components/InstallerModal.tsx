@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Template, VariableMeta } from '@/lib/registry';
 import { runPostInstall } from '@/lib/stackInstall/postInstall';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
@@ -10,6 +10,7 @@ import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
 import { Layers, Loader2, AlertCircle, X, Folder, Server, RefreshCw } from 'lucide-react';
+import TemplateUpgradeBanner from './TemplateUpgradeBanner';
 import { useRouter } from 'next/navigation';
 import Mustache from 'mustache';
 
@@ -62,6 +63,20 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   // Clean install — wipe existing service data before deploying.
   const [cleanInstall, setCleanInstall] = useState(false);
   const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
+
+  // Per-template ready-to-install state, tracked by TemplateUpgradeBanner
+  // for any item that has a pending breaking-change banner. `undefined`
+  // = preview still loading or banner deferred its decision; `false` =
+  // operator hasn't acknowledged yet; `true` = nothing to acknowledge
+  // OR acknowledged. Map keys are item.name (template names). The
+  // Continue button stays disabled while any entry is not `true`.
+  // See #353 / #354.
+  const [upgradeReady, setUpgradeReady] = useState<Record<string, boolean | undefined>>({});
+  const reportUpgradeReady = useCallback((name: string, ready: boolean | undefined) => {
+    setUpgradeReady(prev => (prev[name] === ready ? prev : { ...prev, [name]: ready }));
+  }, []);
+  const checkedItems = items.filter(i => i.checked);
+  const allUpgradesReady = checkedItems.length > 0 && checkedItems.every(i => upgradeReady[i.name] === true);
 
   useEffect(() => {
     getNodes().then(setNodes);
@@ -633,6 +648,18 @@ WantedBy=default.target`;
                                         </label>
                                     ))}
                                 </div>
+                                {/* Upgrade banners — one per checked item that has a
+                                    breaking-change or non-breaking changelog entry between
+                                    the operator's installed schema-version and the
+                                    template's current. See #353 / #354. */}
+                                {checkedItems.map(item => (
+                                    <TemplateUpgradeBanner
+                                        key={item.name}
+                                        templateName={item.name}
+                                        source={template.source}
+                                        onReadyToInstall={ready => reportUpgradeReady(item.name, ready)}
+                                    />
+                                ))}
                             </>
                         )}
                     </div>
@@ -846,8 +873,9 @@ WantedBy=default.target`;
                         <button onClick={onClose} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors">Cancel</button>
                         <button
                             onClick={fetchYamlsAndExtractVars}
-                            disabled={items.filter(i => i.checked).length === 0}
-                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium transition-colors"
+                            disabled={!allUpgradesReady}
+                            title={!allUpgradesReady && checkedItems.length > 0 ? 'Acknowledge the breaking-change banner(s) above to continue.' : undefined}
+                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
                         >
                             Continue
                         </button>

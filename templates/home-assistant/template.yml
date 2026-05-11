@@ -6,6 +6,7 @@ metadata:
     app: home-assistant
   annotations:
     servicebay.label: "Home Assistant"
+    servicebay.schema-version: "2"
     servicebay.ports: "8123/tcp,8091/tcp,3000/tcp"
 spec:
   hostNetwork: true

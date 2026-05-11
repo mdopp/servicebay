@@ -913,6 +913,26 @@ export class ServiceManager {
             await this.runPostDeployScript(nodeName, name, postDeployScript, postDeployEnv ?? {}, onProgress);
         }
 
+        // Stamp the template's schema version so future re-deploys can
+        // detect breaking-change deltas vs. the version that's actually
+        // running on the box. See #353 / #354. Best-effort: a failure
+        // here just means the breaking-change banner can't fire on the
+        // next deploy, which is no worse than the pre-tracking state.
+        try {
+            const { parseTemplateSchemaVersion } = await import('@/lib/templateSchemaVersion');
+            const schemaVersion = parseTemplateSchemaVersion(yamlContent);
+            await updateConfig({
+                installedTemplates: {
+                    [name]: {
+                        schemaVersion,
+                        installedAt: new Date().toISOString(),
+                    },
+                },
+            });
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not stamp installedTemplates[${name}]:`, e);
+        }
+
         this.backupQuadlets(nodeName);
 
         // Create health check for the new service if one doesn't exist

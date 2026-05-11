@@ -268,6 +268,18 @@ export interface AppConfig {
    */
   servicePostDeploy?: Record<string, ServicePostDeployRecord>;
   /**
+   * Per-service record of the template-schema-version that was
+   * deployed. Updated by `ServiceManager.deployKubeService` whenever a
+   * deploy succeeds, so the next deploy can detect a breaking-change
+   * delta and surface the CHANGELOG section to the operator before
+   * applying it. See #353 / #354 / #352 (template upgrade system).
+   *
+   * Key is the template/service name. Absence means the service was
+   * deployed before this tracking field existed — the update flow
+   * treats that as "v1" so a v1→v2 bump still prompts.
+   */
+  installedTemplates?: Record<string, { schemaVersion: number; installedAt: string }>;
+  /**
    * Credentials the install wizard saved for later retrieval (#19/A1).
    * Persisted at the end of every install so the operator can come
    * back to "what's the LLDAP admin password" days later without

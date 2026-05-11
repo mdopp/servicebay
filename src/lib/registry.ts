@@ -496,3 +496,31 @@ export async function getTemplateUserGuide(name: string, source?: string): Promi
 
   return tryRead(path.join(TEMPLATES_PATH, name));
 }
+
+/**
+ * Read a template's CHANGELOG.md. Same fall-through search as
+ * `getTemplateUserGuide` (registry > built-in). Returns the raw
+ * markdown text or null when missing. See #353.
+ */
+export async function getTemplateChangelog(name: string, source?: string): Promise<string | null> {
+  const tryRead = async (dir: string): Promise<string | null> => {
+    try {
+      return await fs.readFile(path.join(dir, 'CHANGELOG.md'), 'utf-8');
+    } catch { return null; }
+  };
+
+  if (source && source !== 'Built-in') {
+    return tryRead(path.join(REGISTRIES_DIR, source, 'templates', name));
+  }
+
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      const found = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      if (found !== null) return found;
+    }
+  }
+
+  return tryRead(path.join(TEMPLATES_PATH, name));
+}
