@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.19.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.19.1...servicebay-v3.19.2) (2026-05-11)
+
+
+### Miscellaneous Chores
+
+* trigger release for [#341](https://github.com/mdopp/servicebay/issues/341) phase-2 refactor ([#373](https://github.com/mdopp/servicebay/issues/373)) ([17790ba](https://github.com/mdopp/servicebay/commit/17790ba2a2763ad1bf7cdb00ca9e4f693a302d34))
+
 ## [3.19.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.19.0...servicebay-v3.19.1) (2026-05-11)
 
 
