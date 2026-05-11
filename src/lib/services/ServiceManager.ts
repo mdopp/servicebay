@@ -1148,15 +1148,17 @@ export class ServiceManager {
                     const image = container.image || '';
                     if (!image.includes('filebrowser')) continue;
 
-                    // Find the database volume mount
+                    // Find the database volume mount. file-share/template.yml
+                    // mounts the DB at `/database` (legacy templates used
+                    // `/db`); accept either so a wider set of layouts hit
+                    // this hook.
                     const dbMount = (container.volumeMounts || []).find(
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        (m: any) => m.mountPath === '/db'
+                        (m: any) => m.mountPath === '/db' || m.mountPath === '/database'
                     );
                     const dbHostPath = dbMount ? volumePaths.get(dbMount.name) : null;
                     if (!dbHostPath) continue;
 
-                    // Extract password from --database arg or use default path
                     const dbFile = 'filebrowser.db';
                     const fullDbPath = `${dbHostPath}/${dbFile}`;
 
@@ -1169,16 +1171,49 @@ export class ServiceManager {
                         continue;
                     }
 
-                    // Initialize filebrowser DB with known admin password using a temporary container
-                    logger.info('ServiceManager', `Initializing FileBrowser DB at ${fullDbPath}`);
+                    // Initialize the FileBrowser BoltDB *before* the main
+                    // container starts. Three steps inside a transient
+                    // container that mounts the host DB dir at /db:
+                    //
+                    //   1. `config init` — creates the empty DB schema.
+                    //   2. `config set --auth.method=proxy --auth.header=Remote-User`
+                    //      switches the DB's runtime auth method to
+                    //      proxy mode. Without this step the FileBrowser
+                    //      v2 binary ignores the `.filebrowser.json` JSON
+                    //      file's `auth.method` field (that field is
+                    //      legacy v1) and falls back to password ('json')
+                    //      auth, which makes every Remote-User header
+                    //      mute and /api/login return 403 for the
+                    //      install-time admin-promote call.
+                    //   3. `users add admin <known-pwd> --perm.admin` —
+                    //      seeds an admin user the proxy-auth path can
+                    //      look up when ServiceBay's filebrowser/init
+                    //      handler comes calling with `Remote-User: admin`.
+                    logger.info('ServiceManager', `Initializing FileBrowser DB at ${fullDbPath} (config init + auth.method=proxy + admin user)`);
                     await agent.sendCommand('exec', { command: `mkdir -p ${dbHostPath}` });
+
                     const initCmd = [
                         `podman run --rm --user 0:0`,
                         `-v ${dbHostPath}:/db`,
                         `${image}`,
                         `config init --database /db/${dbFile}`,
                     ].join(' ');
-                    await agent.sendCommand('exec', { command: initCmd, timeout: 60 });
+                    const initRes = await agent.sendCommand('exec', { command: initCmd, timeout: 60 });
+                    if (initRes.code !== 0) {
+                        logger.warn('ServiceManager', `FileBrowser config init failed (code ${initRes.code}): ${initRes.stderr || initRes.stdout}`);
+                        continue;
+                    }
+
+                    const setCmd = [
+                        `podman run --rm --user 0:0`,
+                        `-v ${dbHostPath}:/db`,
+                        `${image}`,
+                        `config set --auth.method=proxy --auth.header=Remote-User --database /db/${dbFile}`,
+                    ].join(' ');
+                    const setRes = await agent.sendCommand('exec', { command: setCmd, timeout: 60 });
+                    if (setRes.code !== 0) {
+                        logger.warn('ServiceManager', `FileBrowser config set --auth.method=proxy failed (code ${setRes.code}): ${setRes.stderr || setRes.stdout}`);
+                    }
 
                     const userCmd = [
                         `podman run --rm --user 0:0`,
@@ -1188,9 +1223,9 @@ export class ServiceManager {
                     ].join(' ');
                     const result = await agent.sendCommand('exec', { command: userCmd, timeout: 60 });
                     if (result.code === 0) {
-                        logger.info('ServiceManager', 'FileBrowser initialized with admin/admin1234admin');
+                        logger.info('ServiceManager', 'FileBrowser DB initialized: proxy-auth + admin user (password unused under proxy auth).');
                     } else {
-                        logger.warn('ServiceManager', `FileBrowser user init failed: ${result.stderr}`);
+                        logger.warn('ServiceManager', `FileBrowser users add failed: ${result.stderr || result.stdout}`);
                     }
                 }
             }
