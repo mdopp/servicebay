@@ -9,8 +9,10 @@ import { fetchTemplateYaml, fetchTemplateVariables, fetchTemplateConfigFiles } f
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
-import { Layers, Loader2, AlertCircle, X, Folder, Server, RefreshCw } from 'lucide-react';
+import { Layers, Loader2, AlertCircle, X, Folder, Server } from 'lucide-react';
 import TemplateUpgradeBanner from './TemplateUpgradeBanner';
+import StackVariableField from './StackVariableField';
+import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { useRouter } from 'next/navigation';
 import Mustache from 'mustache';
 
@@ -41,12 +43,9 @@ interface Variable {
   meta?: VariableMeta;
 }
 
-function generateSecret(length = 32): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  return Array.from(crypto.getRandomValues(new Uint8Array(length)))
-    .map(b => chars[b % chars.length])
-    .join('');
-}
+// `generateSecret` lives in src/lib/stackInstall/randomSecret.ts as
+// `generateRandomSecret` since #341 phase-2-step-1 — same helper that
+// OnboardingWizard and the new <StackVariableField> share.
 
 export default function InstallerModal({ template, readme, isOpen, onClose }: InstallerModalProps) {
   const router = useRouter();
@@ -296,7 +295,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
         // Auto-fill defaults from metadata
         if (!value && meta?.default) value = meta.default;
         // Auto-generate secrets
-        if (!value && meta?.type === 'secret') value = generateSecret();
+        if (!value && meta?.type === 'secret') value = generateRandomSecret();
         return { name: v, value, global: isGlobal, meta };
     });
     // Async fill for rsa-private types — needs server-side crypto.generateKeyPair.
@@ -488,119 +487,29 @@ WantedBy=default.target`;
       setVariables(newVars);
     };
 
-    const inputClass = "w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500";
-
-    // Select dropdown
-    if (v.meta?.type === 'select' && v.meta.options) {
-      return (
-        <select value={v.value} onChange={(e) => update(e.target.value)} className={inputClass + " appearance-none"}>
-          <option value="" disabled>Select...</option>
-          {v.meta.options.map(opt => (
-            <option key={opt} value={opt}>{opt}</option>
-          ))}
-        </select>
-      );
-    }
-
-    // Device selector
-    if (v.meta?.type === 'device') {
-      const devPath = v.meta.devicePath || '/dev/serial/by-id';
-      const devices = deviceOptions[devPath] || [];
-      return (
-        <div className="flex gap-2">
-          <select value={v.value} onChange={(e) => update(e.target.value)} className={inputClass + " appearance-none flex-1"}>
-            <option value="" disabled>{loadingDevices ? 'Loading devices...' : !selectedNode ? 'Select a node first' : devices.length === 0 ? 'No devices found' : 'Select device...'}</option>
-            {devices.map(dev => (
-              <option key={dev} value={dev}>{dev.replace(`${devPath}/`, '')}</option>
-            ))}
-          </select>
-          {selectedNode && (
-            <button
-              type="button"
-              onClick={() => {
-                setLoadingDevices(true);
-                fetch(`/api/system/devices?node=${selectedNode}&path=${encodeURIComponent(devPath)}`)
-                  .then(r => r.json())
-                  .then(data => {
-                    setDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] }));
-                    setLoadingDevices(false);
-                  })
-                  .catch(() => setLoadingDevices(false));
-              }}
-              className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              title="Refresh device list"
-            >
-              <RefreshCw size={16} className={loadingDevices ? 'animate-spin' : ''} />
-            </button>
-          )}
-        </div>
-      );
-    }
-
-    // Subdomain field (shows .domain suffix)
-    if (v.meta?.type === 'subdomain') {
-      const domain = variables.find(x => x.name === 'PUBLIC_DOMAIN')?.value || 'example.com';
-      return (
-        <div className="flex items-center gap-0">
-          <input
-            type="text"
-            value={v.value}
-            onChange={(e) => update(e.target.value)}
-            className={inputClass + " rounded-r-none border-r-0"}
-            placeholder={v.meta.default || 'subdomain'}
-          />
-          <span className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 rounded-r text-sm whitespace-nowrap">.{domain}</span>
-        </div>
-      );
-    }
-
-    // Password field
-    if (v.meta?.type === 'password') {
-      return (
-        <input
-          type="password"
-          value={v.value}
-          onChange={(e) => update(e.target.value)}
-          className={inputClass}
-          placeholder={`Enter ${v.name.toLowerCase().replace(/_/g, ' ')}`}
-          autoComplete="new-password"
-        />
-      );
-    }
-
-    // Secret (auto-generated default, editable so users can override with
-    // a memorable value; regenerate button picks a fresh random one).
-    if (v.meta?.type === 'secret') {
-      return (
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={v.value}
-            onChange={(e) => update(e.target.value)}
-            className={inputClass + " font-mono text-xs flex-1"}
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <button
-            type="button"
-            onClick={() => update(generateSecret())}
-            className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-            title="Regenerate"
-          >
-            <RefreshCw size={16} />
-          </button>
-        </div>
-      );
-    }
-
-    // Default: text input
+    // Type dispatch (select / device / subdomain / password / secret /
+    // text) lives in <StackVariableField>, shared with OnboardingWizard
+    // since #341.
     return (
-      <input
-        type="text"
-        value={v.value}
-        onChange={(e) => update(e.target.value)}
-        className={inputClass}
-        placeholder={v.meta?.default ? `Default: ${v.meta.default}` : `Value for ${v.name}`}
+      <StackVariableField
+        variable={v}
+        onChange={update}
+        publicDomain={variables.find(x => x.name === 'PUBLIC_DOMAIN')?.value}
+        deviceContext={{
+          deviceOptions,
+          loadingDevices,
+          canRefresh: !!selectedNode,
+          onRefresh: (devPath) => {
+            setLoadingDevices(true);
+            fetch(`/api/system/devices?node=${selectedNode}&path=${encodeURIComponent(devPath)}`)
+              .then(r => r.json())
+              .then(data => {
+                setDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] }));
+                setLoadingDevices(false);
+              })
+              .catch(() => setLoadingDevices(false));
+          },
+        }}
       />
     );
   };
