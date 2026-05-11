@@ -20,7 +20,6 @@ interface FbUser {
   id: number;
   username: string;
   perm?: Record<string, boolean>;
-  // Other fields are returned but only id + username + perm matter for us.
 }
 
 /**
@@ -33,28 +32,27 @@ interface FbUser {
  * runs once at install time and either creates the user with admin
  * perms or upgrades an existing record.
  *
- * **Why HTTP API, not `filebrowser users` CLI**: FileBrowser stores
- * users in a BoltDB database (`/database/filebrowser.db`). BoltDB
- * supports only one writer with an exclusive flock — and the
- * running filebrowser server holds that lock for its entire lifetime.
- * Any `podman exec <ct> filebrowser users add/update ...` blocks
- * trying to acquire the lock and hits FB's internal timeout. The
- * fix is to go through FileBrowser's own HTTP API for user
- * management, which doesn't fight itself for the DB.
+ * **Why HTTP API, not the CLI**: FileBrowser's user records live in a
+ * BoltDB database with an exclusive flock held by the running server.
+ * Any `podman exec <ct> filebrowser users add/update` blocks trying
+ * to acquire that lock and hits FB's internal timeout. Driving the
+ * change through FileBrowser's own HTTP API sidesteps the contention.
  *
- * **Why we can spoof `Remote-User: admin`**: the file-share container
- * is configured for proxy-auth (auth.method=proxy, header=Remote-User
- * in .filebrowser.json). FileBrowser trusts whatever Remote-User
- * header it sees. Externally, NPM + Authelia inject that header for
- * SSO-authenticated visitors. Internally, on the host where ServiceBay
- * + filebrowser share a network namespace, we can set it ourselves.
- * The endpoint is gated by requireSession (admin cookie or internal
- * token) on the ServiceBay side, and FileBrowser only listens on
- * 127.0.0.1 — both guards together mean spoofing the header is not
- * an exposure on top of the trust the operator already extended.
+ * **Auth shape**: FileBrowser's API endpoints (`/api/users`,
+ * `/api/users/{id}`) use a JWT in the `X-Auth` header — they don't
+ * read Remote-User directly. To get that JWT in proxy-auth mode you
+ * POST `/api/login` with the Remote-User header set; the auther
+ * picks the user out of the header, validates it against the DB,
+ * and writes a signed JWT to the response body. That JWT then
+ * authorises `/api/users` etc.
  *
- * Idempotent. Re-runs over an existing database either create or
- * update the user to ensure admin perms.
+ * The trust chain: ServiceBay shares filebrowser's host network and
+ * filebrowser binds 127.0.0.1, so this loopback path is only
+ * reachable from the same host. The endpoint stays gated by
+ * requireSession (admin cookie or internal token), and 'admin'
+ * exists in FB's DB because filebrowser auto-creates the first user
+ * on startup. Spoofing Remote-User here doesn't widen the existing
+ * trust surface.
  */
 export async function POST(request: Request) {
   try {
@@ -67,15 +65,34 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'invalid username' }, { status: 400 });
     }
 
-    // Walk the existing users to either create or PATCH the right one.
+    // Step 1: trade Remote-User: admin for a JWT. FileBrowser's
+    // proxy-auther reads the header, looks the user up (auto-creates
+    // if missing — first-user wins admin), and writes the signed
+    // JWT to the response body as plain text.
+    const loginResp = await fetch(`${FB_BASE}/api/login`, {
+      method: 'POST',
+      headers: { 'Remote-User': 'admin', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!loginResp.ok) {
+      return NextResponse.json({
+        error: `FileBrowser /api/login as admin returned HTTP ${loginResp.status} — server still warming up?`,
+      }, { status: 502 });
+    }
+    const jwt = (await loginResp.text()).trim();
+    if (!jwt || jwt.split('.').length !== 3) {
+      return NextResponse.json({
+        error: `FileBrowser /api/login returned an unexpected body (${jwt.slice(0, 80)})`,
+      }, { status: 502 });
+    }
+
+    // Step 2: list users to decide between create vs. promote.
     const listResp = await fetch(`${FB_BASE}/api/users`, {
-      headers: { 'X-Auth': '', 'Remote-User': 'admin' },
+      headers: { 'X-Auth': jwt },
     });
     if (!listResp.ok) {
-      // FileBrowser may not have finished booting yet — let the
-      // post-deploy script's outer retry loop handle that.
       return NextResponse.json({
-        error: `FileBrowser API not ready: HTTP ${listResp.status}`,
+        error: `FileBrowser GET /api/users returned HTTP ${listResp.status} — admin permissions not yet active?`,
       }, { status: 502 });
     }
     const users = (await listResp.json()) as FbUser[];
@@ -93,13 +110,10 @@ export async function POST(request: Request) {
     };
 
     if (existing) {
-      // Promote to admin. FileBrowser's PUT /api/users/:id expects
-      // `which` to list the fields being changed and `data` to
-      // contain the full updated user. We patch only perm.
       const merged = { ...existing, perm: { ...existing.perm, ...adminPerm } };
       const putResp = await fetch(`${FB_BASE}/api/users/${existing.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Remote-User': 'admin' },
+        headers: { 'Content-Type': 'application/json', 'X-Auth': jwt },
         body: JSON.stringify({ what: 'user', which: ['perm'], data: merged }),
       });
       if (!putResp.ok) {
@@ -130,7 +144,7 @@ export async function POST(request: Request) {
     };
     const postResp = await fetch(`${FB_BASE}/api/users`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Remote-User': 'admin' },
+      headers: { 'Content-Type': 'application/json', 'X-Auth': jwt },
       body: JSON.stringify({ what: 'user', which: ['all'], data: newUser }),
     });
     if (!postResp.ok) {
