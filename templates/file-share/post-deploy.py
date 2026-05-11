@@ -130,20 +130,41 @@ def main() -> int:
     last_beat = 0.0
     started = time.time()
     seeded = False
+    last_status = 0
+    last_error = ""
     while time.time() < deadline:
-        status, body = post_json(init_url, {"username": fb_user, "node": env("SB_NODE", "Local")}, timeout=15)
+        # 60s per attempt: the init endpoint round-trips a `podman
+        # exec` through the agent (SSH) and into filebrowser's
+        # SQLite. With cold caches that can creep past urllib's old
+        # 15s, surfacing as bogus status=0 even when the seed eventually
+        # would have worked. The 3-min outer budget is unchanged.
+        status, body = post_json(init_url, {"username": fb_user, "node": env("SB_NODE", "Local")}, timeout=60)
+        last_status = status
         if status == 200 and body and body.get("ok"):
             action = body.get("action", "ready")
             log(f"✅ FileBrowser admin: {fb_user} ({action}) — log in via Authelia at https://files.<your-domain> to manage shares.")
             seeded = True
             break
+        # Capture the actual error from each attempt so the heartbeat
+        # below isn't a black box. status=0 means urllib couldn't even
+        # connect (timeout / refused / DNS); 4xx-5xx means ServiceBay
+        # rejected it; body.error is what the route handler returned.
+        if status == 0:
+            last_error = "no response (connect failed or timeout)"
+        elif body and isinstance(body, dict) and body.get("error"):
+            last_error = f"HTTP {status}: {body['error']}"
+        else:
+            last_error = f"HTTP {status}"
         elapsed = time.time() - started
         if elapsed - last_beat >= 30:
-            log(f"Still waiting for FileBrowser to accept the admin seed ({int(elapsed)}s elapsed)...")
+            log(f"Still waiting for FileBrowser to accept the admin seed ({int(elapsed)}s elapsed, last response: {last_error})...")
             last_beat = elapsed
         time.sleep(5)
     if not seeded:
-        log("⚠️ Could not pre-seed FileBrowser admin after 3 minutes. Run `podman exec file-share-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db` once the pod is up.")
+        log(f"⚠️ Could not pre-seed FileBrowser admin after 3 minutes. Last response: {last_error or 'unknown'}.")
+        log(f"   Endpoint: {init_url}")
+        log(f"   SB_API_URL={sb_api}  SB_API_TOKEN={'set' if os.environ.get('SB_API_TOKEN') else 'MISSING'}")
+        log("   Manual recovery: `podman exec file-share-filebrowser filebrowser users add <user> _ --perm.admin --database /database/filebrowser.db`")
         # Non-zero exit so the post-deploy run record + diagnose probe
         # (post_deploy_failed) surface this. Otherwise the failure
         # silently disappears with the install log scroll. See #317.
