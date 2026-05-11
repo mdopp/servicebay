@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.18.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.18.1...servicebay-v3.18.2) (2026-05-11)
+
+
+### Bug Fixes
+
+* **file-share:** bind FileBrowser on 0.0.0.0 so NPM can reach it ([#362](https://github.com/mdopp/servicebay/issues/362)) ([8440141](https://github.com/mdopp/servicebay/commit/8440141a8029e6995bf060213003e17e5f9e3377))
+
 ## [3.18.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.18.0...servicebay-v3.18.1) (2026-05-11)
 
 
