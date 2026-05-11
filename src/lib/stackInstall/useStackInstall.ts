@@ -253,12 +253,31 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     nodeRef.current = '';
   }, []);
 
+  // No-op writes return the same array reference so subscribers (e.g. the
+  // wizard's device-poll effect) don't see a spurious change. Pre-refactor
+  // (v3.19.1) the wizard owned variables state and guarded with a
+  // `changed ? next : prev` map; the v3.19.2 refactor moved state in here
+  // and lost that guard, which turned the device-poll effect into a hot
+  // loop during install (every appendLog re-render queued another
+  // /api/system/devices fetch and saturated the browser connection pool).
   const setItemChecked = useCallback((name: string, checked: boolean) => {
-    setItems(prev => prev.map(i => (i.name === name ? { ...i, checked } : i)));
+    setItems(prev => {
+      const i = prev.findIndex(x => x.name === name);
+      if (i === -1 || prev[i].checked === checked) return prev;
+      const next = prev.slice();
+      next[i] = { ...next[i], checked };
+      return next;
+    });
   }, []);
 
   const setVariableValue = useCallback((name: string, value: string) => {
-    setVariables(prev => prev.map(v => (v.name === name ? { ...v, value } : v)));
+    setVariables(prev => {
+      const i = prev.findIndex(x => x.name === name);
+      if (i === -1 || prev[i].value === value) return prev;
+      const next = prev.slice();
+      next[i] = { ...next[i], value };
+      return next;
+    });
   }, []);
 
   const startConfigure = useCallback(async (
