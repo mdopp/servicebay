@@ -7,8 +7,9 @@ metadata:
     servicebay.role: reverse-proxy
   annotations:
     servicebay.label: "Nginx Proxy Manager"
-    servicebay.schema-version: "2"
+    servicebay.schema-version: "3"
     servicebay.tier: "infrastructure"
+    servicebay.ports: "{{NGINX_PORT}}/tcp,{{NGINX_SSL_PORT}}/tcp,{{NGINX_ADMIN_PORT}}/tcp"
 spec:
   hostNetwork: true
   containers:
@@ -19,13 +20,18 @@ spec:
       value: "{{NGINX_ADMIN_EMAIL}}"
     - name: INITIAL_ADMIN_PASSWORD
       value: "{{NGINX_ADMIN_PASSWORD}}"
+    # `hostPort:` is invalid under hostNetwork — podman rejects it with
+    # "PortMappings can only be used with Bridge, slirp4netns, or pasta
+    # networking" and the pod crash-loops. Under hostNetwork the container
+    # binds {{NGINX_PORT}}/{{NGINX_SSL_PORT}}/{{NGINX_ADMIN_PORT}} directly
+    # on the host; the servicebay.ports annotation above carries the port
+    # list for the UI / network graph. The NPM image listens on 80/443/81
+    # internally, so the operator's chosen values only work as-is when
+    # they match those defaults.
     ports:
-    - containerPort: 80
-      hostPort: {{NGINX_PORT}}
-    - containerPort: 443
-      hostPort: {{NGINX_SSL_PORT}}
-    - containerPort: 81
-      hostPort: {{NGINX_ADMIN_PORT}}
+    - containerPort: {{NGINX_PORT}}
+    - containerPort: {{NGINX_SSL_PORT}}
+    - containerPort: {{NGINX_ADMIN_PORT}}
     volumeMounts:
     - mountPath: /data
       name: npm-data

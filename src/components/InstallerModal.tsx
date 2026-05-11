@@ -216,9 +216,20 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
               // comment in OnboardingWizard.tsx for the live-debugged
               // pathology that made `{{DATA_DIR}}` end up as a literal
               // `0` in `targetPath`, writing config files under `~/0/`.
+              // Mustache section tags (`{{#NAME}}` / `{{/NAME}}` / `{{^NAME}}`)
+              // must be stripped first — the sentinel below only covers
+              // bare `{{VAR}}` placeholders, so section tokens slip
+              // through, break js-yaml ("missed comma between flow
+              // collection entries"), and any `.mustache` config file
+              // fails to map a hostPath. Stripping is safe here: we only
+              // need the unconditional volumes/mounts to discover the
+              // config-mount hostPath. Mirrors OnboardingWizard.tsx.
+              const SECTION_RE = /\{\{\s*[#^/]\s*[\w\d_]+\s*\}\}/g;
               const SENTINEL_RE_OUT = /\{\{\s*([\w\d_]+)\s*\}\}/g;
               const SENTINEL_RE_IN = /__SBVAR_([\w\d_]+)__/g;
-              const safeYaml = yaml.replace(SENTINEL_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
+              const safeYaml = yaml
+                .replace(SECTION_RE, '')
+                .replace(SENTINEL_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
               const restorePlaceholders = (s: string): string =>
                 s.replace(SENTINEL_RE_IN, (_m, n) => `{{${n}}}`);
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
