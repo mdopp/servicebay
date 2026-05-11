@@ -1,6 +1,6 @@
 'use server'
 
-import { getReadme, getTemplateYaml, getTemplateVariables, getTemplateConfigFiles, getTemplatePostDeployScript, getTemplates, syncRegistries } from '@/lib/registry';
+import { getReadme, getTemplateYaml, getTemplateVariables, getTemplateConfigFiles, getTemplatePostDeployScript, getTemplateMigrationScripts, getTemplates, syncRegistries } from '@/lib/registry';
 
 export async function fetchTemplates() {
   return await getTemplates();
@@ -24,6 +24,10 @@ export async function fetchTemplateConfigFiles(name: string, source: string = 'B
 
 export async function fetchTemplatePostDeployScript(name: string, source: string = 'Built-in') {
     return await getTemplatePostDeployScript(name, source);
+}
+
+export async function fetchTemplateMigrationScripts(name: string, source: string = 'Built-in') {
+    return await getTemplateMigrationScripts(name, source);
 }
 
 export async function syncAllRegistries() {

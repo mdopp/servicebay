@@ -8,6 +8,7 @@ import { PortMapping as GraphPortMapping } from './network/types';
 import { normalizeExternalTargets } from './network/externalLinks';
 import { ConfigTransformer } from './config/transformer';
 import type { BackupConfig } from './backup/types';
+import type { MigrationAuditEntry } from './stackInstall/migrations';
 
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -279,6 +280,18 @@ export interface AppConfig {
    * treats that as "v1" so a v1→v2 bump still prompts.
    */
   installedTemplates?: Record<string, { schemaVersion: number; installedAt: string }>;
+  /**
+   * Per-service audit log of template migration script runs. Each
+   * entry is appended by `ServiceManager.runMigrationScript` when a
+   * deploy detects a schema-version delta and walks the migration
+   * chain. Failed migrations stay in the log so the diagnose page
+   * can surface them. See #352 phase 3.
+   *
+   * Key is the template/service name; value is the append-only run
+   * history (most recent migration first). Bounded to the last 20
+   * entries per service so config.json stays small.
+   */
+  serviceMigrations?: Record<string, MigrationAuditEntry[]>;
   /**
    * Credentials the install wizard saved for later retrieval (#19/A1).
    * Persisted at the end of every install so the operator can come
