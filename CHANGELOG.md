@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.20.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.19.3...servicebay-v3.20.0) (2026-05-11)
+
+
+### Features
+
+* **templates:** per-template migration scripts ([#352](https://github.com/mdopp/servicebay/issues/352) phase 3) ([#375](https://github.com/mdopp/servicebay/issues/375)) ([08ec8dc](https://github.com/mdopp/servicebay/commit/08ec8dc54fc6ac80d4eaf91995a50bfcbc5aa20e))
+
 ## [3.19.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.19.2...servicebay-v3.19.3) (2026-05-11)
 
 
