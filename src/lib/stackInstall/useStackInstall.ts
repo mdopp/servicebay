@@ -34,14 +34,17 @@ import {
   fetchTemplateVariables,
   fetchTemplateConfigFiles,
   fetchTemplatePostDeployScript,
+  fetchTemplateMigrationScripts,
 } from '@/app/actions';
 import { parseTemplateLabel } from '@/lib/templateLabel';
+import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import {
   runPostInstall,
   configureProxyRoutes,
 } from './postInstall';
 import { buildCredentialsManifest, type Credential } from './credentialsManifest';
 import { generateRandomSecret } from './randomSecret';
+import { selectMigrationChain } from './migrations';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
 
@@ -548,6 +551,55 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         const raw = await fetchTemplatePostDeployScript(item.name, templateSource);
         if (raw) postDeployScript = Mustache.render(raw, view);
       } catch { /* template ships no script — fine */ }
+
+      // Migration chain (#352 phase 3): templates/<name>/migrations/v{N}-to-v{M}.py
+      // run before the new yaml lands when the operator's installed
+      // schemaVersion < the template's current. Detection happens
+      // server-side via /api/system/templates/<name>/upgrade-preview;
+      // chain selection runs here against that endpoint's response.
+      // Render each step with Mustache using the same `view` as the
+      // yaml so OLD/NEW DATA_DIR and any other wizard variables are
+      // already resolved by the time the agent runs python3.
+      let migrations: { filename: string; fromVersion: number; toVersion: number; content: string }[] | undefined;
+      try {
+        const targetVersion = parseTemplateSchemaVersion(item.yaml);
+        const previewUrl = `/api/system/templates/${encodeURIComponent(item.name)}/upgrade-preview`
+          + (templateSource && templateSource !== 'Built-in' ? `?source=${encodeURIComponent(templateSource)}` : '');
+        const previewRes = await fetch(previewUrl);
+        if (previewRes.ok) {
+          const preview = await previewRes.json();
+          const installedVersion = typeof preview.installedVersion === 'number' ? preview.installedVersion : null;
+          if (installedVersion !== null && installedVersion < targetVersion) {
+            const scripts = await fetchTemplateMigrationScripts(item.name, templateSource);
+            const result = selectMigrationChain(installedVersion, targetVersion, scripts);
+            if (!result.ok) {
+              Mustache.escape = savedEscape;
+              const msg = result.reason === 'missing-step'
+                ? `Migration chain for ${item.name} is incomplete: no script for v${result.from}→v${result.expectedNext} (have ${result.available.length === 0 ? 'none' : result.available.map(v => `v${v}`).join(', ')}). Aborting deploy.`
+                : `Migration chain for ${item.name} has overlapping/invalid steps (${result.conflicts.map(c => `v${c.fromVersion}→v${c.toVersion}`).join(', ')}). Aborting deploy.`;
+              appendLog(`❌ ${msg}`);
+              setError(msg);
+              setPhase('error');
+              setInstallingNow(null);
+              return;
+            }
+            if (result.chain.length > 0) {
+              migrations = result.chain.map(s => ({
+                filename: s.filename,
+                fromVersion: s.fromVersion,
+                toVersion: s.toVersion,
+                content: Mustache.render(s.content, view),
+              }));
+            }
+          }
+        }
+      } catch (e) {
+        // Migration discovery is best-effort — a fetch failure on the
+        // preview endpoint shouldn't block the deploy. If migrations
+        // are actually needed and we skipped them, the new container
+        // will fail to start and the diagnose probe will surface it.
+        appendLog(`⚠️ ${item.name}: could not check migration chain (${e instanceof Error ? e.message : String(e)}). Continuing without migrations.`);
+      }
       Mustache.escape = savedEscape;
 
       const postDeployEnv: Record<string, string> = {};
@@ -572,7 +624,8 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
               yamlFileName: `${item.name}.yml`,
               extraFiles,
               postDeployScript,
-              postDeployEnv: postDeployScript ? postDeployEnv : undefined,
+              postDeployEnv: postDeployScript || (migrations && migrations.length > 0) ? postDeployEnv : undefined,
+              migrations,
             }),
           });
         } catch (networkErr) {
