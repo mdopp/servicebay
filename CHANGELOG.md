@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.18.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.17.0...servicebay-v3.18.0) (2026-05-11)
+
+
+### Features
+
+* **templates:** extract voice stack from home-assistant ([#348](https://github.com/mdopp/servicebay/issues/348)) ([#351](https://github.com/mdopp/servicebay/issues/351)) ([bac8233](https://github.com/mdopp/servicebay/commit/bac823326cf8eb89c51def5025c38417daa926fa))
+* **templates:** schema-version annotation + upgrade banner with CHANGELOG diff ([#353](https://github.com/mdopp/servicebay/issues/353), [#354](https://github.com/mdopp/servicebay/issues/354)) ([#357](https://github.com/mdopp/servicebay/issues/357)) ([1abc593](https://github.com/mdopp/servicebay/commit/1abc5935bb2a23da99540e781fce90dffd50d114))
+
+
+### Bug Fixes
+
+* **filebrowser:** use FB's JWT login flow instead of bare Remote-User ([#355](https://github.com/mdopp/servicebay/issues/355)) ([bc7f4bb](https://github.com/mdopp/servicebay/commit/bc7f4bb68dbab32c20fd869261c65cf875962a9e))
+
 ## [3.17.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.16.2...servicebay-v3.17.0) (2026-05-11)
 
 
