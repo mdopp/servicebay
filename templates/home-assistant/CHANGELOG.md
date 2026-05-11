@@ -10,6 +10,28 @@ operator's installed schema-version and the current one and surfaces
 them in the re-deploy dialog. Each `(breaking)` section needs an
 explicit acknowledgement before the deploy can proceed.
 
+## v3
+
+**Seed `configuration.yaml` with `http.trusted_proxies` so NPM can talk to HA.**
+
+Home Assistant's first-boot wrote a minimal `configuration.yaml`
+without an `http:` block. Behind NPM (which forwards `X-Forwarded-For`),
+HA's `http.forwarded` component then rejected every proxied request
+with HTTP 400 ("request from reverse proxy but HTTP integration is
+not set up for reverse proxies").
+
+The template now ships `configuration.yaml.mustache` that gets
+written to `/config/configuration.yaml` on install. Trusts the
+private RFC1918 ranges + loopback — covers any LAN ServiceBay sits
+on without per-install variable injection.
+
+Required action: nothing, unless you already customized
+`configuration.yaml`. Schema bump triggers a re-deploy prompt; the
+new file ships next to your existing one, you decide whether to
+overwrite. After a HA backup-restore the snapshot's
+`configuration.yaml` takes over — re-add the `http:` block manually,
+otherwise `home.<domain>` will start returning 400 again.
+
 ## v2 (breaking)
 
 **Voice extracted into the `voice` template.**
