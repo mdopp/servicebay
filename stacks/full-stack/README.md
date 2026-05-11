@@ -34,7 +34,7 @@ Domain und Subdomains sind bei der Installation anpassbar.
 | music.{domain} | Navidrome | 4533 | Ja | Subsonic-API für Mobile-Apps (siehe Template-README für Authelia-Bypass) |
 | books.{domain} | Audiobookshelf | 13378 | Ja | Hörbücher + Podcasts, eigene Mobile-Apps |
 | files.{domain} | FileBrowser | 8088 | — | Web-UI für die Samba-Freigabe; Authelia-SSO via auth_request (kein eigener Login) |
-| caldav.{domain} | Radicale | 5232 | — | CalDAV/CardDAV; auth direkt gegen LLDAP, kein Authelia (Mobile-Clients = Basic-Auth) |
+| caldav.{domain} | Radicale | 5232 | — | **Kalender UND Adressbücher** (CalDAV + CardDAV auf demselben Host — kein separates `carddav.`); auth direkt gegen LLDAP, kein Authelia (Mobile-Clients = Basic-Auth) |
 
 ## Nach der Installation
 
