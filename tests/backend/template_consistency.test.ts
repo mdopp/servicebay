@@ -409,8 +409,13 @@ describe('Mustache configs have a resolvable target mount', () => {
   for (const t of templates) {
     if (Object.keys(t.configs).length === 0) continue;
     it(`${t.name}: has a servicebay.config-mount annotation that resolves to a real mountPath`, () => {
-      // Render the YAML with a stub view so we can parse it.
-      const safeYaml = t.yamlContent.replace(/\{\{[^}]+\}\}/g, '0');
+      // Render the YAML with a stub view so we can parse it. Strip
+      // mustache section delimiters first ({{#FOO}}, {{/FOO}}, {{^FOO}})
+      // so optional blocks survive parsing — the remaining variable
+      // placeholders get a benign "0" stub.
+      const safeYaml = t.yamlContent
+        .replace(/\{\{[#/^][^}]+\}\}/g, '')
+        .replace(/\{\{[^}]+\}\}/g, '0');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let docs: any[];
       try {

@@ -1,0 +1,24 @@
+# Home Assistant base config. ServiceBay writes this once on first
+# install. Edit freely afterwards — re-deploys don't overwrite.
+#
+# Backup-restore caveat: when you restore a HA backup, the snapshot's
+# own configuration.yaml replaces this file. Re-add an `http:` block
+# with `use_x_forwarded_for: true` and the trusted-proxy CIDRs below,
+# otherwise NPM-proxied requests fail with HTTP 400 "request from
+# reverse proxy but HTTP integration is not set up for reverse
+# proxies".
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Reverse-proxy trust list. NPM (on the same host) forwards
+# X-Forwarded-For for every proxied request. Trusting the private
+# RFC1918 ranges + loopback works regardless of which LAN subnet
+# ServiceBay sits on — no per-install variable injection needed.
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 127.0.0.1
+    - 192.168.0.0/16
+    - 10.0.0.0/8
+    - 172.16.0.0/12
