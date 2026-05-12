@@ -227,6 +227,18 @@ async function requestPublicCert(
 ): Promise<{ ok: true; certId: number } | { ok: false; reason: string }> {
     // 1) Create the LE cert in NPM. NPM blocks until the ACME exchange
     //    completes (success or failure), so the timeout here is generous.
+    //
+    // Schema note: recent NPM (master) tightened the certificate `meta`
+    // schema with `additionalProperties: false` and dropped both
+    // `letsencrypt_email` and `letsencrypt_agree`. The ACME email now
+    // comes from the owner user's account (NPM reads `user.email` on
+    // the authenticated principal), which our bootstrap step already
+    // sets via PUT /api/users/1. Sending the legacy fields makes NPM
+    // 400 with "data/meta must NOT have additional properties". The
+    // `leEmail` param stays only as a precondition gate — callers skip
+    // cert issuance when it isn't set, because "no admin email" means
+    // NPM can't register with Let's Encrypt regardless of payload.
+    void leEmail;
     let certId: number;
     try {
         const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
@@ -238,11 +250,7 @@ async function requestPublicCert(
             body: JSON.stringify({
                 provider: 'letsencrypt',
                 domain_names: [domain],
-                meta: {
-                    letsencrypt_email: leEmail,
-                    letsencrypt_agree: true,
-                    dns_challenge: false,
-                },
+                meta: { dns_challenge: false },
             }),
             signal: AbortSignal.timeout(120_000),
         });
@@ -274,7 +282,6 @@ async function requestPublicCert(
                 ssl_forced: true,
                 http2_support: true,
                 hsts_enabled: false,
-                meta: { letsencrypt_agree: true, dns_challenge: false },
             }),
             signal: AbortSignal.timeout(10_000),
         });
