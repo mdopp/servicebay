@@ -156,10 +156,104 @@ async function getNpmToken(
     return null;
 }
 
+/** Name we use for the auto-managed LAN-only access list in NPM. The
+ *  GET-then-POST flow keys off this exact string, so don't change it
+ *  without a migration plan — renaming would orphan the existing list
+ *  and create a duplicate. */
+const LAN_ACCESS_LIST_NAME = 'ServiceBay LAN only';
+
+/**
+ * Derive a /24 CIDR from a node IP. 192.168.178.100 → 192.168.178.0/24.
+ * Operators on non-/24 LANs can edit the access list manually in NPM
+ * admin — most home/SOHO networks are /24, so this is the right default.
+ */
+function lanCidrFromIp(ip: string): string | null {
+    const m = ip.match(/^(\d+)\.(\d+)\.(\d+)\.\d+$/);
+    if (!m) return null;
+    return `${m[1]}.${m[2]}.${m[3]}.0/24`;
+}
+
+/**
+ * Ensure NPM has a "ServiceBay LAN only" access list configured for the
+ * detected LAN /24, returning its id. Create-if-missing, idempotent
+ * across reinstalls. Returns null on any error so the caller can fall
+ * back to the previous open behaviour rather than blowing up the install.
+ *
+ * Used by the proxy-host loop to auto-restrict any host whose
+ * `exposure: 'lan'` meta says it shouldn't be reachable from the
+ * internet. The wizard's "Access Restrictions (recommended)" manual
+ * instruction was the bandaid for this gap.
+ */
+async function ensureLanAccessList(baseUrl: string, token: string, nodeIp: string): Promise<number | null> {
+    const cidr = lanCidrFromIp(nodeIp);
+    if (!cidr) {
+        logger.warn('ProxyHosts', `Could not derive LAN CIDR from node IP ${nodeIp}; skipping access-list setup.`);
+        return null;
+    }
+
+    // 1) Look for an existing list by name. expand=clients gives us the
+    //    rule list so we can detect drift and patch instead of duplicating.
+    try {
+        const listRes = await fetch(`${baseUrl}/api/nginx/access-lists?expand=clients`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (listRes.ok) {
+            const lists = (await listRes.json()) as Array<{
+                id: number;
+                name: string;
+                clients?: Array<{ address: string; directive: string }>;
+            }>;
+            const existing = Array.isArray(lists) ? lists.find(l => l.name === LAN_ACCESS_LIST_NAME) : undefined;
+            if (existing) return existing.id;
+        }
+    } catch (e) {
+        logger.warn('ProxyHosts', `LAN access-list lookup failed: ${e instanceof Error ? e.message : String(e)}`);
+        // fall through to create — worst case we'll get a duplicate-name 400
+    }
+
+    // 2) Create the list. nginx access rules are evaluated top-to-bottom
+    //    and first-match-wins; allow LAN + localhost, then explicit
+    //    deny-all so the rejection is unambiguous in NPM's logs.
+    try {
+        const createRes = await fetch(`${baseUrl}/api/nginx/access-lists`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+                name: LAN_ACCESS_LIST_NAME,
+                satisfy_any: false,
+                pass_auth: false,
+                items: [],
+                clients: [
+                    { address: cidr,         directive: 'allow' },
+                    { address: '127.0.0.1',  directive: 'allow' },
+                    { address: 'all',        directive: 'deny' },
+                ],
+            }),
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!createRes.ok) {
+            const body = await createRes.text().catch(() => '');
+            logger.warn('ProxyHosts', `Failed to create LAN access list: HTTP ${createRes.status} ${body.slice(0, 200)}`);
+            return null;
+        }
+        const data = (await createRes.json()) as { id?: number };
+        if (typeof data.id !== 'number') return null;
+        logger.info('ProxyHosts', `Created NPM access list "${LAN_ACCESS_LIST_NAME}" (id=${data.id}) allowing ${cidr} + localhost`);
+        return data.id;
+    } catch (e) {
+        logger.warn('ProxyHosts', `LAN access-list create failed: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
+    }
+}
+
 /**
  * Create a proxy host in NPM via its REST API.
  */
-async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRequest) {
+async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRequest, accessListId: number = 0) {
     const pc = host.proxyConfig || {};
     const body = {
         domain_names: [host.domain],
@@ -176,8 +270,11 @@ async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRe
         // HSTS defaults
         hsts_enabled: false,
         hsts_subdomains: false,
-        // No SSL cert on fresh install — user configures Let's Encrypt via NPM admin
-        access_list_id: 0,
+        // SSL cert is bound after creation (via requestPublicCert) for
+        // public-exposure hosts. access_list_id wires NPM's IP-based
+        // gate; lan-exposure hosts get the auto-created
+        // "ServiceBay LAN only" list, public hosts stay open (0).
+        access_list_id: accessListId,
         certificate_id: 0,
         meta: { letsencrypt_agree: false, dns_challenge: false },
         // Service-specific nginx directives (timeouts, upload limits, buffering, etc.)
@@ -338,7 +435,19 @@ export async function POST(request: Request) {
         const config = await getConfig();
         const leEmail = config.reverseProxy?.npm?.email;
 
-        const results: { domain: string; success: boolean; error?: string; certIssued?: boolean; certError?: string }[] = [];
+        // Auto-create the "ServiceBay LAN only" access list once if any
+        // incoming host wants it. Doing this up front (not per-host) means
+        // we hit NPM's access-list endpoint at most twice per install
+        // batch instead of N times. `lanAccessListId === null` falls back
+        // to the previous open behaviour for that subset of hosts so the
+        // install doesn't fail just because the access-list creation
+        // hiccupped — the diagnose UI is the recovery path.
+        const needsLanList = hosts.some(h => h.exposure === 'lan');
+        const lanAccessListId = needsLanList
+            ? await ensureLanAccessList(npm.apiUrl, token, npm.nodeIp)
+            : null;
+
+        const results: { domain: string; success: boolean; error?: string; certIssued?: boolean; certError?: string; lanRestricted?: boolean }[] = [];
 
         for (const host of hosts) {
             // Default forward host = node LAN IP (NPM is in a container,
@@ -346,11 +455,12 @@ export async function POST(request: Request) {
             if (!host.forwardHost) {
                 host.forwardHost = npm.nodeIp;
             }
+            const accessListId = host.exposure === 'lan' && lanAccessListId !== null ? lanAccessListId : 0;
             let createdHost: { id?: number } | null = null;
             try {
-                createdHost = await createProxyHost(npm.apiUrl, token, host);
-                results.push({ domain: host.domain, success: true });
-                logger.info('ProxyHosts', `Created proxy host: ${host.domain} → ${host.forwardHost}:${host.forwardPort} (exposure=${host.exposure ?? 'lan'})`);
+                createdHost = await createProxyHost(npm.apiUrl, token, host, accessListId);
+                results.push({ domain: host.domain, success: true, lanRestricted: accessListId !== 0 });
+                logger.info('ProxyHosts', `Created proxy host: ${host.domain} → ${host.forwardHost}:${host.forwardPort} (exposure=${host.exposure ?? 'lan'}${accessListId !== 0 ? ', LAN-only via access list' : ''})`);
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 results.push({ domain: host.domain, success: false, error: msg });
@@ -431,6 +541,12 @@ export async function POST(request: Request) {
             certs: results
                 .filter(r => r.certIssued || r.certError)
                 .map(r => ({ domain: r.domain, issued: r.certIssued === true, error: r.certError })),
+            // LAN-only hosts that got bound to the auto-managed access
+            // list. Empty when no host had exposure='lan' or when the
+            // access-list creation hiccupped (in which case those hosts
+            // are still publicly reachable — the diagnose UI is the
+            // recovery path).
+            lanRestricted: results.filter(r => r.lanRestricted).map(r => r.domain),
             adminUrl: npm.apiUrl,
             node: npm.nodeName,
         });
