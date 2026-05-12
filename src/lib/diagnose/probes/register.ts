@@ -23,6 +23,7 @@ import './healthChecks';
 import './disk';
 import './podsAndEngine';
 import './certExpiry';
+import './certRequestFailure';
 import './adguardRewritesMissing';
 
 export {};

@@ -107,7 +107,14 @@ function renderProxyConfig(
 /** Build the proxy-host list from subdomain-typed variables. */
 function buildProxyHosts(variables: StackVariable[]): {
   domain: string | undefined;
-  hosts: { domain: string; forwardPort: number; service: string; proxyConfig?: VariableMeta['proxyConfig'] }[];
+  hosts: {
+    domain: string;
+    forwardPort: number;
+    service: string;
+    /** 'public' triggers auto-cert request server-side; 'lan' skips. */
+    exposure: 'public' | 'lan';
+    proxyConfig?: VariableMeta['proxyConfig'];
+  }[];
 } {
   const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
   if (!domain) return { domain, hosts: [] };
@@ -126,6 +133,10 @@ function buildProxyHosts(variables: StackVariable[]): {
       domain: `${sv.value}.${domain}`,
       forwardPort: parseInt(port, 10),
       service,
+      // Conservative default: missing/unknown → 'lan'. Templates declare
+      // `"exposure": "public"` explicitly for services that should get a
+      // Let's Encrypt cert at install time.
+      exposure: (sv.meta?.exposure === 'public' ? 'public' : 'lan') as 'public' | 'lan',
       proxyConfig: renderProxyConfig(sv.meta?.proxyConfig, view),
     };
   }).filter(h => Number.isFinite(h.forwardPort) && h.forwardPort > 0);
@@ -177,6 +188,20 @@ export async function configureProxyRoutes(opts: ConfigureProxyOpts): Promise<Pr
       onLog(`✅ Proxy routes created: ${data.created.join(', ')}`);
       if (data.failed?.length) {
         onLog(`⚠️ Some routes failed: ${data.failed.map((f: { domain: string }) => f.domain).join(', ')}`);
+      }
+      // Surface per-host cert outcomes for the public-exposure hosts.
+      // Failures here are not fatal — the cert_request_failure diagnose
+      // probe parses NPM's letsencrypt.log and lets the operator click
+      // Retry once the underlying cause is fixed.
+      type CertResult = { domain: string; issued: boolean; error?: string };
+      const certs: CertResult[] = Array.isArray(data.certs) ? data.certs : [];
+      const issued = certs.filter(c => c.issued).map(c => c.domain);
+      const failedCerts = certs.filter(c => !c.issued);
+      if (issued.length > 0) {
+        onLog(`🔒 Let's Encrypt certs issued: ${issued.join(', ')}`);
+      }
+      for (const fc of failedCerts) {
+        onLog(`⚠️ Cert request for ${fc.domain} failed — ${fc.error ?? 'see diagnose page for details'}.`);
       }
       return 'ok';
     }

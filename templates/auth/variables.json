@@ -26,6 +26,7 @@
     "type": "subdomain",
     "description": "Subdomain for LLDAP Web UI",
     "default": "ldap",
+    "exposure": "lan",
     "proxyPort": "LLDAP_PORT",
     "proxyConfig": {
       "block_exploits": true,
@@ -41,6 +42,7 @@
     "type": "subdomain",
     "description": "Subdomain for Authelia portal",
     "default": "auth",
+    "exposure": "public",
     "proxyPort": "AUTHELIA_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

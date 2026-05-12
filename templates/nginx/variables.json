@@ -32,6 +32,7 @@
     "type": "subdomain",
     "description": "Subdomain for Nginx Proxy Manager admin",
     "default": "nginx",
+    "exposure": "lan",
     "proxyPort": "NGINX_ADMIN_PORT",
     "proxyConfig": {
       "block_exploits": true,
@@ -42,6 +43,7 @@
     "type": "subdomain",
     "description": "Subdomain for ServiceBay admin panel",
     "default": "admin",
+    "exposure": "lan",
     "proxyPort": "5888",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

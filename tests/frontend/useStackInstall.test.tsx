@@ -533,6 +533,42 @@ spec:
     });
   });
 
+  describe('setVariableExposure', () => {
+    it('overrides exposure on subdomain variables and is a no-op on others', async () => {
+      (fetchTemplateYaml as any).mockResolvedValue(
+        'apiVersion: v1\nkind: Pod\nmetadata:\n  name: vw',
+      );
+      (fetchTemplateVariables as any).mockResolvedValue({
+        VW_SUBDOMAIN: { type: 'subdomain', default: 'vault', exposure: 'public', proxyPort: '8222' },
+        VW_PORT: { type: 'text', default: '8222' },
+      });
+      (fetchTemplateConfigFiles as any).mockResolvedValue([]);
+      (fetchTemplatePostDeployScript as any).mockResolvedValue(null);
+      global.fetch = buildFetchMock({
+        '/api/settings': () => ({ jsonBody: { templateSettings: {} } }),
+      });
+
+      const { result } = renderHook(() => useStackInstall({ templateSource: 'Built-in' }));
+      await act(async () => {
+        await result.current.startConfigure([{ name: 'vw', checked: true }], {});
+      });
+      expect(result.current.variables.find(v => v.name === 'VW_SUBDOMAIN')?.meta?.exposure).toBe('public');
+
+      // Override → 'lan' takes effect.
+      act(() => result.current.setVariableExposure('VW_SUBDOMAIN', 'lan'));
+      expect(result.current.variables.find(v => v.name === 'VW_SUBDOMAIN')?.meta?.exposure).toBe('lan');
+
+      // Same-value write is a no-op (referential stability).
+      const before = result.current.variables;
+      act(() => result.current.setVariableExposure('VW_SUBDOMAIN', 'lan'));
+      expect(result.current.variables).toBe(before);
+
+      // Non-subdomain variable is ignored.
+      act(() => result.current.setVariableExposure('VW_PORT', 'public'));
+      expect(result.current.variables).toBe(before);
+    });
+  });
+
   describe('OIDC client registration', () => {
     it('POSTs to authelia/oidc-clients when subdomain vars carry oidcClient metadata', async () => {
       (fetchTemplateYaml as any).mockResolvedValue(

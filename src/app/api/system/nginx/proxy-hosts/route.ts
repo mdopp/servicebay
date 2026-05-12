@@ -13,6 +13,17 @@ interface ProxyHostRequest {
     forwardScheme?: string;
     /** Template name this proxy host belongs to (e.g. "vaultwarden") */
     service?: string;
+    /**
+     * Exposure profile for the host. `public` triggers an auto Let's
+     * Encrypt cert request on this endpoint right after the proxy host
+     * is created (best-effort — the install does not fail if the ACME
+     * challenge fails; the `cert_request_failure` diagnose probe surfaces
+     * the underlying reason). `lan` (or unset) creates the proxy host
+     * without a cert. Templates declare a sensible default per
+     * subdomain variable in `variables.json`; the wizard's configure
+     * step lets the operator override per service.
+     */
+    exposure?: 'public' | 'lan';
     /** Service-specific NPM proxy host settings */
     proxyConfig?: {
         allow_websocket_upgrade?: boolean;
@@ -192,6 +203,94 @@ async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRe
 }
 
 /**
+ * Request a Let's Encrypt cert from NPM and bind it to the just-created
+ * proxy host. Best-effort: returns `{ ok: false, reason }` on every kind
+ * of failure (HTTP non-OK, network, malformed response). The caller
+ * surfaces the reason in the per-host result so the wizard log shows
+ * "cert pending" rather than blowing up the install — the
+ * cert_request_failure diagnose probe parses NPM's letsencrypt.log on
+ * the next diagnose run and lets the operator click Retry once the
+ * underlying cause (DNS / port 80 / CAA) is fixed.
+ *
+ * NPM's certbot is webroot HTTP-01 by default (see
+ * templates/nginx/template.yml). The challenge file is served by NPM on
+ * port 80 across every configured server_name, which is why the proxy
+ * host MUST exist before issuance — without a server_name match, NPM's
+ * default-server rejects the ACME request and certbot times out.
+ */
+async function requestPublicCert(
+    baseUrl: string,
+    token: string,
+    proxyHostId: number,
+    domain: string,
+    leEmail: string,
+): Promise<{ ok: true; certId: number } | { ok: false; reason: string }> {
+    // 1) Create the LE cert in NPM. NPM blocks until the ACME exchange
+    //    completes (success or failure), so the timeout here is generous.
+    let certId: number;
+    try {
+        const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+                provider: 'letsencrypt',
+                domain_names: [domain],
+                meta: {
+                    letsencrypt_email: leEmail,
+                    letsencrypt_agree: true,
+                    dns_challenge: false,
+                },
+            }),
+            signal: AbortSignal.timeout(120_000),
+        });
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            return { ok: false, reason: `NPM /api/nginx/certificates returned HTTP ${res.status}: ${body.slice(0, 200) || 'no body'}` };
+        }
+        const data = await res.json() as { id?: number };
+        if (typeof data.id !== 'number') {
+            return { ok: false, reason: 'NPM accepted the cert request but returned no id.' };
+        }
+        certId = data.id;
+    } catch (e) {
+        return { ok: false, reason: `Cert request failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
+
+    // 2) Bind the cert to the proxy host so HTTPS becomes the canonical
+    //    URL. Without this step the cert exists in NPM but the proxy
+    //    host still serves on port 80 only.
+    try {
+        const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${proxyHostId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+                certificate_id: certId,
+                ssl_forced: true,
+                http2_support: true,
+                hsts_enabled: false,
+                meta: { letsencrypt_agree: true, dns_challenge: false },
+            }),
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            // Cert is issued; binding failed. Operator can do this manually
+            // in NPM admin → Hosts → Edit. Surface the partial success.
+            return { ok: false, reason: `Cert ${certId} issued but binding to proxy host ${proxyHostId} failed (HTTP ${res.status}: ${body.slice(0, 160)}). Open NPM admin → Hosts → Edit → SSL to bind it.` };
+        }
+    } catch (e) {
+        return { ok: false, reason: `Cert ${certId} issued but the bind PUT failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    return { ok: true, certId };
+}
+
+/**
  * POST: Create proxy hosts in NPM
  * Body: { hosts: [{ domain, forwardPort, forwardHost?, forwardScheme?, proxyConfig? }], node? }
  *
@@ -226,7 +325,13 @@ export async function POST(request: Request) {
             }, { status: 401 });
         }
 
-        const results: { domain: string; success: boolean; error?: string }[] = [];
+        // ACME registration email — needed when any host has
+        // `exposure: 'public'`. Falls back to the stored NPM admin email
+        // (the wizard hoists operatorEmail into both fields).
+        const config = await getConfig();
+        const leEmail = config.reverseProxy?.npm?.email;
+
+        const results: { domain: string; success: boolean; error?: string; certIssued?: boolean; certError?: string }[] = [];
 
         for (const host of hosts) {
             // Default forward host = node LAN IP (NPM is in a container,
@@ -234,14 +339,44 @@ export async function POST(request: Request) {
             if (!host.forwardHost) {
                 host.forwardHost = npm.nodeIp;
             }
+            let createdHost: { id?: number } | null = null;
             try {
-                await createProxyHost(npm.apiUrl, token, host);
+                createdHost = await createProxyHost(npm.apiUrl, token, host);
                 results.push({ domain: host.domain, success: true });
-                logger.info('ProxyHosts', `Created proxy host: ${host.domain} → ${host.forwardHost}:${host.forwardPort}`);
+                logger.info('ProxyHosts', `Created proxy host: ${host.domain} → ${host.forwardHost}:${host.forwardPort} (exposure=${host.exposure ?? 'lan'})`);
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 results.push({ domain: host.domain, success: false, error: msg });
                 logger.warn('ProxyHosts', `Failed to create proxy host ${host.domain}: ${msg}`);
+                continue;
+            }
+
+            // Auto-cert for public-exposure hosts. Best-effort: install
+            // continues regardless of ACME outcome — the diagnose probe
+            // (`cert_request_failure`) is the recovery path.
+            if (host.exposure === 'public') {
+                if (!leEmail) {
+                    const reason = 'No ACME registration email configured (set reverseProxy.npm.email in Settings → Integrations); skipped cert request.';
+                    results[results.length - 1].certError = reason;
+                    logger.warn('ProxyHosts', `Skip cert for ${host.domain}: ${reason}`);
+                } else if (typeof createdHost?.id !== 'number') {
+                    results[results.length - 1].certError = 'NPM did not return a proxy host id; cannot bind a cert without it.';
+                } else {
+                    const certResult = await requestPublicCert(
+                        npm.apiUrl,
+                        token,
+                        createdHost.id,
+                        host.domain,
+                        leEmail,
+                    );
+                    if (certResult.ok) {
+                        results[results.length - 1].certIssued = true;
+                        logger.info('ProxyHosts', `Issued + bound LE cert ${certResult.certId} for ${host.domain}`);
+                    } else {
+                        results[results.length - 1].certError = certResult.reason;
+                        logger.warn('ProxyHosts', `Cert request failed for ${host.domain}: ${certResult.reason}`);
+                    }
+                }
             }
         }
 
@@ -250,7 +385,6 @@ export async function POST(request: Request) {
 
         // Persist proxy host state and public domain to config
         try {
-            const config = await getConfig();
             const existingHosts = config.reverseProxy?.hosts || [];
             const newEntries: ProxyHostEntry[] = hosts.map(h => ({
                 domain: h.domain,
@@ -281,6 +415,15 @@ export async function POST(request: Request) {
             success: failed.length === 0,
             created: created.map(r => r.domain),
             failed: failed.map(r => ({ domain: r.domain, error: r.error })),
+            // Per-host cert outcomes — present only for hosts whose
+            // request body had `exposure: 'public'`. Successful issuance
+            // → `certIssued: true`; any failure → `certError: <reason>`.
+            // The wizard surfaces successes/failures as a short summary;
+            // the cert_request_failure diagnose probe is the recovery
+            // path for the failure case.
+            certs: results
+                .filter(r => r.certIssued || r.certError)
+                .map(r => ({ domain: r.domain, issued: r.certIssued === true, error: r.certError })),
             adminUrl: npm.apiUrl,
             node: npm.nodeName,
         });

@@ -2036,6 +2036,7 @@ export default function OnboardingWizard() {
                                                 <StackVariableField
                                                     variable={v}
                                                     onChange={(value) => installFlow.setVariableValue(v.name, value)}
+                                                    onExposureChange={(exposure) => installFlow.setVariableExposure(v.name, exposure)}
                                                     publicDomain={stackVariables.find(x => x.name === 'PUBLIC_DOMAIN')?.value}
                                                     inputClassName="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
                                                     deviceContext={{

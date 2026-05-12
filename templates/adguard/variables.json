@@ -22,6 +22,7 @@
     "type": "subdomain",
     "description": "Subdomain for AdGuard Home admin",
     "default": "dns",
+    "exposure": "lan",
     "proxyPort": "ADGUARD_ADMIN_PORT",
     "proxyConfig": {
       "block_exploits": true,

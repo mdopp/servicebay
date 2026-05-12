@@ -69,7 +69,7 @@ export function StackInstallConfigureForm({
   beforeVariables,
   afterVariables,
 }: ConfigureFormProps) {
-  const { variables, cleanInstall, cleanInstallConfirm, setCleanInstall, setCleanInstallConfirm, setVariableValue } = controller;
+  const { variables, cleanInstall, cleanInstallConfirm, setCleanInstall, setCleanInstallConfirm, setVariableValue, setVariableExposure } = controller;
   const groups = groupVariablesByTemplate(variables).filter(g => g.key !== '_global');
   const publicDomain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
 
@@ -157,6 +157,7 @@ export function StackInstallConfigureForm({
                     <StackVariableField
                       variable={v}
                       onChange={(value) => setVariableValue(v.name, value)}
+                      onExposureChange={(exposure) => setVariableExposure(v.name, exposure)}
                       publicDomain={publicDomain}
                       deviceContext={deviceContext}
                       inputClassName={inputClassName}

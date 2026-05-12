@@ -12,6 +12,7 @@
     "type": "subdomain",
     "description": "Subdomain for Syncthing Web UI",
     "default": "sync",
+    "exposure": "lan",
     "proxyPort": "8384",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
@@ -33,6 +34,7 @@
     "type": "subdomain",
     "description": "Subdomain for FileBrowser. Authelia forward-auth in the proxy snippet means SSO login → FileBrowser session in one step.",
     "default": "files",
+    "exposure": "public",
     "proxyPort": "FILEBROWSER_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
