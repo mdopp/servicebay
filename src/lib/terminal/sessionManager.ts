@@ -186,7 +186,7 @@ function resolveHomeDir(): string {
   }
 }
 
-async function resolvePtySpec(id: string): Promise<PtySpec> {
+export async function resolvePtySpec(id: string): Promise<PtySpec> {
   const defaultShell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || 'bash');
 
   if (id.startsWith('container:')) {
@@ -197,28 +197,41 @@ async function resolvePtySpec(id: string): Promise<PtySpec> {
       throw new Error('Invalid container ID');
     }
 
-    if (nodeName && nodeName !== 'local') {
-      try {
-        const nodes = await listNodes();
-        const node = nodes.find(n => n.Name === nodeName);
-        if (node) {
-          const uri = new URL(node.URI);
-          if (uri.protocol === 'ssh:') {
-            const args: string[] = [];
-            if (node.Identity) args.push('-i', node.Identity);
-            if (uri.port) args.push('-p', uri.port);
-            args.push('-o', 'StrictHostKeyChecking=no');
-            args.push('-o', 'UserKnownHostsFile=/dev/null');
-            args.push('-t');
-            args.push(`${uri.username}@${uri.hostname}`);
-            args.push(`podman exec -it -e TERM=xterm-256color ${containerId} sh -c 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'`);
-            return { shell: 'ssh', args, fallbackWarning: '' };
-          }
+    // Always try to resolve the node (incl. `local` → `Local`) and route via
+    // SSH when the node has an ssh:// URI. In container-mode installs every
+    // node — including `Local` (`ssh://core@127.0.0.1`) — is reached via SSH
+    // because the ServiceBay container deliberately ships without the podman
+    // CLI (see Dockerfile: "Removed podman and systemd - agent uses SSH to
+    // execute commands on host"). Before this, `container:local:<id>` skipped
+    // the SSH branch and tried to spawn `podman` directly inside the
+    // ServiceBay container — failing with `execvp(3) failed.: No such file or
+    // directory`.
+    const nodeKey = nodeName === 'local' ? 'Local' : nodeName;
+    try {
+      const nodes = await listNodes();
+      const node = nodes.find(n => n.Name === nodeKey);
+      if (node) {
+        const uri = new URL(node.URI);
+        if (uri.protocol === 'ssh:') {
+          const args: string[] = [];
+          if (node.Identity) args.push('-i', node.Identity);
+          if (uri.port) args.push('-p', uri.port);
+          args.push('-o', 'StrictHostKeyChecking=no');
+          args.push('-o', 'UserKnownHostsFile=/dev/null');
+          args.push('-t');
+          args.push(`${uri.username}@${uri.hostname}`);
+          args.push(`podman exec -it -e TERM=xterm-256color ${containerId} sh -c 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'`);
+          return { shell: 'ssh', args, fallbackWarning: '' };
         }
-      } catch (e) {
-        logger.error('Server', `Failed to setup remote container terminal for ${nodeName}:`, e);
       }
+    } catch (e) {
+      logger.error('Server', `Failed to setup container terminal for ${nodeKey}:`, e);
     }
+
+    // Bare-metal install path: ServiceBay runs on the host with the podman CLI
+    // in PATH. Container-mode installs don't reach this — see the SSH branch
+    // above. Kept so a hypothetical `node:` install (or a future packaged
+    // binary) still works without a per-node SSH config entry.
     return {
       shell: 'podman',
       args: ['exec', '-it', '-e', 'TERM=xterm-256color', containerId, 'sh', '-c', 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'],
