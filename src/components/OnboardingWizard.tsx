@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     checkOnboardingStatus,
@@ -10,7 +10,6 @@ import {
     saveRegistriesConfig,
     saveEmailConfig,
     completeStackSetup,
-    markInstallStarted,
     forceClearInstallLock,
     OnboardingStatus
 } from '@/app/actions/onboarding';
@@ -279,77 +278,24 @@ export default function OnboardingWizard() {
     'file-share':     { recommendedWith: ['auth'], reason: 'FileBrowser uses authelia forward-auth for family-facing access' },
   };
 
-  // Live container/service state from the agent. The status strip
-  // ABOVE the log panel uses this — NOT log-parsing — so a service
-  // counts as "deployed" only when its container is actually Up, not
-  // when the deploy API just returned. (Earlier log-parsing version
-  // showed "12/12 deployed" while NPM was still pulling its image.)
+  // Live container/service state from the agent. The status strip ABOVE
+  // the log panel uses this — NOT log-parsing — so a service counts as
+  // "deployed" only when its container is actually Up. The settle-wait
+  // logic that used to live here moved server-side (runner.ts) when the
+  // deploy loop was extracted; the runner reads the same DigitalTwinStore
+  // singleton directly, in-process.
   const { data: digitalTwin } = useDigitalTwin();
-  // Async install handlers (deploy → settle-wait → done) capture the
-  // initial digitalTwin closure value and never see SSE-driven updates
-  // for the duration of the loop. Mirror the latest value into a ref
-  // so those long-running async functions can read fresh state via
-  // `digitalTwinRef.current`. Without this, the settle-wait loop reads
-  // stale data and reports "0/N services active" indefinitely even
-  // though services are actually coming up.
-  const digitalTwinRef = useRef(digitalTwin);
-  useEffect(() => { digitalTwinRef.current = digitalTwin; }, [digitalTwin]);
-
-  // Settle-wait — don't transition to 'done' until each newly-deployed
-  // service shows up as active in the digital twin. Previously inline in
-  // handleStackInstall; now passed to the shared engine via onBeforeDone
-  // so the wizard's "(N/M up)" log lines still appear before the Done
-  // credentials banner renders. Cap the wait at 3 minutes — long enough
-  // for cold-start image pulls on a normal connection — then transition
-  // either way and let the diagnose probe report what's genuinely stuck.
-  //
-  // Skip if there's no twin connection (tests, or a disconnected agent —
-  // in either case hanging the wizard for 3 min helps no one) or nothing
-  // was deployed.
-  const settleWait = useCallback(async (
-    deployed: { name: string }[],
-    appendLog: (msg: string) => void,
-  ) => {
-    if (!digitalTwinRef.current || deployed.length === 0) return;
-    const expected = deployed.map(i => i.name);
-    const SETTLE_TIMEOUT_MS = 3 * 60_000;
-    const SETTLE_POLL_MS = 5_000;
-    const startedAt = Date.now();
-    let lastReady = -1;
-    while (Date.now() - startedAt < SETTLE_TIMEOUT_MS) {
-      const node = stackSelectedNode || 'Local';
-      const twinNode = digitalTwinRef.current?.nodes?.[node];
-      const services = twinNode?.services ?? [];
-      const ready = expected.filter(name =>
-        services.some(s => (s.name === name || s.name === `${name}.service`) && s.active),
-      ).length;
-      if (ready !== lastReady) {
-        appendLog(`Waiting for services to become active... (${ready}/${expected.length} up)`);
-        lastReady = ready;
-      }
-      if (ready === expected.length) break;
-      await new Promise(r => setTimeout(r, SETTLE_POLL_MS));
-    }
-    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-    if (lastReady === expected.length) {
-      appendLog(`✅ All ${expected.length} services active after ${elapsed}s.`);
-    } else {
-      appendLog(
-        `⚠️ ${lastReady}/${expected.length} services active after ${elapsed}s — slow image pulls or a real failure. Self-diagnose below will tell you which.`,
-      );
-    }
-  }, [stackSelectedNode]);
 
   /**
-   * Shared install engine — owns the configure / installing / done state
-   * machine, variable resolution, streaming deploys, and post-install
-   * pipeline. The wizard provides the digital-twin settle-wait via
-   * onBeforeDone so the credentials banner renders only after the
-   * services actually came up. See `useStackInstall.ts` and #341.
+   * Shared install engine. The deploy loop now runs server-side via
+   * runner.ts; this hook is the thin RPC + socket-subscription client.
+   * The wizard tags every job with `source: 'wizard'` so the
+   * install-in-progress banner can distinguish wizard installs from
+   * single-template redeploys via the InstallerModal.
    */
   const installFlow = useStackInstall({
     templateSource: selectedStack?.source || 'Built-in',
-    onBeforeDone: settleWait,
+    source: 'wizard',
   });
 
   // Configure-step tab. Variables are categorised so the operator isn't
@@ -404,14 +350,15 @@ export default function OnboardingWizard() {
   useEffect(() => {
     checkOnboardingStatus().then(s => {
       setStatus(s);
-      // If a server-side install lock exists and we're NOT actively
-      // running the install in this tab (we'd have set stackInstallStep
-      // = 'installing' already and started heartbeating), show the
-      // "another session is installing" gate so the operator doesn't
-      // race two installs in parallel.
-      if (s.installInProgress && stackInstallStep !== 'installing') {
-         
+      // If the server reports an active install job and we're NOT
+      // already tracking it locally, auto-attach to it. This is the
+      // critical "operator reopened the tab mid-install" path: the
+      // runner kept working on the server, and we just need to render
+      // its progress instead of re-prompting from scratch. The job
+      // shape on `installInProgress` carries the jobId for this.
+      if (s.installInProgress && installFlow.jobId !== s.installInProgress.jobId) {
         setIsOpen(true);
+        void installFlow.attachToJob(s.installInProgress.jobId);
         return;
       }
       if (s.needsSetup) {
@@ -509,18 +456,11 @@ export default function OnboardingWizard() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [isOpen, currentStep, stackInstallStep]);
 
-  // Heartbeat the server-side install lock while the wizard is in
-  // 'installing'. Other tabs / devices polling /api/onboarding will see
-  // installInProgress and refuse to start a fresh install. The lock
-  // auto-expires server-side at 30 min if heartbeats stop (covers crashed
-  // installs / lost power).
-  useEffect(() => {
-    if (stackInstallStep !== 'installing') return;
-    const tick = () => { void markInstallStarted('wizard'); };
-    tick();
-    const id = setInterval(tick, 20_000);
-    return () => clearInterval(id);
-  }, [stackInstallStep]);
+  // Heartbeat removed — the server-side runner now owns the install
+  // lifecycle. checkOnboardingStatus reads the active job from
+  // jobStore (replaces installLock); there's nothing for the client to
+  // keep alive. A crashed install is recovered via markCrashedOnStartup
+  // in server.ts, not via heartbeat expiry.
 
   // Auto-run the self-diagnose once the install pipeline lands on 'done'.
   // Gated by `diagnoseRanOnce` so reopening the panel doesn't re-fire and
@@ -900,7 +840,7 @@ export default function OnboardingWizard() {
           alreadyInstalled: i.alreadyInstalled,
         })),
         prefilled,
-        { node: stackSelectedNode || undefined },
+        { node: stackSelectedNode || undefined, cleanInstall },
       );
 
       // Mirror yaml/configFiles back into the wizard's stackItems so the
@@ -917,10 +857,10 @@ export default function OnboardingWizard() {
     }
   };
 
-  // Configure → installing → done. The shared engine owns variable
-  // resolution, streaming deploys, post-install pipeline, and the NPM
-  // credentials prompt; the wizard contributes the digital-twin settle-
-  // wait via the `settleWait` callback passed to `useStackInstall`.
+  // Configure → installing → done. The shared engine POSTs to
+  // /api/install/start and subscribes to socket events; the deploy
+  // loop, post-install pipeline, OIDC registration, portal provision,
+  // and digital-twin settle-wait all run in the server-side runner now.
   //
   // itemsOverride / variablesOverride: closure-bypass story — the
   // express flow threads the freshly-computed items/variables through

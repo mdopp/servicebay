@@ -41,6 +41,8 @@ import { ResourceBroadcast } from './src/lib/health/resourceBroadcast';
 import { CharRingBuffer } from './src/lib/util/ringBuffer';
 import { SSHConnectionPool } from './src/lib/ssh/pool';
 import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './src/lib/auth/session';
+import { setIo as setInstallSocketIo } from './src/lib/install/socketBridge';
+import { markCrashedOnStartup as markCrashedInstallsOnStartup } from './src/lib/install/jobStore';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
@@ -254,6 +256,21 @@ app.prepare().then(() => {
   });
 
   const io = new Server(server);
+
+  // Wire the install runner's socket bridge so server-side install jobs
+  // can broadcast progress to all connected clients via install:update /
+  // install:log events. Pair with the markCrashedOnStartup call below.
+  setInstallSocketIo(io);
+
+  // Recover from a previous server crash: any install job left in an
+  // active phase belonged to a process that died mid-deploy. Flip those
+  // to 'crashed' so the wizard surfaces a Start-over button instead of
+  // polling for an update that will never arrive.
+  markCrashedInstallsOnStartup()
+    .then((n) => {
+      if (n > 0) logger.info('Server', `Marked ${n} crashed install job(s) on startup.`);
+    })
+    .catch(() => { /* best-effort */ });
 
   // Socket.IO auth: every connection must carry a valid session cookie.
   io.use(async (socket, next) => {
