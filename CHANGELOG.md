@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.22.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.21.0...servicebay-v3.22.0) (2026-05-12)
+
+
+### Features
+
+* **diagnose:** FritzBox reconnect action + fix-buttons in onboarding wizard ([#383](https://github.com/mdopp/servicebay/issues/383)) ([add9a56](https://github.com/mdopp/servicebay/commit/add9a56f181b657a43e64c93c86eea2f39ac3c8d))
+* **install:** explicit portal-routing provision with retries ([#386](https://github.com/mdopp/servicebay/issues/386)) ([4e02f0c](https://github.com/mdopp/servicebay/commit/4e02f0ca1fe1f6879da05bfa164d5f91394e66a3))
+
+
+### Bug Fixes
+
+* **adguard:** use GET for /control/rewrite/list, not POST ([#385](https://github.com/mdopp/servicebay/issues/385)) ([6604352](https://github.com/mdopp/servicebay/commit/660435276640ef60989eee94d1e0a43fb87096a5))
+* **diagnose:** read AdGuard creds from config.adguard, not stale templateSettings ([#384](https://github.com/mdopp/servicebay/issues/384)) ([2677471](https://github.com/mdopp/servicebay/commit/2677471ea20254b049a61feebcc85b4308ee1d48))
+
 ## [3.21.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.20.0...servicebay-v3.21.0) (2026-05-12)
 
 
