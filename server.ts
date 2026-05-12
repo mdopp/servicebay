@@ -459,6 +459,26 @@ app.prepare().then(() => {
     updateMonitoringState();
     socket.emit('twin:state', twinStore.getSnapshot());
 
+    // Server identity — emitted once per (re)connect so the client can detect
+    // server restarts and `setupCompleted` flips while the page is open.
+    // `sessionId` is regenerated on every process start, so a delta on this
+    // field across a socket reconnect means the server actually restarted
+    // (vs. a transient network blip, which keeps the same id). The
+    // `<ServerIdentityWatcher>` client component diff-checks the value and
+    // either reloads silently (setup wizard appeared) or shows a 10s-grace
+    // "Server restarted — reloading…" banner.
+    void (async () => {
+      try {
+        const config = await getConfig();
+        socket.emit('server:identity', {
+          sessionId,
+          setupCompleted: Boolean(config.setupCompleted),
+        });
+      } catch (e) {
+        logger.warn('Server', `Could not emit server:identity: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    })();
+
     socket.on('logs:subscribe', () => { socket.join('logs:live'); });
     socket.on('logs:unsubscribe', () => { socket.leave('logs:live'); });
     socket.on('disconnect', () => {

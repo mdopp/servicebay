@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/providers/ToastProvider";
 import { DigitalTwinProvider } from "@/providers/DigitalTwinProvider";
+import ServerIdentityWatcher from "@/components/ServerIdentityWatcher";
 import { getConfig } from "@/lib/config";
 import { DigitalTwinStore } from "@/lib/store/twin";
 
@@ -71,6 +72,7 @@ export default function RootLayout({
       >
         <ToastProvider>
           <DigitalTwinProvider>
+            <ServerIdentityWatcher />
             {children}
           </DigitalTwinProvider>
         </ToastProvider>
