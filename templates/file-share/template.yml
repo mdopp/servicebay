@@ -7,6 +7,9 @@ metadata:
   annotations:
     servicebay.label: "File Share (Syncthing + Samba + FileBrowser)"
     servicebay.schema-version: "2"
+    # FileBrowser is fronted by Authelia via the nginx proxy host — both
+    # must be running before this template's post-deploy can wire SSO.
+    servicebay.dependencies: "nginx,auth"
     servicebay.ports: "8384/tcp,22000/tcp,139/tcp,445/tcp,{{FILEBROWSER_PORT}}/tcp"
     # Pin the .filebrowser.json.mustache target to filebrowser's /config
     # mount — without this the wizard's path resolver would also consider

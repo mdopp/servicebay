@@ -7,6 +7,9 @@ metadata:
   annotations:
     servicebay.label: "Home Assistant"
     servicebay.schema-version: "3"
+    # Home Assistant is reached at home.<domain> via nginx, and (when
+    # the operator enables it) authenticates via Authelia.
+    servicebay.dependencies: "nginx,auth"
     servicebay.config-mount: "/config"
     servicebay.ports: "8123/tcp,8091/tcp,3000/tcp"
 spec:

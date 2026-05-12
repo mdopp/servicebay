@@ -8,6 +8,8 @@ metadata:
     servicebay.label: "Radicale (CalDAV + CardDAV)"
     servicebay.schema-version: "1"
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
+    # caldav.<domain> goes through nginx; auth is the SSO front.
+    servicebay.dependencies: "nginx,auth"
 spec:
   hostNetwork: true
   initContainers:

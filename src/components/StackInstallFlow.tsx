@@ -24,7 +24,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCcw, XCircle } from 'lucide-react';
 import StackVariableField from './StackVariableField';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
@@ -182,7 +182,7 @@ interface ProgressProps extends CommonProps {
 }
 
 export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
-  const { logs, phase, npmCredPrompt, npmCredFallback, retryNpmCredentials, skipNpmCredentials } = controller;
+  const { logs, phase, npmCredPrompt, npmCredFallback, retryNpmCredentials, skipNpmCredentials, abortInstall, reset } = controller;
   const logTailRef = useRef<HTMLDivElement | null>(null);
   const [credEmail, setCredEmail] = useNpmCredFallback(npmCredFallback.email);
   const [credPassword, setCredPassword] = useNpmCredFallback(npmCredFallback.password);
@@ -209,6 +209,43 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
         )}
         <div ref={logTailRef} />
       </div>
+
+      {/* Abort + start-over controls. Visible-only:
+          - `installing`: red Abort button (confirmed). Cancels the
+            in-flight stream and stops the deploy loop.
+          - `error`: amber Start over button. Resets state and returns
+            the wizard to its initial step so the operator can pick
+            their templates again. */}
+      {phase === 'installing' && (
+        <div className="mt-3 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm('Abort the install? Already-deployed services stay running; in-flight templates may be partially applied.')) {
+                abortInstall();
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-600 text-white hover:bg-red-700"
+          >
+            <XCircle size={14} /> Abort install
+          </button>
+        </div>
+      )}
+      {phase === 'error' && (
+        <div className="mt-3 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm('Start over? This wipes the current install state and returns to the template catalog. Any services already deployed on the host stay running.')) {
+                reset();
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-amber-600 text-white hover:bg-amber-700"
+          >
+            <RefreshCcw size={14} /> Start over
+          </button>
+        </div>
+      )}
 
       {npmCredPrompt && (
         <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
@@ -351,7 +388,7 @@ export default function StackInstallFlow(props: {
       />
     );
   }
-  if (phase === 'installing' || phase === 'done') {
+  if (phase === 'installing' || phase === 'done' || phase === 'error') {
     return (
       <>
         <StackInstallProgress
