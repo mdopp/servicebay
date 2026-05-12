@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.26.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.25.3...servicebay-v3.26.0) (2026-05-12)
+
+
+### Features
+
+* **install:** auto-restrict LAN-exposure proxy hosts via NPM access list ([#416](https://github.com/mdopp/servicebay/issues/416)) ([8863b52](https://github.com/mdopp/servicebay/commit/8863b5227a7fa484528cc912ca2eb3f5bc6ab976))
+
 ## [3.25.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.25.2...servicebay-v3.25.3) (2026-05-12)
 
 
