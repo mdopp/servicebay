@@ -7,6 +7,7 @@ import { CheckRunner } from './runner';
 import { CheckConfig, CheckResult } from './types';
 import { initializeDefaultChecks } from './init';
 import { sendEmailAlert } from '@/lib/email';
+import { NotificationBatcher } from './notificationBatcher';
 import { DATA_DIR } from '@/lib/dirs';
 
 // In-memory interval tracking
@@ -22,6 +23,15 @@ export class HealthService {
 
     // 1. Ensure defaults
     await initializeDefaultChecks();
+
+    // 1b. Open the boot-grace email-batch window. Health checks
+    //     that flip ok → fail during the first 10 min after boot
+    //     (or until events settle for 90 s, whichever comes first)
+    //     are coalesced into one digest email instead of spamming
+    //     the operator with N "service down" notifications during
+    //     the cold-start race. See NotificationBatcher for the
+    //     coalescing rules.
+    NotificationBatcher.start();
 
     // 2. Start initial scheduling
     this.restartAll();
@@ -137,17 +147,23 @@ export class HealthService {
       }
 
       if (enteredFailure) {
-        await sendEmailAlert(
-          `Check Failed: ${check.name}`,
-          formatAlertMessage('fail', check, result)
-        );
+        const buffered = NotificationBatcher.enqueue('fail', check, result);
+        if (!buffered) {
+          await sendEmailAlert(
+            `Check Failed: ${check.name}`,
+            formatAlertMessage('fail', check, result)
+          );
+        }
       }
 
       if (recoveredNow) {
-        await sendEmailAlert(
-          `Service Recovered: ${check.name}`,
-          formatAlertMessage('recovery', check, result)
-        );
+        const buffered = NotificationBatcher.enqueue('recovery', check, result);
+        if (!buffered) {
+          await sendEmailAlert(
+            `Service Recovered: ${check.name}`,
+            formatAlertMessage('recovery', check, result)
+          );
+        }
       }
     } catch (e) {
       logger.error('Health', `Error running check ${check.name}:`, e);
