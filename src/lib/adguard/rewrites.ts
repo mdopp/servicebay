@@ -38,23 +38,31 @@ function authHeader(opts: ClientOpts): string | undefined {
   return `Basic ${token}`;
 }
 
-async function request(opts: ClientOpts, path: string, body?: unknown): Promise<Response> {
+async function request(opts: ClientOpts, path: string, body?: unknown, method: 'GET' | 'POST' = 'POST'): Promise<Response> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const auth = authHeader(opts);
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
+  if (method === 'POST') headers['Content-Type'] = 'application/json';
   if (auth) headers['Authorization'] = auth;
   return fetchImpl(`${opts.adminUrl.replace(/\/$/, '')}${path}`, {
-    method: 'POST',
+    method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : '{}',
+    body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
   });
 }
 
 /** Read all current rewrites from AdGuard. Returns empty array if the
- *  call fails (e.g. AdGuard down). */
+ *  call fails (e.g. AdGuard down).
+ *
+ *  AdGuard's API: `GET /control/rewrite/list`. The mutating endpoints
+ *  (add/update/delete) are POST. This function used to POST `list` too,
+ *  which AdGuard treats as 405 — silently returning empty here.
+ *  ensureWildcardRewrite still "worked" because it falls through to ADD
+ *  when the list returns empty, but the diagnose probe (which trusts
+ *  the list as ground truth) reported every entry as missing. */
 export async function listRewrites(opts: ClientOpts): Promise<AdguardRewrite[]> {
   try {
-    const res = await request(opts, REWRITES_LIST);
+    const res = await request(opts, REWRITES_LIST, undefined, 'GET');
     if (!res.ok) return [];
     const data = (await res.json()) as AdguardRewrite[];
     return Array.isArray(data) ? data : [];
