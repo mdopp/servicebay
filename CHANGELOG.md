@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.23.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.22.1...servicebay-v3.23.0) (2026-05-12)
+
+
+### Features
+
+* **ui:** detect server restart + setup-revert, prompt reload ([#390](https://github.com/mdopp/servicebay/issues/390)) ([e4516a8](https://github.com/mdopp/servicebay/commit/e4516a881045fde9c6c9ae0987edd4ab89b2918d))
+
 ## [3.22.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.22.0...servicebay-v3.22.1) (2026-05-12)
 
 
