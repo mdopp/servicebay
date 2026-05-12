@@ -50,9 +50,9 @@ interface AdguardQueryLogEntry {
 }
 
 /** Read AdGuard's recent query log for non-localhost clients. */
-async function adguardSeesLanClients(adminUrl: string, password: string): Promise<boolean> {
+async function adguardSeesLanClients(adminUrl: string, username: string, password: string): Promise<boolean> {
   try {
-    const auth = `Basic ${Buffer.from(`admin:${password}`).toString('base64')}`;
+    const auth = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
     const cutoff = Date.now() - QUERYLOG_RECENT_MIN * 60 * 1000;
     const res = await fetch(`${adminUrl.replace(/\/$/, '')}/control/querylog?limit=200`, {
       headers: { Authorization: auth },
@@ -106,13 +106,34 @@ async function fritzBoxDhcpDns(host: string, username: string, password: string)
   }
 }
 
-/** Resolve AdGuard's admin URL + password from config + templateSettings. */
-async function adguardCreds(): Promise<{ url: string; password: string } | null> {
+/** Resolve AdGuard's admin URL + credentials.
+ *
+ *  Prefers the dedicated `config.adguard` block written by AdGuard's
+ *  post-deploy (via `/api/system/adguard/credentials`) — this is where
+ *  current installs store creds. Falls back to the legacy
+ *  `templateSettings.ADGUARD_ADMIN_PASSWORD` for installs that predate
+ *  the credentials endpoint. Mirrors `findAdguardCreds()` in the portal
+ *  provisioner so the probe sees the same creds the provisioner uses
+ *  to write rewrites; previously this probe only read the legacy path,
+ *  which left freshly-installed boxes (no `templateSettings` password)
+ *  reporting "AdGuard credentials not configured" even though
+ *  `config.adguard.password` was set, suppressing the query-log signal. */
+async function adguardCreds(): Promise<{ url: string; username: string; password: string } | null> {
   const config = await getConfig();
+  const direct = config.adguard;
+  if (direct?.password) {
+    return {
+      url:
+        direct.adminUrl ||
+        `http://localhost:${config.templateSettings?.ADGUARD_ADMIN_PORT ?? '8083'}`,
+      username: direct.username || 'admin',
+      password: direct.password,
+    };
+  }
   const password = config.templateSettings?.ADGUARD_ADMIN_PASSWORD;
   const port = config.templateSettings?.ADGUARD_ADMIN_PORT ?? '8083';
   if (!password) return null;
-  return { url: `http://localhost:${port}`, password };
+  return { url: `http://localhost:${port}`, username: 'admin', password };
 }
 
 /** Top-level probe entry — returns the partial probe payload. */
@@ -145,7 +166,7 @@ export async function checkRouterDnsNotPointing(): Promise<RouterDnsProbeResult>
   const adguard = await adguardCreds();
   let adguardOk = false;
   if (adguard) {
-    adguardOk = await adguardSeesLanClients(adguard.url, adguard.password);
+    adguardOk = await adguardSeesLanClients(adguard.url, adguard.username, adguard.password);
   }
 
   // Signal B — FritzBox DHCP option-6 (only when gateway is fritzbox).
