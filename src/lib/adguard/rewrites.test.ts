@@ -6,11 +6,12 @@ import {
   listRewrites,
 } from './rewrites';
 
-function mockFetch(handler: (path: string, body: unknown) => { ok: boolean; body?: unknown }) {
+function mockFetch(handler: (path: string, body: unknown, method: string) => { ok: boolean; body?: unknown }) {
   return vi.fn(async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
     const body = init.body ? JSON.parse(init.body as string) : undefined;
-    const result = handler(path, body);
+    const method = init.method ?? 'GET';
+    const result = handler(path, body, method);
     return {
       ok: result.ok,
       json: async () => result.body ?? {},
@@ -43,6 +44,16 @@ describe('listRewrites', () => {
     }));
     const rewrites = await listRewrites(opts(fetchImpl as unknown as typeof fetch));
     expect(rewrites).toEqual([{ domain: '*.home.arpa', answer: '10.0.0.5' }]);
+  });
+
+  it('uses GET for the list endpoint (AdGuard rejects POST with 405)', async () => {
+    const seen: { method: string; path: string }[] = [];
+    const fetchImpl = mockFetch((path, _body, method) => {
+      seen.push({ method, path });
+      return { ok: true, body: [] };
+    });
+    await listRewrites(opts(fetchImpl as unknown as typeof fetch));
+    expect(seen).toEqual([{ method: 'GET', path: '/control/rewrite/list' }]);
   });
 
   it('returns empty array on non-OK response', async () => {
