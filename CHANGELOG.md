@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.25.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.25.1...servicebay-v3.25.2) (2026-05-12)
+
+
+### Bug Fixes
+
+* **install:** poll /api/install/status instead of socket subscription ([#402](https://github.com/mdopp/servicebay/issues/402)) ([7dfa235](https://github.com/mdopp/servicebay/commit/7dfa2354bc327de969784558d2e58a155d4c202d))
+
 ## [3.25.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.25.0...servicebay-v3.25.1) (2026-05-12)
 
 
