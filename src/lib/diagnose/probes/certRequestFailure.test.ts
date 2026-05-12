@@ -114,10 +114,10 @@ describe('checkCertRequestFailure', () => {
     expect(out.detail).toMatch(/hasn't attempted/);
   });
 
-  it('returns info when tail has no failure markers', async () => {
+  it('returns ok when tail has no failure markers', async () => {
     mockTail('2026-05-12 00:00:00,000:INFO:certbot:All clean.');
     const out = await checkCertRequestFailure('Local');
-    expect(out.status).toBe('info');
+    expect(out.status).toBe('ok');
   });
 
   it('returns fail with one item per failed domain', async () => {
@@ -134,7 +134,7 @@ describe('checkCertRequestFailure', () => {
     expect(out.items?.[0].actionIds).toEqual(['show_log_tail', 'retry_request']);
   });
 
-  it('returns info when the failure is older than the freshness window', async () => {
+  it('returns ok when the failure is older than the freshness window', async () => {
     // 48h old → outside the 24h freshness window.
     const old = new Date(Date.now() - 48 * 3600_000).toISOString().replace('T', ' ').slice(0, 19);
     mockTail(`${old},000:ERROR:certbot:Some challenges have failed.
@@ -142,7 +142,7 @@ describe('checkCertRequestFailure', () => {
   Type:   connection
   Detail: stale failure`);
     const out = await checkCertRequestFailure('Local');
-    expect(out.status).toBe('info');
+    expect(out.status).toBe('ok');
     expect(out.detail).toMatch(/outside the .* freshness window/);
   });
 

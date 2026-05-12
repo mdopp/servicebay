@@ -26,6 +26,7 @@ import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, R
 import StackVariableField from './StackVariableField';
 import { StackInstallProgress, StackInstallSummary } from './StackInstallFlow';
 import DiagnoseProbeList, { type DiagnoseProbe } from './DiagnoseProbeList';
+import { DoneStepDnsCheck } from './DoneStepDnsCheck';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
@@ -2205,31 +2206,10 @@ export default function OnboardingWizard() {
                                     </p>
                                 </div>
                                 {hasProxyRoutes && (
-                                    <>
-                                        <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-1.5">
-                                            <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
-                                            <p className="text-xs text-blue-700 dark:text-blue-300">
-                                                Create A records pointing to your server IP:
-                                            </p>
-                                            <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
-                                                {subdomains.map(sv => (
-                                                    <div key={sv.name}>{sv.value}.{domain} &rarr; {'<SERVER-IP>'}</div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        <div className="p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-1.5">
-                                            <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
-                                            <p className="text-xs text-amber-700 dark:text-amber-300">
-                                                Open Nginx Proxy Manager and request Let&apos;s Encrypt SSL certificates for each proxy host.
-                                            </p>
-                                        </div>
-                                        <div className="p-2.5 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-1.5">
-                                            <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (recommended)</p>
-                                            <p className="text-xs text-gray-600 dark:text-gray-400">
-                                                In NPM, add IP-based access lists for admin services (Nginx Admin, AdGuard) to restrict LAN-only access.
-                                            </p>
-                                        </div>
-                                    </>
+                                    <DoneStepDnsCheck
+                                        domain={domain!}
+                                        subdomains={subdomains.map(sv => `${sv.value}.${domain}`)}
+                                    />
                                 )}
                                 {!hasProxyRoutes && installFlow.credentialsManifest.length === 0 && (
                                     <p className="text-sm text-green-600 dark:text-green-400 font-medium">
