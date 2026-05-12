@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.25.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.25.0...servicebay-v3.25.1) (2026-05-12)
+
+
+### Bug Fixes
+
+* **install:** attach internal token on runner loopback fetches ([#400](https://github.com/mdopp/servicebay/issues/400)) ([1c049d3](https://github.com/mdopp/servicebay/commit/1c049d3122b4c765c08b5fddf350a7f13b11cc12))
+
 ## [3.25.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.24.1...servicebay-v3.25.0) (2026-05-12)
 
 
