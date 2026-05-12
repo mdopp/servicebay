@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.22.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.22.0...servicebay-v3.22.1) (2026-05-12)
+
+
+### Bug Fixes
+
+* **nginx:** drop letsencrypt_{email,agree} from cert-create meta ([#388](https://github.com/mdopp/servicebay/issues/388)) ([7718156](https://github.com/mdopp/servicebay/commit/77181564e6a3947397f91a16e7d89523e105130b))
+
 ## [3.22.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.21.0...servicebay-v3.22.0) (2026-05-12)
 
 
