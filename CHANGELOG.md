@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.25.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.24.1...servicebay-v3.25.0) (2026-05-12)
+
+
+### Features
+
+* **install:** move deploy loop server-side, survive browser disconnects ([#398](https://github.com/mdopp/servicebay/issues/398)) ([b696fd8](https://github.com/mdopp/servicebay/commit/b696fd83931e42a440bc3f3205c89caab0fd0568))
+
 ## [3.24.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.24.0...servicebay-v3.24.1) (2026-05-12)
 
 
