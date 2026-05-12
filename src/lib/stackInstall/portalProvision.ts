@@ -32,10 +32,15 @@ const PORTAL_PROVISION_ATTEMPTS = 4;
  *  few seconds on first boot. */
 const PORTAL_PROVISION_BACKOFF_MS = [0, 3000, 6000, 9000];
 
+import { getInternalApiToken } from '@/lib/auth/internalToken';
+
 function apiFetch(p: string, init?: RequestInit): Promise<Response> {
-  if (typeof window !== 'undefined') return fetch(p, init);
   const port = process.env.PORT || '3000';
-  return fetch(`http://127.0.0.1:${port}${p}`, init);
+  const headers = new Headers(init?.headers);
+  if (!headers.has('x-sb-internal-token')) {
+    headers.set('x-sb-internal-token', getInternalApiToken());
+  }
+  return fetch(`http://127.0.0.1:${port}${p}`, { ...init, headers });
 }
 
 export async function provisionPortalWithRetries(onLog: (msg: string) => void): Promise<boolean> {

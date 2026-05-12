@@ -39,6 +39,7 @@ import {
 import { buildCredentialsManifest, type Credential } from '@/lib/stackInstall/credentialsManifest';
 import { provisionPortalWithRetries } from '@/lib/stackInstall/portalProvision';
 import { DigitalTwinStore } from '@/lib/store/twin';
+import { getInternalApiToken } from '@/lib/auth/internalToken';
 import {
   appendLog,
   getJob,
@@ -72,12 +73,19 @@ const pendingCredentials = new Map<string, {
   resolve: (creds: { email: string; password: string } | null) => void;
 }>();
 
-/** Loopback fetch helper. Uses the same Next.js port the rest of the
- *  process is listening on. The auth REST API has no middleware-level
- *  gating, so a session cookie isn't required for these calls. */
+/** Loopback fetch helper. proxy.ts middleware gates state-changing API
+ *  calls on either a session cookie OR the X-SB-Internal-Token header
+ *  (the same token the post-deploy scripts on the agent host use). The
+ *  runner has no session, so we attach the token here — without it
+ *  every POST /api/services / NPM / portal call from this process gets
+ *  403'd by the CSRF check (no Origin header from Node fetch). */
 function apiFetch(p: string, init?: RequestInit): Promise<Response> {
   const port = process.env.PORT || '3000';
-  return fetch(`http://127.0.0.1:${port}${p}`, init);
+  const headers = new Headers(init?.headers);
+  if (!headers.has('x-sb-internal-token')) {
+    headers.set('x-sb-internal-token', getInternalApiToken());
+  }
+  return fetch(`http://127.0.0.1:${port}${p}`, { ...init, headers });
 }
 
 /**
