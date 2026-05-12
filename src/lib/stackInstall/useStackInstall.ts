@@ -8,12 +8,21 @@
  * thin RPC + socket-subscription client that:
  *
  *   - POSTs to `/api/install/start` when the operator confirms
- *   - subscribes to `install:update` / `install:log` socket events
+ *   - polls `/api/install/status?jobId=…&logsSince=N` every 2s while
+ *     the job is in a non-terminal phase, applying state + appending
+ *     new log lines as they arrive
  *   - exposes `attachToJob(jobId)` so a reopened tab can pick up an
  *     in-flight job mid-install (the runner kept working server-side
  *     while the operator was away)
  *   - forwards `retryNpmCredentials` / `skipNpmCredentials` /
  *     `abortInstall` to their `/api/install/*` endpoints
+ *
+ * 3.25.x had a socket-subscription model here. It was racy: useSocket
+ * could return `undefined` for the socket on first render, the
+ * subscription effect would throw into a swallowed React error, and
+ * the wizard would never receive the runner's `done` event even
+ * though the install completed end-to-end. Polling sidesteps every
+ * one of those failure modes.
  *
  * Closing the browser no longer interrupts an install — the runner
  * owns the deploy loop end-to-end.
@@ -33,7 +42,6 @@ import { parseTemplateLabel } from '@/lib/templateLabel';
 import { type Credential } from './credentialsManifest';
 import { generateRandomSecret } from './randomSecret';
 import { parseTemplateDependencies } from './dependencies';
-import { useSocket } from '@/hooks/useSocket';
 import type { JobState as RemoteJobState } from '@/lib/install/jobStore';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
@@ -255,8 +263,6 @@ function mapPhase(serverPhase: RemoteJobState['phase']): StackInstallPhase {
 
 export function useStackInstall(options: UseStackInstallOptions): UseStackInstallReturn {
   const { templateSource, source } = options;
-  const { socket } = useSocket();
-
   const [phase, setPhase] = useState<StackInstallPhase>('idle');
   const [items, setItems] = useState<StackItem[]>([]);
   const [variables, setVariables] = useState<StackVariable[]>([]);
@@ -324,29 +330,53 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     nodeRef.current = '';
   }, []);
 
-  // Subscribe to live install:update / install:log events for the
-  // currently-tracked job. The hook+socket pair survives tab refresh —
-  // attachToJob fetches initial state from /api/install/status, then this
-  // effect keeps it live. Socket events for a different jobId are ignored
-  // (cheap; we just early-return).
+  // Poll /api/install/status for state + new log lines while a job is
+  // actively running. Replaces the socket-only subscription that was
+  // here in 3.25.x — the socket approach had a race where `useSocket`
+  // returned `undefined` on first render and the subscription effect
+  // ran (with `socket.on` throwing into a swallowed React error) before
+  // the WebSocket completed its handshake. Net effect: install ran
+  // server-side end-to-end, but the wizard never received the `done`
+  // event and stayed stuck on "Processing..." forever.
+  //
+  // Polling sidesteps that entirely:
+  //   - works whether or not the socket ever connects
+  //   - works after a tab reopen (no replay needed; we read from
+  //     wherever the log file is now)
+  //   - stops the moment phase becomes terminal (done/error/aborted/crashed)
+  //   - 2s cadence is plenty — even a 5-minute install only gets
+  //     ~150 polls, each <1KB. Latency on phase transitions is up to
+  //     2s which is invisible inside a multi-minute pipeline.
   useEffect(() => {
     if (!jobId) return;
     jobIdRef.current = jobId;
-    const onUpdate = (state: RemoteJobState) => {
-      if (state.id !== jobIdRef.current) return;
-      applyJobState(state);
+    if (phase !== 'installing') return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const url = `/api/install/status?jobId=${encodeURIComponent(jobId)}&logsSince=${logsOffsetRef.current}`;
+        const res = await fetch(url);
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          job: RemoteJobState | null;
+          logs: string;
+          logsOffset: number;
+        };
+        if (cancelled) return;
+        if (data.logs) {
+          const newLines = data.logs.split('\n').filter(l => l.length > 0);
+          if (newLines.length > 0) setLogs(prev => [...prev, ...newLines]);
+        }
+        if (typeof data.logsOffset === 'number') {
+          logsOffsetRef.current = data.logsOffset;
+        }
+        if (data.job) applyJobState(data.job);
+      } catch { /* network blip — try again next tick */ }
     };
-    const onLog = (evt: { jobId: string; line: string }) => {
-      if (evt.jobId !== jobIdRef.current) return;
-      setLogs(prev => [...prev, evt.line]);
-    };
-    socket.on('install:update', onUpdate);
-    socket.on('install:log', onLog);
-    return () => {
-      socket.off('install:update', onUpdate);
-      socket.off('install:log', onLog);
-    };
-  }, [jobId, socket, applyJobState]);
+    void tick();
+    const id = setInterval(() => { void tick(); }, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [jobId, phase, applyJobState]);
 
   const abortInstall = useCallback(() => {
     const id = jobIdRef.current;
@@ -623,11 +653,17 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       },
     };
 
+    // 30s timeout on the start POST. createJob + startJob should return
+    // in milliseconds; if it hangs longer something is genuinely wrong on
+    // the server and we want the wizard to surface an error instead of
+    // sitting on "Processing..." forever.
+    const startTimeout = AbortSignal.timeout(30_000);
     try {
       const res = await fetch("/api/install/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: startTimeout,
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

@@ -201,7 +201,22 @@ describe('OnboardingWizard', () => {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ jobId: 'test-job-1' }) });
             }
             if (url.includes('/api/install/status')) {
-                return Promise.resolve({ ok: true, json: () => Promise.resolve({ job: null, logs: '', logsOffset: 0 }) });
+                // Default: report the install as already done. Tests that
+                // need a different phase override the mock per-spec.
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                    job: {
+                        id: 'test-job-1',
+                        source: 'wizard',
+                        phase: 'done',
+                        startedAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                        endedAt: new Date().toISOString(),
+                        progress: { currentItem: null, deployedNames: ['nginx-web'], totalCount: 1 },
+                        credentialsManifest: [],
+                    },
+                    logs: '',
+                    logsOffset: 0,
+                }) });
             }
             if (url.includes('/api/install/abort') || url.includes('/api/install/credentials') || url.includes('/api/install/skip-credentials')) {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
@@ -450,18 +465,9 @@ describe('OnboardingWizard', () => {
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
             fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
 
-            // Wizard now POSTs to /api/install/start and waits for socket
-            // events. Wait for the subscription to attach, then drive the
-            // hook through to done.
-            await waitFor(() => expect(socketHandlers.get('install:update')?.length ?? 0).toBeGreaterThan(0));
-            emitSocket('install:update', {
-                id: 'test-job-1',
-                phase: 'done',
-                progress: { currentItem: null, deployedNames: ['nginx-web'], totalCount: 1 },
-                credentialsManifest: [],
-            });
-
-            // Should show done state
+            // Wizard POSTs to /api/install/start, then polls /api/install/status.
+            // Default mock returns phase=done immediately so the wizard transitions
+            // to the Done step on the first poll tick.
             await waitFor(() => {
                 expect(screen.getByText(/installation complete/i)).toBeDefined();
             });
@@ -490,15 +496,8 @@ describe('OnboardingWizard', () => {
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
             fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
 
-            // Drive the server-side runner from running → done via a socket event.
-            await waitFor(() => expect(socketHandlers.get('install:update')?.length ?? 0).toBeGreaterThan(0));
-            emitSocket('install:update', {
-                id: 'test-job-1',
-                phase: 'done',
-                progress: { currentItem: null, deployedNames: ['nginx-web'], totalCount: 1 },
-                credentialsManifest: [],
-            });
-
+            // Wizard polls /api/install/status; the default mock returns phase=done
+            // so the Finish button appears once the polling effect's first tick lands.
             await waitFor(() => screen.getByRole('button', { name: /Finish/i }));
             fireEvent.click(screen.getByRole('button', { name: /Finish/i }));
 
@@ -557,16 +556,8 @@ describe('OnboardingWizard', () => {
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
             fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
 
-            // Server-side runner now drives the flow. Push a done event
+            // Polling-default mock returns phase=done; wait for the wizard
             // to land on the Done step where DNS / SSL instructions render.
-            await waitFor(() => expect(socketHandlers.get('install:update')?.length ?? 0).toBeGreaterThan(0));
-            emitSocket('install:update', {
-                id: 'test-job-1',
-                phase: 'done',
-                progress: { currentItem: null, deployedNames: ['nginx-web'], totalCount: 1 },
-                credentialsManifest: [],
-            });
-
             await waitFor(() => {
                 // Should show DNS instructions
                 expect(screen.getByText(/1\. Configure DNS/i)).toBeDefined();
