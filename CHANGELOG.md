@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.25.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.25.2...servicebay-v3.25.3) (2026-05-12)
+
+
+### Bug Fixes
+
+* **wizard,diagnose:** replace static post-install instructions with self-checks ([#409](https://github.com/mdopp/servicebay/issues/409)) ([117e6c8](https://github.com/mdopp/servicebay/commit/117e6c85ae95f3821d9654ef7730b2ec79973220))
+
 ## [3.25.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.25.1...servicebay-v3.25.2) (2026-05-12)
 
 
