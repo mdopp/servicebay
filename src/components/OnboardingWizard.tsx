@@ -73,6 +73,14 @@ interface StackItem {
    * with their checkbox locked-on; users pick features on top.
    */
   tier?: TemplateTier;
+  /**
+   * Install-time hard deps from
+   * `metadata.annotations['servicebay.dependencies']`. Drives the
+   * "requires X" red badge, the auto-check on toggle-on, and the
+   * uncheck-guard that prevents an operator from accidentally
+   * removing something other selected services need.
+   */
+  dependencies?: string[];
 }
 
 /** Fetch names of services already deployed on the target node */
@@ -179,6 +187,12 @@ export default function OnboardingWizard() {
    *  'infrastructure' or 'feature' so the wizard can lock-include the
    *  platform tier. See `src/lib/templateTier.ts`. */
   const [templateTiers, setTemplateTiers] = useState<Map<string, TemplateTier>>(new Map());
+  /** name → hard-dependency list, parsed from each template's
+   *  `servicebay.dependencies` annotation. Populated once in
+   *  loadStacks and used by handleSelectStack to decorate each
+   *  StackItem with its deps so the auto-check + uncheck-guard +
+   *  "requires X" badge run off the same map. */
+  const [templateDeps, setTemplateDeps] = useState<Map<string, string[]>>(new Map());
   const [selectedStack, setSelectedStack] = useState<Template | null>(null);
   const [stackItems, setStackItems] = useState<StackItem[]>([]);
   /** Stage in the install sub-flow. 'select' and 'services' are wizard-
@@ -546,10 +560,13 @@ export default function OnboardingWizard() {
       // each template.yml on stack-pick. Templates list is small (~10
       // entries), the lookup is one-off per install.
       const tiers = new Map<string, 'infrastructure' | 'feature'>();
+      const deps = new Map<string, string[]>();
       for (const t of templates.filter(t => t.type === 'template')) {
         tiers.set(t.name, t.tier ?? 'feature');
+        deps.set(t.name, t.dependencies ?? []);
       }
       setTemplateTiers(tiers);
+      setTemplateDeps(deps);
       setStackNodes(nodes);
       if (nodes.length === 1) setStackSelectedNode(nodes[0].Name);
       // Single-stack-only installs (the common case — only `full-stack`
@@ -826,6 +843,7 @@ export default function OnboardingWizard() {
             // README's [x] / [ ] state. Users pick features; the
             // platform is non-negotiable. See #258 / #249.
             tier: templateTiers.get(name) ?? 'feature',
+            dependencies: templateDeps.get(name) ?? [],
             checked: templateTiers.get(name) === 'infrastructure'
               ? !isInstalled
               : (!isInstalled && match[1].toLowerCase() === 'x'),
@@ -1714,7 +1732,17 @@ export default function OnboardingWizard() {
                                 const installedNames = new Set(stackItems.filter(i => i.alreadyInstalled).map(i => i.name));
                                 const missing: { from: string; needs: string; reason?: string }[] = [];
                                 for (const item of checked) {
-                                    for (const dep of SERVICE_DEPS[item.name]?.requires ?? []) {
+                                    // Hard deps come from the template's
+                                    // `servicebay.dependencies` annotation
+                                    // (item.dependencies); SERVICE_DEPS is
+                                    // legacy hardcoded data that's now
+                                    // empty for `requires` — kept for the
+                                    // `recommendedWith` soft-dep badges only.
+                                    const required = [
+                                        ...(item.dependencies ?? []),
+                                        ...(SERVICE_DEPS[item.name]?.requires ?? []),
+                                    ];
+                                    for (const dep of new Set(required)) {
                                         if (!checkedNames.has(dep) && !installedNames.has(dep)) {
                                             missing.push({ from: item.name, needs: dep, reason: SERVICE_DEPS[item.name]?.reason });
                                         }
@@ -1817,22 +1845,50 @@ export default function OnboardingWizard() {
                                                 disabled={item.alreadyInstalled}
                                                 onChange={() => {
                                                     if (item.alreadyInstalled) return;
+                                                    const turningOn = !stackItems[i].checked;
                                                     const newItems = [...stackItems];
-                                                    newItems[i].checked = !newItems[i].checked;
-                                                    // Auto-include hard deps when the operator
-                                                    // turns a service ON. Don't auto-uncheck
-                                                    // deps when turning OFF — the dep might
-                                                    // also be needed by another checked
-                                                    // service, and "you unchecked X so Y
-                                                    // also went away" is surprising.
-                                                    if (newItems[i].checked) {
-                                                        const required = SERVICE_DEPS[item.name]?.requires ?? [];
-                                                        for (const dep of required) {
+
+                                                    if (turningOn) {
+                                                        newItems[i].checked = true;
+                                                        // Auto-include hard deps from the
+                                                        // template annotation + any legacy
+                                                        // SERVICE_DEPS.requires entry.
+                                                        const required = [
+                                                            ...(item.dependencies ?? []),
+                                                            ...(SERVICE_DEPS[item.name]?.requires ?? []),
+                                                        ];
+                                                        for (const dep of new Set(required)) {
                                                             const j = newItems.findIndex(x => x.name === dep);
                                                             if (j >= 0 && !newItems[j].checked && !newItems[j].alreadyInstalled) {
                                                                 newItems[j].checked = true;
                                                             }
                                                         }
+                                                    } else {
+                                                        // Uncheck-guard: if another checked
+                                                        // template lists this item as a hard
+                                                        // dependency, removing it would put
+                                                        // the install into an invalid state.
+                                                        // Ask before cascading the uncheck so
+                                                        // the operator sees what's about to
+                                                        // be removed.
+                                                        const dependents = newItems.filter(other =>
+                                                            other.checked
+                                                            && !other.alreadyInstalled
+                                                            && other.name !== item.name
+                                                            && (other.dependencies ?? []).includes(item.name),
+                                                        );
+                                                        if (dependents.length > 0) {
+                                                            const ok = window.confirm(
+                                                                `${dependents.map(d => d.name).join(', ')} require ${item.name}. `
+                                                                + `Unchecking ${item.name} will also uncheck ${dependents.length === 1 ? 'that template' : 'those templates'}. Continue?`,
+                                                            );
+                                                            if (!ok) return;
+                                                            for (const d of dependents) {
+                                                                const j = newItems.findIndex(x => x.name === d.name);
+                                                                if (j >= 0) newItems[j].checked = false;
+                                                            }
+                                                        }
+                                                        newItems[i].checked = false;
                                                     }
                                                     setStackItems(newItems);
                                                 }}
@@ -1862,7 +1918,12 @@ export default function OnboardingWizard() {
                                                         Both labels link explicitly to the dep
                                                         service name so it's obvious what's
                                                         required. */}
-                                                    {(SERVICE_DEPS[item.name]?.requires ?? []).map(dep => (
+                                                    {[
+                                                        ...new Set([
+                                                            ...(item.dependencies ?? []),
+                                                            ...(SERVICE_DEPS[item.name]?.requires ?? []),
+                                                        ]),
+                                                    ].map(dep => (
                                                         <span
                                                             key={`req-${dep}`}
                                                             className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"
