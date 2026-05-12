@@ -9,6 +9,7 @@ import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPoi
 import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
+import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -650,6 +651,30 @@ export async function POST(request: Request) {
     probes.push({
       id: 'cert_expiry',
       label: 'TLS certificates',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 17) AdGuard DNS rewrites. The portal provisioner is fire-and-forget
+  //     at install + 60s after boot; either invocation can silently
+  //     fail (AdGuard cold-starting, auth flapping). This probe is the
+  //     safety net — it diffs AdGuard's current rewrite list against
+  //     the expected set and offers a one-click "Reprovision" that
+  //     re-runs the same code path.
+  try {
+    const ar = await checkAdguardRewritesMissing();
+    probes.push({
+      id: 'adguard_rewrites_missing',
+      label: 'AdGuard DNS rewrites',
+      status: ar.status,
+      detail: ar.detail,
+      hint: ar.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'adguard_rewrites_missing',
+      label: 'AdGuard DNS rewrites',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
