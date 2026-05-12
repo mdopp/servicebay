@@ -45,6 +45,15 @@ export default function ServerIdentityWatcher() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
+    // `useSocket` initializes the singleton socket inside its own
+    // useEffect, which runs after the first render returns. The very
+    // first time this component renders the destructured `socket`
+    // value is still `undefined`; reading `.on()` on it crashed the
+    // app at the root layout (TypeError: Cannot read properties of
+    // undefined (reading 'on')). Bail out until the next render fires
+    // with the initialized socket — `socket` is in the dep array so
+    // the effect re-runs once `useSocket` returns a defined value.
+    if (!socket) return;
     function onIdentity(data: ServerIdentity) {
       if (initial.current === null) {
         initial.current = data;
