@@ -225,6 +225,59 @@ async function resolveConfigFilePaths(yaml: string, cfgFiles: ConfigFile[]): Pro
 const MAX_DEPLOY_ATTEMPTS = 3;
 const DEPLOY_BACKOFF_MS = [0, 1000, 4000];
 
+const PORTAL_PROVISION_ATTEMPTS = 4;
+/** Backoff between portal-provision attempts (ms). Total wall-clock cost if
+ *  every attempt fails: ~18s. Hits the cold-start window for AdGuard's
+ *  `/control/rewrite/*` endpoints, which can lag `/control/status` by a few
+ *  seconds on first boot. */
+const PORTAL_PROVISION_BACKOFF_MS = [0, 3000, 6000, 9000];
+
+/**
+ * Drive `/api/system/portal/provision` with retries, narrating progress to the
+ * wizard log. The endpoint already calls `provisionPortalRouting()` which is
+ * idempotent — we just give it more chances than the implicit fire-and-forget
+ * triggers (AdGuard's post-deploy hook + the 60s-post-boot timer in server.ts).
+ *
+ * Why this exists: on a fresh install, AdGuard's post-deploy POSTs credentials
+ * the moment the container reports healthy, which then fires
+ * `provisionPortalRouting()` in the background. That one shot can land while
+ * AdGuard's REST API is still finishing its own bootstrap — the call returns
+ * non-2xx, the provisioner records "failed", and nothing retries until the
+ * operator notices missing rewrites and clicks Reprovision in diagnose. By
+ * the time the install loop reaches this helper, every other service is
+ * deployed and AdGuard has had time to warm up; a short retry loop here turns
+ * the lossy fire-and-forget into a guaranteed-present rewrite list.
+ *
+ * Returns true if the endpoint reported `ok` on any attempt; false if every
+ * attempt failed (the caller logs a fallback suggestion in that case).
+ */
+export async function provisionPortalWithRetries(onLog: (msg: string) => void): Promise<boolean> {
+  for (let attempt = 1; attempt <= PORTAL_PROVISION_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      await new Promise(r => setTimeout(r, PORTAL_PROVISION_BACKOFF_MS[attempt - 1]));
+    }
+    try {
+      const res = await fetch('/api/system/portal/provision', { method: 'POST' });
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; detail?: string }
+        | null;
+      if (data?.ok) {
+        onLog(`✅ Portal routing: ${data.detail ?? 'provisioned'}`);
+        return true;
+      }
+      const reason = data?.detail ?? `HTTP ${res.status}`;
+      const tag = attempt < PORTAL_PROVISION_ATTEMPTS ? '⏳' : '⚠️';
+      onLog(`${tag} Portal routing attempt ${attempt}/${PORTAL_PROVISION_ATTEMPTS}: ${reason}`);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      const tag = attempt < PORTAL_PROVISION_ATTEMPTS ? '⏳' : '⚠️';
+      onLog(`${tag} Portal routing attempt ${attempt}/${PORTAL_PROVISION_ATTEMPTS}: ${reason}`);
+    }
+  }
+  onLog('⚠️ Portal routing did not fully provision after retries. Open Settings → Self-Diagnose → Reprovision if rewrites are missing.');
+  return false;
+}
+
 export function useStackInstall(options: UseStackInstallOptions): UseStackInstallReturn {
   const { templateSource, onBeforeDone } = options;
 
@@ -786,6 +839,16 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       return;
     }
 
+    // Explicit portal-routing provisioner. AdGuard's post-deploy fires this
+    // implicitly via fire-and-forget when credentials are saved, but that one
+    // shot frequently lands during AdGuard's REST-API cold start and is lost.
+    // Gating on `adguard` in `deployed` keeps this a no-op for installs that
+    // didn't include AdGuard. See `provisionPortalWithRetries` for the why.
+    if (deployed.some(d => d.name === 'adguard')) {
+      appendLog('Provisioning AdGuard DNS rewrites + portal routing...');
+      await provisionPortalWithRetries(appendLog);
+    }
+
     if (onBeforeDone) {
       try {
         await onBeforeDone(deployed, appendLog);
@@ -819,11 +882,20 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       });
       appendLog('Saved NPM credentials for future installs.');
     } catch { /* install succeeded — just won't auto-sync next time */ }
+
+    // Mirror the runInstall path's explicit portal-routing provision so the
+    // NPM-credentials-prompt branch ends in the same state as the happy path.
+    const checked = items.filter(i => i.checked);
+    if (checked.some(i => i.name === 'adguard')) {
+      appendLog('Provisioning AdGuard DNS rewrites + portal routing...');
+      await provisionPortalWithRetries(appendLog);
+    }
+
     if (onBeforeDone) {
       try {
         // No `deployed` snapshot available here; pass the checked items as
         // a best-effort substitute. Settle-wait only uses names anyway.
-        await onBeforeDone(items.filter(i => i.checked).map(i => ({ name: i.name })), appendLog);
+        await onBeforeDone(checked.map(i => ({ name: i.name })), appendLog);
       } catch { /* swallow */ }
     }
     setPhase('done');
