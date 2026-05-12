@@ -17,6 +17,7 @@
     "type": "subdomain",
     "description": "Subdomain for Home Assistant",
     "default": "home",
+    "exposure": "public",
     "proxyPort": "8123",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

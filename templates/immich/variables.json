@@ -12,6 +12,7 @@
     "type": "subdomain",
     "description": "Subdomain for Immich",
     "default": "photos",
+    "exposure": "public",
     "proxyPort": "IMMICH_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

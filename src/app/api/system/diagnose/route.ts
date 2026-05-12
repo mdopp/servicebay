@@ -9,6 +9,7 @@ import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPoi
 import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
+import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
 import '@/lib/diagnose/probes/register';
 
@@ -651,6 +652,31 @@ export async function POST(request: Request) {
     probes.push({
       id: 'cert_expiry',
       label: 'TLS certificates',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 16b) Recent ACME failures from NPM's letsencrypt.log. NPM surfaces
+  //      cert-issuance failures as a generic "Internal Error"; this
+  //      probe parses the actual log tail and turns each failed domain
+  //      into a row with show_log_tail + retry_request actions. Silent
+  //      (info) when the log is missing, the last failure is older than
+  //      24h, or the file is unparseable.
+  try {
+    const crf = await checkCertRequestFailure(nodeName);
+    probes.push({
+      id: 'cert_request_failure',
+      label: 'Cert request failures',
+      status: crf.status,
+      detail: crf.detail,
+      hint: crf.hint,
+      _items: crf.items,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'cert_request_failure',
+      label: 'Cert request failures',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

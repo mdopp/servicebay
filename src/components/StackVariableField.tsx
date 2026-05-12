@@ -39,6 +39,13 @@ interface StackVariableFieldProps {
    *  variables render a disabled dropdown — same fallback both
    *  consumers had before. */
   deviceContext?: StackVariableFieldDeviceContext;
+  /**
+   * For subdomain variables: change the exposure profile (public vs
+   * lan-only). Omit to hide the inline toggle — the field then shows
+   * only the template default as a static badge. The wizard owns
+   * the state mutation via useStackInstall.setVariableExposure.
+   */
+  onExposureChange?: (exposure: 'public' | 'lan') => void;
   /** Tailwind class shape. Pre-extraction the two consumers used
    *  slightly different paddings/border-radii; defaulting to the
    *  InstallerModal shape and letting OnboardingWizard pass its own
@@ -64,6 +71,7 @@ export default function StackVariableField({
   onChange,
   publicDomain,
   deviceContext,
+  onExposureChange,
   inputClassName,
 }: StackVariableFieldProps) {
   const cls = inputClassName ?? 'w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500';
@@ -122,20 +130,52 @@ export default function StackVariableField({
     );
   }
 
-  // Subdomain field (shows .domain suffix)
+  // Subdomain field (shows .domain suffix). When `onExposureChange` is
+  // provided, an inline Public/LAN segmented toggle hangs to the right
+  // — operators override the per-template default; the choice drives
+  // whether the install auto-requests a Let's Encrypt cert. Without
+  // `onExposureChange` (e.g. read-only contexts) we fall back to a
+  // small static badge so the operator still sees what's planned.
   if (v.meta?.type === 'subdomain') {
+    const exposure: 'public' | 'lan' = v.meta.exposure === 'public' ? 'public' : 'lan';
     return (
-      <div className="flex items-center gap-0">
-        <input
-          type="text"
-          value={v.value}
-          onChange={(e) => onChange(e.target.value)}
-          className={`${cls} rounded-r-none border-r-0`}
-          placeholder={v.meta.default || 'subdomain'}
-        />
-        <span className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 rounded-r text-sm whitespace-nowrap">
-          .{publicDomain || 'example.com'}
-        </span>
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-0 flex-1 min-w-[12rem]">
+          <input
+            type="text"
+            value={v.value}
+            onChange={(e) => onChange(e.target.value)}
+            className={`${cls} rounded-r-none border-r-0`}
+            placeholder={v.meta.default || 'subdomain'}
+          />
+          <span className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 rounded-r text-sm whitespace-nowrap">
+            .{publicDomain || 'example.com'}
+          </span>
+        </div>
+        {onExposureChange ? (
+          <div className="inline-flex rounded border border-gray-300 dark:border-gray-700 overflow-hidden text-xs" role="group" aria-label="Exposure profile">
+            <button
+              type="button"
+              onClick={() => onExposureChange('public')}
+              className={`px-2.5 py-1.5 ${exposure === 'public' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+              title="Reachable from the internet on 80/443. Auto-requests a Let's Encrypt cert at install."
+            >
+              Public
+            </button>
+            <button
+              type="button"
+              onClick={() => onExposureChange('lan')}
+              className={`px-2.5 py-1.5 border-l border-gray-300 dark:border-gray-700 ${exposure === 'lan' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+              title="LAN-only — no public exposure, no TLS cert provisioned."
+            >
+              LAN
+            </button>
+          </div>
+        ) : (
+          <span className={`px-2 py-0.5 rounded text-xs ${exposure === 'public' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100' : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'}`}>
+            {exposure === 'public' ? 'Public' : 'LAN'}
+          </span>
+        )}
       </div>
     );
   }

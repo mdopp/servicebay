@@ -35,6 +35,7 @@
     "type": "subdomain",
     "description": "Subdomain for Vaultwarden",
     "default": "vault",
+    "exposure": "public",
     "proxyPort": "VAULTWARDEN_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

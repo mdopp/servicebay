@@ -27,6 +27,7 @@
     "type": "subdomain",
     "description": "Subdomain for both CalDAV (calendars) and CardDAV (address books). Radicale serves both protocols on the same port, so there's no separate `carddav.` host — contacts live at `https://caldav.<domain>/<user>/contacts/`. Mobile clients (DAVx⁵, iOS, Thunderbird) speak HTTP Basic auth — Authelia in front would block them, so this proxy host has NO Authelia forward-auth.",
     "default": "caldav",
+    "exposure": "public",
     "proxyPort": "RADICALE_PORT",
     "proxyConfig": {
       "block_exploits": true,

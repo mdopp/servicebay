@@ -343,6 +343,17 @@ export interface VariableMeta {
   proxyPort?: string;
   /** For subdomain type: service-specific NPM proxy host configuration */
   proxyConfig?: ProxyConfig;
+  /**
+   * For subdomain type: how this service is meant to be exposed.
+   *   - `public`: reachable from the internet on 80/443, auto-request
+   *     Let's Encrypt cert at install time and bind it to the proxy host.
+   *   - `lan`: reachable only on the LAN, no TLS cert provisioned.
+   * Each template declares a sensible default in variables.json; the
+   * operator can override per-service in the wizard's configure step.
+   * Missing/undefined treated the same as `lan` (the conservative
+   * default — never auto-request a cert without explicit opt-in).
+   */
+  exposure?: 'public' | 'lan';
   /** OIDC client to register with Authelia when this service is deployed */
   oidcClient?: OidcClientConfig;
   /** For bcrypt type: name of another variable whose plaintext gets bcrypt-hashed */

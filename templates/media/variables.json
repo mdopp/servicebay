@@ -36,6 +36,7 @@
     "type": "subdomain",
     "description": "Subdomain for Audiobookshelf",
     "default": "books",
+    "exposure": "public",
     "proxyPort": "ABS_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
@@ -74,6 +75,7 @@
     "type": "subdomain",
     "description": "Subdomain for Navidrome (web UI + Symfonium endpoint)",
     "default": "music",
+    "exposure": "public",
     "proxyPort": "NAVIDROME_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
