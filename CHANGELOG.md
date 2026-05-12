@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.24.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.24.0...servicebay-v3.24.1) (2026-05-12)
+
+
+### Bug Fixes
+
+* **ui:** guard ServerIdentityWatcher against undefined socket ([#396](https://github.com/mdopp/servicebay/issues/396)) ([78499f2](https://github.com/mdopp/servicebay/commit/78499f27519194019c9e0c56765baf17a548412e))
+
 ## [3.24.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.23.0...servicebay-v3.24.0) (2026-05-12)
 
 
