@@ -177,15 +177,15 @@ export async function checkCertRequestFailure(node: string): Promise<CertRequest
 
   const parsed = parseLetsencryptTail(tail);
   if (parsed.failures.length === 0 && !parsed.rateLimited) {
-    return { status: 'info', detail: 'Most recent NPM cert request did not record a failure.' };
+    return { status: 'ok', detail: 'No Let\'s Encrypt cert failures in the recent NPM log.' };
   }
 
   if (parsed.ts) {
     const ageMs = Date.now() - parsed.ts;
     if (ageMs > FRESHNESS_HOURS * 3_600_000) {
       return {
-        status: 'info',
-        detail: `Last NPM cert failure was ${Math.round(ageMs / 3_600_000)}h ago — outside the ${FRESHNESS_HOURS}h freshness window.`,
+        status: 'ok',
+        detail: `Last cert failure was ${Math.round(ageMs / 3_600_000)}h ago (outside the ${FRESHNESS_HOURS}h freshness window). Treating as resolved.`,
       };
     }
   }

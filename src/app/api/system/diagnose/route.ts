@@ -253,13 +253,32 @@ export async function POST(request: Request) {
     _items: failedUnitItems.length > 0 ? failedUnitItems : undefined,
   });
 
-  // 5) Listening ports for known services
+  // 5) Listening ports — only flag ones that don't map to a running
+  //    service or a standard system port. Dumping all 30 open ports
+  //    in the detail string was noise; the operator just installed
+  //    those services and knows nginx listens on 80. Show count +
+  //    any actual surprise ports inline.
   const ports = trimOutput(listen.stdout, 50).split('\n').filter(Boolean);
+  const expectedPorts = new Set<string>([
+    '22',   // sshd
+    '5888', // servicebay itself
+  ]);
+  const portsTwin = DigitalTwinStore.getInstance().nodes[nodeName];
+  for (const svc of ((portsTwin?.services ?? []) as { ports?: { hostPort?: number }[] }[])) {
+    for (const p of (svc.ports ?? [])) {
+      if (typeof p.hostPort === 'number') expectedPorts.add(String(p.hostPort));
+    }
+  }
+  const unexpected = ports.filter(p => !expectedPorts.has(p));
   probes.push({
     id: 'ports',
     label: 'Open TCP ports',
-    status: ports.length > 0 ? 'info' : 'warn',
-    detail: ports.length > 0 ? `Listening on: ${ports.join(', ')}` : 'No ports detected — services may still be starting.',
+    status: ports.length === 0 ? 'warn' : (unexpected.length === 0 ? 'ok' : 'info'),
+    detail: ports.length === 0
+      ? 'No ports detected — services may still be starting.'
+      : unexpected.length === 0
+        ? `${ports.length} ports listening, all match installed services or standard system ports.`
+        : `${ports.length} ports listening; ${unexpected.length} not mapped to a known service: ${unexpected.join(', ')}.`,
   });
 
   // 6) USB serial devices (Z-Wave / Zigbee sticks)
@@ -667,7 +686,7 @@ export async function POST(request: Request) {
     const crf = await checkCertRequestFailure(nodeName);
     probes.push({
       id: 'cert_request_failure',
-      label: 'Cert request failures',
+      label: 'Let\'s Encrypt cert requests',
       status: crf.status,
       detail: crf.detail,
       hint: crf.hint,
@@ -676,7 +695,7 @@ export async function POST(request: Request) {
   } catch (e) {
     probes.push({
       id: 'cert_request_failure',
-      label: 'Cert request failures',
+      label: 'Let\'s Encrypt cert requests',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

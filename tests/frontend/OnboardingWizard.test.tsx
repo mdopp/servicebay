@@ -53,28 +53,16 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
   useDigitalTwin: () => ({ data: null }),
 }));
 
-// Install runner socket bridge. The deploy loop now lives server-side
-// (src/lib/install/runner.ts); the hook subscribes to install:update /
-// install:log events. Tests use `socketHandlers` to push events to drive
-// the wizard through the install state machine.
-const socketHandlers = new Map<string, ((...args: unknown[]) => void)[]>();
+// Stub useSocket. The wizard's install-progress hook used to subscribe
+// to install:update / install:log socket events; that's gone now in
+// favour of polling (3.25.2). Other dashboard hooks may still call
+// useSocket, so we provide a minimal connected-shaped stub.
 const mockSocket = {
-  on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-    const arr = socketHandlers.get(event) ?? [];
-    arr.push(handler);
-    socketHandlers.set(event, arr);
-  }),
-  off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-    const arr = socketHandlers.get(event) ?? [];
-    const i = arr.indexOf(handler);
-    if (i >= 0) arr.splice(i, 1);
-  }),
+  on: vi.fn(),
+  off: vi.fn(),
   emit: vi.fn(),
   connected: true,
 };
-function emitSocket(event: string, payload: unknown) {
-  for (const h of socketHandlers.get(event) ?? []) h(payload);
-}
 vi.mock('@/hooks/useSocket', () => ({
   useSocket: () => ({ socket: mockSocket, isConnected: true }),
 }));
@@ -173,9 +161,6 @@ describe('OnboardingWizard', () => {
         if (typeof window !== 'undefined') {
             window.sessionStorage.clear();
         }
-        // Reset install runner socket subscriptions so a previous test's
-        // hook doesn't receive events meant for the next test.
-        socketHandlers.clear();
         (getNodes as any).mockResolvedValue(mockNodes);
         (fetchTemplates as any).mockResolvedValue(mockStacks);
         (fetchReadme as any).mockResolvedValue(mockStackReadme);
@@ -220,6 +205,9 @@ describe('OnboardingWizard', () => {
             }
             if (url.includes('/api/install/abort') || url.includes('/api/install/credentials') || url.includes('/api/install/skip-credentials')) {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+            }
+            if (url.includes('/api/system/dns/verify')) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ expectedIPs: ['1.2.3.4'], results: [] }) });
             }
             if (url.includes('/api/system/nginx/status')) {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ installed: true, active: true }) });
@@ -534,7 +522,7 @@ describe('OnboardingWizard', () => {
             });
         });
 
-        it('shows post-install DNS and SSL steps after stack install', async () => {
+        it('runs DNS verification on Done step when subdomains were deployed', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
             // Return variables with subdomain type
             (fetchTemplateVariables as any).mockResolvedValue({
@@ -556,15 +544,19 @@ describe('OnboardingWizard', () => {
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
             fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
 
-            // Polling-default mock returns phase=done; wait for the wizard
-            // to land on the Done step where DNS / SSL instructions render.
+            // Polling-default mock returns phase=done; the Done step now
+            // mounts the DoneStepDnsCheck component which fires
+            // POST /api/system/dns/verify. The static "Configure DNS"
+            // bullet list was replaced with that runtime check (the
+            // generic catch-all in the fetch mock returns ok: true with
+            // an empty body, which the component treats as no domains
+            // to verify and renders nothing — assertion target is the
+            // POST having been dispatched).
             await waitFor(() => {
-                // Should show DNS instructions
-                expect(screen.getByText(/1\. Configure DNS/i)).toBeDefined();
-                // Should show SSL instructions
-                expect(screen.getByText(/2\. SSL Certificates/i)).toBeDefined();
-                // Should show access restrictions
-                expect(screen.getByText(/3\. Access Restrictions/i)).toBeDefined();
+                expect(global.fetch).toHaveBeenCalledWith(
+                    expect.stringContaining('/api/system/dns/verify'),
+                    expect.objectContaining({ method: 'POST' }),
+                );
             }, { timeout: 5000 });
         });
 
