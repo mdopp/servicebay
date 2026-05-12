@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.24.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.23.0...servicebay-v3.24.0) (2026-05-12)
+
+
+### Features
+
+* **health:** coalesce boot-grace alert emails into one digest ([#394](https://github.com/mdopp/servicebay/issues/394)) ([77d85cb](https://github.com/mdopp/servicebay/commit/77d85cb5ce2d59aa8ee19cee22cce8356146e017))
+* **install:** Abort/Start over + dependency-aware install order ([#392](https://github.com/mdopp/servicebay/issues/392)) ([0abb5ac](https://github.com/mdopp/servicebay/commit/0abb5ac499d521fe7f82c4649f8aab730c670214))
+* **wizard,docs:** auto-check deps + uncheck-guard, document annotation ([#395](https://github.com/mdopp/servicebay/issues/395)) ([79695dc](https://github.com/mdopp/servicebay/commit/79695dc60809855590d69987aa54cb6be075c738))
+
 ## [3.23.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.22.1...servicebay-v3.23.0) (2026-05-12)
 
 
