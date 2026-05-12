@@ -35,6 +35,16 @@ export interface Template {
    * the wizard). See `src/lib/templateTier.ts`.
    */
   tier?: 'infrastructure' | 'feature';
+  /**
+   * Install-time hard dependencies. Read from
+   * `metadata.annotations['servicebay.dependencies']` — comma-separated
+   * list of template names that must install before this one. Used by
+   * the wizard to auto-check deps + block unchecking a dep that
+   * something else needs, and by `useStackInstall` to topo-sort the
+   * deploy loop. Empty for stacks and for templates without the
+   * annotation.
+   */
+  dependencies?: string[];
 }
 
 export interface TemplateSettingsSchemaEntry {
@@ -88,6 +98,25 @@ async function readTemplateTier(itemDir: string, type: 'template' | 'stack'): Pr
   }
 }
 
+/** Read `servicebay.dependencies` from a template.yml. Same comma-
+ *  separated parsing as `parseTemplateDependencies` in
+ *  `src/lib/stackInstall/dependencies.ts` — duplicated server-side so
+ *  the registry layer can populate Template.dependencies at fetch
+ *  time without making the client import server-only fs helpers. */
+async function readTemplateDependencies(itemDir: string, type: 'template' | 'stack'): Promise<string[]> {
+  if (type === 'stack') return [];
+  try {
+    const yaml = await fs.readFile(path.join(itemDir, 'template.yml'), 'utf-8');
+    const m = /^\s+servicebay\.dependencies:\s*(?:"([^"]*)"|'([^']*)'|([^\n#]+?))\s*$/m.exec(yaml);
+    if (!m) return [];
+    const raw = (m[1] ?? m[2] ?? m[3] ?? '').trim();
+    if (!raw) return [];
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 async function fetchDir(dirPath: string, type: 'template' | 'stack', source: string): Promise<Template[]> {
   try {
     // Check if directory exists
@@ -102,7 +131,10 @@ async function fetchDir(dirPath: string, type: 'template' | 'stack', source: str
 
     return await Promise.all(directories.map(async item => {
         const itemPath = path.join(dirPath, item.name);
-        const tier = await readTemplateTier(itemPath, type);
+        const [tier, dependencies] = await Promise.all([
+            readTemplateTier(itemPath, type),
+            readTemplateDependencies(itemPath, type),
+        ]);
         return {
             name: item.name,
             path: itemPath,
@@ -110,6 +142,7 @@ async function fetchDir(dirPath: string, type: 'template' | 'stack', source: str
             type,
             source,
             tier,
+            dependencies,
         };
     }));
   } catch (e) {

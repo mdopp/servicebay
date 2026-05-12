@@ -28,7 +28,17 @@ metadata:
     servicebay.ports: "8080/tcp"
     servicebay.schema-version: "1"     # bump on every breaking change
     # servicebay.config-mount: "/config"   # required iff *.mustache files exist
+    # servicebay.tier: "infrastructure"    # auto-include + lock checked
+    # servicebay.dependencies: "nginx,auth" # comma-separated install-time deps
 ```
+
+`servicebay.dependencies` is the single source of truth for hard install-time
+dependencies. The wizard reads it to auto-check missing deps, block unchecking
+a dep that something else needs, and topo-sort the deploy loop. Declare it
+when your post-deploy talks to another template's API (e.g. registering an
+OIDC client in Authelia) or when your subdomain is served via NPM. Example:
+`servicebay.dependencies: "nginx,auth"` for anything that needs both proxy +
+SSO at install time. No annotation = no install-time deps.
 
 `servicebay.schema-version` defaults to `1` when missing — fine for
 new templates. Bump it whenever the pod structure or variable shape
