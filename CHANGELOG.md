@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.21.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.20.0...servicebay-v3.21.0) (2026-05-12)
+
+
+### Features
+
+* **diagnose:** adguard_rewrites_missing probe + reprovision action ([#379](https://github.com/mdopp/servicebay/issues/379)) ([9364e1b](https://github.com/mdopp/servicebay/commit/9364e1bddda8f4023113f0bae4f757d23c3521d6))
+* **install:** per-template public/LAN exposure + auto LE cert + cert_request_failure probe ([#382](https://github.com/mdopp/servicebay/issues/382)) ([1284ac3](https://github.com/mdopp/servicebay/commit/1284ac32c2184156531c7c52c90001e9cc56e144))
+
+
+### Bug Fixes
+
+* **terminal:** route container:local:* through SSH in container mode ([#380](https://github.com/mdopp/servicebay/issues/380)) ([bd6e7d4](https://github.com/mdopp/servicebay/commit/bd6e7d4d3824c3a397a1dea9abcc8055bf172741))
+
 ## [3.20.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.19.3...servicebay-v3.20.0) (2026-05-11)
 
 
