@@ -26,6 +26,7 @@ import { useStackInstall } from '@/lib/stackInstall/useStackInstall';
 import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home } from 'lucide-react';
 import StackVariableField from './StackVariableField';
 import { StackInstallProgress, StackInstallSummary } from './StackInstallFlow';
+import DiagnoseProbeList, { type DiagnoseProbe } from './DiagnoseProbeList';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
@@ -349,9 +350,11 @@ export default function OnboardingWizard() {
   // Post-install self-test — auto-runs once the install pipeline reaches
   // 'done' so the user immediately sees a green/yellow/red verdict on
   // their fresh deployment instead of having to navigate to Settings.
+  // `diagnoseNode` is captured from the response so the action-dispatch
+  // calls in DiagnoseProbeList target the same node the suite probed.
   type ProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
-  interface DiagnoseProbe { id: string; label: string; status: ProbeStatus; detail: string; hint?: string }
   const [diagnoseProbes, setDiagnoseProbes] = useState<DiagnoseProbe[] | null>(null);
+  const [diagnoseNode, setDiagnoseNode] = useState<string>('Local');
   const [diagnoseRunning, setDiagnoseRunning] = useState(false);
   const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
   const [diagnoseRanOnce, setDiagnoseRanOnce] = useState(false);
@@ -523,7 +526,10 @@ export default function OnboardingWizard() {
         }
         return r.json();
       })
-      .then((data: { probes: DiagnoseProbe[] }) => setDiagnoseProbes(data.probes))
+      .then((data: { node?: string; probes: DiagnoseProbe[] }) => {
+        setDiagnoseProbes(data.probes);
+        if (data.node) setDiagnoseNode(data.node);
+      })
       .catch(e => setDiagnoseError(e instanceof Error ? e.message : String(e)))
       .finally(() => setDiagnoseRunning(false));
   }, [stackInstallStep, diagnoseRanOnce]);
@@ -2182,17 +2188,15 @@ export default function OnboardingWizard() {
                                         <p className="text-xs text-red-700 dark:text-red-300">{diagnoseError}</p>
                                     )}
                                     {diagnoseProbes && (diagCounts.warn > 0 || diagCounts.fail > 0) && (
-                                        <details className="mt-1 text-xs">
-                                            <summary className={`cursor-pointer ${overallStyle.text}`}>Details ({diagCounts.warn + diagCounts.fail} issue{diagCounts.warn + diagCounts.fail === 1 ? '' : 's'})</summary>
-                                            <ul className="mt-1 space-y-1.5">
-                                                {diagnoseProbes.filter(p => p.status === 'warn' || p.status === 'fail').map(p => (
-                                                    <li key={p.id} className="border-l-2 border-current pl-2 opacity-90">
-                                                        <div className="font-semibold">{p.status === 'fail' ? '❌' : '⚠️'} {p.label}</div>
-                                                        <div className="font-mono whitespace-pre-wrap break-words">{p.detail}</div>
-                                                        {p.hint && <div className="italic mt-0.5 opacity-90">💡 {p.hint}</div>}
-                                                    </li>
-                                                ))}
-                                            </ul>
+                                        <details className="mt-2 text-xs" open>
+                                            <summary className={`cursor-pointer ${overallStyle.text} mb-2`}>Details + fix-buttons ({diagCounts.warn + diagCounts.fail} issue{diagCounts.warn + diagCounts.fail === 1 ? '' : 's'})</summary>
+                                            <DiagnoseProbeList
+                                                probes={diagnoseProbes}
+                                                node={diagnoseNode}
+                                                compact
+                                                parentRunning={diagnoseRunning}
+                                                onRefresh={() => setDiagnoseRanOnce(false)}
+                                            />
                                         </details>
                                     )}
                                     <p className={`text-xs mt-1 ${overallStyle.text} opacity-70`}>

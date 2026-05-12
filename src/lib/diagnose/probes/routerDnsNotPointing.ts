@@ -30,7 +30,7 @@
 
 import { getConfig, updateConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
-import { setFritzBoxDhcpDns } from '@/lib/router/dnsConfig';
+import { reconnectFritzBox, setFritzBoxDhcpDns } from '@/lib/router/dnsConfig';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 
 const PROBE_ID = 'router_dns_not_pointing';
@@ -211,6 +211,33 @@ async function configureFritzbox(): Promise<ProbeActionResult> {
   };
 }
 
+/** Action handler for `reconnect_fritzbox`. Issues a TR-064
+ *  ForceTermination so the FritzBox drops + re-establishes its WAN
+ *  link. Used after `configure_fritzbox` to push the new DHCP-DNS
+ *  setting through more aggressively than waiting for lease renewal —
+ *  the FritzBox's own DNS resolver re-reads config on reconnect, and
+ *  devices that auto-renew on link-state changes pick up option 6
+ *  immediately. Marked destructive because the WAN goes down for
+ *  5–30 s and DSL users typically get a fresh public IP. */
+async function reconnectFritzboxAction(): Promise<ProbeActionResult> {
+  const result = await reconnectFritzBox();
+  if (result.result === 'ok') {
+    return {
+      ok: true,
+      message:
+        '✅ FritzBox is reconnecting (typically 5–30 s). DSL users will get a fresh public IP; the dynamic-DNS poller will catch up on its next tick.',
+      refresh: true,
+    };
+  }
+  return {
+    ok: false,
+    message:
+      result.detail ??
+      'FritzBox reconnect failed — check Settings → Gateway, or trigger "Neu verbinden" in the FritzBox UI under Internet → Online-Monitor.',
+    refresh: false,
+  };
+}
+
 async function dismissProbe(): Promise<ProbeActionResult> {
   const config = await getConfig();
   await updateConfig({
@@ -247,6 +274,18 @@ registerProbeAction(
 registerProbeAction(
   PROBE_ID,
   {
+    id: 'reconnect_fritzbox',
+    label: 'Reconnect FritzBox',
+    description:
+      'Forces the FritzBox to drop and re-establish its WAN connection via TR-064 ForceTermination. Useful right after "Configure on FritzBox" so the new DHCP DNS setting takes effect without waiting for client lease renewals. Causes a brief (5–30 s) internet outage; DSL users typically get a fresh public IP.',
+    destructive: true,
+  },
+  reconnectFritzboxAction,
+);
+
+registerProbeAction(
+  PROBE_ID,
+  {
     id: 'verify_from_device',
     label: 'Verify from this device',
     description:
@@ -273,4 +312,7 @@ registerProbeAction(
   dismissProbe,
 );
 
-logger.debug('diagnose:probes', `Registered ${PROBE_ID} actions: configure_fritzbox, verify_from_device, dismiss`);
+logger.debug(
+  'diagnose:probes',
+  `Registered ${PROBE_ID} actions: configure_fritzbox, reconnect_fritzbox, verify_from_device, dismiss`,
+);
