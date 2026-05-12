@@ -27,17 +27,20 @@
 import Mustache from 'mustache';
 import type { VariableMeta } from '@/lib/registry';
 import { buildCredentialsManifest, formatCredentialsBanner, type Credential } from './credentialsManifest';
+import { getInternalApiToken } from '@/lib/auth/internalToken';
 
-/** Env-aware fetch wrapper. The post-install pipeline used to run only
- *  in the browser, so every call site used relative `/api/...` URLs. The
- *  server-side install runner now invokes the same code path on the
- *  Node side, where `fetch('/api/...')` would fail with "Invalid URL".
- *  Detecting the environment here keeps every existing call site working
- *  without sprinkling URL-builder logic through the file. */
+/** Loopback fetch helper. The post-install pipeline runs server-side
+ *  inside the install runner; this file is no longer pulled into the
+ *  client bundle (only its types are). proxy.ts middleware blocks plain
+ *  Node-fetch POSTs as cross-site (no Origin header), so we attach the
+ *  internal token to every call. */
 function apiFetch(p: string, init?: RequestInit): Promise<Response> {
-  if (typeof window !== 'undefined') return fetch(p, init);
   const port = process.env.PORT || '3000';
-  return fetch(`http://127.0.0.1:${port}${p}`, init);
+  const headers = new Headers(init?.headers);
+  if (!headers.has('x-sb-internal-token')) {
+    headers.set('x-sb-internal-token', getInternalApiToken());
+  }
+  return fetch(`http://127.0.0.1:${port}${p}`, { ...init, headers });
 }
 
 /** Variable shape shared between wizard and modal. */

@@ -33,7 +33,6 @@ import { parseTemplateLabel } from '@/lib/templateLabel';
 import { type Credential } from './credentialsManifest';
 import { generateRandomSecret } from './randomSecret';
 import { parseTemplateDependencies } from './dependencies';
-import { provisionPortalWithRetries } from './portalProvision';
 import { useSocket } from '@/hooks/useSocket';
 import type { JobState as RemoteJobState } from '@/lib/install/jobStore';
 
@@ -235,11 +234,9 @@ async function resolveConfigFilePaths(yaml: string, cfgFiles: ConfigFile[]): Pro
   }
 }
 
-// provisionPortalWithRetries moved to ./portalProvision so the server-side
-// install runner (runner.ts) can share the same implementation without
-// pulling in this 'use client'-tagged file. Re-exported above for any
-// external callers that still import it from here.
-export { provisionPortalWithRetries };
+// provisionPortalWithRetries lives in ./portalProvision (server-only).
+// Don't re-export it here — the chain client→useStackInstall→portalProvision
+// would pull AUTH_SECRET-touching code into the browser bundle.
 
 /** Map server-side `JobPhase` to the client-facing display phase the
  *  rest of the wizard already understands. `crashed` and `aborted` both

@@ -18,9 +18,10 @@ afterEach(() => {
   globalThis.setTimeout = originalSetTimeout;
 });
 
-// useStackInstall imports a lot of React/Next plumbing — we only want the
-// pure helper. Pull it in *after* fetch is stubbed.
-import { provisionPortalWithRetries } from './useStackInstall';
+// Pulled from the new home: the helper was extracted out of the React-
+// tagged useStackInstall hook so the server-side install runner could
+// share it. Imported after fetch is stubbed so the module sees the mock.
+import { provisionPortalWithRetries } from './portalProvision';
 
 function mockJsonResponse(ok: boolean, body: unknown, status = ok ? 200 : 400): Response {
   return {
