@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { getConfig, saveConfig, type AccessRequest } from '@/lib/config';
+import { getConfig, saveConfig, getAdminBaseUrl, type AccessRequest } from '@/lib/config';
 import { sendEmailAlert } from '@/lib/email';
 import { logger } from '@/lib/logger';
 
@@ -76,11 +76,15 @@ export async function POST(request: Request) {
 
   // Best-effort email notification — sendEmailAlert no-ops when
   // email isn't configured.
+  const adminBase = getAdminBaseUrl(config);
+  const deepLink = adminBase ? `${adminBase}/settings/integrations#access-requests` : null;
   void sendEmailAlert(
     'New access request',
     `${parsed.name} (${parsed.email}) has requested access to your home server.\n\n` +
     (parsed.message ? `Message: ${parsed.message}\n\n` : '') +
-    'Open Settings → Access Requests to create the LLDAP user.',
+    (deepLink
+      ? `Review and approve: ${deepLink}`
+      : 'Open Settings → Access Requests to create the LLDAP user.'),
   );
 
   return NextResponse.json({ ok: true, id: newRequest.id });

@@ -373,6 +373,25 @@ export function getOidcCallbackUrl(config: { reverseProxy?: { publicDomain?: str
   return 'http://localhost:3000/api/auth/oidc/callback';
 }
 
+/**
+ * Base URL of the ServiceBay admin UI for use in outbound communications
+ * (e.g. notification emails). Prefers the public domain when available so
+ * the link works from outside the LAN; otherwise falls back to the LAN
+ * domain. Returns null when nothing usable is configured — callers should
+ * omit the link rather than generating a broken localhost URL.
+ */
+export function getAdminBaseUrl(config: { reverseProxy?: { publicDomain?: string; lanDomain?: string } }): string | null {
+  const publicDomain = config.reverseProxy?.publicDomain;
+  if (publicDomain) {
+    return `https://admin.${publicDomain}`;
+  }
+  const lanDomain = config.reverseProxy?.lanDomain;
+  if (lanDomain) {
+    return `http://admin.${lanDomain}`;
+  }
+  return null;
+}
+
 const normalizeExternalLinkEntry = (link: ExternalLink): ExternalLink => {
   const normalizedTargets = normalizeExternalTargets(link.ipTargets ?? []);
   return {
