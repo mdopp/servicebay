@@ -28,6 +28,18 @@ import Mustache from 'mustache';
 import type { VariableMeta } from '@/lib/registry';
 import { buildCredentialsManifest, formatCredentialsBanner, type Credential } from './credentialsManifest';
 
+/** Env-aware fetch wrapper. The post-install pipeline used to run only
+ *  in the browser, so every call site used relative `/api/...` URLs. The
+ *  server-side install runner now invokes the same code path on the
+ *  Node side, where `fetch('/api/...')` would fail with "Invalid URL".
+ *  Detecting the environment here keeps every existing call site working
+ *  without sprinkling URL-builder logic through the file. */
+function apiFetch(p: string, init?: RequestInit): Promise<Response> {
+  if (typeof window !== 'undefined') return fetch(p, init);
+  const port = process.env.PORT || '3000';
+  return fetch(`http://127.0.0.1:${port}${p}`, init);
+}
+
 /** Variable shape shared between wizard and modal. */
 export interface StackVariable {
   name: string;
@@ -61,7 +73,7 @@ async function waitForNpm(
   while (Date.now() - start < maxWait) {
     try {
       const query = node ? `?node=${node}` : '';
-      const res = await fetch(`/api/system/nginx/status${query}`);
+      const res = await apiFetch(`/api/system/nginx/status${query}`);
       if (res.ok) {
         const data = await res.json();
         if (data.installed && data.active) return true;
@@ -173,7 +185,7 @@ export async function configureProxyRoutes(opts: ConfigureProxyOpts): Promise<Pr
   }
 
   try {
-    const res = await fetch('/api/system/nginx/proxy-hosts', {
+    const res = await apiFetch('/api/system/nginx/proxy-hosts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -250,7 +262,7 @@ async function bootstrapNpmAdmin(opts: {
   opts.onLog('Verifying NPM admin credentials (waiting up to 90s for the user table to seed)...');
 
   try {
-    const res = await fetch('/api/system/nginx/bootstrap', {
+    const res = await apiFetch('/api/system/nginx/bootstrap', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, fullName, node: opts.node }),
@@ -346,7 +358,7 @@ export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyRes
   // (#19 / A1). Best-effort: a failure here doesn't block the install.
   if (manifest.length > 0) {
     try {
-      const res = await fetch('/api/system/credentials', {
+      const res = await apiFetch('/api/system/credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ credentials: manifest }),

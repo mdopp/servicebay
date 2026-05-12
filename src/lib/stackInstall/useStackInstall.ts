@@ -1,51 +1,41 @@
 /**
  * Shared install engine used by both OnboardingWizard and InstallerModal.
  *
- * Owns the configure → installing → done state machine that used to live
- * in (almost) duplicate form in `OnboardingWizard.handleStackFetchVars /
- * handleStackInstall / handleNpmCredentialSubmit` and
- * `InstallerModal.fetchYamlsAndExtractVars / handleInstall /
- * registerOidcClients`. Both call sites kept drifting — auto-fill rules,
- * Mustache section-tag handling, post-deploy.py support, OIDC client
- * registration — and bugs landed in one path but not the other. Funnelling
- * everything through this hook means there's one place to fix the next
- * one, and both UIs benefit at once.
+ * Owns the configure → installing → done state machine. The configure
+ * step (`startConfigure`) still runs entirely client-side because it's
+ * an interactive review of resolved variables. The deploy loop itself
+ * runs server-side via `src/lib/install/runner.ts`; this hook is the
+ * thin RPC + socket-subscription client that:
  *
- * Streaming-only by design — both consumers now use
- * `POST /api/services?stream=1`. The InstallerModal previously did
- * sequential non-streaming POSTs; that path is gone (see #341 phase-2
- * decisions section).
+ *   - POSTs to `/api/install/start` when the operator confirms
+ *   - subscribes to `install:update` / `install:log` socket events
+ *   - exposes `attachToJob(jobId)` so a reopened tab can pick up an
+ *     in-flight job mid-install (the runner kept working server-side
+ *     while the operator was away)
+ *   - forwards `retryNpmCredentials` / `skipNpmCredentials` /
+ *     `abortInstall` to their `/api/install/*` endpoints
  *
- * State surface is intentionally callback-light: phase transitions are
- * driven by the hook calling its own state setters; consumers read
- * `phase` and react to the values exposed in the returned object. The
- * one optional callback (`onBeforeDone`) exists so the wizard can run
- * its digital-twin settle-wait between "deploys finished" and the UI
- * showing the Done banner.
+ * Closing the browser no longer interrupts an install — the runner
+ * owns the deploy loop end-to-end.
  */
 
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
-import Mustache from 'mustache';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VariableMeta } from '@/lib/registry';
 import {
   fetchTemplateYaml,
   fetchTemplateVariables,
   fetchTemplateConfigFiles,
-  fetchTemplatePostDeployScript,
-  fetchTemplateMigrationScripts,
+  fetchStoredVariableValues,
 } from '@/app/actions';
 import { parseTemplateLabel } from '@/lib/templateLabel';
-import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
-import {
-  runPostInstall,
-  configureProxyRoutes,
-} from './postInstall';
-import { buildCredentialsManifest, type Credential } from './credentialsManifest';
+import { type Credential } from './credentialsManifest';
 import { generateRandomSecret } from './randomSecret';
-import { selectMigrationChain } from './migrations';
-import { parseTemplateDependencies, topoSortByDependencies } from './dependencies';
+import { parseTemplateDependencies } from './dependencies';
+import { provisionPortalWithRetries } from './portalProvision';
+import { useSocket } from '@/hooks/useSocket';
+import type { JobState as RemoteJobState } from '@/lib/install/jobStore';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
 
@@ -85,14 +75,9 @@ export interface UseStackInstallOptions {
    *  `fetchTemplateConfigFiles` / `fetchTemplatePostDeployScript`.
    *  Usually `'Built-in'` (wizard) or the registry source URL (modal). */
   templateSource: string;
-  /**
-   * Optional async step run after deploys + runPostInstall + OIDC client
-   * registration succeed, but BEFORE the phase transitions to 'done'.
-   * The wizard uses it for the digital-twin settle-wait that polls until
-   * each deployed service reports active. Returning lets the hook move on;
-   * throwing is swallowed (settling is informational, not a gate).
-   */
-  onBeforeDone?: (deployed: { name: string }[], appendLog: (msg: string) => void) => Promise<void>;
+  /** Free-form tag that lands on the JobState so the install-in-progress
+   *  banner can show "wizard" vs "modal" to the operator. */
+  source?: string;
 }
 
 export interface UseStackInstallReturn {
@@ -129,38 +114,55 @@ export interface UseStackInstallReturn {
   /** Fetch yamls + variable metadata + configFiles for every checked
    *  item, resolve placeholders, transition to 'configure'. `prefilled`
    *  is merged into globalSettings — wizard uses it for PUBLIC_DOMAIN /
-   *  NGINX_ADMIN_EMAIL captured before this step; modal passes `{}`. */
+   *  NGINX_ADMIN_EMAIL captured before this step; modal passes `{}`.
+   *  When `cleanInstall` is false, stored credential values (LLDAP
+   *  password, NPM password, etc.) are used instead of generating new
+   *  random secrets so that services with pre-existing data volumes
+   *  continue to accept the password they were initialised with. */
   startConfigure: (
     items: StackItemInput[],
     prefilled: Record<string, string>,
-    options?: { node?: string },
+    options?: { node?: string; cleanInstall?: boolean },
   ) => Promise<{ items: StackItem[]; variables: StackVariable[] }>;
 
-  /** Deploy all selected services and run the post-install pipeline.
-   *  Transitions configure → installing → done (or pauses on npm
-   *  credential prompt). */
+  /** POST the resolved items/variables to /api/install/start. The
+   *  server owns the deploy loop from here on — this hook just
+   *  subscribes to socket events for live progress. The browser tab
+   *  can be closed without interrupting the install. */
   runInstall: (overrides?: { items?: StackItem[]; variables?: StackVariable[]; node?: string }) => Promise<void>;
 
-  /** Retry proxy-route creation with user-provided NPM credentials.
-   *  Hook stores them on /api/system/nginx/credentials on success. */
+  /** Submit operator-supplied NPM credentials to resume a paused job.
+   *  Backed by POST /api/install/credentials. */
   retryNpmCredentials: (email: string, password: string) => Promise<void>;
 
-  /** Dismiss the prompt without retrying — phase moves to 'done'. */
+  /** Resume a paused job by skipping the NPM credentials prompt. */
   skipNpmCredentials: () => void;
 
-  /** Append a single line to the install log. Used by consumers to
-   *  prefix the log with pre-flow actions (RAID mount, dependency
-   *  warning) before runInstall takes over. */
+  /** Append a single line to the local log buffer. Pre-install only —
+   *  once a job has started, all log lines come from the server.
+   *  Callers use this to prefix the log with one-shot actions like a
+   *  RAID-mount notice before `runInstall` takes over. */
   appendLog: (line: string) => void;
 
-  /** Reset all install state. Use when consumer cancels mid-flow. */
+  /** Reset local state and detach from any current job. Does NOT abort
+   *  a running job server-side — call `abortInstall` first if needed. */
   reset: () => void;
 
-  /** Abort the running install. Cancels any in-flight `/api/services`
-   *  fetch and sets a flag the deploy loop checks between iterations,
-   *  so the next item never starts. Transitions phase to `error` with
-   *  a clear message. No-op when called outside `installing`. */
+  /** Abort the running install via POST /api/install/abort. The runner
+   *  flips the job to phase=aborted; the subscription effect picks
+   *  that up and reflects it in local state. */
   abortInstall: () => void;
+
+  /** Attach to an already-running install job. Used by the wizard when
+   *  it detects an in-progress job on mount (e.g. operator reopened the
+   *  tab mid-install). Fetches the current state + log and subscribes
+   *  to socket updates. */
+  attachToJob: (jobId: string) => Promise<void>;
+
+  /** Current job ID, or null when no install is being tracked.
+   *  Exposed so the wizard can render the "another tab is running this
+   *  install" banner with the right job context. */
+  jobId: string | null;
 }
 
 /** Strip Mustache section tags (`{{#NAME}}` / `{{/NAME}}` / `{{^NAME}}`)
@@ -233,64 +235,30 @@ async function resolveConfigFilePaths(yaml: string, cfgFiles: ConfigFile[]): Pro
   }
 }
 
-const MAX_DEPLOY_ATTEMPTS = 3;
-const DEPLOY_BACKOFF_MS = [0, 1000, 4000];
+// provisionPortalWithRetries moved to ./portalProvision so the server-side
+// install runner (runner.ts) can share the same implementation without
+// pulling in this 'use client'-tagged file. Re-exported above for any
+// external callers that still import it from here.
+export { provisionPortalWithRetries };
 
-const PORTAL_PROVISION_ATTEMPTS = 4;
-/** Backoff between portal-provision attempts (ms). Total wall-clock cost if
- *  every attempt fails: ~18s. Hits the cold-start window for AdGuard's
- *  `/control/rewrite/*` endpoints, which can lag `/control/status` by a few
- *  seconds on first boot. */
-const PORTAL_PROVISION_BACKOFF_MS = [0, 3000, 6000, 9000];
-
-/**
- * Drive `/api/system/portal/provision` with retries, narrating progress to the
- * wizard log. The endpoint already calls `provisionPortalRouting()` which is
- * idempotent — we just give it more chances than the implicit fire-and-forget
- * triggers (AdGuard's post-deploy hook + the 60s-post-boot timer in server.ts).
- *
- * Why this exists: on a fresh install, AdGuard's post-deploy POSTs credentials
- * the moment the container reports healthy, which then fires
- * `provisionPortalRouting()` in the background. That one shot can land while
- * AdGuard's REST API is still finishing its own bootstrap — the call returns
- * non-2xx, the provisioner records "failed", and nothing retries until the
- * operator notices missing rewrites and clicks Reprovision in diagnose. By
- * the time the install loop reaches this helper, every other service is
- * deployed and AdGuard has had time to warm up; a short retry loop here turns
- * the lossy fire-and-forget into a guaranteed-present rewrite list.
- *
- * Returns true if the endpoint reported `ok` on any attempt; false if every
- * attempt failed (the caller logs a fallback suggestion in that case).
- */
-export async function provisionPortalWithRetries(onLog: (msg: string) => void): Promise<boolean> {
-  for (let attempt = 1; attempt <= PORTAL_PROVISION_ATTEMPTS; attempt++) {
-    if (attempt > 1) {
-      await new Promise(r => setTimeout(r, PORTAL_PROVISION_BACKOFF_MS[attempt - 1]));
-    }
-    try {
-      const res = await fetch('/api/system/portal/provision', { method: 'POST' });
-      const data = (await res.json().catch(() => null)) as
-        | { ok?: boolean; detail?: string }
-        | null;
-      if (data?.ok) {
-        onLog(`✅ Portal routing: ${data.detail ?? 'provisioned'}`);
-        return true;
-      }
-      const reason = data?.detail ?? `HTTP ${res.status}`;
-      const tag = attempt < PORTAL_PROVISION_ATTEMPTS ? '⏳' : '⚠️';
-      onLog(`${tag} Portal routing attempt ${attempt}/${PORTAL_PROVISION_ATTEMPTS}: ${reason}`);
-    } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
-      const tag = attempt < PORTAL_PROVISION_ATTEMPTS ? '⏳' : '⚠️';
-      onLog(`${tag} Portal routing attempt ${attempt}/${PORTAL_PROVISION_ATTEMPTS}: ${reason}`);
-    }
+/** Map server-side `JobPhase` to the client-facing display phase the
+ *  rest of the wizard already understands. `crashed` and `aborted` both
+ *  surface as `error` so the existing Start-over UI works without
+ *  branching on every distinct terminal state. */
+function mapPhase(serverPhase: RemoteJobState['phase']): StackInstallPhase {
+  switch (serverPhase) {
+    case 'running':           return 'installing';
+    case 'needs_credentials': return 'installing';
+    case 'done':              return 'done';
+    case 'error':             return 'error';
+    case 'aborted':           return 'error';
+    case 'crashed':           return 'error';
   }
-  onLog('⚠️ Portal routing did not fully provision after retries. Open Settings → Self-Diagnose → Reprovision if rewrites are missing.');
-  return false;
 }
 
 export function useStackInstall(options: UseStackInstallOptions): UseStackInstallReturn {
-  const { templateSource, onBeforeDone } = options;
+  const { templateSource, source } = options;
+  const { socket } = useSocket();
 
   const [phase, setPhase] = useState<StackInstallPhase>('idle');
   const [items, setItems] = useState<StackItem[]>([]);
@@ -303,24 +271,42 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const [error, setError] = useState<string | null>(null);
   const [cleanInstall, setCleanInstall] = useState(false);
   const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
+  const [jobId, setJobId] = useState<string | null>(null);
 
-  /** Latest node value. The deploy loop and post-install pipeline read
-   *  this via the ref so async work doesn't get pinned to a stale closure
-   *  value if the consumer changes nodes mid-resolve. */
+  /** Latest node value. Cached in a ref so async runInstall sees fresh
+   *  value if the consumer changes nodes between configure and install. */
   const nodeRef = useRef<string>('');
 
-  /** Set by `abortInstall()`. Checked at top of every deploy-loop
-   *  iteration and before each retry attempt so the loop bails out as
-   *  soon as possible without leaving half-applied work mid-template. */
-  const abortRequestedRef = useRef(false);
-  /** AbortController for the in-flight `/api/services?stream=1` fetch.
-   *  Cleared at the end of each attemptDeploy. Lets abortInstall()
-   *  interrupt a long-running deploy (image pull, slow post-deploy)
-   *  instead of waiting for the next iteration check. */
-  const activeRequestRef = useRef<AbortController | null>(null);
+  /** Byte offset into the server-side log file. Bumped when /api/install/status
+   *  returns log content; lets a subsequent fetch (e.g. on socket reconnect)
+   *  pull only the new tail instead of replaying the entire log. */
+  const logsOffsetRef = useRef<number>(0);
+
+  /** Tracks the currently subscribed jobId in a ref so socket handlers
+   *  can filter incoming events without re-binding on every state change. */
+  const jobIdRef = useRef<string | null>(null);
 
   const appendLog = useCallback((line: string) => {
     setLogs(prev => [...prev, line]);
+  }, []);
+
+  /** Apply a server JobState snapshot to local React state. The server
+   *  is the source of truth for everything except `items`/`variables`
+   *  (which the client owns from startConfigure) and the few client-only
+   *  state values that don't appear on the job. */
+  const applyJobState = useCallback((state: RemoteJobState) => {
+    setPhase(mapPhase(state.phase));
+    setInstallingNow(state.progress?.currentItem ?? null);
+    if (state.credentialsManifest) setCredentialsManifest(state.credentialsManifest);
+    setError(state.phase === 'aborted' || state.phase === 'crashed' || state.phase === 'error'
+      ? state.error ?? 'Install failed.'
+      : null);
+    if (state.phase === 'needs_credentials' && state.needsCredentials) {
+      setNpmCredFallback(state.needsCredentials.fallback);
+      setNpmCredPrompt(true);
+    } else {
+      setNpmCredPrompt(false);
+    }
   }, []);
 
   const reset = useCallback(() => {
@@ -335,26 +321,70 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     setError(null);
     setCleanInstall(false);
     setCleanInstallConfirm('');
+    setJobId(null);
+    jobIdRef.current = null;
+    logsOffsetRef.current = 0;
     nodeRef.current = '';
-    // Cancel any in-flight deploy fetch and clear the abort flag so a
-    // subsequent runInstall doesn't trip over leftover state.
-    activeRequestRef.current?.abort();
-    activeRequestRef.current = null;
-    abortRequestedRef.current = false;
   }, []);
 
+  // Subscribe to live install:update / install:log events for the
+  // currently-tracked job. The hook+socket pair survives tab refresh —
+  // attachToJob fetches initial state from /api/install/status, then this
+  // effect keeps it live. Socket events for a different jobId are ignored
+  // (cheap; we just early-return).
+  useEffect(() => {
+    if (!jobId) return;
+    jobIdRef.current = jobId;
+    const onUpdate = (state: RemoteJobState) => {
+      if (state.id !== jobIdRef.current) return;
+      applyJobState(state);
+    };
+    const onLog = (evt: { jobId: string; line: string }) => {
+      if (evt.jobId !== jobIdRef.current) return;
+      setLogs(prev => [...prev, evt.line]);
+    };
+    socket.on('install:update', onUpdate);
+    socket.on('install:log', onLog);
+    return () => {
+      socket.off('install:update', onUpdate);
+      socket.off('install:log', onLog);
+    };
+  }, [jobId, socket, applyJobState]);
+
   const abortInstall = useCallback(() => {
-    if (abortRequestedRef.current) return;
-    abortRequestedRef.current = true;
-    // Tear down the in-flight fetch immediately so a long image pull
-    // doesn't block the abort. The deploy loop's exception handler
-    // sees the AbortError and stops; the retry loop sees the flag.
-    activeRequestRef.current?.abort();
-    setLogs(prev => [...prev, '⛔ Install aborted by user.']);
-    setError('Installation aborted by user. Click "Start over" to begin again.');
-    setPhase('error');
-    setInstallingNow(null);
+    const id = jobIdRef.current;
+    if (!id) return;
+    void fetch('/api/install/abort', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: id }),
+    }).catch(() => undefined);
   }, []);
+
+  /** Attach to an already-running job. The wizard calls this on mount
+   *  when checkOnboardingStatus reports an active install. Fetches the
+   *  full state + accumulated log so the new tab catches up immediately;
+   *  the subscription effect then keeps it live. */
+  const attachToJob = useCallback(async (id: string): Promise<void> => {
+    try {
+      const res = await fetch(`/api/install/status?jobId=${encodeURIComponent(id)}`);
+      if (!res.ok) return;
+      const data = await res.json() as {
+        job: RemoteJobState | null;
+        logs: string;
+        logsOffset: number;
+      };
+      if (!data.job) return;
+      // Reset log buffer to whatever the server has so far. After this,
+      // socket events accumulate normally; the subscription is gated on
+      // jobIdRef.current matching the incoming event's jobId.
+      const initialLogs = data.logs ? data.logs.split('\n').filter(l => l.length > 0) : [];
+      setLogs(initialLogs);
+      logsOffsetRef.current = data.logsOffset;
+      applyJobState(data.job);
+      setJobId(id);
+    } catch { /* best-effort attach */ }
+  }, [applyJobState]);
 
   // No-op writes return the same array reference so subscribers (e.g. the
   // wizard's device-poll effect) don't see a spurious change. Pre-refactor
@@ -398,7 +428,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const startConfigure = useCallback(async (
     inputItems: StackItemInput[],
     prefilled: Record<string, string>,
-    opts?: { node?: string },
+    opts?: { node?: string; cleanInstall?: boolean },
   ): Promise<{ items: StackItem[]; variables: StackVariable[] }> => {
     setPhase('configure');
     setError(null);
@@ -424,6 +454,14 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         globalSettings = settings.templateSettings || {};
       }
     } catch { /* empty defaults are fine */ }
+
+    // On a non-clean reinstall, prefer stored passwords over freshly
+    // generated ones. Services like LLDAP only read their admin password
+    // on first DB init — a new random value would mismatch the data volume.
+    let storedValues: Record<string, string> = {};
+    if (!opts?.cleanInstall) {
+      try { storedValues = await fetchStoredVariableValues(); } catch { /* best-effort */ }
+    }
 
     for (const item of selected) {
       try {
@@ -483,7 +521,11 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       }
       if (name === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
       if (!value && meta?.default) value = meta.default;
-      if (!value && meta?.type === 'secret') value = generateRandomSecret();
+      if (!value && meta?.type === 'secret') {
+        // On a reinstall without RESET, use the stored value if available so
+        // services with existing data volumes keep the password they know.
+        value = storedValues[name] ?? generateRandomSecret();
+      }
       return { name, value, global: isGlobal, meta };
     });
 
@@ -538,490 +580,111 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     return { items: newItems, variables: resolvedVars };
   }, [templateSource]);
 
-  /**
-   * Register OIDC clients with Authelia for any subdomain variables whose
-   * meta.oidcClient is set. Cross-template concern (one POST collects
-   * every checked template's clients in a single call) — that's why it
-   * stays here instead of inside the auth template's post-deploy.py.
-   */
-  const registerOidcClients = useCallback(async (
-    checkedItems: StackItem[],
-    vars: StackVariable[],
-  ): Promise<void> => {
-    if (!vars.find(v => v.name === 'PUBLIC_DOMAIN')?.value) return;
-    const hasOidcClients = vars.some(v => v.meta?.oidcClient && v.meta?.type === 'subdomain' && v.value);
-    if (!hasOidcClients) return;
-
-    appendLog('Registering OIDC clients with Authelia...');
-    const variableValues = vars.reduce<Record<string, string>>((acc, v) => {
-      acc[v.name] = v.value;
-      return acc;
-    }, {});
-    try {
-      const res = await fetch('/api/system/authelia/oidc-clients', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          templates: checkedItems.map(i => ({ name: i.name, source: templateSource })),
-          variables: variableValues,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        if (data.added?.length) appendLog(`✅ OIDC clients registered: ${data.added.join(', ')}`);
-        if (data.skipped?.length) appendLog(`ℹ️ Already registered: ${data.skipped.join(', ')}`);
-      } else if (res.status === 404) {
-        appendLog('⚠️ Authelia not deployed — OIDC clients not registered. Deploy Authelia first, then redeploy this service.');
-      } else {
-        appendLog(`⚠️ Could not register OIDC clients: ${data.error || 'unknown error'}`);
-      }
-    } catch {
-      appendLog('⚠️ Could not reach Authelia. Register OIDC clients manually.');
-    }
-  }, [templateSource, appendLog]);
-
+  /** Build the JobInput payload from the wizards resolved state and POST
+   *  it to /api/install/start. The server takes ownership of the deploy
+   *  loop from there; the subscription effect above keeps local state in
+   *  sync via socket events. */
   const runInstall = useCallback(async (overrides?: {
     items?: StackItem[];
     variables?: StackVariable[];
     node?: string;
   }): Promise<void> => {
-    setPhase('installing');
-    setError(null);
-    setNpmCredPrompt(false);
-    setLogs([]);
-
     if (overrides?.node !== undefined) nodeRef.current = overrides.node;
     const itemsBase = overrides?.items ?? items;
     const varsBase = overrides?.variables ?? variables;
     const node = nodeRef.current;
 
-    if (cleanInstall && cleanInstallConfirm === 'RESET') {
-      appendLog('🧹 Clean install — wiping existing service data...');
-      try {
-        const res = await fetch('/api/system/stacks/reset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: 'RESET', node: node || undefined }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-          const removed = data.deleted?.length ?? 0;
-          appendLog(`✅ Reset done — removed ${removed} service${removed === 1 ? '' : 's'}, wiped ${data.dataDir}.`);
-          if (data.failed?.length) {
-            appendLog(`⚠️ Some services could not be cleanly removed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`);
-          }
-        } else {
-          appendLog(`⚠️ Reset failed: ${data.error || 'unknown error'}. Continuing with install — existing data may remain.`);
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'unknown error';
-        appendLog(`⚠️ Reset call failed: ${msg}. Continuing with install.`);
-      }
-    }
+    setError(null);
+    setLogs([]);
+    setNpmCredPrompt(false);
+    setCredentialsManifest([]);
+    setPhase("installing");
 
-    const checked = itemsBase.filter(i => i.checked);
-    if (checked.length === 0) {
-      appendLog('⚠️ No services selected to install — aborting.');
-      setPhase('done');
-      setCredentialsManifest([]);
-      return;
-    }
+    const host = typeof window !== "undefined" ? window.location.hostname : "";
+    const payload = {
+      source: source ?? "wizard",
+      input: {
+        items: itemsBase.map(i => ({
+          name: i.name,
+          checked: i.checked,
+          alreadyInstalled: i.alreadyInstalled,
+          yaml: i.yaml,
+          configFiles: i.configFiles,
+          dependencies: i.dependencies,
+        })),
+        variables: varsBase.map(v => ({
+          name: v.name,
+          value: v.value,
+          global: v.global,
+          meta: v.meta,
+        })),
+        node: node || undefined,
+        cleanInstall,
+        cleanInstallConfirm,
+        templateSource,
+        host,
+      },
+    };
 
-    // Topo-sort by install-time deps so e.g. `auth` lands before
-    // `vaultwarden`. `alreadyInstalled` items are treated as satisfied
-    // satisfiers — the operator may add a single template on top of an
-    // existing stack, and that template's `auth` dep is fine if auth
-    // was installed in a previous run. On `missing` (a checked
-    // template depends on something the operator didn't tick) we
-    // surface the gap and stop before any deploy starts — the user
-    // can go back to the catalog and fix it instead of watching a
-    // half-broken stack come up.
-    const sortResult = topoSortByDependencies(
-      checked.map(i => ({
-        name: i.name,
-        checked: i.checked,
-        alreadyInstalled: i.alreadyInstalled,
-        yaml: i.yaml,
-        configFiles: i.configFiles,
-        dependencies: i.dependencies ?? [],
-      })),
-      { alreadyInstalled: new Set(itemsBase.filter(i => i.alreadyInstalled).map(i => i.name)) },
-    );
-    if (!sortResult.ok) {
-      const msg = sortResult.reason === 'missing'
-        ? `Cannot install ${sortResult.item}: it depends on ${sortResult.missing.join(', ')}, which ${sortResult.missing.length === 1 ? 'is' : 'are'} not selected. Go back and check ${sortResult.missing.length === 1 ? 'that template' : 'those templates'}, or unselect ${sortResult.item}.`
-        : `Templates form a dependency cycle (${sortResult.involved.join(' ↔ ')}). This is a template-authoring bug — please report it.`;
-      appendLog(`❌ ${msg}`);
-      setError(msg);
-      setPhase('error');
-      return;
-    }
-    const selected = sortResult.ordered;
-    const sortedNames = selected.map(s => s.name).join(' → ');
-    const checkedNames = checked.map(c => c.name).join(' → ');
-    if (sortedNames !== checkedNames) {
-      appendLog(`Install order (by dependencies): ${sortedNames}`);
-    }
-
-    const deployed: { name: string; checked: boolean }[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const scriptCredentials: any[] = [];
-
-    // Reset abort state for this run. A leftover flag from a previous
-    // run that ended in 'error' would otherwise short-circuit the very
-    // first iteration.
-    abortRequestedRef.current = false;
-    activeRequestRef.current = null;
-
-    for (const item of selected) {
-      if (abortRequestedRef.current) return;
-      if (item.alreadyInstalled) {
-        appendLog(`✅ ${item.name} already installed, skipping.`);
-        deployed.push({ name: item.name, checked: true });
-        continue;
-      }
-      if (!item.yaml) continue;
-      appendLog(`Installing ${item.name}...`);
-      setInstallingNow(item.name);
-
-      const view = varsBase.reduce<Record<string, string>>((acc, v) => {
-        acc[v.name] = v.value;
-        return acc;
-      }, {});
-      // Disable HTML escaping — Mustache renders YAML and config files,
-      // not HTML.
-      const savedEscape = Mustache.escape;
-      Mustache.escape = (text: string) => text;
-      const yamlContent = Mustache.render(item.yaml, view);
-      const kubeContent = `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
-
-      // Sanity-check that every {{VAR}} referenced in a config file has a
-      // value. Without this, Mustache renders missing vars as empty strings
-      // — silent data loss that produces crash-looping pods with no
-      // breadcrumb back to the configure step.
-      const refRe = /\{\{\s*[#^/{]?\s*([A-Z_][A-Z0-9_]*)\s*\}{1,3}/g;
-      for (const cf of (item.configFiles || [])) {
-        if (!cf.targetPath) continue;
-        const refs = new Set<string>();
-        for (const m of cf.content.matchAll(refRe)) refs.add(m[1]);
-        const missing = [...refs].filter(r => !(r in view) || view[r] === '');
-        if (missing.length > 0) {
-          Mustache.escape = savedEscape;
-          const msg = `Cannot deploy ${item.name}: ${cf.filename} references variable(s) with no value: ${missing.join(', ')}. ` +
-            `Go back to the Configure step and fill them in (or check the template's variables.json defaults).`;
-          appendLog(`❌ ${msg}`);
-          setError(msg);
-          setPhase('error');
-          setInstallingNow(null);
+    try {
+      const res = await fetch("/api/install/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // 409 = another install is already in progress. Attach to it
+        // instead of failing — the operator probably just clicked
+        // Install in two tabs.
+        if (res.status === 409 && typeof data.jobId === "string") {
+          await attachToJob(data.jobId);
           return;
         }
+        const msg = data.error || `HTTP ${res.status}`;
+        setError(msg);
+        setPhase("error");
+        return;
       }
-      const extraFiles = (item.configFiles || [])
-        .filter(cf => cf.targetPath)
-        .map(cf => ({
-          path: Mustache.render(cf.targetPath!, view),
-          content: Mustache.render(cf.content, view),
-        }));
-
-      // Optional per-template post-deploy.py — server runs it after the
-      // unit starts; output streams back via `progress` events. Parsed
-      // below for `__SB_CREDENTIAL__ {json}` markers.
-      let postDeployScript: string | undefined;
-      try {
-        const raw = await fetchTemplatePostDeployScript(item.name, templateSource);
-        if (raw) postDeployScript = Mustache.render(raw, view);
-      } catch { /* template ships no script — fine */ }
-
-      // Migration chain (#352 phase 3): templates/<name>/migrations/v{N}-to-v{M}.py
-      // run before the new yaml lands when the operator's installed
-      // schemaVersion < the template's current. Detection happens
-      // server-side via /api/system/templates/<name>/upgrade-preview;
-      // chain selection runs here against that endpoint's response.
-      // Render each step with Mustache using the same `view` as the
-      // yaml so OLD/NEW DATA_DIR and any other wizard variables are
-      // already resolved by the time the agent runs python3.
-      let migrations: { filename: string; fromVersion: number; toVersion: number; content: string }[] | undefined;
-      try {
-        const targetVersion = parseTemplateSchemaVersion(item.yaml);
-        const previewUrl = `/api/system/templates/${encodeURIComponent(item.name)}/upgrade-preview`
-          + (templateSource && templateSource !== 'Built-in' ? `?source=${encodeURIComponent(templateSource)}` : '');
-        const previewRes = await fetch(previewUrl);
-        if (previewRes.ok) {
-          const preview = await previewRes.json();
-          const installedVersion = typeof preview.installedVersion === 'number' ? preview.installedVersion : null;
-          if (installedVersion !== null && installedVersion < targetVersion) {
-            const scripts = await fetchTemplateMigrationScripts(item.name, templateSource);
-            const result = selectMigrationChain(installedVersion, targetVersion, scripts);
-            if (!result.ok) {
-              Mustache.escape = savedEscape;
-              const msg = result.reason === 'missing-step'
-                ? `Migration chain for ${item.name} is incomplete: no script for v${result.from}→v${result.expectedNext} (have ${result.available.length === 0 ? 'none' : result.available.map(v => `v${v}`).join(', ')}). Aborting deploy.`
-                : `Migration chain for ${item.name} has overlapping/invalid steps (${result.conflicts.map(c => `v${c.fromVersion}→v${c.toVersion}`).join(', ')}). Aborting deploy.`;
-              appendLog(`❌ ${msg}`);
-              setError(msg);
-              setPhase('error');
-              setInstallingNow(null);
-              return;
-            }
-            if (result.chain.length > 0) {
-              migrations = result.chain.map(s => ({
-                filename: s.filename,
-                fromVersion: s.fromVersion,
-                toVersion: s.toVersion,
-                content: Mustache.render(s.content, view),
-              }));
-            }
-          }
-        }
-      } catch (e) {
-        // Migration discovery is best-effort — a fetch failure on the
-        // preview endpoint shouldn't block the deploy. If migrations
-        // are actually needed and we skipped them, the new container
-        // will fail to start and the diagnose probe will surface it.
-        appendLog(`⚠️ ${item.name}: could not check migration chain (${e instanceof Error ? e.message : String(e)}). Continuing without migrations.`);
-      }
-      Mustache.escape = savedEscape;
-
-      const postDeployEnv: Record<string, string> = {};
-      for (const v of varsBase) {
-        if (typeof v.value === 'string') postDeployEnv[v.name] = v.value;
-      }
-      if (typeof window !== 'undefined') {
-        postDeployEnv.HOST = window.location.hostname || 'localhost';
-      }
-
-      const attemptDeploy = async (): Promise<void> => {
-        const query = node ? `?node=${node}&stream=1` : '?stream=1';
-        let res: Response;
-        // Wire an AbortController so abortInstall() can tear down the
-        // in-flight stream. Stored in a ref the abort handler reads;
-        // cleared in `finally` so a slow post-install pipeline call
-        // doesn't get cancelled by a later abort intended for a future
-        // deploy.
-        const controller = new AbortController();
-        activeRequestRef.current = controller;
-        try {
-          res = await fetch(`/api/services${query}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: item.name,
-              kubeContent,
-              yamlContent,
-              yamlFileName: `${item.name}.yml`,
-              extraFiles,
-              postDeployScript,
-              postDeployEnv: postDeployScript || (migrations && migrations.length > 0) ? postDeployEnv : undefined,
-              migrations,
-            }),
-            signal: controller.signal,
-          });
-        } catch (networkErr) {
-          if (networkErr instanceof DOMException && networkErr.name === 'AbortError') {
-            const aborted = new Error('aborted by user');
-            (aborted as Error & { fatal?: boolean }).fatal = true;
-            throw aborted;
-          }
-          throw new Error(`network: ${networkErr instanceof Error ? networkErr.message : String(networkErr)}`);
-        }
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          const msg = errBody.error || `HTTP ${res.status}`;
-          if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
-            const fatal = new Error(msg);
-            (fatal as Error & { fatal?: boolean }).fatal = true;
-            throw fatal;
-          }
-          throw new Error(msg);
-        }
-        const reader = res.body?.getReader();
-        if (!reader) return;
-        const decoder = new TextDecoder();
-        let buf = '';
-        let lastProgressLine = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split('\n');
-          buf = lines.pop() || '';
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const evt = JSON.parse(line);
-              if (evt.type === 'progress') {
-                if (typeof evt.message === 'string' && evt.message.startsWith('__SB_CREDENTIAL__ ')) {
-                  try {
-                    scriptCredentials.push(JSON.parse(evt.message.slice('__SB_CREDENTIAL__ '.length)));
-                  } catch { /* malformed marker — drop it */ }
-                  continue;
-                }
-                // In-place collapse for image-pull progress only (which
-                // ticks once a second per layer). Everything else —
-                // including post-deploy.py stdout — appends a new line.
-                const isPullProgress = /Pulling image \d+\/\d+|MB\s*\/\s*[\d.]+\s*MB/.test(evt.message ?? '');
-                if (isPullProgress && lastProgressLine && /Pulling image \d+\/\d+|MB\s*\/\s*[\d.]+\s*MB/.test(lastProgressLine)) {
-                  setLogs(prev => {
-                    const next = [...prev];
-                    next[next.length - 1] = evt.message;
-                    return next;
-                  });
-                } else {
-                  appendLog(evt.message);
-                }
-                lastProgressLine = evt.message;
-              } else if (evt.type === 'error') {
-                throw new Error(evt.message);
-              }
-            } catch (parseErr) {
-              if (parseErr instanceof Error && parseErr.message !== line.trim()) throw parseErr;
-            }
-          }
-        }
-        // Reached only on a clean stream end — clear the abort handle
-        // so a subsequent abort doesn't tear down work for the next
-        // template.
-        activeRequestRef.current = null;
-      };
-
-      let lastDeployErr: Error | null = null;
-      let deployedOk = false;
-      for (let attempt = 1; attempt <= MAX_DEPLOY_ATTEMPTS; attempt++) {
-        if (abortRequestedRef.current) break;
-        if (DEPLOY_BACKOFF_MS[attempt - 1] > 0) {
-          await new Promise(r => setTimeout(r, DEPLOY_BACKOFF_MS[attempt - 1]));
-        }
-        try {
-          await attemptDeploy();
-          appendLog(attempt > 1
-            ? `✅ ${item.name} deployed on attempt ${attempt}/${MAX_DEPLOY_ATTEMPTS}.`
-            : `✅ ${item.name} deployed (containers may still be starting in background).`);
-          deployedOk = true;
-          break;
-        } catch (e) {
-          // Make sure we don't leak a stale abort handle from a failed
-          // attempt — finally semantics, but kept inline because
-          // attemptDeploy isn't wrapped in try/finally itself (the
-          // throw paths above all happen before the in-flight fetch
-          // hands over its reader anyway).
-          activeRequestRef.current = null;
-          lastDeployErr = e instanceof Error ? e : new Error(String(e));
-          if ((lastDeployErr as Error & { fatal?: boolean }).fatal) break;
-          if (attempt < MAX_DEPLOY_ATTEMPTS) {
-            appendLog(`⏳ ${item.name} attempt ${attempt}/${MAX_DEPLOY_ATTEMPTS} failed (${lastDeployErr.message}); retrying in ${DEPLOY_BACKOFF_MS[attempt] / 1000}s…`);
-          }
-        }
-      }
-      if (deployedOk) {
-        deployed.push({ name: item.name, checked: true });
-      } else {
-        const msg = lastDeployErr?.message ?? 'unknown error';
-        const fatal = lastDeployErr && (lastDeployErr as Error & { fatal?: boolean }).fatal;
-        const tail = fatal ? msg : `after ${MAX_DEPLOY_ATTEMPTS} attempt(s): ${msg}`;
-        appendLog(`❌ Failed to install ${item.name} ${tail}`);
-      }
-      setInstallingNow(null);
-      // Bail out before starting the next template if the operator
-      // hit Abort during this one. abortInstall() already moved phase
-      // to 'error' and logged the abort line; the post-install
-      // pipeline below would be a wasted run on partial state.
-      if (abortRequestedRef.current) return;
+      const newJobId = data.jobId as string;
+      logsOffsetRef.current = 0;
+      setJobId(newJobId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Could not start install: ${msg}`);
+      setPhase("error");
     }
-
-    const proxyResult = await runPostInstall({
-      selected: deployed,
-      variables: varsBase,
-      node: node || undefined,
-      onLog: appendLog,
-      extraCredentials: scriptCredentials,
-    });
-
-    await registerOidcClients(itemsBase.filter(i => i.checked), varsBase);
-
-    const host = typeof window !== 'undefined' ? window.location.hostname : '';
-    const manifest = [
-      ...buildCredentialsManifest({ variables: varsBase, host }),
-      ...scriptCredentials,
-    ];
-    setCredentialsManifest(manifest);
-
-    if (proxyResult === 'needs_credentials') {
-      // Pre-fill the prompt with whatever the wizard configured — usually
-      // the auto-generated values are correct but NPM rejected them
-      // because of a stale data volume. Operator can override.
-      const fallbackEmail = varsBase.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value ?? '';
-      const fallbackPassword = varsBase.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value ?? '';
-      setNpmCredFallback({ email: fallbackEmail, password: fallbackPassword });
-      setNpmCredPrompt(true);
-      return;
-    }
-
-    // Explicit portal-routing provisioner. AdGuard's post-deploy fires this
-    // implicitly via fire-and-forget when credentials are saved, but that one
-    // shot frequently lands during AdGuard's REST-API cold start and is lost.
-    // Gating on `adguard` in `deployed` keeps this a no-op for installs that
-    // didn't include AdGuard. See `provisionPortalWithRetries` for the why.
-    if (deployed.some(d => d.name === 'adguard')) {
-      appendLog('Provisioning AdGuard DNS rewrites + portal routing...');
-      await provisionPortalWithRetries(appendLog);
-    }
-
-    if (onBeforeDone) {
-      try {
-        await onBeforeDone(deployed, appendLog);
-      } catch { /* settle-wait is informational, swallow failures */ }
-    }
-
-    setPhase('done');
-  }, [items, variables, cleanInstall, cleanInstallConfirm, templateSource, appendLog, registerOidcClients, onBeforeDone]);
+  }, [items, variables, cleanInstall, cleanInstallConfirm, templateSource, source, attachToJob]);
 
   const retryNpmCredentials = useCallback(async (email: string, password: string): Promise<void> => {
     if (!email || !password) return;
+    const id = jobIdRef.current;
+    if (!id) return;
     setNpmCredPrompt(false);
-    appendLog('Retrying with provided credentials...');
-    const result = await configureProxyRoutes({
-      variables,
-      node: nodeRef.current || undefined,
-      onLog: appendLog,
-      credentials: { email, password },
-      skipWait: true,
-    });
-    if (result === 'needs_credentials') {
-      appendLog('❌ Authentication failed. Please check your credentials.');
-      setNpmCredPrompt(true);
-      return;
-    }
     try {
-      await fetch('/api/system/nginx/credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+      await fetch("/api/install/credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: id, email, password }),
       });
-      appendLog('Saved NPM credentials for future installs.');
-    } catch { /* install succeeded — just won't auto-sync next time */ }
-
-    // Mirror the runInstall path's explicit portal-routing provision so the
-    // NPM-credentials-prompt branch ends in the same state as the happy path.
-    const checked = items.filter(i => i.checked);
-    if (checked.some(i => i.name === 'adguard')) {
-      appendLog('Provisioning AdGuard DNS rewrites + portal routing...');
-      await provisionPortalWithRetries(appendLog);
+    } catch {
+      // Re-show the prompt so the operator can retry. The runner stays
+      // paused on the in-memory promise; nothing has been committed.
+      setNpmCredPrompt(true);
     }
-
-    if (onBeforeDone) {
-      try {
-        // No `deployed` snapshot available here; pass the checked items as
-        // a best-effort substitute. Settle-wait only uses names anyway.
-        await onBeforeDone(checked.map(i => ({ name: i.name })), appendLog);
-      } catch { /* swallow */ }
-    }
-    setPhase('done');
-  }, [variables, items, appendLog, onBeforeDone]);
+  }, []);
 
   const skipNpmCredentials = useCallback(() => {
+    const id = jobIdRef.current;
+    if (!id) return;
     setNpmCredPrompt(false);
-    setPhase('done');
+    void fetch("/api/install/skip-credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: id }),
+    }).catch(() => undefined);
   }, []);
+
 
   return {
     phase,
@@ -1048,5 +711,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     appendLog,
     reset,
     abortInstall,
+    attachToJob,
+    jobId,
   };
 }

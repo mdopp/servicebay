@@ -53,6 +53,32 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
   useDigitalTwin: () => ({ data: null }),
 }));
 
+// Install runner socket bridge. The deploy loop now lives server-side
+// (src/lib/install/runner.ts); the hook subscribes to install:update /
+// install:log events. Tests use `socketHandlers` to push events to drive
+// the wizard through the install state machine.
+const socketHandlers = new Map<string, ((...args: unknown[]) => void)[]>();
+const mockSocket = {
+  on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+    const arr = socketHandlers.get(event) ?? [];
+    arr.push(handler);
+    socketHandlers.set(event, arr);
+  }),
+  off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+    const arr = socketHandlers.get(event) ?? [];
+    const i = arr.indexOf(handler);
+    if (i >= 0) arr.splice(i, 1);
+  }),
+  emit: vi.fn(),
+  connected: true,
+};
+function emitSocket(event: string, payload: unknown) {
+  for (const h of socketHandlers.get(event) ?? []) h(payload);
+}
+vi.mock('@/hooks/useSocket', () => ({
+  useSocket: () => ({ socket: mockSocket, isConnected: true }),
+}));
+
 // 3. Mock Navigation
 const mockRefresh = vi.fn();
 vi.mock('next/navigation', () => ({
@@ -147,6 +173,9 @@ describe('OnboardingWizard', () => {
         if (typeof window !== 'undefined') {
             window.sessionStorage.clear();
         }
+        // Reset install runner socket subscriptions so a previous test's
+        // hook doesn't receive events meant for the next test.
+        socketHandlers.clear();
         (getNodes as any).mockResolvedValue(mockNodes);
         (fetchTemplates as any).mockResolvedValue(mockStacks);
         (fetchReadme as any).mockResolvedValue(mockStackReadme);
@@ -167,6 +196,15 @@ describe('OnboardingWizard', () => {
             }
             if (url.includes('/api/services') && opts?.method === 'POST') {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+            }
+            if (url.includes('/api/install/start')) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ jobId: 'test-job-1' }) });
+            }
+            if (url.includes('/api/install/status')) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ job: null, logs: '', logsOffset: 0 }) });
+            }
+            if (url.includes('/api/install/abort') || url.includes('/api/install/credentials') || url.includes('/api/install/skip-credentials')) {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
             }
             if (url.includes('/api/system/nginx/status')) {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ installed: true, active: true }) });
@@ -412,14 +450,25 @@ describe('OnboardingWizard', () => {
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
             fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
 
-            // Should show install logs and done state
+            // Wizard now POSTs to /api/install/start and waits for socket
+            // events. Wait for the subscription to attach, then drive the
+            // hook through to done.
+            await waitFor(() => expect(socketHandlers.get('install:update')?.length ?? 0).toBeGreaterThan(0));
+            emitSocket('install:update', {
+                id: 'test-job-1',
+                phase: 'done',
+                progress: { currentItem: null, deployedNames: ['nginx-web'], totalCount: 1 },
+                credentialsManifest: [],
+            });
+
+            // Should show done state
             await waitFor(() => {
                 expect(screen.getByText(/installation complete/i)).toBeDefined();
             });
 
-            // Should have called the services API for each checked service
+            // Should have called the install runner endpoint
             expect(global.fetch).toHaveBeenCalledWith(
-                expect.stringContaining('/api/services'),
+                expect.stringContaining('/api/install/start'),
                 expect.objectContaining({ method: 'POST' })
             );
         });
@@ -440,6 +489,15 @@ describe('OnboardingWizard', () => {
 
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
             fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
+
+            // Drive the server-side runner from running → done via a socket event.
+            await waitFor(() => expect(socketHandlers.get('install:update')?.length ?? 0).toBeGreaterThan(0));
+            emitSocket('install:update', {
+                id: 'test-job-1',
+                phase: 'done',
+                progress: { currentItem: null, deployedNames: ['nginx-web'], totalCount: 1 },
+                credentialsManifest: [],
+            });
 
             await waitFor(() => screen.getByRole('button', { name: /Finish/i }));
             fireEvent.click(screen.getByRole('button', { name: /Finish/i }));
@@ -498,6 +556,16 @@ describe('OnboardingWizard', () => {
 
             await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
             fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
+
+            // Server-side runner now drives the flow. Push a done event
+            // to land on the Done step where DNS / SSL instructions render.
+            await waitFor(() => expect(socketHandlers.get('install:update')?.length ?? 0).toBeGreaterThan(0));
+            emitSocket('install:update', {
+                id: 'test-job-1',
+                phase: 'done',
+                progress: { currentItem: null, deployedNames: ['nginx-web'], totalCount: 1 },
+                credentialsManifest: [],
+            });
 
             await waitFor(() => {
                 // Should show DNS instructions

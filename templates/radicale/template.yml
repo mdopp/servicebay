@@ -22,7 +22,7 @@ spec:
   # `podman play kube` re-creates it deterministically — there's
   # nothing host-side that can drift.
   - name: write-config
-    image: docker.io/busybox:latest
+    image: docker.io/tomsquest/docker-radicale:latest
     command: ["/bin/sh", "-c"]
     args:
       - |

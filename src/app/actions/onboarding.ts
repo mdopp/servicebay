@@ -2,7 +2,8 @@
 
 import { getConfig, saveConfig } from '@/lib/config';
 import { SSH_DIR } from '@/lib/dirs';
-import { getInstallActive, setInstallActive, clearInstallActive } from '@/lib/wizard/installLock';
+import { getCurrentJob } from '@/lib/install/jobStore';
+import { abortJob } from '@/lib/install/runner';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -13,12 +14,15 @@ export interface OnboardingStatus {
   hasSshKey: boolean;
   hasExternalLinks: boolean;
   /**
-   * Set when an install pipeline is currently running in some session.
-   * Other tabs/devices use this to refuse to start a fresh install while
-   * the first one is still in flight. Auto-clears after 30 min if the
-   * heartbeat stops (covers crashed installs / lost power).
+   * Set when an install job is currently running in some session.
+   * Other tabs/devices use this to attach to the existing job (or to
+   * show a "another tab is installing" banner if the operator wants to
+   * watch from elsewhere). The jobId lets the wizard call
+   * `useStackInstall.attachToJob` to pick up live progress. A crashed
+   * server flips its jobs to phase=crashed on next boot, so this never
+   * stays stuck on a dead install.
    */
-  installInProgress: { startedAt: string; source?: string } | null;
+  installInProgress: { jobId: string; startedAt: string; source?: string } | null;
   features: {
     gateway: boolean;
     ssh: boolean;
@@ -63,7 +67,10 @@ export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
   
   const needsSetup = !config.setupCompleted && !hasGateway;
 
-  const installInProgress = await getInstallActive();
+  const activeJob = await getCurrentJob();
+  const installInProgress = activeJob
+    ? { jobId: activeJob.id, startedAt: activeJob.startedAt, source: activeJob.source }
+    : null;
 
   return {
     needsSetup,
@@ -154,7 +161,6 @@ export async function skipOnboarding() {
     config.setupCompleted = true;
     setSafeMcpDefaults(config);
     await saveConfig(config);
-    await clearInstallActive();
 }
 
 export async function completeStackSetup() {
@@ -162,19 +168,15 @@ export async function completeStackSetup() {
     delete config.stackSetupPending;
     setSafeMcpDefaults(config);
     await saveConfig(config);
-    await clearInstallActive();
 }
 
-/** Acquire / refresh the install lock. Called by the wizard when it
- *  enters the install pipeline and on a heartbeat while running. */
-export async function markInstallStarted(source: string = 'wizard'): Promise<void> {
-    await setInstallActive(source);
-}
-
-/** Force-clear a stuck lock. Surfaced in the UI so the operator can
- *  recover from a crashed install without waiting 30 min for auto-expiry. */
+/** Force-clear a stuck install. Surfaced in the UI so the operator can
+ *  recover from a job that's somehow wedged without restarting the
+ *  whole server. Aborts the runner if it's still alive; the job state
+ *  transitions to phase=aborted via the runner's normal cleanup path. */
 export async function forceClearInstallLock(): Promise<void> {
-    await clearInstallActive();
+    const job = await getCurrentJob();
+    if (job) abortJob(job.id);
 }
 
 /**
