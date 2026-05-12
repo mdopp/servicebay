@@ -8,6 +8,9 @@ metadata:
   annotations:
     servicebay.label: "Media (Audiobookshelf + Navidrome)"
     servicebay.schema-version: "1"
+    # Audiobookshelf's post-deploy registers an OIDC client in Authelia
+    # and its public URLs route through nginx — both prerequisites.
+    servicebay.dependencies: "nginx,auth"
     servicebay.ports: "{{ABS_PORT}}/tcp,{{NAVIDROME_PORT}}/tcp"
 spec:
   hostNetwork: true

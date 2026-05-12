@@ -7,6 +7,10 @@ metadata:
   annotations:
     servicebay.label: "Vaultwarden (Passwords)"
     servicebay.schema-version: "1"
+    # Install order: proxy + SSO foundation needs to land first so the
+    # post-deploy OIDC-client registration can talk to Authelia and the
+    # vault.<domain> proxy route resolves to a running NPM.
+    servicebay.dependencies: "nginx,auth"
 spec:
   containers:
   - name: vaultwarden

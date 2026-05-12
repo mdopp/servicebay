@@ -45,6 +45,7 @@ import {
 import { buildCredentialsManifest, type Credential } from './credentialsManifest';
 import { generateRandomSecret } from './randomSecret';
 import { selectMigrationChain } from './migrations';
+import { parseTemplateDependencies, topoSortByDependencies } from './dependencies';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
 
@@ -60,6 +61,10 @@ export interface StackItem {
   yaml?: string;
   configFiles?: ConfigFile[];
   alreadyInstalled?: boolean;
+  /** Template names that must install before this one. Parsed from the
+   *  `servicebay.dependencies` annotation in template.yml during
+   *  startConfigure. Empty when the template has no install-time deps. */
+  dependencies?: string[];
 }
 
 export interface StackVariable {
@@ -150,6 +155,12 @@ export interface UseStackInstallReturn {
 
   /** Reset all install state. Use when consumer cancels mid-flow. */
   reset: () => void;
+
+  /** Abort the running install. Cancels any in-flight `/api/services`
+   *  fetch and sets a flag the deploy loop checks between iterations,
+   *  so the next item never starts. Transitions phase to `error` with
+   *  a clear message. No-op when called outside `installing`. */
+  abortInstall: () => void;
 }
 
 /** Strip Mustache section tags (`{{#NAME}}` / `{{/NAME}}` / `{{^NAME}}`)
@@ -298,6 +309,16 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
    *  value if the consumer changes nodes mid-resolve. */
   const nodeRef = useRef<string>('');
 
+  /** Set by `abortInstall()`. Checked at top of every deploy-loop
+   *  iteration and before each retry attempt so the loop bails out as
+   *  soon as possible without leaving half-applied work mid-template. */
+  const abortRequestedRef = useRef(false);
+  /** AbortController for the in-flight `/api/services?stream=1` fetch.
+   *  Cleared at the end of each attemptDeploy. Lets abortInstall()
+   *  interrupt a long-running deploy (image pull, slow post-deploy)
+   *  instead of waiting for the next iteration check. */
+  const activeRequestRef = useRef<AbortController | null>(null);
+
   const appendLog = useCallback((line: string) => {
     setLogs(prev => [...prev, line]);
   }, []);
@@ -315,6 +336,24 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     setCleanInstall(false);
     setCleanInstallConfirm('');
     nodeRef.current = '';
+    // Cancel any in-flight deploy fetch and clear the abort flag so a
+    // subsequent runInstall doesn't trip over leftover state.
+    activeRequestRef.current?.abort();
+    activeRequestRef.current = null;
+    abortRequestedRef.current = false;
+  }, []);
+
+  const abortInstall = useCallback(() => {
+    if (abortRequestedRef.current) return;
+    abortRequestedRef.current = true;
+    // Tear down the in-flight fetch immediately so a long image pull
+    // doesn't block the abort. The deploy loop's exception handler
+    // sees the AbortError and stops; the retry loop sees the flag.
+    activeRequestRef.current?.abort();
+    setLogs(prev => [...prev, '⛔ Install aborted by user.']);
+    setError('Installation aborted by user. Click "Start over" to begin again.');
+    setPhase('error');
+    setInstallingNow(null);
   }, []);
 
   // No-op writes return the same array reference so subscribers (e.g. the
@@ -391,7 +430,13 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         const yaml = await fetchTemplateYaml(item.name, templateSource);
         if (!yaml) continue;
         const idx = newItems.findIndex(i => i.name === item.name);
-        if (idx !== -1) newItems[idx].yaml = yaml;
+        if (idx !== -1) {
+          newItems[idx].yaml = yaml;
+          // Parse install-time deps from the (still un-rendered) yaml.
+          // Mustache placeholders don't appear in the dependencies
+          // annotation, so the raw string is fine here.
+          newItems[idx].dependencies = parseTemplateDependencies(yaml);
+        }
 
         for (const match of yaml.matchAll(MUSTACHE_VAR_RE_OUT)) vars.add(match[1]);
 
@@ -574,19 +619,62 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       }
     }
 
-    const selected = itemsBase.filter(i => i.checked);
-    if (selected.length === 0) {
+    const checked = itemsBase.filter(i => i.checked);
+    if (checked.length === 0) {
       appendLog('⚠️ No services selected to install — aborting.');
       setPhase('done');
       setCredentialsManifest([]);
       return;
     }
 
+    // Topo-sort by install-time deps so e.g. `auth` lands before
+    // `vaultwarden`. `alreadyInstalled` items are treated as satisfied
+    // satisfiers — the operator may add a single template on top of an
+    // existing stack, and that template's `auth` dep is fine if auth
+    // was installed in a previous run. On `missing` (a checked
+    // template depends on something the operator didn't tick) we
+    // surface the gap and stop before any deploy starts — the user
+    // can go back to the catalog and fix it instead of watching a
+    // half-broken stack come up.
+    const sortResult = topoSortByDependencies(
+      checked.map(i => ({
+        name: i.name,
+        checked: i.checked,
+        alreadyInstalled: i.alreadyInstalled,
+        yaml: i.yaml,
+        configFiles: i.configFiles,
+        dependencies: i.dependencies ?? [],
+      })),
+      { alreadyInstalled: new Set(itemsBase.filter(i => i.alreadyInstalled).map(i => i.name)) },
+    );
+    if (!sortResult.ok) {
+      const msg = sortResult.reason === 'missing'
+        ? `Cannot install ${sortResult.item}: it depends on ${sortResult.missing.join(', ')}, which ${sortResult.missing.length === 1 ? 'is' : 'are'} not selected. Go back and check ${sortResult.missing.length === 1 ? 'that template' : 'those templates'}, or unselect ${sortResult.item}.`
+        : `Templates form a dependency cycle (${sortResult.involved.join(' ↔ ')}). This is a template-authoring bug — please report it.`;
+      appendLog(`❌ ${msg}`);
+      setError(msg);
+      setPhase('error');
+      return;
+    }
+    const selected = sortResult.ordered;
+    const sortedNames = selected.map(s => s.name).join(' → ');
+    const checkedNames = checked.map(c => c.name).join(' → ');
+    if (sortedNames !== checkedNames) {
+      appendLog(`Install order (by dependencies): ${sortedNames}`);
+    }
+
     const deployed: { name: string; checked: boolean }[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const scriptCredentials: any[] = [];
 
+    // Reset abort state for this run. A leftover flag from a previous
+    // run that ended in 'error' would otherwise short-circuit the very
+    // first iteration.
+    abortRequestedRef.current = false;
+    activeRequestRef.current = null;
+
     for (const item of selected) {
+      if (abortRequestedRef.current) return;
       if (item.alreadyInstalled) {
         appendLog(`✅ ${item.name} already installed, skipping.`);
         deployed.push({ name: item.name, checked: true });
@@ -705,6 +793,13 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       const attemptDeploy = async (): Promise<void> => {
         const query = node ? `?node=${node}&stream=1` : '?stream=1';
         let res: Response;
+        // Wire an AbortController so abortInstall() can tear down the
+        // in-flight stream. Stored in a ref the abort handler reads;
+        // cleared in `finally` so a slow post-install pipeline call
+        // doesn't get cancelled by a later abort intended for a future
+        // deploy.
+        const controller = new AbortController();
+        activeRequestRef.current = controller;
         try {
           res = await fetch(`/api/services${query}`, {
             method: 'POST',
@@ -719,8 +814,14 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
               postDeployEnv: postDeployScript || (migrations && migrations.length > 0) ? postDeployEnv : undefined,
               migrations,
             }),
+            signal: controller.signal,
           });
         } catch (networkErr) {
+          if (networkErr instanceof DOMException && networkErr.name === 'AbortError') {
+            const aborted = new Error('aborted by user');
+            (aborted as Error & { fatal?: boolean }).fatal = true;
+            throw aborted;
+          }
           throw new Error(`network: ${networkErr instanceof Error ? networkErr.message : String(networkErr)}`);
         }
         if (!res.ok) {
@@ -777,11 +878,16 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
             }
           }
         }
+        // Reached only on a clean stream end — clear the abort handle
+        // so a subsequent abort doesn't tear down work for the next
+        // template.
+        activeRequestRef.current = null;
       };
 
       let lastDeployErr: Error | null = null;
       let deployedOk = false;
       for (let attempt = 1; attempt <= MAX_DEPLOY_ATTEMPTS; attempt++) {
+        if (abortRequestedRef.current) break;
         if (DEPLOY_BACKOFF_MS[attempt - 1] > 0) {
           await new Promise(r => setTimeout(r, DEPLOY_BACKOFF_MS[attempt - 1]));
         }
@@ -793,6 +899,12 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
           deployedOk = true;
           break;
         } catch (e) {
+          // Make sure we don't leak a stale abort handle from a failed
+          // attempt — finally semantics, but kept inline because
+          // attemptDeploy isn't wrapped in try/finally itself (the
+          // throw paths above all happen before the in-flight fetch
+          // hands over its reader anyway).
+          activeRequestRef.current = null;
           lastDeployErr = e instanceof Error ? e : new Error(String(e));
           if ((lastDeployErr as Error & { fatal?: boolean }).fatal) break;
           if (attempt < MAX_DEPLOY_ATTEMPTS) {
@@ -809,6 +921,11 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         appendLog(`❌ Failed to install ${item.name} ${tail}`);
       }
       setInstallingNow(null);
+      // Bail out before starting the next template if the operator
+      // hit Abort during this one. abortInstall() already moved phase
+      // to 'error' and logged the abort line; the post-install
+      // pipeline below would be a wasted run on partial state.
+      if (abortRequestedRef.current) return;
     }
 
     const proxyResult = await runPostInstall({
@@ -930,5 +1047,6 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     skipNpmCredentials,
     appendLog,
     reset,
+    abortInstall,
   };
 }

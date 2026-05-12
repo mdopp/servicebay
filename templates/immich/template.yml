@@ -7,6 +7,8 @@ metadata:
   annotations:
     servicebay.label: "Immich (Photos)"
     servicebay.schema-version: "1"
+    # photos.<domain> is served via nginx; Immich's SSO uses Authelia.
+    servicebay.dependencies: "nginx,auth"
 spec:
   containers:
     - name: immich-server
