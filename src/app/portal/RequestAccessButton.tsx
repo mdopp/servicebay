@@ -6,13 +6,18 @@ import { UserPlus, Loader2 } from 'lucide-react';
 /**
  * "Don't have an account?" affordance on the family portal (#242
  * follow-up). Renders a small button below the card grid; clicking
- * opens a modal with name/email/optional message → POSTs to
- * /api/system/access-requests (public). The admin sees the request
- * in Settings → Access Requests and creates an LLDAP user.
+ * opens a modal that collects everything LLDAP needs to provision an
+ * account — first/last name, desired login, email, optional note —
+ * and POSTs to /api/system/access-requests (public). The admin
+ * approves in Settings → Access Requests; #405 wired this form to
+ * gather the profile data so approval is one click rather than a
+ * round-trip to ask the requester for a username.
  */
 export default function RequestAccessButton() {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -20,7 +25,9 @@ export default function RequestAccessButton() {
   const [submitted, setSubmitted] = useState(false);
 
   const reset = () => {
-    setName('');
+    setFirstName('');
+    setLastName('');
+    setUsername('');
     setEmail('');
     setMessage('');
     setError(null);
@@ -37,11 +44,23 @@ export default function RequestAccessButton() {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+    const trimmedUsername = username.trim().toLowerCase();
+    if (!/^[a-z0-9._-]{1,60}$/.test(trimmedUsername)) {
+      setError('Username may only contain lowercase letters, digits, dots, underscores, and hyphens (max 60 characters).');
+      setSubmitting(false);
+      return;
+    }
     try {
       const res = await fetch('/api/system/access-requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), email: email.trim(), message: message.trim() || undefined }),
+        body: JSON.stringify({
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          username: trimmedUsername,
+          email: email.trim(),
+          message: message.trim() || undefined,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -74,7 +93,7 @@ export default function RequestAccessButton() {
           onClick={onClose}
         >
           <div
-            className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl max-w-md w-full p-6"
+            className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}
           >
             {submitted ? (
@@ -100,19 +119,56 @@ export default function RequestAccessButton() {
                   </p>
                 </div>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                      First name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={firstName}
+                      onChange={e => setFirstName(e.target.value)}
+                      required
+                      maxLength={60}
+                      autoComplete="given-name"
+                      className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                      Last name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={lastName}
+                      onChange={e => setLastName(e.target.value)}
+                      required
+                      maxLength={60}
+                      autoComplete="family-name"
+                      className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
                 <div className="space-y-1">
                   <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                    Your name <span className="text-red-500">*</span>
+                    Desired username <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
-                    value={name}
-                    onChange={e => setName(e.target.value)}
+                    value={username}
+                    onChange={e => setUsername(e.target.value.toLowerCase())}
                     required
-                    maxLength={120}
-                    autoComplete="name"
+                    minLength={1}
+                    maxLength={60}
+                    pattern="[a-z0-9._\-]{1,60}"
+                    autoComplete="username"
+                    placeholder="e.g. max.mustermann"
                     className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    Your login — lowercase letters, digits, dots, underscores, and hyphens only. Can&apos;t be changed later.
+                  </p>
                 </div>
 
                 <div className="space-y-1">
