@@ -218,6 +218,10 @@ export async function configureProxyRoutes(opts: ConfigureProxyOpts): Promise<Pr
       for (const fc of failedCerts) {
         onLog(`⚠️ Cert request for ${fc.domain} failed — ${fc.error ?? 'see diagnose page for details'}.`);
       }
+      const lanRestricted: string[] = Array.isArray(data.lanRestricted) ? data.lanRestricted : [];
+      if (lanRestricted.length > 0) {
+        onLog(`🛡️ LAN-only access list applied to ${lanRestricted.length} host${lanRestricted.length === 1 ? '' : 's'}: ${lanRestricted.join(', ')}`);
+      }
       return 'ok';
     }
     if (res.status === 401 && data.needsCredentials) {
