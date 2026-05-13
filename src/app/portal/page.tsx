@@ -1,5 +1,7 @@
+import { headers } from 'next/headers';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
 import { buildPortalCards } from '@/lib/portal/services';
+import { verifyAutheliaSession } from '@/lib/portal/auth';
 import PortalGrid from './PortalGrid';
 import RequestAccessButton from './RequestAccessButton';
 
@@ -8,14 +10,21 @@ export const dynamic = 'force-dynamic';
 
 /**
  * /portal — read-only card grid surfacing every running, feature-tier
- * service that ships a `user-guide.md`. Anonymous on the LAN per the
- * #242 design conversation. Reachable directly at `/portal` and via
- * the apex/www host rewrite in `proxy.ts`. Same UX in public-domain
- * mode — visitors typing the apex see the family portal regardless
- * of mode.
+ * service that ships a `user-guide.md`. Anonymous-readable per the
+ * #242 design conversation, but recognizes signed-in Authelia sessions
+ * (#417) to hide the "Request access" button and greet the visitor by
+ * name. Reachable directly at `/portal` and via the apex/www host
+ * rewrite in `proxy.ts`. Same UX in public-domain mode — visitors
+ * typing the apex see the family portal regardless of mode.
  */
 export default async function PortalPage() {
-  const cards = await buildPortalCards('Local');
+  const hdrs = await headers();
+  const [cards, visitor] = await Promise.all([
+    buildPortalCards('Local'),
+    verifyAutheliaSession(hdrs.get('cookie')),
+  ]);
+  const isLoggedIn = Boolean(visitor.user);
+  const firstName = visitor.name?.trim().split(/\s+/)[0] ?? null;
 
   return (
     <main className="max-w-6xl mx-auto px-6 py-12">
@@ -27,7 +36,9 @@ export default async function PortalPage() {
           </h1>
         </div>
         <p className="mt-3 text-base text-gray-600 dark:text-gray-400">
-          Pick a service below to get started.
+          {isLoggedIn && firstName
+            ? `Welcome back, ${firstName} — pick a service below to get started.`
+            : 'Pick a service below to get started.'}
         </p>
       </header>
 
@@ -42,7 +53,7 @@ export default async function PortalPage() {
         <PortalGrid cards={cards} />
       )}
 
-      <RequestAccessButton />
+      {!isLoggedIn && <RequestAccessButton />}
     </main>
   );
 }
