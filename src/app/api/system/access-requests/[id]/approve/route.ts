@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getConfig, saveConfig } from '@/lib/config';
 import { createLldapUser, getLldapUserDeepLink } from '@/lib/lldap/client';
+import { sendTransactionalEmail } from '@/lib/email';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -72,6 +73,32 @@ export async function POST(
   };
   await saveConfig({ ...config, accessRequests: requests });
   logger.info('access-requests:approve', `Provisioned LLDAP user ${req.username} for ${req.email}`);
+
+  // Best-effort confirmation to the requester. No-ops cleanly when
+  // email isn't configured — we still return success because the
+  // LLDAP user *is* created and the admin can hand-deliver the URL.
+  const publicDomain = config.reverseProxy?.publicDomain;
+  const lanDomain = config.reverseProxy?.lanDomain;
+  const portalBase = publicDomain
+    ? `https://admin.${publicDomain}`
+    : lanDomain
+      ? `http://admin.${lanDomain}`
+      : null;
+  const greetingName = req.firstName ?? req.name;
+  const loginHint = portalBase
+    ? `Login here: ${portalBase}/portal\n\n`
+    : '';
+  void sendTransactionalEmail(
+    req.email,
+    'Your home server account is ready',
+    [
+      `Hi ${greetingName},`,
+      ``,
+      `Your account has been approved. Your username is "${req.username}".`,
+      ``,
+      `${loginHint}First time signing in? Click "Forgot password" on the login page — you'll get an email to set your password.`,
+    ].join('\n'),
+  );
 
   const deepLink = await getLldapUserDeepLink(req.username);
   return NextResponse.json({ ok: true, lldapUrl: deepLink });
