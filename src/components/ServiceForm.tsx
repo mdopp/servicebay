@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import yaml from 'js-yaml';
-import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2 } from 'lucide-react';
+import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2, RefreshCw } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
@@ -183,6 +183,35 @@ WantedBy=default.target`;
   const handleCopyYaml = () => {
     navigator.clipboard.writeText(yamlContent);
     addToast('success', 'Copied!', 'Full YAML content copied to clipboard');
+  };
+
+  const [rerendering, setRerendering] = useState(false);
+  const handleRerender = async () => {
+    if (!name) return;
+    if (!window.confirm(
+      'Re-render this service\'s YAML from its template using the current ' +
+      'Settings → Template Variables values? The editor below will be replaced ' +
+      'with the new YAML; nothing is saved or restarted until you click Save.',
+    )) {
+      return;
+    }
+    setRerendering(true);
+    try {
+      const res = await fetch(`/api/services/${encodeURIComponent(name)}/reconfigure-preview`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        addToast('error', 'Re-render failed', typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
+        return;
+      }
+      if (typeof data.yamlContent === 'string') {
+        handleYamlChange(data.yamlContent);
+        addToast('success', 'Re-rendered', 'Review the changes and click Save to apply.');
+      }
+    } catch (e) {
+      addToast('error', 'Re-render failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setRerendering(false);
+    }
   };
 
   const handleYamlChange = (content: string) => {
@@ -600,7 +629,18 @@ WantedBy=default.target`;
                         
                         <div className="flex-1 border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden bg-[#2d2d2d] dark:bg-black relative group">
                             <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
-                                <button 
+                                {isEdit && (
+                                    <button
+                                        onClick={handleRerender}
+                                        type="button"
+                                        disabled={rerendering}
+                                        className="p-1.5 bg-gray-700/50 hover:bg-gray-700 text-gray-300 hover:text-white rounded backdrop-blur-sm transition-colors disabled:opacity-50"
+                                        title="Re-render this YAML from its template using the current Settings → Template Variables values"
+                                    >
+                                        <RefreshCw size={14} className={rerendering ? 'animate-spin' : ''} />
+                                    </button>
+                                )}
+                                <button
                                     onClick={handleCopyYaml}
                                     type="button"
                                     className="p-1.5 bg-gray-700/50 hover:bg-gray-700 text-gray-300 hover:text-white rounded backdrop-blur-sm transition-colors"
