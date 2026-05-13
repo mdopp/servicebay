@@ -10,8 +10,20 @@
   },
   "ZWAVE_DEVICE": {
     "type": "device",
-    "description": "USB device path for your Z-Wave stick",
+    "description": "Optional: USB device path of your Z-Wave stick. Leave blank if you don't have one yet — Z-Wave JS UI will still start and you can add the stick later via its settings UI or by re-running the wizard.",
     "devicePath": "/dev/serial/by-id"
+  },
+  "ZWAVE_JS_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for the Z-Wave JS UI. LAN-only — Z-Wave management doesn't need to be exposed to the public internet.",
+    "default": "zwave",
+    "exposure": "lan",
+    "proxyPort": "8091",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": false
+    }
   },
   "HA_SUBDOMAIN": {
     "type": "subdomain",

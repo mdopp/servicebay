@@ -10,6 +10,29 @@ operator's installed schema-version and the current one and surfaces
 them in the re-deploy dialog. Each `(breaking)` section needs an
 explicit acknowledgement before the deploy can proceed.
 
+## v4 (breaking) — #420 / #422
+
+**Z-Wave JS UI always runs + reachable at `zwave.<lanDomain>`.**
+
+Previously the Z-Wave JS UI container only started when `ZWAVE_DEVICE`
+was set; without a stick the container was absent entirely and the UI
+unreachable. Adding a stick later meant editing the pod yaml by hand.
+
+The container now starts unconditionally. Without a stick the UI runs
+in "no serial device configured" mode — the operator points it at a
+stick later via the UI's own *Settings → Z-Wave → Serial Port* picker
+(or re-runs the install wizard once #421 lands). The device mount +
+zwave-stick hostPath volume are still guarded by `{{#ZWAVE_DEVICE}}`
+so podman doesn't crash-loop on a missing host path.
+
+Also adds `ZWAVE_JS_SUBDOMAIN` (default `zwave`, LAN-only) so the UI
+is reachable at `https://zwave.<lanDomain>` through NPM. Subdomain is
+created unconditionally because the container is too — visiting it
+without a stick configured just opens the UI's empty state.
+
+Required action: redeploy Home Assistant. Pre-existing zwave-config
+data under `${DATA_DIR}/home-assistant/zwave-js` is preserved.
+
 ## v3
 
 **Seed `configuration.yaml` with `http.trusted_proxies` so NPM can talk to HA.**
