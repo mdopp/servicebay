@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink, Sparkles, Home } from 'lucide-react';
+import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink, Sparkles, Home, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import PluginHelp from './PluginHelp';
 import pkg from '../../package.json';
@@ -24,6 +24,14 @@ export default function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showCollapsedNodeLabel, setShowCollapsedNodeLabel] = useState(false);
   const [lldapUrl, setLldapUrl] = useState<string | null>(null);
+  // Conditional sidebar entry for /setup. Visible whenever the server
+  // reports an active install job (running / needs_credentials) OR a
+  // recently-finished job that hasn't been acknowledged yet (terminal
+  // phases with stackSetupPending still set). This way "Setup" is a
+  // first-class destination during the 10-minute install window — the
+  // operator can navigate to Services / Terminal / Health and still
+  // come back to watch progress.
+  const [hasActiveInstall, setHasActiveInstall] = useState(false);
 
   useEffect(() => {
     if (window.innerWidth < 768) {
@@ -37,6 +45,26 @@ export default function Sidebar() {
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data?.url) setLldapUrl(data.url); })
       .catch(() => {});
+  }, []);
+
+  // Poll the install-job singleton so every connected client picks up
+  // (and drops) the "Setup" entry within 5 s — the operator on a
+  // second tab/phone should see the same affordance as the operator
+  // who clicked Install. Short interval is fine: payload is tiny and
+  // it pauses naturally when there's no active job.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch('/api/install/status', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as { job: { phase?: string } | null };
+        if (!cancelled) setHasActiveInstall(Boolean(data.job));
+      } catch { /* offline / mid-redeploy — keep the previous value */ }
+    };
+    void tick();
+    const handle = setInterval(tick, 5000);
+    return () => { cancelled = true; clearInterval(handle); };
   }, []);
 
   return (
@@ -84,6 +112,27 @@ export default function Sidebar() {
             </button>
         )}
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
+            {hasActiveInstall && (() => {
+                const isActive = pathname?.startsWith('/setup') ?? false;
+                return (
+                    <button
+                        type="button"
+                        onClick={() => router.push('/setup')}
+                        className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${
+                            isActive
+                            ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
+                            : 'bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300'
+                        } ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+                        title={isCollapsed ? 'Setup in progress' : ''}
+                    >
+                        <div className="relative shrink-0">
+                            <Wrench size={20} className={isActive ? 'text-blue-500 dark:text-blue-400' : 'text-blue-600 dark:text-blue-400'} />
+                            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                        </div>
+                        {!isCollapsed && <span className="font-medium whitespace-nowrap overflow-hidden">Setup</span>}
+                    </button>
+                );
+            })()}
             {plugins.map(p => {
                 const Icon = p.icon;
                 const isActive = pathname?.startsWith(p.path) ?? false;

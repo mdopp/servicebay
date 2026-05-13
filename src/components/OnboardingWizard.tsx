@@ -22,7 +22,7 @@ import type { TemplateTier } from '@/lib/templateTier';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { useStackInstall } from '@/lib/stackInstall/useStackInstall';
 
-import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home } from 'lucide-react';
+import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home, Minimize2 } from 'lucide-react';
 import StackVariableField from './StackVariableField';
 import { StackInstallProgress, StackInstallSummary } from './StackInstallFlow';
 import DiagnoseProbeList, { type DiagnoseProbe } from './DiagnoseProbeList';
@@ -346,6 +346,17 @@ export default function OnboardingWizard() {
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.version) setAppVersion(d.version); })
       .catch(() => { /* version is informational; silent failure is fine */ });
+  }, []);
+
+  // Re-open the wizard when /setup (or any other page) requests it.
+  // /setup is the non-blocking workspace shown while an install is
+  // running — its "Open wizard" button dispatches this event so the
+  // operator can come back to credential prompts / progress detail
+  // without losing wizard state.
+  useEffect(() => {
+    const onOpen = () => setIsOpen(true);
+    window.addEventListener('servicebay:open-wizard', onOpen);
+    return () => window.removeEventListener('servicebay:open-wizard', onOpen);
   }, []);
 
   useEffect(() => {
@@ -985,17 +996,34 @@ export default function OnboardingWizard() {
             filtering, so an express operator naturally sees a smaller
             denominator ("Step 1 of 2") without needing a separate UI. */}
         <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
-           <h2 className="text-xl font-bold flex items-center gap-2">
-             <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-               <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-             </div>
-             ServiceBay Setup
-             {appVersion && (
-               <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400 align-middle">
-                 v{appVersion}
-               </span>
-             )}
-           </h2>
+           <div className="flex items-start justify-between gap-3">
+             <h2 className="text-xl font-bold flex items-center gap-2">
+               <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                 <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+               </div>
+               ServiceBay Setup
+               {appVersion && (
+                 <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400 align-middle">
+                   v{appVersion}
+                 </span>
+               )}
+             </h2>
+             {/* Continue-in-background button. The install runs entirely
+                 server-side once `/api/install/start` returns, so closing
+                 the modal doesn't pause or abort anything — it just lets
+                 the operator navigate to Services / Terminal / Health
+                 while the deploy progresses. /setup keeps the live log
+                 view, the sidebar has a pulsing Setup entry, and the
+                 operator can pop the wizard back open from there. */}
+             <button
+               type="button"
+               onClick={() => setIsOpen(false)}
+               className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+               title="Hide this dialog. The install keeps running; reopen from the Setup entry in the sidebar or /setup."
+             >
+               <Minimize2 size={13} /> Minimize
+             </button>
+           </div>
            {(() => {
              const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
              // Same two-path logic as getNextStep — see comment there.
