@@ -208,22 +208,33 @@ export async function syncRegistries() {
 
     for (const reg of registries) {
         const regPath = path.join(REGISTRIES_DIR, reg.name);
+        // Isolate each registry: a single bad URL (a 404'd repo, an
+        // unreachable mirror) used to abort the entire loop, so the
+        // registries listed *after* it never got synced — which is why
+        // a stale `ServiceBay Templates` entry could silently strand
+        // the canonical `mdopp/servicebay` clone. Per-registry try/catch
+        // keeps subsequent registries syncing.
         try {
-            await fs.access(path.join(regPath, '.git'));
-            // Exists — fetch latest and reset (shallow clones can't reliably git pull)
-            console.log(`Updating registry ${reg.name}...`);
-            const branch = reg.branch || 'main';
-            await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath });
-            await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath });
-        } catch {
-            // Doesn't exist, clone
-            console.log(`Cloning registry ${reg.name}...`);
             try {
-                await cloneSparse(reg.url, regPath, ['templates', 'stacks']);
+                await fs.access(path.join(regPath, '.git'));
+                // Exists — fetch latest and reset (shallow clones can't reliably git pull)
+                console.log(`Updating registry ${reg.name}...`);
+                const branch = reg.branch || 'main';
+                await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath });
+                await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath });
             } catch {
-                // Fallback to full clone if sparse checkout not supported
-                await execFileAsync('git', ['clone', '--depth', '1', reg.url, regPath]);
+                // Doesn't exist, clone
+                console.log(`Cloning registry ${reg.name}...`);
+                try {
+                    await cloneSparse(reg.url, regPath, ['templates', 'stacks']);
+                } catch {
+                    // Fallback to full clone if sparse checkout not supported
+                    await execFileAsync('git', ['clone', '--depth', '1', reg.url, regPath]);
+                }
             }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`Registry ${reg.name} (${reg.url}) sync failed — skipping (other registries continue): ${msg}`);
         }
     }
 }

@@ -40,6 +40,7 @@ import { buildCredentialsManifest, type Credential } from '@/lib/stackInstall/cr
 import { provisionPortalWithRetries } from '@/lib/stackInstall/portalProvision';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
+import { getConfig } from '@/lib/config';
 import {
   appendLog,
   getJob,
@@ -354,6 +355,19 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     if (typeof v.value === 'string') postDeployEnv[v.name] = v.value;
   }
   postDeployEnv.HOST = input.host || 'localhost';
+
+  // LAN_IP — the address rootless podman actually port-forwards to. With
+  // `hostNetwork: true` on a rootless pod, ports inside the container's
+  // namespace (e.g. immich-server binding [::1]:2283) are NOT visible on
+  // the host's main loopback; podman only publishes them on the LAN IP.
+  // Templates that need to HTTP-probe their own service from the host
+  // post-deploy shell should prefer LAN_IP over 127.0.0.1 / [::1].
+  // See templates/immich/post-deploy.py for the canonical use site.
+  try {
+    const config = await getConfig();
+    const lanIp = config.reverseProxy?.lanIp;
+    if (lanIp) postDeployEnv.LAN_IP = lanIp;
+  } catch { /* best-effort — missing LAN_IP just means templates fall back to loopback */ }
 
   const attemptDeploy = async (): Promise<void> => {
     const query = input.node ? `?node=${input.node}&stream=1` : '?stream=1';
