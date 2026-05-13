@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.28.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.4...servicebay-v3.28.0) (2026-05-13)
+
+
+### Features
+
+* **setup:** non-blocking install workspace at /setup ([#450](https://github.com/mdopp/servicebay/issues/450)) ([5fbcfba](https://github.com/mdopp/servicebay/commit/5fbcfba994c49f7ae8f01a25a1fb28c5d1d3fb1d))
+
 ## [3.27.4](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.3...servicebay-v3.27.4) (2026-05-13)
 
 
