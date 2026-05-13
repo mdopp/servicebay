@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.30.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.2...servicebay-v3.30.3) (2026-05-13)
+
+
+### Bug Fixes
+
+* **wizard:** don't auto-open after install — route operator to /setup instead ([#462](https://github.com/mdopp/servicebay/issues/462)) ([0318aa0](https://github.com/mdopp/servicebay/commit/0318aa040dad5f22239c2868f64c740f6322c87c))
+
 ## [3.30.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.1...servicebay-v3.30.2) (2026-05-13)
 
 
