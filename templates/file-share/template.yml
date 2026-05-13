@@ -62,6 +62,14 @@ spec:
         value: "0"
       - name: STGUIADDRESS
         value: "0.0.0.0:8384"
+      # Disable Syncthing's UPnP / NAT-PMP NAT-traversal (#415). The
+      # FritzBox replies 403 to AddPortMapping on its IPv6 WAN entry
+      # (WANIPConn2), which Syncthing then retries on a loop and
+      # buries the real container logs. LAN sync still works; remote
+      # sync falls back to Syncthing's relay servers — acceptable
+      # for a family home-server scenario.
+      - name: STNOUPNP
+        value: "1"
     ports:
       - containerPort: 8384
       - containerPort: 22000
