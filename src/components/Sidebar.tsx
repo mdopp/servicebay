@@ -52,14 +52,27 @@ export default function Sidebar() {
   // second tab/phone should see the same affordance as the operator
   // who clicked Install. Short interval is fine: payload is tiny and
   // it pauses naturally when there's no active job.
+  //
+  // Visibility rule: show the pill whenever EITHER (a) an install job
+  // is currently running, OR (b) the operator hasn't acknowledged a
+  // terminal install yet (`stackSetupPending: true`). The second case
+  // is what gives the operator a path back to /setup after they
+  // minimised the wizard but never clicked "Finish".
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
       try {
         const res = await fetch('/api/install/status', { cache: 'no-store' });
         if (!res.ok) return;
-        const data = await res.json() as { job: { phase?: string } | null };
-        if (!cancelled) setHasActiveInstall(Boolean(data.job));
+        const data = await res.json() as {
+          job: { phase?: string } | null;
+          jobIsActive?: boolean;
+          stackSetupPending?: boolean;
+        };
+        if (cancelled) return;
+        setHasActiveInstall(
+          Boolean(data.jobIsActive) || Boolean(data.stackSetupPending),
+        );
       } catch { /* offline / mid-redeploy — keep the previous value */ }
     };
     void tick();

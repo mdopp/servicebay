@@ -217,6 +217,20 @@ export async function wasInstallActiveWithin(graceMs: number): Promise<boolean> 
   return false;
 }
 
+/**
+ * Most-recent job in *any* phase, sorted by start time. Used by the
+ * UI to decide whether to show "Setup" affordances after an install
+ * has finished — `getCurrentJob` filters to active phases only, so a
+ * job that's already `done` is invisible to it. Returns `null` only
+ * when no jobs have ever been recorded.
+ */
+export async function getLatestJob(): Promise<JobState | null> {
+  const jobs = await listJobs();
+  if (jobs.length === 0) return null;
+  jobs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return jobs[0];
+}
+
 /** Singleton "is an install in progress?" check. Returns the most
  *  recent job in an active phase, or null. Replaces installLock.ts. */
 export async function getCurrentJob(): Promise<JobState | null> {
