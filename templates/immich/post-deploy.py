@@ -104,22 +104,24 @@ def wait_pod_running(pod_name: str, deadline_sec: float = POD_RUNNING_TIMEOUT) -
     return False
 
 
-def wait_ready(base_url: str) -> bool:
-    """Poll Immich's /api/server-info until it returns 200. Runs only after
-    the pod is already Running, so this budget covers postgres init +
-    Immich server migrations, not image pulls."""
+def wait_ready(port: str) -> tuple[bool, str]:
+    """Poll Immich's /api/server-info until it returns 200. Tries both
+    127.0.0.1 and [::1] because NestJS on Linux defaults to binding :: and
+    the effective loopback address depends on kernel IPV6_V6ONLY setting —
+    on FCoS only [::1] answers. Returns (success, base_url)."""
+    candidates = [f"http://127.0.0.1:{port}", f"http://[::1]:{port}"]
     started = time.time()
     while time.time() - started < READY_TIMEOUT:
-        code, _ = request_json("GET", f"{base_url}/api/server-info")
-        if code == 200:
-            return True
+        for url in candidates:
+            code, _ = request_json("GET", f"{url}/api/server-info")
+            if code == 200:
+                return True, url
         time.sleep(READY_INTERVAL)
-    return False
+    return False, candidates[0]
 
 
 def main() -> int:
     port = env("IMMICH_PORT", "2283")
-    base_url = f"http://127.0.0.1:{port}"
     public_domain = env("PUBLIC_DOMAIN")
     sso_enabled = env("IMMICH_SSO_ENABLED") == "true"
     sso_secret = env("IMMICH_SSO_SECRET")
@@ -127,7 +129,7 @@ def main() -> int:
     admin_email = env("IMMICH_ADMIN_EMAIL")
     admin_password = env("IMMICH_ADMIN_PASSWORD")
     subdomain = env("IMMICH_SUBDOMAIN", "photos")
-    public_url = f"https://{subdomain}.{public_domain}" if public_domain else base_url
+    public_url = f"https://{subdomain}.{public_domain}" if public_domain else f"http://127.0.0.1:{port}"
 
     log(f"Waiting up to {int(POD_RUNNING_TIMEOUT)}s for the immich pod to enter Running state (covers image pull)…")
     if not wait_pod_running("immich"):
@@ -135,12 +137,13 @@ def main() -> int:
         log("   Re-run this post-deploy from Diagnose → post_deploy_failed → 'Re-run post-install' once the pod is up.")
         return 1
 
-    log(f"Waiting up to {int(READY_TIMEOUT)}s for Immich at {base_url} to accept API calls (postgres init + server migrations)…")
-    if not wait_ready(base_url):
-        log(f"❌ Immich /api/server-info did not respond within {int(READY_TIMEOUT)}s — skipping seed/OIDC config.")
+    log(f"Waiting up to {int(READY_TIMEOUT)}s for Immich API (tries 127.0.0.1 and [::1] — NestJS binds IPv6-only on FCoS by default)…")
+    ready, base_url = wait_ready(port)
+    if not ready:
+        log(f"❌ Immich /api/server-info did not respond on 127.0.0.1 or [::1] within {int(READY_TIMEOUT)}s — skipping seed/OIDC config.")
         log("   Re-run this post-deploy from Diagnose → post_deploy_failed → 'Re-run post-install' once /api/server-info returns 200.")
         return 1
-    log("✅ Immich is ready.")
+    log(f"✅ Immich is ready at {base_url}.")
 
     if not admin_email or not admin_password:
         log("⚠️  IMMICH_ADMIN_EMAIL / IMMICH_ADMIN_PASSWORD not set — skipping admin seed and OIDC config. Re-run the wizard to regenerate them.")
