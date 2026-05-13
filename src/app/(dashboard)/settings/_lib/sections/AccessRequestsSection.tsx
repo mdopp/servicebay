@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, ExternalLink, Loader2, Mail, Trash2, UserCheck, UserPlus } from 'lucide-react';
+import { Check, ExternalLink, Loader2, Mail, Send, Trash2, UserCheck, UserPlus } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 interface AccessRequest {
@@ -89,6 +89,22 @@ export default function AccessRequestsSection() {
     }
   };
 
+  const onResendWelcome = async (id: string) => {
+    setBusy('action');
+    try {
+      const res = await fetch(`/api/system/access-requests/${id}/welcome`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        addToast('success', 'Welcome email sent', 'The family member should see it shortly.');
+      } else {
+        const message = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+        addToast('error', 'Could not send welcome email', message);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onDelete = async (id: string) => {
     if (!window.confirm('Delete this access request? Use for spam — there\'s no undo.')) return;
     setBusy('action');
@@ -164,6 +180,7 @@ export default function AccessRequestsSection() {
                       r={r}
                       onApprove={() => onApprove(r.id)}
                       onResolve={() => onResolve(r.id)}
+                      onResendWelcome={() => onResendWelcome(r.id)}
                       onDelete={() => onDelete(r.id)}
                       busy={busy === 'action'}
                     />
@@ -181,6 +198,7 @@ export default function AccessRequestsSection() {
                       r={r}
                       onApprove={() => onApprove(r.id)}
                       onResolve={() => onResolve(r.id)}
+                      onResendWelcome={() => onResendWelcome(r.id)}
                       onDelete={() => onDelete(r.id)}
                       busy={busy === 'action'}
                       muted
@@ -200,6 +218,7 @@ function RequestRow({
   r,
   onApprove,
   onResolve,
+  onResendWelcome,
   onDelete,
   busy,
   muted,
@@ -207,11 +226,13 @@ function RequestRow({
   r: AccessRequest;
   onApprove: () => void;
   onResolve: () => void;
+  onResendWelcome: () => void;
   onDelete: () => void;
   busy: boolean;
   muted?: boolean;
 }) {
   const canAutoApprove = Boolean(r.username);
+  const canResendWelcome = Boolean(r.username);
   return (
     <div className={`p-3 rounded-lg border border-gray-200 dark:border-gray-700 ${muted ? 'opacity-60' : 'bg-white dark:bg-gray-900'}`}>
       <div className="flex items-start gap-3">
@@ -254,6 +275,16 @@ function RequestRow({
               title={canAutoApprove ? 'Mark resolved without creating the LLDAP user' : 'Mark resolved (after creating the LLDAP user)'}
             >
               <Check size={16} />
+            </button>
+          )}
+          {r.status === 'resolved' && canResendWelcome && (
+            <button
+              onClick={onResendWelcome}
+              disabled={busy}
+              className="p-1.5 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded disabled:opacity-50"
+              title="Resend the welcome email to this family member"
+            >
+              <Send size={16} />
             </button>
           )}
           <button
