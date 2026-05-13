@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.30.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.0...servicebay-v3.30.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **immich:** oauth schema requires tokenEndpointAuthMethod + signing algos ([#458](https://github.com/mdopp/servicebay/issues/458)) ([44d9447](https://github.com/mdopp/servicebay/commit/44d94477761bb540881d495fd6549de250248149))
+
 ## [3.30.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.29.0...servicebay-v3.30.0) (2026-05-13)
 
 
