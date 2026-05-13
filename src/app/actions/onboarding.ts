@@ -113,23 +113,19 @@ export async function saveAutoUpdateConfig(enabled: boolean) {
 
 export async function saveRegistriesConfig(enabled: boolean) {
     const config = await getConfig();
-    // Default registries if enabling
-    const defaultRegistry = {
-        name: 'ServiceBay Templates',
-        url: 'https://github.com/mdopp/servicebay-templates'
+    // No default external registry. The previous seed
+    // (`mdopp/servicebay-templates`) was a 404, and once #443 landed
+    // and the container actually bundled git, every fresh install
+    // tried to clone that URL on startup and aborted the whole sync
+    // loop — which is why operators kept hitting templates frozen at
+    // pre-sync state. `lib/registry.ts:getRegistries` already
+    // prepends the canonical `mdopp/servicebay` default, so leaving
+    // `items` empty here gives us the right behaviour: enable the
+    // mechanism, but only sync the bundled built-in registry.
+    config.registries = {
+        enabled,
+        items: config.registries?.items || []
     };
-    
-    if (enabled && (!config.registries?.items || config.registries.items.length === 0)) {
-        config.registries = {
-            enabled: true,
-            items: [defaultRegistry]
-        };
-    } else {
-        config.registries = {
-            enabled,
-            items: config.registries?.items || []
-        };
-    }
     await saveConfig(config);
 }
 

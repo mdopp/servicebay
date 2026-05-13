@@ -96,16 +96,30 @@ def request_json(method: str, url: str, payload: object | None = None, token: st
 
 
 def wait_ready(port: str) -> tuple[bool, str]:
-    """Poll Immich's /api/server-info until it returns 200. Tries both
-    127.0.0.1 and [::1] because NestJS on Linux defaults to binding :: and
-    the effective loopback address depends on the kernel IPV6_V6ONLY
-    setting — on FCoS only [::1] answers. Returns (success, base_url).
+    """Poll Immich's /api/server-info until it returns 200. Returns
+    (success, base_url).
 
-    Carries the whole "is immich up?" budget on its own; covers image
-    pull + pod start + DB init + migrations. Emits a heartbeat line
-    every HEARTBEAT_INTERVAL seconds so the operator sees progress and
-    the install runner's NDJSON stream stays warm."""
-    candidates = [f"http://127.0.0.1:{port}", f"http://[::1]:{port}"]
+    Probes the host-published LAN_IP first, then 127.0.0.1 and [::1] as
+    fallbacks. The reason LAN_IP comes first: with rootless podman +
+    `hostNetwork: true` (immich's setup), ports the container binds
+    inside its own namespace — even on what the container thinks is
+    [::1] — are NOT routed back to the host's main loopback. Podman
+    only publishes them on the LAN IP via the userspace forwarder, so
+    the host post-deploy shell can reach immich at
+    http://<LAN_IP>:2283 but NOT at http://127.0.0.1:2283 or
+    http://[::1]:2283. We keep the loopback candidates around for
+    rootful / bridge-network environments where they actually work.
+
+    Carries the whole 'is immich up?' budget; covers image pull + pod
+    start + DB init + migrations. Emits a heartbeat line every
+    HEARTBEAT_INTERVAL seconds so the operator sees progress and the
+    install runner's NDJSON stream stays warm."""
+    lan_ip = env("LAN_IP")
+    candidates: list[str] = []
+    if lan_ip:
+        candidates.append(f"http://{lan_ip}:{port}")
+    candidates.extend([f"http://127.0.0.1:{port}", f"http://[::1]:{port}"])
+
     started = time.time()
     last_heartbeat = started
     while time.time() - started < READY_TIMEOUT:
@@ -116,7 +130,7 @@ def wait_ready(port: str) -> tuple[bool, str]:
         now = time.time()
         if now - last_heartbeat >= HEARTBEAT_INTERVAL:
             elapsed = int(now - started)
-            log(f"   …still waiting for /api/server-info on 127.0.0.1 / [::1] ({elapsed}s/{int(READY_TIMEOUT)}s)")
+            log(f"   …still waiting for /api/server-info on {', '.join(candidates)} ({elapsed}s/{int(READY_TIMEOUT)}s)")
             last_heartbeat = now
         time.sleep(READY_INTERVAL)
     return False, candidates[0]
