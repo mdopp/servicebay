@@ -11,6 +11,7 @@ import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing'
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
+import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -343,7 +344,16 @@ export async function POST(request: Request) {
   // restarting; younger ones are just "started at boot, not looping". 90 s
   // covers the slowest cold-start + a tiny grace window.
   const recentBootGrace = 90;
-  const treatYoungAsLoop = systemUptimeSec > recentBootGrace;
+  // Same suppression after an install: the /setup auto-diagnose fires
+  // the moment a job lands in `done`, by which point the fresh
+  // containers are 30-90 s old and would all trip the "Up <30s" rule.
+  // System uptime is past `recentBootGrace` by then (FCoS booted
+  // hours ago), so the boot-time gate doesn't help. Five minutes is
+  // wide enough for the slowest first-boot install path (image pulls
+  // + post-deploy seeds + the operator clicking "Finish") to settle.
+  const RECENT_INSTALL_GRACE_MS = 5 * 60_000;
+  const recentInstall = await wasInstallActiveWithin(RECENT_INSTALL_GRACE_MS);
+  const treatYoungAsLoop = systemUptimeSec > recentBootGrace && !recentInstall;
 
   const psLines = trimOutput(psStatus.stdout, 80).split('\n').filter(Boolean);
   const looping = psLines.filter(l => {
@@ -398,7 +408,9 @@ export async function POST(request: Request) {
           : looping.length === 0
             ? (treatYoungAsLoop
                 ? `${psLines.length} container(s), all stable.`
-                : `${psLines.length} container(s) — system booted ${systemUptimeSec}s ago, young containers expected. Re-run after ~2 min for a real restart-loop check.`)
+                : recentInstall
+                    ? `${psLines.length} container(s) — install just finished, young containers expected. Re-run after ~5 min for a real restart-loop check.`
+                    : `${psLines.length} container(s) — system booted ${systemUptimeSec}s ago, young containers expected. Re-run after ~2 min for a real restart-loop check.`)
             : `${looping.length} of ${psLines.length} container(s) may be in a restart loop.`),
     hint: looping.length > 0
       ? 'Each row shows the last log lines from the container. Click "Restart" after fixing the root cause (bind-mount perms, missing config, port conflict). "Show recent logs" pulls the last 5 lines for a quick triage without SSH.'

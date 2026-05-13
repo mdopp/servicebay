@@ -196,6 +196,27 @@ async function listJobs(): Promise<JobState[]> {
   }
 }
 
+/**
+ * "Has there been recent install activity?" — true if a job is
+ * currently running OR the most-recent terminal job ended less than
+ * `graceMs` milliseconds ago. Used by diagnose probes (e.g.
+ * crash_loop) to soften "container is too young → must be restarting"
+ * heuristics that would otherwise fire on freshly-deployed services
+ * the moment the install finishes. Cheap (one disk scan); callers
+ * are usually rare (one probe run per diagnose), so we don't cache.
+ */
+export async function wasInstallActiveWithin(graceMs: number): Promise<boolean> {
+  const jobs = await listJobs();
+  if (jobs.length === 0) return false;
+  const now = Date.now();
+  for (const j of jobs) {
+    if (j.phase === 'running' || j.phase === 'needs_credentials') return true;
+    const ended = j.endedAt ? Date.parse(j.endedAt) : Date.parse(j.updatedAt);
+    if (Number.isFinite(ended) && now - ended < graceMs) return true;
+  }
+  return false;
+}
+
 /** Singleton "is an install in progress?" check. Returns the most
  *  recent job in an active phase, or null. Replaces installLock.ts. */
 export async function getCurrentJob(): Promise<JobState | null> {
