@@ -22,13 +22,24 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 
 
-READY_TIMEOUT = 180.0
+# First-boot budget is generous because Immich has four containers
+# (immich-server, immich-machine-learning, redis, postgres) and the
+# server-image alone is ~2 GB. On a fresh install the path is
+# image-pull → pod-start → postgres-initdb → server-migrations →
+# /api/server-info goes 200. 180 s used to cover the API-probe only —
+# which fired before image pulls even finished. The split below gives
+# image pulls + pod start up to 10 min, and the server bootstrap
+# after the pod is Running another 5 min. Healthy fast machines exit
+# both loops within seconds.
+POD_RUNNING_TIMEOUT = 600.0
+READY_TIMEOUT = 300.0
 READY_INTERVAL = 2.0
 REQUEST_TIMEOUT = 30.0
 
@@ -72,8 +83,31 @@ def request_json(method: str, url: str, payload: object | None = None, token: st
         return 0, None
 
 
+def wait_pod_running(pod_name: str, deadline_sec: float = POD_RUNNING_TIMEOUT) -> bool:
+    """Poll `podman pod inspect` until the pod is Running. Covers image-pull
+    + first container start on fresh installs; on warm machines exits within
+    a second. Best-effort — any subprocess failure is treated as 'not yet'."""
+    started = time.time()
+    while time.time() - started < deadline_sec:
+        try:
+            r = subprocess.run(
+                ["podman", "pod", "inspect", pod_name, "--format", "{{.State}}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if r.returncode == 0 and r.stdout.strip().lower() == "running":
+                return True
+        except Exception:  # pylint: disable=broad-except
+            pass
+        time.sleep(2)
+    return False
+
+
 def wait_ready(base_url: str) -> bool:
-    """Poll Immich's /api/server-info until it returns 200, then return True."""
+    """Poll Immich's /api/server-info until it returns 200. Runs only after
+    the pod is already Running, so this budget covers postgres init +
+    Immich server migrations, not image pulls."""
     started = time.time()
     while time.time() - started < READY_TIMEOUT:
         code, _ = request_json("GET", f"{base_url}/api/server-info")
@@ -95,9 +129,16 @@ def main() -> int:
     subdomain = env("IMMICH_SUBDOMAIN", "photos")
     public_url = f"https://{subdomain}.{public_domain}" if public_domain else base_url
 
-    log(f"Waiting up to {int(READY_TIMEOUT)}s for Immich at {base_url}…")
+    log(f"Waiting up to {int(POD_RUNNING_TIMEOUT)}s for the immich pod to enter Running state (covers image pull)…")
+    if not wait_pod_running("immich"):
+        log(f"❌ immich pod did not reach Running within {int(POD_RUNNING_TIMEOUT)}s — skipping seed/OIDC config.")
+        log("   Re-run this post-deploy from Diagnose → post_deploy_failed → 'Re-run post-install' once the pod is up.")
+        return 1
+
+    log(f"Waiting up to {int(READY_TIMEOUT)}s for Immich at {base_url} to accept API calls (postgres init + server migrations)…")
     if not wait_ready(base_url):
-        log(f"❌ Immich did not become ready within {int(READY_TIMEOUT)}s — skipping seed/OIDC config.")
+        log(f"❌ Immich /api/server-info did not respond within {int(READY_TIMEOUT)}s — skipping seed/OIDC config.")
+        log("   Re-run this post-deploy from Diagnose → post_deploy_failed → 'Re-run post-install' once /api/server-info returns 200.")
         return 1
     log("✅ Immich is ready.")
 
