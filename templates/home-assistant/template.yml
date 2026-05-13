@@ -11,7 +11,7 @@ metadata:
     # the operator enables it) authenticates via Authelia.
     servicebay.dependencies: "nginx,auth"
     servicebay.config-mount: "/config"
-    servicebay.ports: "8123/tcp,8091/tcp,3000/tcp"
+    servicebay.ports: "8123/tcp,8091/tcp,3001/tcp"
 spec:
   hostNetwork: true
   containers:
