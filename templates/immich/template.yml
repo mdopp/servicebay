@@ -6,16 +6,36 @@ metadata:
     app: immich
   annotations:
     servicebay.label: "Immich (Photos)"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
+    servicebay.ports: "{{IMMICH_PORT}}/tcp"
     # photos.<domain> is served via nginx; Immich's SSO uses Authelia.
     servicebay.dependencies: "nginx,auth"
 spec:
+  # v2 (#410): hostNetwork is required so Immich can fetch
+  # https://auth.<PUBLIC_DOMAIN>/.well-known/openid-configuration for
+  # OIDC discovery. Under bridge networking the container resolves the
+  # public auth subdomain to the router's WAN IP and the request fails
+  # (most home routers don't hairpin NAT). Under hostNetwork Immich
+  # inherits the host resolver and AdGuard rewrites *.<PUBLIC_DOMAIN>
+  # to the LAN IP — same pattern Vaultwarden uses (#408).
+  #
+  # Side-effect for the sidecars: redis + postgres now share the host
+  # network namespace. The args overrides below pin both to 127.0.0.1
+  # so they stay reachable for immich-server / machine-learning via
+  # loopback without being exposed on the LAN.
+  hostNetwork: true
   containers:
     - name: immich-server
       image: ghcr.io/immich-app/immich-server:release
       env:
+        # Under hostNetwork `hostPort:` is invalid — IMMICH_PORT here
+        # makes the server bind {{IMMICH_PORT}} directly on the host;
+        # the servicebay.ports annotation documents it for the UI /
+        # network graph.
+        - name: IMMICH_PORT
+          value: "{{IMMICH_PORT}}"
         - name: DB_HOSTNAME
-          value: "localhost"
+          value: "127.0.0.1"
         - name: DB_USERNAME
           value: "postgres"
         - name: DB_PASSWORD
@@ -23,12 +43,11 @@ spec:
         - name: DB_DATABASE_NAME
           value: "immich"
         - name: REDIS_HOSTNAME
-          value: "localhost"
+          value: "127.0.0.1"
         - name: IMMICH_MACHINE_LEARNING_URL
-          value: "http://localhost:3003"
+          value: "http://127.0.0.1:3003"
       ports:
-        - containerPort: 2283
-          hostPort: {{IMMICH_PORT}}
+        - containerPort: {{IMMICH_PORT}}
       volumeMounts:
         - mountPath: /usr/src/app/upload
           name: immich-upload
@@ -41,9 +60,15 @@ spec:
 
     - name: redis
       image: docker.io/redis:6.2-alpine
+      # Pin redis to loopback so hostNetwork doesn't accidentally
+      # expose it on the LAN. immich-server reaches it via 127.0.0.1.
+      args: ["--bind", "127.0.0.1", "--protected-mode", "yes"]
 
     - name: database
       image: docker.io/tensorchord/pgvecto-rs:pg14-v0.2.0
+      # Postgres image defaults to listen_addresses='*'. Override to
+      # localhost-only so the sidecar isn't reachable from the LAN.
+      args: ["postgres", "-c", "listen_addresses=127.0.0.1"]
       env:
         - name: POSTGRES_PASSWORD
           value: "{{DB_PASSWORD}}"

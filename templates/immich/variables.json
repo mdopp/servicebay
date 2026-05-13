@@ -8,6 +8,35 @@
     "description": "Web UI port",
     "default": "2283"
   },
+  "IMMICH_ADMIN_NAME": {
+    "type": "text",
+    "description": "Display name for the seeded Immich admin user. Used in the first-run sign-up that runs in post-deploy.",
+    "default": "Admin"
+  },
+  "IMMICH_ADMIN_EMAIL": {
+    "type": "text",
+    "description": "Email of the seeded Immich admin user — also doubles as the login. Set this to the operator's email so SSO auto-linking (matching by email) works on first sign-in.",
+    "default": ""
+  },
+  "IMMICH_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "Initial password for the seeded Immich admin user. Auto-generated; surfaced in the post-install credentials banner so the operator can sign in once and immediately rotate or hand off to SSO."
+  },
+  "IMMICH_SSO_ENABLED": {
+    "type": "select",
+    "description": "Enable Immich ↔ Authelia SSO. On by default so family members sign in once with the household password. Flip to false if you hit an SSO regression and want to fall back to local Immich accounts.",
+    "options": ["true", "false"],
+    "default": "true"
+  },
+  "IMMICH_SSO_SECRET": {
+    "type": "secret",
+    "description": "OIDC client secret for Immich ↔ Authelia. Auto-generated; the wizard wires the same value into Authelia's clients[] entry and the Immich system-config OAuth section via post-deploy."
+  },
+  "PUBLIC_DOMAIN": {
+    "type": "text",
+    "description": "Public domain (used to build the SSO authority URL https://auth.<domain>)",
+    "default": "dopp.cloud"
+  },
   "IMMICH_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for Immich",
@@ -25,7 +54,8 @@
       "client_name": "Immich",
       "authorization_policy": "one_factor",
       "redirect_uris": ["/auth/login", "/user-settings", "app.immich:/"],
-      "scopes": ["openid", "profile", "email"]
+      "scopes": ["openid", "profile", "email"],
+      "clientSecretVar": "IMMICH_SSO_SECRET"
     }
   }
 }
