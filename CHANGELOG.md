@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.28.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.28.0...servicebay-v3.28.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **immich:** probe /api/server/ping — /api/server-info doesn't exist ([#452](https://github.com/mdopp/servicebay/issues/452)) ([fe9bbcc](https://github.com/mdopp/servicebay/commit/fe9bbccdee43b8d6dd5ffb17f8470726d1ef95b0))
+
 ## [3.28.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.4...servicebay-v3.28.0) (2026-05-13)
 
 
