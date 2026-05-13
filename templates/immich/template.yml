@@ -66,9 +66,19 @@ spec:
 
     - name: database
       image: docker.io/tensorchord/pgvecto-rs:pg14-v0.2.0
-      # Postgres image defaults to listen_addresses='*'. Override to
-      # localhost-only so the sidecar isn't reachable from the LAN.
-      args: ["postgres", "-c", "listen_addresses=127.0.0.1"]
+      # The pgvecto-rs image's default CMD sets
+      # `shared_preload_libraries=vectors.so` — overriding args to
+      # restrict listen_addresses dropped that, postgres started
+      # without the extension and immich's microservices worker
+      # crashed with "pgvecto.rs must be loaded via
+      # shared_preload_libraries" (#410 follow-up). Keep BOTH
+      # `-c` flags: extension load AND localhost-only bind.
+      args:
+        - "postgres"
+        - "-c"
+        - "shared_preload_libraries=vectors.so"
+        - "-c"
+        - "listen_addresses=127.0.0.1"
       env:
         - name: POSTGRES_PASSWORD
           value: "{{DB_PASSWORD}}"
