@@ -149,13 +149,14 @@ export async function generateAudiobookshelfDeepLink(serviceName: string, subdom
 }
 
 /**
- * Read the running Syncthing container's device ID. Uses
- * `podman exec syncthing cat /var/syncthing/config/config.xml`
- * (the file-share template mounts the syncthing-config PVC there)
- * and pulls the `<device id="...">` line that matches the special
- * "ourselves" entry. Falls back to running `syncthing --device-id`
- * inside the container if the config file isn't readable yet
- * (rare cold-start window).
+ * Read the running Syncthing container's device ID via
+ * `podman exec file-share-syncthing syncthing --device-id`.
+ *
+ * The container name follows podman play-kube's `<pod>-<container>`
+ * convention — the YAML's container is named `syncthing` but the
+ * actual podman container is `file-share-syncthing`. Calling it
+ * just by `syncthing` returns 404 and the UI ends up hiding the
+ * QR with "Syncthing container might not be running yet".
  *
  * Returns `null` when the container isn't running, the agent
  * doesn't respond, or the parse fails — the caller treats that as
@@ -169,7 +170,7 @@ export async function fetchSyncthingDeviceId(node: string = 'Local'): Promise<st
     // parsing the XML's myID attribute or matching against the
     // container's hostname; the CLI is one less moving part.
     const res = await agent.sendCommand('exec', {
-      command: 'podman exec syncthing syncthing --device-id 2>/dev/null',
+      command: 'podman exec file-share-syncthing syncthing --device-id 2>/dev/null',
     }, { timeoutMs: 6_000 }) as { code?: number; stdout?: string };
     if (res.code !== 0) return null;
     const id = (res.stdout ?? '').trim();
