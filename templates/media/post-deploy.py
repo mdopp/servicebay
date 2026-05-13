@@ -197,15 +197,39 @@ def configure_abs_oidc(
         return False
 
     # 2. Fetch endpoint URLs from Authelia's OIDC discovery document.
-    #    Fall back to known Authelia path conventions if the host isn't reachable yet.
-    code, disc = request_json("GET", f"{issuer_url}/.well-known/openid-configuration")
-    if code == 200 and isinstance(disc, dict):
+    #    Two probes in order so the install path doesn't depend on
+    #    DNS or router-hairpin being ready yet:
+    #      a) http://localhost:<AUTHELIA_PORT>/.well-known/...
+    #         Authelia runs rootless+hostNetwork on this box, so its
+    #         port is reachable from the post-deploy shell even
+    #         before AdGuard rewrites are provisioned. This is the
+    #         path that works on a fresh install.
+    #      b) https://auth.<PUBLIC_DOMAIN>/.well-known/...
+    #         The public URL. Works once DNS is set up; useful when
+    #         the operator is re-running the seed long after install
+    #         and the localhost port may have moved.
+    #    Discovery values point at the *public* issuer regardless of
+    #    which probe answered — clients hit those URLs from a
+    #    browser, not from the host.
+    authelia_port = env("AUTHELIA_PORT", "9091")
+    discovery_candidates = [
+        f"http://localhost:{authelia_port}",
+        issuer_url,
+    ]
+    disc = None
+    for candidate in discovery_candidates:
+        code, body = request_json("GET", f"{candidate}/.well-known/openid-configuration")
+        if code == 200 and isinstance(body, dict):
+            disc = body
+            log(f"ℹ️  Authelia OIDC discovery via {candidate}.")
+            break
+    if disc is not None:
         auth_url = disc.get("authorization_endpoint", "")
         token_url = disc.get("token_endpoint", "")
         userinfo_url = disc.get("userinfo_endpoint", "")
         jwks_url = disc.get("jwks_uri", "")
     else:
-        log(f"ℹ️  Authelia OIDC discovery returned HTTP {code} — using standard Authelia endpoint paths.")
+        log("ℹ️  Authelia OIDC discovery unreachable on every candidate — falling back to known Authelia 4.x paths.")
         auth_url = f"{issuer_url}/api/oidc/authorization"
         token_url = f"{issuer_url}/api/oidc/token"
         userinfo_url = f"{issuer_url}/api/oidc/userinfo"
