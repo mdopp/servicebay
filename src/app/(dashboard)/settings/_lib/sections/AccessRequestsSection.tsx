@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, ExternalLink, Loader2, Mail, Trash2, UserPlus } from 'lucide-react';
+import { Check, ExternalLink, Loader2, Mail, Trash2, UserCheck, UserPlus } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 interface AccessRequest {
@@ -69,6 +69,26 @@ export default function AccessRequestsSection() {
     }
   };
 
+  const onApprove = async (id: string) => {
+    setBusy('action');
+    try {
+      const res = await fetch(`/api/system/access-requests/${id}/approve`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        addToast('success', 'User created in LLDAP', 'Assign groups in the LLDAP tab that just opened.');
+        if (typeof data.lldapUrl === 'string') {
+          window.open(data.lldapUrl, '_blank', 'noopener,noreferrer');
+        }
+        await load();
+      } else {
+        const message = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+        addToast('error', 'Could not approve', message);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onDelete = async (id: string) => {
     if (!window.confirm('Delete this access request? Use for spam — there\'s no undo.')) return;
     setBusy('action');
@@ -112,7 +132,7 @@ export default function AccessRequestsSection() {
             )}
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Family members on the LAN can submit a request from the portal at <span className="font-mono">/portal</span>. Create the user in LLDAP, then mark resolved.
+            Family members on the LAN can submit a request from the portal at <span className="font-mono">/portal</span>. Click <span className="font-medium">Approve</span> to provision the user in LLDAP and open their group-assignment page.
           </p>
         </div>
         {lldapUrl && (
@@ -142,6 +162,7 @@ export default function AccessRequestsSection() {
                     <RequestRow
                       key={r.id}
                       r={r}
+                      onApprove={() => onApprove(r.id)}
                       onResolve={() => onResolve(r.id)}
                       onDelete={() => onDelete(r.id)}
                       busy={busy === 'action'}
@@ -158,6 +179,7 @@ export default function AccessRequestsSection() {
                     <RequestRow
                       key={r.id}
                       r={r}
+                      onApprove={() => onApprove(r.id)}
                       onResolve={() => onResolve(r.id)}
                       onDelete={() => onDelete(r.id)}
                       busy={busy === 'action'}
@@ -176,17 +198,20 @@ export default function AccessRequestsSection() {
 
 function RequestRow({
   r,
+  onApprove,
   onResolve,
   onDelete,
   busy,
   muted,
 }: {
   r: AccessRequest;
+  onApprove: () => void;
   onResolve: () => void;
   onDelete: () => void;
   busy: boolean;
   muted?: boolean;
 }) {
+  const canAutoApprove = Boolean(r.username);
   return (
     <div className={`p-3 rounded-lg border border-gray-200 dark:border-gray-700 ${muted ? 'opacity-60' : 'bg-white dark:bg-gray-900'}`}>
       <div className="flex items-start gap-3">
@@ -211,12 +236,22 @@ function RequestRow({
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {r.status === 'pending' && canAutoApprove && (
+            <button
+              onClick={onApprove}
+              disabled={busy}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded disabled:opacity-50"
+              title="Provision the user in LLDAP and open the group assignment page"
+            >
+              <UserCheck size={14} /> Approve
+            </button>
+          )}
           {r.status === 'pending' && (
             <button
               onClick={onResolve}
               disabled={busy}
               className="p-1.5 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded disabled:opacity-50"
-              title="Mark resolved (after creating the LLDAP user)"
+              title={canAutoApprove ? 'Mark resolved without creating the LLDAP user' : 'Mark resolved (after creating the LLDAP user)'}
             >
               <Check size={16} />
             </button>
