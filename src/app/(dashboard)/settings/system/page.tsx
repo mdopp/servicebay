@@ -3,14 +3,14 @@
 import LogLevelControl from '@/components/LogLevelControl';
 import ServerIdentitySection from '../_lib/sections/ServerIdentitySection';
 import UpdatesSection from '../_lib/sections/UpdatesSection';
-import OsUpdateWindowSection from '../_lib/sections/OsUpdateWindowSection';
+import UpdateWindowSection from '../_lib/sections/UpdateWindowSection';
 
 export default function SystemSettingsPage() {
   return (
     <>
       <ServerIdentitySection />
       <UpdatesSection />
-      <OsUpdateWindowSection />
+      <UpdateWindowSection />
       <LogLevelControl />
     </>
   );

@@ -145,7 +145,12 @@ def main() -> int:
     sso_enabled = env("IMMICH_SSO_ENABLED") == "true"
     sso_secret = env("IMMICH_SSO_SECRET")
     admin_name = env("IMMICH_ADMIN_NAME", "Admin")
-    admin_email = env("IMMICH_ADMIN_EMAIL")
+    # IMMICH_ADMIN_EMAIL defaults to empty in variables.json — operators
+    # who blow through the configure step never fill it in, and the
+    # seed step then skipped silently. Fall back to OPERATOR_EMAIL (the
+    # canonical email ServiceBay already collects for notifications)
+    # so a typical install gets a real address without prompting twice.
+    admin_email = env("IMMICH_ADMIN_EMAIL") or env("OPERATOR_EMAIL")
     admin_password = env("IMMICH_ADMIN_PASSWORD")
     subdomain = env("IMMICH_SUBDOMAIN", "photos")
     public_url = f"https://{subdomain}.{public_domain}" if public_domain else f"http://127.0.0.1:{port}"
@@ -159,7 +164,10 @@ def main() -> int:
     log(f"✅ Immich is ready at {base_url}.")
 
     if not admin_email or not admin_password:
-        log("⚠️  IMMICH_ADMIN_EMAIL / IMMICH_ADMIN_PASSWORD not set — skipping admin seed and OIDC config. Re-run the wizard to regenerate them.")
+        log("⚠️  No admin email available (IMMICH_ADMIN_EMAIL + OPERATOR_EMAIL both blank) "
+            "or IMMICH_ADMIN_PASSWORD missing — skipping admin seed and OIDC config. "
+            "Fill in Settings → Notifications → email so future installs auto-seed, "
+            "then re-run from Diagnose → post_deploy_failed.")
         return 0
 
     # 1. Seed admin (idempotent — 400 means an admin already exists).

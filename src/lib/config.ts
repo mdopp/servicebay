@@ -143,28 +143,49 @@ export interface AppConfig {
     lastNotifiedVersion?: string;
   };
   /**
-   * Operating-system update window. Fedora CoreOS uses Zincati to apply
-   * OS updates and (importantly) reboot the host when one lands; by
-   * default that can happen any time of day, which is disruptive on a
-   * box running family-visible services. When `enabled`, we render the
-   * window to `/etc/zincati/config.d/55-servicebay-window.toml` so
-   * Zincati only reboots inside the configured `days` / `startTime` /
-   * `lengthMinutes` window. ServiceBay stores the configured intent
-   * here so a wiped `/etc` gets the same window on next save and the
-   * UI can render what was chosen even when the file on disk is in an
-   * unexpected state.
+   * Unified auto-update window. ServiceBay manages three independent
+   * sources of "the host may restart now": Zincati (OS updates, host
+   * reboot), `podman-auto-update.timer` (container image refresh,
+   * per-service restart), and the ServiceBay app itself. By default
+   * each fires on its own clock, which is disruptive on a family-
+   * visible appliance. This config gives the operator one quiet slot
+   * and selectively applies it to each source.
    *
-   * When `enabled: false`, the TOML file is removed and Zincati
-   * reverts to its `immediate` default. We never silently overwrite
-   * the operator's choice — disabled means *operator opted out*.
+   * State machine:
+   *   - `undefined` (fresh install, operator hasn't decided): we
+   *     treat as "safety lock — no auto-updates anywhere". On boot
+   *     ServiceBay writes `[updates] enabled = false` to Zincati and
+   *     masks `podman-auto-update.timer`. This is the defence
+   *     against the "FCoS auto-updated mid-install, host rebooted,
+   *     and the USB install stick was still inserted → re-imaged
+   *     from scratch" foot-gun.
+   *   - `{ enabled: false }` (operator explicitly opted out): same as
+   *     undefined — keep the locks. The wrapper exists so the UI can
+   *     remember the operator's most-recent days/time selection if
+   *     they toggle back on.
+   *   - `{ enabled: true, ... }`: render drop-ins for whichever
+   *     `applyTo.*` flags are on; leave the others locked (or, if
+   *     the operator chose not to apply, unlocked at their default).
    */
-  osUpdateWindow?: {
+  updateWindow?: {
     enabled: boolean;
     days: Array<'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun'>;
     /** 24-h `HH:MM`, UTC. */
     startTime: string;
     /** Length of the maintenance window in minutes. Min 30, max 1440. */
     lengthMinutes: number;
+    /**
+     * Which restart sources the window applies to. Operators can
+     * defer OS reboots while letting container images auto-refresh
+     * (or vice-versa). `servicebay` is the ServiceBay-app updater
+     * itself — today it only sends notifications and applies on
+     * manual click, so this flag is forward-looking infrastructure.
+     */
+    applyTo: {
+      os: boolean;
+      containers: boolean;
+      servicebay: boolean;
+    };
   };
   registries?: RegistriesSettings;
   externalLinks?: ExternalLink[];
