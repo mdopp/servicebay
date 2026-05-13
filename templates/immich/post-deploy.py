@@ -228,6 +228,25 @@ def main() -> int:
         # locally if SSO breaks; flip to True later via the Immich UI.
         "autoLaunch": False,
         "signingAlgorithm": "RS256",
+        # Immich 2.x added three required oauth fields that older
+        # immich-server builds tolerated being absent. PATCH/PUT now
+        # 400s with `should not be empty` / `must be a string` if
+        # any of them are missing.
+        #   - tokenEndpointAuthMethod: how Immich authenticates to the
+        #     OIDC provider when redeeming the auth code. Authelia
+        #     accepts both `client_secret_post` and `client_secret_basic`;
+        #     `client_secret_post` is the safer default for first-time
+        #     setups (won't trip basic-auth parsing on proxies).
+        #   - profileSigningAlgorithm: signing algo Immich expects on
+        #     the userinfo JWT. Authelia doesn't sign userinfo by
+        #     default, but the field still has to be a non-empty
+        #     string. `RS256` matches Authelia's id_token signing.
+        #   - roleClaim: optional claim name that maps to Immich admin
+        #     role. Empty string opts out of role-based assignment —
+        #     operators promote to admin manually for now.
+        "tokenEndpointAuthMethod": "client_secret_post",
+        "profileSigningAlgorithm": "RS256",
+        "roleClaim": "",
         "mobileOverrideEnabled": False,
         "mobileRedirectUri": "",
         "storageLabelClaim": "preferred_username",
