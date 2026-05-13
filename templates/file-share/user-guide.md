@@ -1,31 +1,45 @@
 ---
-lucide_icon: "folder-open"
-tagline: "Share documents across phones, laptops, and the family — like a private Dropbox."
-setup_assets:
-  - kind: "syncthing_qr"
-    label: "Pair this Syncthing device"
-    description: "Shows a QR code with the home server's device ID. The Android Syncthing app's \"Add Device → Scan QR\" picks it up directly."
-recommended_apps:
-  - name: "Syncthing"
-    url: "https://syncthing.net/downloads/"
-    platforms: ["desktop", "android"]
-    note: "Two-way folder sync between your devices and the home server."
-  - name: "Möbius Sync"
-    url: "https://apps.apple.com/app/m%C3%B6bius-sync/id1539203216"
-    platforms: ["ios"]
-    note: "Syncthing-compatible iOS client — Apple doesn't allow Syncthing itself on iOS."
-  - name: "Obsidian"
-    url: "https://obsidian.md"
-    platforms: ["desktop", "ios", "android"]
-    note: "Markdown notes — point your vault at a Syncthing folder and notes auto-sync across every device."
-  - name: "KOReader"
-    url: "https://koreader.rocks/"
-    platforms: ["android"]
-    note: "Beautiful e-reader for PDFs / EPUBs / comics — opens files directly from a Syncthing folder."
-  - name: "VLC"
-    url: "https://www.videolan.org/vlc/"
-    platforms: ["desktop", "ios", "android"]
-    note: "Plays videos from the SMB share without downloading — pick \"Local Network\" → your server."
+# The `file-share` template ships three access paths — FileBrowser
+# (browser), Samba (network drive), and Syncthing (continuous sync).
+# Two cards so the family-portal "Open" button routes to the right
+# tool: Files = the polished Dropbox-style web UI, Syncthing = the
+# device-pairing daemon that lives on a separate subdomain. Samba
+# has no web UI, so it stays in the shared body text below.
+cards:
+  - subdomain_var: "FILEBROWSER_SUBDOMAIN"
+    label: "Files"
+    lucide_icon: "folder-open"
+    tagline: "Browse and share files in your browser — upload, download, and share links like a private Dropbox."
+
+  - subdomain_var: "SYNCTHING_SUBDOMAIN"
+    label: "Syncthing"
+    lucide_icon: "refresh-cw"
+    tagline: "Keep folders on your phone and laptop in sync with the home server — automatic two-way."
+    setup_assets:
+      - kind: "syncthing_qr"
+        label: "Pair this Syncthing device"
+        description: "Shows a QR code with the home server's device ID. The Android Syncthing app's \"Add Device → Scan QR\" picks it up directly."
+    recommended_apps:
+      - name: "Syncthing"
+        url: "https://syncthing.net/downloads/"
+        platforms: ["desktop", "android"]
+        note: "Two-way folder sync between your devices and the home server."
+      - name: "Möbius Sync"
+        url: "https://apps.apple.com/app/m%C3%B6bius-sync/id1539203216"
+        platforms: ["ios"]
+        note: "Syncthing-compatible iOS client — Apple doesn't allow Syncthing itself on iOS."
+      - name: "Obsidian"
+        url: "https://obsidian.md"
+        platforms: ["desktop", "ios", "android"]
+        note: "Markdown notes — point your vault at a Syncthing folder and notes auto-sync across every device."
+      - name: "KOReader"
+        url: "https://koreader.rocks/"
+        platforms: ["android"]
+        note: "Beautiful e-reader for PDFs / EPUBs / comics — opens files directly from a Syncthing folder."
+      - name: "VLC"
+        url: "https://www.videolan.org/vlc/"
+        platforms: ["desktop", "ios", "android"]
+        note: "Plays videos from the SMB share without downloading — pick \"Local Network\" → your server."
 ---
 
 # Getting started with Files
@@ -34,7 +48,7 @@ This service runs three different ways to access your files. Pick the one that f
 
 ## In the browser (FileBrowser)
 
-The simplest path — no setup. Click the *Open* button on this card, log in with the family password, and you see every shared folder. You can upload, download, rename, share links — like Dropbox's web UI.
+The simplest path — no setup. Click the *Open* button on the **Files** card, log in with the family password, and you see every shared folder. You can upload, download, rename, share links — like Dropbox's web UI.
 
 Best for: occasional access, sharing a link with someone outside the family, mobile browsers.
 
@@ -57,7 +71,7 @@ Best for: working with large files (video, photos), where uploading through a br
 Syncthing keeps a folder on your phone in sync with the home server in both directions. Photos you take, documents you save — they appear on the server within minutes.
 
 1. Install **Syncthing** (Android) or **Möbius Sync** (iOS) from the links above.
-2. The app shows a *device ID*. Add ServiceBay's device ID (you'll find it in the FileBrowser web UI under *Settings → Sync*).
+2. The app shows a *device ID*. Open the **Syncthing** card and scan the QR code (it carries the home server's device ID).
 3. Pick which folders on your phone to sync.
 
 Best for: continuous backup of phone documents, two-way sync between phone and laptop.
