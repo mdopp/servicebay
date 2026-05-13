@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.30.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.29.0...servicebay-v3.30.0) (2026-05-13)
+
+
+### Features
+
+* **setup:** bring done-step panels to /setup + Authelia OIDC localhost fallback ([#456](https://github.com/mdopp/servicebay/issues/456)) ([a94bde3](https://github.com/mdopp/servicebay/commit/a94bde3e631fc2f7ae710788f84c82e00828efcb))
+
 ## [3.29.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.28.1...servicebay-v3.29.0) (2026-05-13)
 
 
