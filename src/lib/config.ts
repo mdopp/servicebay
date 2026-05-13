@@ -142,6 +142,30 @@ export interface AppConfig {
      */
     lastNotifiedVersion?: string;
   };
+  /**
+   * Operating-system update window. Fedora CoreOS uses Zincati to apply
+   * OS updates and (importantly) reboot the host when one lands; by
+   * default that can happen any time of day, which is disruptive on a
+   * box running family-visible services. When `enabled`, we render the
+   * window to `/etc/zincati/config.d/55-servicebay-window.toml` so
+   * Zincati only reboots inside the configured `days` / `startTime` /
+   * `lengthMinutes` window. ServiceBay stores the configured intent
+   * here so a wiped `/etc` gets the same window on next save and the
+   * UI can render what was chosen even when the file on disk is in an
+   * unexpected state.
+   *
+   * When `enabled: false`, the TOML file is removed and Zincati
+   * reverts to its `immediate` default. We never silently overwrite
+   * the operator's choice — disabled means *operator opted out*.
+   */
+  osUpdateWindow?: {
+    enabled: boolean;
+    days: Array<'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun'>;
+    /** 24-h `HH:MM`, UTC. */
+    startTime: string;
+    /** Length of the maintenance window in minutes. Min 30, max 1440. */
+    lengthMinutes: number;
+  };
   registries?: RegistriesSettings;
   externalLinks?: ExternalLink[];
   mcp?: {
