@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.27.4](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.3...servicebay-v3.27.4) (2026-05-13)
+
+
+### Bug Fixes
+
+* **install:** probe immich on LAN_IP — rootless+hostNetwork doesn't bridge loopback ([#448](https://github.com/mdopp/servicebay/issues/448)) ([a243e82](https://github.com/mdopp/servicebay/commit/a243e82dcb1e537bb63bda117f8d46c95d04e5d5))
+
 ## [3.27.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.2...servicebay-v3.27.3) (2026-05-13)
 
 
