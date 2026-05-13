@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.27.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.26.0...servicebay-v3.27.0) (2026-05-13)
+
+
+### Features
+
+* **access-requests:** auto-create LLDAP user on approve ([#425](https://github.com/mdopp/servicebay/issues/425)) ([1b8f907](https://github.com/mdopp/servicebay/commit/1b8f90777311ae5422fac7e906715affd68aaeb2)), closes [#406](https://github.com/mdopp/servicebay/issues/406)
+* **access-requests:** collect username + firstName/lastName on portal form ([#424](https://github.com/mdopp/servicebay/issues/424)) ([b8685f6](https://github.com/mdopp/servicebay/commit/b8685f65c2a5104b45064b771639502407a6d38c)), closes [#405](https://github.com/mdopp/servicebay/issues/405)
+* **access-requests:** confirmation email to requester on approve ([#426](https://github.com/mdopp/servicebay/issues/426)) ([0ab207e](https://github.com/mdopp/servicebay/commit/0ab207e4e024ecb41769e8ffaf6a5b00ea203c37)), closes [#407](https://github.com/mdopp/servicebay/issues/407)
+* **access-requests:** deep-link admin email to settings page ([#423](https://github.com/mdopp/servicebay/issues/423)) ([3917b55](https://github.com/mdopp/servicebay/commit/3917b555f4db1693fdbf45f690642eea2d81f0be)), closes [#404](https://github.com/mdopp/servicebay/issues/404)
+* **access-requests:** resend welcome email + polished template ([#434](https://github.com/mdopp/servicebay/issues/434)) ([eecc7af](https://github.com/mdopp/servicebay/commit/eecc7afd79b25db1a90be64936e857f0f8096211)), closes [#418](https://github.com/mdopp/servicebay/issues/418)
+* **home-assistant:** Z-Wave JS UI always-on + browser-reachable ([#435](https://github.com/mdopp/servicebay/issues/435)) ([b6310e5](https://github.com/mdopp/servicebay/commit/b6310e592f9e37f1aacb07c9c2f3bd7d71c893bf))
+* **portal:** auth-aware view via Authelia soft-verify ([#433](https://github.com/mdopp/servicebay/issues/433)) ([6cd9a47](https://github.com/mdopp/servicebay/commit/6cd9a47757bc269658e09055ca9cc3a69459651f))
+* **services:** re-render YAML from template using current variables ([#436](https://github.com/mdopp/servicebay/issues/436)) ([7ab283e](https://github.com/mdopp/servicebay/commit/7ab283e220a1eaa22d8d6f9b6ac528bf24d1e59c))
+
+
+### Bug Fixes
+
+* **file-share:** correct syncthing exec name + silence UPnP logspam ([#432](https://github.com/mdopp/servicebay/issues/432)) ([9aedbfb](https://github.com/mdopp/servicebay/commit/9aedbfbad5855458fd46783a6da70cb77e3c7917)), closes [#415](https://github.com/mdopp/servicebay/issues/415)
+* **file-share:** split portal tile into Files + Syncthing cards ([#431](https://github.com/mdopp/servicebay/issues/431)) ([c95c3e6](https://github.com/mdopp/servicebay/commit/c95c3e61a29fe7652591cb0e4d470557c0fa4542)), closes [#414](https://github.com/mdopp/servicebay/issues/414)
+* **immich:** seed admin, wire OIDC, and switch pod to hostNetwork ([#428](https://github.com/mdopp/servicebay/issues/428)) ([178bea1](https://github.com/mdopp/servicebay/commit/178bea103e1c52c02c00383dbe728f26d2cd782c)), closes [#410](https://github.com/mdopp/servicebay/issues/410)
+* **media:** switch Navidrome from reverse-proxy-auth to OIDC ([#430](https://github.com/mdopp/servicebay/issues/430)) ([0f8be9b](https://github.com/mdopp/servicebay/commit/0f8be9bf303999715c7cc30c317a4b79286b8d94)), closes [#413](https://github.com/mdopp/servicebay/issues/413)
+* **vaultwarden:** switch pod to hostNetwork so SSO discovery works ([#427](https://github.com/mdopp/servicebay/issues/427)) ([32f0e0d](https://github.com/mdopp/servicebay/commit/32f0e0de36a33fa7f7f728dc8787e8d05ffec99e)), closes [#408](https://github.com/mdopp/servicebay/issues/408)
+
 ## [3.26.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.25.3...servicebay-v3.26.0) (2026-05-12)
 
 
