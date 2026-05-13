@@ -119,8 +119,24 @@ function renderProxyConfig(
   }
 }
 
-/** Build the proxy-host list from subdomain-typed variables. */
-function buildProxyHosts(variables: StackVariable[]): {
+/** Build the proxy-host list from subdomain-typed variables. Exported
+ * for unit testing — the public-vs-LAN routing rule is subtle enough
+ * that a regression test is worth pinning (see
+ * `tests/backend/buildProxyHosts.test.ts`).
+ *
+ * Hosts are split by their declared `exposure`:
+ *   - `public` → `<sub>.<PUBLIC_DOMAIN>` (Let's Encrypt cert, externally
+ *     reachable once DNS points here).
+ *   - `lan`    → `<sub>.<LAN_DOMAIN or 'home.arpa'>` so admin-only UIs
+ *     (e.g. Z-Wave JS at `zwave.home.arpa`) never accidentally land on
+ *     the public domain — that previously produced a `zwave.<publicDomain>`
+ *     entry the DNS-verify probe nagged about, and would have exposed the
+ *     UI publicly if the operator ever created the A record.
+ *
+ * Public-exposure hosts are skipped when no `PUBLIC_DOMAIN` is set
+ * (LAN-only install).
+ */
+export function buildProxyHosts(variables: StackVariable[]): {
   domain: string | undefined;
   hosts: {
     domain: string;
@@ -132,28 +148,31 @@ function buildProxyHosts(variables: StackVariable[]): {
   }[];
 } {
   const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-  if (!domain) return { domain, hosts: [] };
+  const lanDomain = variables.find(v => v.name === 'LAN_DOMAIN')?.value || 'home.arpa';
   const view = variables.reduce<Record<string, string>>(
     (acc, v) => { acc[v.name] = v.value; return acc; },
     {},
   );
   const subdomainVars = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
-  const hosts = subdomainVars.map(sv => {
+  const hosts = subdomainVars.flatMap(sv => {
+    // Conservative default: missing/unknown → 'lan'. Templates declare
+    // `"exposure": "public"` explicitly for services that should get a
+    // Let's Encrypt cert at install time.
+    const exposure: 'public' | 'lan' = sv.meta?.exposure === 'public' ? 'public' : 'lan';
+    const hostDomain = exposure === 'public' ? domain : lanDomain;
+    if (!hostDomain) return [];
     let port = sv.meta?.proxyPort || '';
     const portVar = variables.find(v => v.name === port);
     if (portVar) port = portVar.value;
     const service = sv.meta?.templateName
       || sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase();
-    return {
-      domain: `${sv.value}.${domain}`,
+    return [{
+      domain: `${sv.value}.${hostDomain}`,
       forwardPort: parseInt(port, 10),
       service,
-      // Conservative default: missing/unknown → 'lan'. Templates declare
-      // `"exposure": "public"` explicitly for services that should get a
-      // Let's Encrypt cert at install time.
-      exposure: (sv.meta?.exposure === 'public' ? 'public' : 'lan') as 'public' | 'lan',
+      exposure,
       proxyConfig: renderProxyConfig(sv.meta?.proxyConfig, view),
-    };
+    }];
   }).filter(h => Number.isFinite(h.forwardPort) && h.forwardPort > 0);
   return { domain, hosts };
 }
@@ -175,6 +194,11 @@ interface ConfigureProxyOpts {
 export async function configureProxyRoutes(opts: ConfigureProxyOpts): Promise<ProxyResult> {
   const { variables, node, onLog, credentials, skipWait } = opts;
   const { domain, hosts } = buildProxyHosts(variables);
+  // Public mode: PUBLIC_DOMAIN set + at least one host built. LAN-only
+  // mode (no PUBLIC_DOMAIN) is intentionally not handled here — proxy
+  // routing on `.home.arpa` exists only for individual lan-exposed hosts
+  // alongside a public install. Pure LAN-mode reverse proxy is a
+  // separate flow.
   if (!domain || hosts.length === 0) return 'skipped';
 
   if (!credentials && !skipWait) {
