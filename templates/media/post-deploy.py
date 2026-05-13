@@ -54,6 +54,43 @@ def log(msg: str) -> None:
     sys.stdout.flush()
 
 
+REQUEST_TIMEOUT = 30.0
+
+
+def request_json(
+    method: str,
+    url: str,
+    payload: object | None = None,
+    token: str | None = None,
+    extra_headers: dict[str, str] | None = None,
+    timeout: float = REQUEST_TIMEOUT,
+) -> tuple[int, object | None]:
+    """Generic HTTP helper — GET/PATCH/POST with optional Bearer auth and extra headers."""
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers: dict[str, str] = {"Accept": "application/json"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if extra_headers:
+        headers.update(extra_headers)
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            try:
+                return resp.status, json.loads(raw) if raw else None
+            except json.JSONDecodeError:
+                return resp.status, None
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8"))
+        except Exception:  # pylint: disable=broad-except
+            return e.code, None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0, None
+
+
 def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tuple[int, dict[str, object] | None]:
     """POST JSON, return (status, parsed-body-or-None)."""
     body = json.dumps(payload).encode("utf-8")
@@ -128,6 +165,79 @@ def seed_media(service_label: str, service_payload_name: str, port_var: str, def
     log(f"⚠️ {service_label} did not become reachable in 5 minutes. Open http://<server-ip>:{port} and create the admin user manually.")
 
 
+def configure_abs_oidc(
+    abs_port: str,
+    abs_user: str,
+    abs_password: str,
+    public_domain: str,
+    oidc_secret: str,
+) -> bool:
+    """Configure Audiobookshelf OIDC via its /api/auth-settings API.
+    Tries 127.0.0.1 and [::1] because Node.js on FCoS may bind IPv6-only.
+    Returns True if the settings were written successfully."""
+    issuer_url = f"https://auth.{public_domain}"
+
+    # 1. Login to get a bearer token (x-return-tokens: true puts it in the body).
+    token: str | None = None
+    abs_base: str | None = None
+    for host in (f"http://127.0.0.1:{abs_port}", f"http://[::1]:{abs_port}"):
+        code, body = request_json(
+            "POST", f"{host}/login",
+            {"username": abs_user, "password": abs_password},
+            extra_headers={"x-return-tokens": "true"},
+        )
+        if code == 200 and isinstance(body, dict):
+            token = (body.get("user") or {}).get("accessToken")
+            if token:
+                abs_base = host
+                break
+
+    if not token or not abs_base:
+        log("⚠️  Could not log in to Audiobookshelf for OIDC setup — skipping auto-config.")
+        return False
+
+    # 2. Fetch endpoint URLs from Authelia's OIDC discovery document.
+    #    Fall back to known Authelia path conventions if the host isn't reachable yet.
+    code, disc = request_json("GET", f"{issuer_url}/.well-known/openid-configuration")
+    if code == 200 and isinstance(disc, dict):
+        auth_url = disc.get("authorization_endpoint", "")
+        token_url = disc.get("token_endpoint", "")
+        userinfo_url = disc.get("userinfo_endpoint", "")
+        jwks_url = disc.get("jwks_uri", "")
+    else:
+        log(f"ℹ️  Authelia OIDC discovery returned HTTP {code} — using standard Authelia endpoint paths.")
+        auth_url = f"{issuer_url}/api/oidc/authorization"
+        token_url = f"{issuer_url}/api/oidc/token"
+        userinfo_url = f"{issuer_url}/api/oidc/userinfo"
+        jwks_url = f"{issuer_url}/jwks.json"
+
+    # 3. Write auth settings.
+    code, resp = request_json(
+        "PATCH", f"{abs_base}/api/auth-settings",
+        {
+            "authActiveAuthMethods": ["local", "openid"],
+            "authOpenIDIssuerURL": issuer_url,
+            "authOpenIDAuthorizationURL": auth_url,
+            "authOpenIDTokenURL": token_url,
+            "authOpenIDUserInfoURL": userinfo_url,
+            "authOpenIDJwksURL": jwks_url,
+            "authOpenIDClientID": "audiobookshelf",
+            "authOpenIDClientSecret": oidc_secret,
+            "authOpenIDButtonText": "Login with Authelia",
+            "authOpenIDAutoLaunch": False,
+            "authOpenIDAutoRegister": True,
+            "authOpenIDMatchExistingBy": "email",
+            "authOpenIDTokenSigningAlgorithm": "RS256",
+        },
+        token=token,
+    )
+    if code == 200:
+        log(f"✅ Audiobookshelf OIDC configured against {issuer_url}.")
+        return True
+    log(f"⚠️  Could not write ABS OIDC settings (HTTP {code}): {resp}.")
+    return False
+
+
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
@@ -183,15 +293,20 @@ def main() -> int:
         password_var="NAVIDROME_ADMIN_PASSWORD",
     )
 
-    # ── ABS OIDC client_secret (system credential, pasted into ABS UI) ──
+    # ── ABS OIDC auto-configuration ───────────────────────────────────────
     abs_oidc_secret = env("ABS_OIDC_SECRET")
     public_domain = env("PUBLIC_DOMAIN")
-    if abs_oidc_secret:
-        url = f"https://auth.{public_domain}" if public_domain else "auth.<domain>"
-        log(f"🔐 Audiobookshelf OIDC: issuer={url}, client_id=audiobookshelf, client_secret={abs_oidc_secret} — paste into ABS Settings → Authentication → OIDC.")
+    abs_oidc_ok = False
+    if abs_oidc_secret and public_domain:
+        abs_oidc_ok = configure_abs_oidc(abs_port, abs_user, abs_password, public_domain, abs_oidc_secret)
+
+    if not abs_oidc_ok and abs_oidc_secret:
+        # Auto-config failed or prerequisites missing — surface secret for manual paste.
+        auth_url = f"https://auth.{public_domain}" if public_domain else "auth.<domain>"
+        log(f"🔐 Audiobookshelf OIDC: issuer={auth_url}, client_id=audiobookshelf, client_secret={abs_oidc_secret} — paste into ABS Settings → Authentication → OIDC.")
         emit_credential(
             service="Audiobookshelf OIDC client_secret",
-            url=url,
+            url=auth_url,
             username="audiobookshelf",
             password=abs_oidc_secret,
             importance="system",

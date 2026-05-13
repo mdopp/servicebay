@@ -2152,7 +2152,13 @@ export default function OnboardingWizard() {
                         // next-step panels when the install produced any proxy
                         // routes. Rendered via the StackInstallSummary slot below.
                         const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-                        const subdomains = stackVariables.filter(v => v.meta?.type === 'subdomain' && v.value);
+                        // DNS verification runs only against public-exposure subdomains.
+                        // LAN-exposed ones (e.g. ZWAVE_JS_SUBDOMAIN) live on `.home.arpa`
+                        // via AdGuard rewrites — querying a public resolver for those
+                        // would always fail and surface as spurious "not resolving" hints.
+                        const subdomains = stackVariables.filter(
+                            v => v.meta?.type === 'subdomain' && v.value && v.meta?.exposure === 'public',
+                        );
                         const hasProxyRoutes = !!domain && subdomains.length > 0;
                         const diagCounts = (diagnoseProbes ?? []).reduce<Record<ProbeStatus, number>>(
                             (a, p) => { a[p.status] = (a[p.status] ?? 0) + 1; return a; },

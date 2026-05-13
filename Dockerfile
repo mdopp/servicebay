@@ -47,8 +47,11 @@ ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV PATH="/app/node_modules/.bin:$PATH"
 
-# Install SSH client and Python (required for Agent V4 in container mode)
-# Removed podman and systemd - agent uses SSH to execute commands on host
+# Install SSH client, Python, and git.
+# - SSH/Python: Agent V4 runs commands on the host over SSH.
+# - git: external registry sync (#443) clones template repositories into
+#   the on-disk cache. Without git, `Registry sync skipped: git not
+#   available` silently falls back to built-in templates only.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     openssh-client \
@@ -56,6 +59,7 @@ RUN apt-get update && \
     python3-paramiko \
     procps \
     iproute2 \
+    git \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 

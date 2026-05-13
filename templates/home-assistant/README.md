@@ -37,20 +37,21 @@ Because voice runs on host network on the same node, `localhost` resolves to the
 
 ## SSO (Authelia)
 
-To enable OIDC login via Authelia, add this client to your Authelia `configuration.yml`:
+ServiceBay registers an OIDC client for Home Assistant in Authelia automatically. The client secret is stored in the `HA_OIDC_SECRET` variable and can be retrieved from **Settings → Integrations → Saved credentials**.
+
+Home Assistant does not ship a native OIDC auth provider. To wire up SSO you have two options:
+
+**Option A — HACS custom integration (recommended)**
+
+Install [homeassistant_auth_oidc](https://github.com/christiaangoossens/hacs-oidc-client) via HACS, then add to `configuration.yaml`:
 
 ```yaml
-      - client_id: 'homeassistant'
-        client_name: 'Home Assistant'
-        client_secret: '$plaintext$<your-secret>'
-        public: false
-        authorization_policy: 'one_factor'
-        redirect_uris:
-          - 'https://ha.<your-domain>/auth/oidc/callback'
-        scopes: ['openid', 'profile', 'email', 'groups']
-        response_types: ['code']
-        grant_types: ['authorization_code']
-        token_endpoint_auth_method: 'client_secret_post'
+homeassistant_auth_oidc:
+  client_id: homeassistant
+  client_secret: "<HA_OIDC_SECRET from saved credentials>"
+  discovery_url: "https://auth.<your-domain>/.well-known/openid-configuration"
 ```
 
-Then add the OIDC integration in Home Assistant's `configuration.yaml`.
+**Option B — Authelia forward-auth at the proxy level**
+
+Configure NPM to forward-authenticate every request to `home.<domain>` via Authelia before it reaches HA. Users log in to Authelia once; HA sees them as coming from a trusted proxy. No changes to `configuration.yaml` needed, but HA still maintains its own user accounts.

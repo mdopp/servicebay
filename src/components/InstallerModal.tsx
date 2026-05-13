@@ -209,7 +209,12 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
               }}
               doneFooter={(() => {
                 const domain = controller.variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-                const subdomains = controller.variables.filter(v => v.meta?.type === 'subdomain' && v.value);
+                // Only public-exposure subdomains need a public A record. LAN-only
+                // ones (e.g. Z-Wave JS admin UI) resolve via AdGuard on `.home.arpa`
+                // and would mislead the operator into creating unwanted public records.
+                const subdomains = controller.variables.filter(
+                  v => v.meta?.type === 'subdomain' && v.value && v.meta?.exposure === 'public',
+                );
                 if (!domain || subdomains.length === 0) return null;
                 return (
                   <div className="space-y-3">

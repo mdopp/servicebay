@@ -528,7 +528,7 @@ describe('OnboardingWizard', () => {
             (fetchTemplateVariables as any).mockResolvedValue({
                 SERVICE_NAME: { type: 'text', default: 'my-service' },
                 PUBLIC_DOMAIN: { type: 'text', default: 'example.com' },
-                TEST_SUBDOMAIN: { type: 'subdomain', default: 'test', proxyPort: '8080' },
+                TEST_SUBDOMAIN: { type: 'subdomain', default: 'test', proxyPort: '8080', exposure: 'public' },
             });
 
             render(<OnboardingWizard />);
@@ -571,7 +571,7 @@ describe('OnboardingWizard', () => {
             (fetchTemplateVariables as any).mockResolvedValue({
                 SERVICE_NAME: { type: 'text', default: 'my-service' },
                 PUBLIC_DOMAIN: { type: 'text', default: 'example.com' },
-                TEST_SUBDOMAIN: { type: 'subdomain', default: 'test', proxyPort: '8080' },
+                TEST_SUBDOMAIN: { type: 'subdomain', default: 'test', proxyPort: '8080', exposure: 'public' },
             });
 
             // Make proxy-hosts return 401 with needsCredentials

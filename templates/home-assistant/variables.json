@@ -10,8 +10,8 @@
   },
   "ZWAVE_DEVICE": {
     "type": "device",
-    "description": "Optional: USB device path of your Z-Wave stick. Leave blank if you don't have one yet — Z-Wave JS UI will still start and you can add the stick later via its settings UI or by re-running the wizard.",
-    "devicePath": "/dev/serial/by-id"
+    "description": "Optional: USB device path of your Z-Wave stick (e.g. /dev/ttyACM0 or /dev/ttyUSB0). Use the real device path, not a /dev/serial/by-id symlink — symlinks don't work as CharDevice mounts. Leave blank if you don't have one yet.",
+    "devicePath": "/dev"
   },
   "ZWAVE_JS_SUBDOMAIN": {
     "type": "subdomain",
@@ -24,6 +24,10 @@
       "block_exploits": true,
       "ssl_forced": false
     }
+  },
+  "HA_OIDC_SECRET": {
+    "type": "secret",
+    "description": "OIDC client secret for the Home Assistant client registered with Authelia. Auto-generated and pinned via clientSecretVar so Authelia always uses the same value. HA itself does not have a native OIDC auth provider — use this secret when configuring a custom integration (e.g. homeassistant_auth_oidc via HACS)."
   },
   "HA_SUBDOMAIN": {
     "type": "subdomain",
@@ -42,7 +46,8 @@
       "client_name": "Home Assistant",
       "authorization_policy": "one_factor",
       "redirect_uris": ["/auth/oidc/callback"],
-      "scopes": ["openid", "profile", "email", "groups"]
+      "scopes": ["openid", "profile", "email", "groups"],
+      "clientSecretVar": "HA_OIDC_SECRET"
     }
   }
 }

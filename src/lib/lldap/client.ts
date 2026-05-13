@@ -128,10 +128,20 @@ export async function createLldapUser(input: CreateUserInput): Promise<LldapCrea
  * LLDAP's web UI URL for a specific user's detail page — used as the
  * deep-link target after auto-create so the admin lands directly on
  * the group-assignment view.
+ *
+ * Prefers the NPM-exposed subdomain stored under `reverseProxy.hosts`
+ * (same source as `/api/auth/lldap-url`, used by the sidebar) over
+ * `config.lldap.url`. The latter is the server-internal URL —
+ * `http://localhost:17170` — which is what `templates/auth/post-deploy.py`
+ * writes for in-process API calls and is unreachable from the admin's
+ * browser (#442). Falls back to `config.lldap.url` for LAN-only installs
+ * with no NPM entry, where localhost may at least work for an admin
+ * browsing from the server itself.
  */
 export async function getLldapUserDeepLink(userId: string): Promise<string | null> {
   const config = await getConfig();
-  const url = config.lldap?.url;
-  if (!url) return null;
-  return `${url.replace(/\/$/, '')}/user/${encodeURIComponent(userId)}`;
+  const proxied = config.reverseProxy?.hosts?.find(h => h.service === 'lldap' && h.created);
+  const base = proxied ? `https://${proxied.domain}` : config.lldap?.url;
+  if (!base) return null;
+  return `${base.replace(/\/$/, '')}/user/${encodeURIComponent(userId)}`;
 }
