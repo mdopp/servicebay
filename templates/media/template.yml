@@ -7,7 +7,7 @@ metadata:
     servicebay.role: media
   annotations:
     servicebay.label: "Media (Audiobookshelf + Navidrome)"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
     # Audiobookshelf's post-deploy registers an OIDC client in Authelia
     # and its public URLs route through nginx — both prerequisites.
     servicebay.dependencies: "nginx,auth"
@@ -51,14 +51,27 @@ spec:
         value: "@every 1h"
       - name: ND_ENABLEUSEREDITING
         value: "true"
-      # Trust the X-Authelia-User header so the SSO login becomes the
-      # Navidrome login automatically. Bound to the loopback subnet
-      # because the proxy lives on the same host. Subsonic API calls
-      # (mobile apps) ignore this and use built-in user auth.
-      - name: ND_REVERSEPROXYUSERHEADER
-        value: Remote-User
-      - name: ND_REVERSEPROXYWHITELIST
-        value: 127.0.0.1/32
+      # OIDC against Authelia (v2 / #413). The previous
+      # ND_REVERSEPROXYUSERHEADER setup expected NPM to forward an
+      # Authelia-injected `Remote-User` header, but the proxy host was
+      # never wired up with Authelia forward-auth — so the header
+      # never arrived and only the local admin worked. OIDC is the
+      # consistent pattern across services in ServiceBay and lets
+      # Navidrome display an explicit "Sign in with Authelia" button.
+      # Subsonic API calls (mobile apps) bypass this and continue to
+      # use the local admin account.
+      - name: ND_OIDC_ENABLED
+        value: "{{NAVIDROME_OIDC_ENABLED}}"
+      - name: ND_OIDC_ISSUER
+        value: "https://auth.{{PUBLIC_DOMAIN}}"
+      - name: ND_OIDC_CLIENTID
+        value: "navidrome"
+      - name: ND_OIDC_CLIENTSECRET
+        value: "{{NAVIDROME_OIDC_SECRET}}"
+      - name: ND_OIDC_REDIRECTURL
+        value: "https://{{NAVIDROME_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}/auth/oidc/callback"
+      - name: ND_OIDC_AUTOREGISTER
+        value: "true"
     ports:
       - containerPort: {{NAVIDROME_PORT}}
     volumeMounts:

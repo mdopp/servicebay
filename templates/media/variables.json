@@ -71,6 +71,21 @@
     "description": "Host path to your music library. Defaults to the file-share template's data dir, so files dropped into the Samba share appear automatically.",
     "default": "/mnt/data/stacks/file-share/data/Music"
   },
+  "NAVIDROME_OIDC_ENABLED": {
+    "type": "select",
+    "description": "Enable Navidrome ↔ Authelia SSO. On by default so family members sign in with the household password. Flip to false if you hit an SSO regression and want to fall back to local Navidrome accounts.",
+    "options": ["true", "false"],
+    "default": "true"
+  },
+  "NAVIDROME_OIDC_SECRET": {
+    "type": "secret",
+    "description": "OIDC client secret for Navidrome ↔ Authelia. Auto-generated; pinned via clientSecretVar so Authelia and Navidrome share the same value."
+  },
+  "PUBLIC_DOMAIN": {
+    "type": "text",
+    "description": "Public domain (used to build the SSO authority URL https://auth.<domain> and the redirect URL).",
+    "default": "dopp.cloud"
+  },
   "NAVIDROME_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for Navidrome (web UI + Symfonium endpoint)",
@@ -81,6 +96,14 @@
       "allow_websocket_upgrade": true,
       "block_exploits": true,
       "ssl_forced": true
+    },
+    "oidcClient": {
+      "client_id": "navidrome",
+      "client_name": "Navidrome",
+      "authorization_policy": "one_factor",
+      "redirect_uris": ["/auth/oidc/callback"],
+      "scopes": ["openid", "profile", "email"],
+      "clientSecretVar": "NAVIDROME_OIDC_SECRET"
     }
   }
 }
