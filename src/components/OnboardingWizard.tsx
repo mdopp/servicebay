@@ -360,8 +360,23 @@ export default function OnboardingWizard() {
   }, []);
 
   useEffect(() => {
-    checkOnboardingStatus().then(s => {
+    // We check two things in parallel: the wizard-onboarding status
+    // (does setup need to start at all?) and the install-job status
+    // (is there a *terminal* job sitting around that the operator
+    // never acknowledged?). The second one decides whether to skip
+    // the auto-open: if there's a finished install + stackSetupPending
+    // we route the operator to /setup instead of slamming the modal
+    // back over their screen on every reload (#wizard-pop-on-reload).
+    Promise.all([
+      checkOnboardingStatus(),
+      fetch('/api/install/status', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => d as { job?: { phase?: string } | null; jobIsActive?: boolean } | null)
+        .catch(() => null),
+    ]).then(([s, installStatus]) => {
       setStatus(s);
+      const hasTerminalJob = !!installStatus?.job && installStatus.jobIsActive === false;
+
       // If the server reports an active install job and we're NOT
       // already tracking it locally, auto-attach to it. This is the
       // critical "operator reopened the tab mid-install" path: the
@@ -395,6 +410,23 @@ export default function OnboardingWizard() {
           );
         }
       } else if (s.stackSetupPending) {
+        // If there's already a terminal install job on the server, the
+        // operator has *started* an install; they just haven't clicked
+        // "Finish" on /setup yet. Popping the modal back open on every
+        // reload in this state is hostile — the operator is using
+        // ServiceBay normally and gets a 90vh dialog shoved in their
+        // face. The Sidebar Setup pill stays visible (and pulses) while
+        // `stackSetupPending: true`, and /setup is one click away to
+        // see credentials / DNS verify / Finish. So: skip auto-open.
+        if (hasTerminalJob) {
+          // Suppress the modal but keep `stacksOnlyMode` armed so if
+          // the operator does open the wizard via the sidebar's
+          // "Open wizard" affordance they land on install-confirm.
+          setStacksOnlyMode(true);
+          setCurrentStep('install-confirm');
+          return;
+        }
+        // No prior install attempt yet: legitimate first-run auto-open.
         // Setup was completed by installer, but stacks haven't been chosen
         // yet. Land on the install-confirm screen — domain +
         // clean-install + preselected full-stack. Edit drops them into
