@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.29.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.28.1...servicebay-v3.29.0) (2026-05-13)
+
+
+### Features
+
+* **settings:** unified Auto-update window + boot-time safety lock ([#454](https://github.com/mdopp/servicebay/issues/454)) ([576c9ac](https://github.com/mdopp/servicebay/commit/576c9ac43afbd5f3039ecddb452c82118fbbe478))
+
 ## [3.28.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.28.0...servicebay-v3.28.1) (2026-05-13)
 
 
