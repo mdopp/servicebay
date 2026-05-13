@@ -42,6 +42,12 @@ POD_RUNNING_TIMEOUT = 600.0
 READY_TIMEOUT = 300.0
 READY_INTERVAL = 2.0
 REQUEST_TIMEOUT = 30.0
+# Heartbeat cadence for the silent poll loops. Keeps the wizard's
+# /api/services NDJSON stream warm so undici doesn't fire its 5-min
+# bodyTimeout mid-wait and the runner doesn't see a phantom
+# "(terminated)" failure on healthy installs. 60 s gives ~5 lines per
+# loop in the worst case — cheap, and the operator can see progress.
+HEARTBEAT_INTERVAL = 60.0
 
 
 def env(key: str, default: str = "") -> str:
@@ -86,8 +92,15 @@ def request_json(method: str, url: str, payload: object | None = None, token: st
 def wait_pod_running(pod_name: str, deadline_sec: float = POD_RUNNING_TIMEOUT) -> bool:
     """Poll `podman pod inspect` until the pod is Running. Covers image-pull
     + first container start on fresh installs; on warm machines exits within
-    a second. Best-effort — any subprocess failure is treated as 'not yet'."""
+    a second. Best-effort — any subprocess failure is treated as 'not yet'.
+
+    Emits a heartbeat line every HEARTBEAT_INTERVAL seconds — the wizard's
+    NDJSON stream from /api/services would otherwise stay silent for up to
+    POD_RUNNING_TIMEOUT and undici's bodyTimeout (5 min) would kill the
+    connection and trigger a phantom retry."""
     started = time.time()
+    last_state = ""
+    last_heartbeat = started
     while time.time() - started < deadline_sec:
         try:
             r = subprocess.run(
@@ -96,10 +109,17 @@ def wait_pod_running(pod_name: str, deadline_sec: float = POD_RUNNING_TIMEOUT) -
                 text=True,
                 timeout=5,
             )
-            if r.returncode == 0 and r.stdout.strip().lower() == "running":
+            state = r.stdout.strip().lower() if r.returncode == 0 else "unknown"
+            if state == "running":
                 return True
         except Exception:  # pylint: disable=broad-except
-            pass
+            state = "unknown"
+        now = time.time()
+        if now - last_heartbeat >= HEARTBEAT_INTERVAL or state != last_state:
+            elapsed = int(now - started)
+            log(f"   …pod state={state or 'pending'} ({elapsed}s/{int(deadline_sec)}s)")
+            last_heartbeat = now
+            last_state = state
         time.sleep(2)
     return False
 
@@ -108,14 +128,23 @@ def wait_ready(port: str) -> tuple[bool, str]:
     """Poll Immich's /api/server-info until it returns 200. Tries both
     127.0.0.1 and [::1] because NestJS on Linux defaults to binding :: and
     the effective loopback address depends on kernel IPV6_V6ONLY setting —
-    on FCoS only [::1] answers. Returns (success, base_url)."""
+    on FCoS only [::1] answers. Returns (success, base_url).
+
+    Emits a heartbeat every HEARTBEAT_INTERVAL seconds — same rationale as
+    wait_pod_running."""
     candidates = [f"http://127.0.0.1:{port}", f"http://[::1]:{port}"]
     started = time.time()
+    last_heartbeat = started
     while time.time() - started < READY_TIMEOUT:
         for url in candidates:
             code, _ = request_json("GET", f"{url}/api/server-info")
             if code == 200:
                 return True, url
+        now = time.time()
+        if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+            elapsed = int(now - started)
+            log(f"   …still waiting for /api/server-info ({elapsed}s/{int(READY_TIMEOUT)}s)")
+            last_heartbeat = now
         time.sleep(READY_INTERVAL)
     return False, candidates[0]
 

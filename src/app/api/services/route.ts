@@ -331,6 +331,19 @@ export async function POST(request: Request) {
       }
     };
 
+    // Keepalive ping. Templates with long silent post-deploy phases
+    // (e.g. immich's wait_pod_running can be idle 10 min on a cold
+    // first-boot image pull) would otherwise let undici's default
+    // 5-min bodyTimeout close the install runner's fetch with
+    // `terminated`, triggering a phantom retry while the install is
+    // actually still progressing fine. The runner ignores unknown
+    // event types, so emitting `{type: "ping"}` every 30 s keeps the
+    // stream warm without surfacing to the UI.
+    const KEEPALIVE_INTERVAL_MS = 30_000;
+    const keepalive = setInterval(() => {
+      void safeWrite({ type: 'ping' });
+    }, KEEPALIVE_INTERVAL_MS);
+
     (async () => {
       try {
         await ServiceManager.deployKubeService(
@@ -349,6 +362,7 @@ export async function POST(request: Request) {
       } catch (e) {
         await safeWrite({ type: 'error', message: e instanceof Error ? e.message : String(e) });
       } finally {
+        clearInterval(keepalive);
         if (!writerClosed) {
           try { await writer.close(); } catch { /* already closed */ }
         }
