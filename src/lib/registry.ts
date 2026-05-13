@@ -192,10 +192,11 @@ export async function syncRegistries() {
 
     if (registries.length === 0) return;
 
-    // Fedora CoreOS doesn't ship git. Without it we can still serve the
-    // built-in templates/stacks bundled with ServiceBay; only external
-    // registry sync is unavailable. Log once and skip rather than fail
-    // every server start.
+    // The official ServiceBay container bundles git (#443). This guard
+    // stays for unofficial runtime environments — without git we can
+    // still serve the built-in templates/stacks bundled with
+    // ServiceBay; only external registry sync is unavailable. Log once
+    // and skip rather than fail every server start.
     if (!(await isGitAvailable())) {
         console.log('Registry sync skipped: git not available (built-in templates still served).');
         return;
