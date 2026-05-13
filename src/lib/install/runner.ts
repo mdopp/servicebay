@@ -356,18 +356,34 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   }
   postDeployEnv.HOST = input.host || 'localhost';
 
-  // LAN_IP — the address rootless podman actually port-forwards to. With
-  // `hostNetwork: true` on a rootless pod, ports inside the container's
-  // namespace (e.g. immich-server binding [::1]:2283) are NOT visible on
-  // the host's main loopback; podman only publishes them on the LAN IP.
-  // Templates that need to HTTP-probe their own service from the host
-  // post-deploy shell should prefer LAN_IP over 127.0.0.1 / [::1].
-  // See templates/immich/post-deploy.py for the canonical use site.
+  // LAN_IP + OPERATOR_EMAIL — server-side context that every template
+  // can rely on without each having to wire it through variables.json.
+  //
+  //   LAN_IP: the address rootless podman actually port-forwards to.
+  //   With `hostNetwork: true` on a rootless pod, ports inside the
+  //   container's namespace (e.g. immich-server binding [::1]:2283)
+  //   are not always visible on the host's main loopback; podman
+  //   publishes them on the LAN IP via the userspace forwarder.
+  //   Templates that HTTP-probe their own service from the host
+  //   post-deploy shell can fall back to this.
+  //
+  //   OPERATOR_EMAIL: the single email address ServiceBay already
+  //   collects for outbound notifications, used as the canonical
+  //   "the operator" identity. Templates seeding admin accounts
+  //   (immich, audiobookshelf, navidrome…) use it as a fallback when
+  //   their per-template <SERVICE>_ADMIN_EMAIL variable is blank, so
+  //   the operator only ever has to type their email once. SSO auto-
+  //   linking by email also flows through this.
+  //
+  // Both are best-effort; a missing config field just leaves the env
+  // var unset and templates fall back to their own defaults.
   try {
     const config = await getConfig();
     const lanIp = config.reverseProxy?.lanIp;
     if (lanIp) postDeployEnv.LAN_IP = lanIp;
-  } catch { /* best-effort — missing LAN_IP just means templates fall back to loopback */ }
+    const operatorEmail = config.notifications?.email?.to?.[0]?.trim();
+    if (operatorEmail) postDeployEnv.OPERATOR_EMAIL = operatorEmail;
+  } catch { /* leave env unset; templates handle missing values */ }
 
   const attemptDeploy = async (): Promise<void> => {
     const query = input.node ? `?node=${input.node}&stream=1` : '?stream=1';

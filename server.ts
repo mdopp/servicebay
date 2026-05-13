@@ -547,6 +547,33 @@ app.prepare().then(() => {
     // Sync template registries in background (non-blocking)
     syncRegistries().catch(err => logger.warn('Server', `Registry sync failed: ${err}`));
 
+    // Safety lock: until the operator picks an update window, hold
+    // Zincati and podman-auto-update.timer off. Closes the foot-gun
+    // where a fresh install can be re-imaged mid-setup by an FCoS
+    // auto-update + still-inserted USB stick. Idempotent — re-running
+    // with the same disk state is a no-op. Deferred behind a short
+    // delay so the agent has time to come up; we don't block boot on
+    // host-side I/O.
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const { getConfig } = await import('./src/lib/config');
+          const { getExecutor } = await import('./src/lib/executor');
+          const { applyUpdateWindow, applyLocks } = await import('./src/lib/updateWindow');
+          const config = await getConfig();
+          const win = config.updateWindow;
+          const executor = getExecutor();
+          if (win && win.enabled) {
+            await applyUpdateWindow(executor, win);
+          } else {
+            await applyLocks(executor);
+          }
+        } catch (err) {
+          logger.warn('Server', `Auto-update lock setup failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      })();
+    }, 30_000);
+
     // Bootstrap-token TTL initialisation (#322). Idempotent: only
     // writes expiresAt when the install script left a hash but no
     // expiry; subsequent boots see expiresAt already set and skip.
