@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.27.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.0...servicebay-v3.27.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **immich:** extend post-deploy budget + wait for pod Running first ([#438](https://github.com/mdopp/servicebay/issues/438)) ([90ed25a](https://github.com/mdopp/servicebay/commit/90ed25ab73b7f7e1256e24b5edd107c5c0f73f31))
+* **immich:** preserve pgvecto.rs shared_preload_libraries in postgres args ([#439](https://github.com/mdopp/servicebay/issues/439)) ([2267230](https://github.com/mdopp/servicebay/commit/2267230f4cc12f9ea8775527fb1ac20d64dd6b32))
+
 ## [3.27.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.26.0...servicebay-v3.27.0) (2026-05-13)
 
 
