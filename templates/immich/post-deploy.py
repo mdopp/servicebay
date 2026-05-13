@@ -3,7 +3,7 @@
 post-deploy hook for the `immich` stack (#410).
 
 What this does:
-  1. Wait for Immich's /api/server-info to answer 200 on the loopback
+  1. Wait for Immich's /api/server/ping to answer 200 on the loopback
      (127.0.0.1 or [::1]; NestJS on FCoS binds IPv6-only).
   2. Idempotently seed the initial admin account via /api/auth/admin-sign-up.
      If the admin already exists (returning installs, re-runs after success),
@@ -42,7 +42,7 @@ import urllib.request
 # format-string value depends on podman version, and the loop is
 # silent. We dropped it — the API probe below is the only signal that
 # actually answers "can the post-deploy talk to immich?", and an HTTP
-# 200 on /api/server-info already implies the pod and database are
+# 200 on /api/server/ping already implies the pod and database are
 # alive. See PR adding this comment for the failure mode it fixed.
 READY_TIMEOUT = 900.0
 READY_INTERVAL = 2.0
@@ -96,19 +96,22 @@ def request_json(method: str, url: str, payload: object | None = None, token: st
 
 
 def wait_ready(port: str) -> tuple[bool, str]:
-    """Poll Immich's /api/server-info until it returns 200. Returns
+    """Poll Immich's /api/server/ping until it returns 200. Returns
     (success, base_url).
 
-    Probes the host-published LAN_IP first, then 127.0.0.1 and [::1] as
-    fallbacks. The reason LAN_IP comes first: with rootless podman +
-    `hostNetwork: true` (immich's setup), ports the container binds
-    inside its own namespace — even on what the container thinks is
-    [::1] — are NOT routed back to the host's main loopback. Podman
-    only publishes them on the LAN IP via the userspace forwarder, so
-    the host post-deploy shell can reach immich at
-    http://<LAN_IP>:2283 but NOT at http://127.0.0.1:2283 or
-    http://[::1]:2283. We keep the loopback candidates around for
-    rootful / bridge-network environments where they actually work.
+    Probes the host-published LAN_IP first when known, then 127.0.0.1
+    and [::1] — every reachable variant is tried each iteration so
+    we don't get stuck if one address answers but the others don't.
+    Rootless podman + `hostNetwork: true` (immich's setup) typically
+    keeps loopback reachable; LAN_IP is kept around as a belt-and-
+    braces fallback.
+
+    NB on the endpoint: earlier shapes of this script hit
+    `/api/server/ping`, which doesn't exist in Immich v2.x. Every
+    probe returned 404, the loop never matched a 200, and the runner
+    eventually saw the SSH agent drop with "Agent disconnected". The
+    bootstrap log lists the real routes — `/api/server/ping` is the
+    cheapest unauthenticated readiness signal.
 
     Carries the whole 'is immich up?' budget; covers image pull + pod
     start + DB init + migrations. Emits a heartbeat line every
@@ -124,13 +127,13 @@ def wait_ready(port: str) -> tuple[bool, str]:
     last_heartbeat = started
     while time.time() - started < READY_TIMEOUT:
         for url in candidates:
-            code, _ = request_json("GET", f"{url}/api/server-info")
+            code, _ = request_json("GET", f"{url}/api/server/ping")
             if code == 200:
                 return True, url
         now = time.time()
         if now - last_heartbeat >= HEARTBEAT_INTERVAL:
             elapsed = int(now - started)
-            log(f"   …still waiting for /api/server-info on {', '.join(candidates)} ({elapsed}s/{int(READY_TIMEOUT)}s)")
+            log(f"   …still waiting for /api/server/ping on {', '.join(candidates)} ({elapsed}s/{int(READY_TIMEOUT)}s)")
             last_heartbeat = now
         time.sleep(READY_INTERVAL)
     return False, candidates[0]
@@ -150,8 +153,8 @@ def main() -> int:
     log(f"Waiting up to {int(READY_TIMEOUT)}s for Immich API on 127.0.0.1 / [::1] (covers image pull + DB init + migrations)…")
     ready, base_url = wait_ready(port)
     if not ready:
-        log(f"❌ Immich /api/server-info did not respond on 127.0.0.1 or [::1] within {int(READY_TIMEOUT)}s — skipping seed/OIDC config.")
-        log("   Re-run this post-deploy from Diagnose → post_deploy_failed → 'Re-run post-install' once /api/server-info returns 200.")
+        log(f"❌ Immich /api/server/ping did not respond on 127.0.0.1 or [::1] within {int(READY_TIMEOUT)}s — skipping seed/OIDC config.")
+        log("   Re-run this post-deploy from Diagnose → post_deploy_failed → 'Re-run post-install' once /api/server/ping returns 200.")
         return 1
     log(f"✅ Immich is ready at {base_url}.")
 
