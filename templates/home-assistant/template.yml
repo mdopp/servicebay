@@ -6,7 +6,7 @@ metadata:
     app: home-assistant
   annotations:
     servicebay.label: "Home Assistant"
-    servicebay.schema-version: "3"
+    servicebay.schema-version: "4"
     # Home Assistant is reached at home.<domain> via nginx, and (when
     # the operator enables it) authenticates via Authelia.
     servicebay.dependencies: "nginx,auth"
@@ -30,8 +30,12 @@ spec:
     securityContext:
       privileged: true
 
-  {{#ZWAVE_DEVICE}}
-  # 2. Z-Wave JS UI (only when Z-Wave stick is present)
+  # 2. Z-Wave JS UI — always runs (v4 / #422). On installs without a
+  # Z-Wave stick the UI starts in "no serial device configured" mode;
+  # the operator can plug a stick in later and point the UI at it
+  # without rewriting the pod yaml. The device mount + volume below
+  # only land when ZWAVE_DEVICE is set so podman doesn't crash-loop
+  # on a missing host path.
   - name: zwave-js
     image: ghcr.io/zwave-js/zwave-js-ui:latest
     env:
@@ -44,11 +48,12 @@ spec:
     volumeMounts:
     - mountPath: /usr/src/app/store
       name: zwave-config
+    {{#ZWAVE_DEVICE}}
     - mountPath: /dev/serial-device
       name: zwave-stick
+    {{/ZWAVE_DEVICE}}
     securityContext:
       privileged: true
-  {{/ZWAVE_DEVICE}}
 
   # 3. Matter Server
   - name: matter-server
@@ -76,12 +81,10 @@ spec:
     hostPath:
       path: {{DATA_DIR}}/home-assistant/homeassistant
       type: DirectoryOrCreate
-  {{#ZWAVE_DEVICE}}
   - name: zwave-config
     hostPath:
       path: {{DATA_DIR}}/home-assistant/zwave-js
       type: DirectoryOrCreate
-  {{/ZWAVE_DEVICE}}
   - name: matter-config
     hostPath:
       path: {{DATA_DIR}}/home-assistant/matter-server
