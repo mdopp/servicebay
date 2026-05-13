@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.27.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.2...servicebay-v3.27.3) (2026-05-13)
+
+
+### Bug Fixes
+
+* **immich:** drop fragile wait_pod_running + keep install stream warm ([#446](https://github.com/mdopp/servicebay/issues/446)) ([31360ae](https://github.com/mdopp/servicebay/commit/31360ae1211878e5234ca1caf7044f4defbed439))
+
 ## [3.27.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.1...servicebay-v3.27.2) (2026-05-13)
 
 
