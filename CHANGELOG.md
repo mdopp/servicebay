@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.30.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.1...servicebay-v3.30.2) (2026-05-13)
+
+
+### Bug Fixes
+
+* **diagnose:** suppress crash_loop "young container" rule after a fresh install ([#460](https://github.com/mdopp/servicebay/issues/460)) ([bd7acaf](https://github.com/mdopp/servicebay/commit/bd7acaf5b237c2df296c7430576c5d12f0e50dcc))
+
 ## [3.30.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.0...servicebay-v3.30.1) (2026-05-13)
 
 
