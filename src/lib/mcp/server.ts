@@ -395,12 +395,18 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     },
     async ({ name, kubeContent, yamlContent, yamlFileName, extraFiles, node }) => {
       const nodeName = await resolveNode(node);
+      // `kubeContent` here is the Pod YAML (Kubernetes manifest). We generate
+      // the systemd .kube unit internally — same pattern as the install runner
+      // (src/lib/install/runner.ts:275-276). The parameter name is historical;
+      // the MCP description says "kube YAML content" meaning the Pod YAML.
+      const resolvedYamlFileName = yamlFileName ?? `${name}.yml`;
+      const generatedKubeUnit = `[Kube]\nYaml=${resolvedYamlFileName}\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
       await ServiceManager.deployKubeService(
         nodeName,
         name,
+        generatedKubeUnit,
         kubeContent,
-        yamlContent ?? '',
-        yamlFileName ?? `${name}.yaml`,
+        resolvedYamlFileName,
         extraFiles,
       );
       return textResult(`Service "${name}" deployed successfully${extraFiles?.length ? ` (${extraFiles.length} extra file${extraFiles.length === 1 ? '' : 's'} written)` : ''}`);
@@ -733,12 +739,14 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     async ({ name, kubeContent, yamlContent, yamlFileName, node }) => {
       const nodeName = await resolveNode(node);
       try {
+        const resolvedYamlFileName = yamlFileName ?? `${name}.yml`;
+        const generatedKubeUnit = `[Kube]\nYaml=${resolvedYamlFileName}\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
         await ServiceManager.deployKubeService(
           nodeName,
           name,
+          generatedKubeUnit,
           kubeContent,
-          yamlContent ?? '',
-          yamlFileName ?? `${name}.yaml`,
+          resolvedYamlFileName,
         );
         return textResult(`Service "${name}" updated and redeployed`);
       } catch (err) {

@@ -10,8 +10,8 @@
   },
   "ZWAVE_DEVICE": {
     "type": "device",
-    "description": "Optional: USB device path of your Z-Wave stick. Leave blank if you don't have one yet — Z-Wave JS UI will still start and you can add the stick later via its settings UI or by re-running the wizard.",
-    "devicePath": "/dev/serial/by-id"
+    "description": "Optional: USB device path of your Z-Wave stick (e.g. /dev/ttyACM0 or /dev/ttyUSB0). Use the real device path, not a /dev/serial/by-id symlink — symlinks don't work as CharDevice mounts. Leave blank if you don't have one yet.",
+    "devicePath": "/dev"
   },
   "ZWAVE_JS_SUBDOMAIN": {
     "type": "subdomain",
