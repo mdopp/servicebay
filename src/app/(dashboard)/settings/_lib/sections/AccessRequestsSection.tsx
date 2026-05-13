@@ -10,6 +10,9 @@ interface AccessRequest {
   name: string;
   email: string;
   message?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
   status: 'pending' | 'resolved';
   resolvedAt?: string;
 }
@@ -188,8 +191,13 @@ function RequestRow({
     <div className={`p-3 rounded-lg border border-gray-200 dark:border-gray-700 ${muted ? 'opacity-60' : 'bg-white dark:bg-gray-900'}`}>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-2 text-sm flex-wrap">
             <span className="font-medium text-gray-900 dark:text-white">{r.name}</span>
+            {r.username && (
+              <span className="inline-flex items-center px-1.5 py-0.5 text-[11px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded">
+                {r.username}
+              </span>
+            )}
             <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300 hover:underline text-xs">
               <Mail size={12} /> {r.email}
             </a>

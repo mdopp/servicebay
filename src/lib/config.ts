@@ -356,10 +356,26 @@ export interface AccessRequest {
   id: string;
   /** ISO timestamp of when the form was submitted. */
   requestedAt: string;
+  /**
+   * Display name. Originally a single free-text field; newer requests
+   * compose this from firstName + lastName on submit but it remains
+   * the canonical "human-readable label" for old entries that don't
+   * carry the split fields.
+   */
   name: string;
   email: string;
   /** Optional "why" note from the requester. */
   message?: string;
+  /**
+   * Desired LLDAP login. Validated to `[a-z0-9._-]{1,60}` so it maps
+   * cleanly to LLDAP's `uid` without further sanitization. Optional
+   * for backward-compatibility with requests submitted before #405.
+   */
+  username?: string;
+  /** Given name — feeds LLDAP `firstName` when the admin approves. */
+  firstName?: string;
+  /** Family name — feeds LLDAP `lastName` when the admin approves. */
+  lastName?: string;
   status: 'pending' | 'resolved';
   /** ISO timestamp of when the admin marked it resolved. */
   resolvedAt?: string;

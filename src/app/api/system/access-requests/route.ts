@@ -29,10 +29,23 @@ export const dynamic = 'force-dynamic';
 const MAX_PENDING = 50;
 const POST_BODY_LIMIT = 4_096;
 
+// LLDAP `uid` accepts a wider character set, but we constrain to
+// `[a-z0-9._-]` so it round-trips cleanly through URLs, filesystem
+// paths, and most app-level username validators without further
+// sanitization on the admin side.
+const USERNAME_RE = /^[a-z0-9._-]{1,60}$/;
+
 const PostBody = z.object({
-  name: z.string().trim().min(1).max(120),
+  // Free-text name kept for backward compatibility with portal clients
+  // that haven't been updated yet. New submissions also send firstName
+  // and lastName; if those are present, the server composes `name`
+  // from them — see the POST handler.
+  name: z.string().trim().min(1).max(120).optional(),
   email: z.email().max(200),
   message: z.string().trim().max(1_000).optional(),
+  username: z.string().trim().regex(USERNAME_RE, 'Username must be lowercase letters, digits, ., _ or -, max 60 chars').optional(),
+  firstName: z.string().trim().min(1).max(60).optional(),
+  lastName: z.string().trim().min(1).max(60).optional(),
 });
 
 export async function POST(request: Request) {
@@ -63,12 +76,28 @@ export async function POST(request: Request) {
     );
   }
 
+  // Compose display name from firstName/lastName when both are
+  // provided (new clients); otherwise fall back to the free-text
+  // `name` field (old clients). At least one source is required.
+  const composed = parsed.firstName && parsed.lastName
+    ? `${parsed.firstName} ${parsed.lastName}`
+    : parsed.name?.trim();
+  if (!composed) {
+    return NextResponse.json(
+      { error: 'Name is required (or firstName + lastName).' },
+      { status: 400 },
+    );
+  }
+
   const newRequest: AccessRequest = {
     id: crypto.randomUUID(),
     requestedAt: new Date().toISOString(),
-    name: parsed.name,
+    name: composed,
     email: parsed.email,
     message: parsed.message,
+    username: parsed.username,
+    firstName: parsed.firstName,
+    lastName: parsed.lastName,
     status: 'pending',
   };
   await saveConfig({ ...config, accessRequests: [...existing, newRequest] });
