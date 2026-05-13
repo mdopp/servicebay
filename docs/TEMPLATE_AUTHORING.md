@@ -100,6 +100,53 @@ What each `type` does generically (no per-template code needed):
 `LLDAP_HOST`, `LLDAP_LDAP_PORT`, `LLDAP_BASE_DN`) that every template
 can reference without re-declaring.
 
+### Wiring SSO end-to-end
+
+`oidcClient` only registers the client with Authelia. For a working
+*Login with Authelia* button the service has to learn the same
+client secret and the issuer URL, AND it has to be able to reach
+`https://auth.<PUBLIC_DOMAIN>` from inside its container. Skipping
+any of these three legs leaves the wizard reporting success while
+the service silently rejects SSO logins.
+
+Use this checklist for every template that wants SSO:
+
+1. **Pin the client secret.** Declare a `<SERVICE>_SSO_SECRET`
+   variable as `"type": "secret"` and set
+   `clientSecretVar: "<SERVICE>_SSO_SECRET"` on the `oidcClient`
+   block. The same value flows into Authelia's `clients[]` and the
+   wizard's env file — without `clientSecretVar` the OIDC route
+   generates a random secret the service never learns.
+
+2. **Tell the service to use OIDC.** Two paths, pick whichever the
+   upstream supports:
+   - **Env vars in `template.yml`** when the upstream reads OIDC
+     config from environment (Vaultwarden's `SSO_*`, Navidrome's
+     `ND_OIDC_*`). Zero-click after deploy.
+   - **API call from `post-deploy.py`** when the upstream only
+     accepts runtime settings (Immich's `PUT /api/system-config`,
+     Audiobookshelf's auth settings API). Read the env vars the
+     wizard injected and POST them.
+
+3. **Make `auth.<PUBLIC_DOMAIN>` reachable from inside the pod.**
+   Under Podman bridge networking the container resolves the public
+   auth subdomain to the router's WAN IP and OIDC discovery hits
+   the missing-hairpin-NAT trap. Two fixes:
+   - **`hostNetwork: true`** on the pod (matches what `nginx` and
+     `auth` already do). Cleanest for single-container pods;
+     multi-container pods also need to pin sidecars to `127.0.0.1`
+     so they don't get exposed on the LAN.
+   - **Avoid the trap entirely** when the service only needs LDAP
+     against LLDAP (reverse-proxy auth, `Remote-User` header).
+     But: that path needs Authelia forward-auth wired into the NPM
+     proxy host, not OIDC.
+
+Worked references:
+- `templates/vaultwarden/` — env-var OIDC + hostNetwork. Canonical
+  one-container example.
+- `templates/immich/` — post-deploy API-call OIDC + hostNetwork +
+  sidecars pinned to loopback. Canonical multi-container example.
+
 ### Companion mustache files (`*.mustache`)
 
 Any `<name>.mustache` file in the template directory gets rendered with
