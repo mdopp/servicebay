@@ -6,12 +6,22 @@ metadata:
     app: vaultwarden
   annotations:
     servicebay.label: "Vaultwarden (Passwords)"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
+    servicebay.ports: "{{VAULTWARDEN_PORT}}/tcp"
     # Install order: proxy + SSO foundation needs to land first so the
     # post-deploy OIDC-client registration can talk to Authelia and the
     # vault.<domain> proxy route resolves to a running NPM.
     servicebay.dependencies: "nginx,auth"
 spec:
+  # v2 (#408): hostNetwork is required so Vaultwarden can reach
+  # https://auth.<PUBLIC_DOMAIN>/.well-known/openid-configuration for
+  # OIDC discovery. Under bridge networking the container resolves the
+  # public auth subdomain to the router's WAN IP and the request fails
+  # (most home routers don't hairpin NAT). Under hostNetwork the
+  # container inherits the host's resolver, which AdGuard rewrites
+  # *.PUBLIC_DOMAIN to the LAN IP — so the OIDC discovery request goes
+  # NPM → Authelia → success.
+  hostNetwork: true
   containers:
   - name: vaultwarden
     image: docker.io/vaultwarden/server:latest
@@ -35,9 +45,18 @@ spec:
       value: "{{VAULTWARDEN_SSO_SECRET}}"
     - name: SSO_SCOPES
       value: "email profile"
+    # Vaultwarden listens on port 80 by default. Under hostNetwork that
+    # collides with NPM's HTTP listener — point Rocket at the operator's
+    # configured port so it binds directly there on the host.
+    - name: ROCKET_PORT
+      value: "{{VAULTWARDEN_PORT}}"
+    # `hostPort:` is invalid under hostNetwork (podman rejects with
+    # "PortMappings can only be used with Bridge, slirp4netns, or pasta
+    # networking"). The servicebay.ports annotation above carries the
+    # port for the UI / network graph; the container now binds
+    # {{VAULTWARDEN_PORT}} directly on the host.
     ports:
-    - containerPort: 80
-      hostPort: {{VAULTWARDEN_PORT}}
+    - containerPort: {{VAULTWARDEN_PORT}}
     volumeMounts:
     - mountPath: /data
       name: vaultwarden-data
