@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.27.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.1...servicebay-v3.27.2) (2026-05-13)
+
+
+### Bug Fixes
+
+* **immich:** probe both 127.0.0.1 and [::1] in post-deploy wait_ready ([#441](https://github.com/mdopp/servicebay/issues/441)) ([bb68128](https://github.com/mdopp/servicebay/commit/bb6812858bdc9ce3350c42e4804b05ddcd34442f))
+* Z-Wave device permissions + SSO OIDC wiring + MCP deploy API ([#444](https://github.com/mdopp/servicebay/issues/444)) ([805036f](https://github.com/mdopp/servicebay/commit/805036f641766882a0e6dcd9048fe2ded11a509d))
+
 ## [3.27.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.27.0...servicebay-v3.27.1) (2026-05-13)
 
 
