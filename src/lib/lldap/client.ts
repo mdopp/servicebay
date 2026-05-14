@@ -24,6 +24,16 @@ const CREATE_USER_MUTATION = `
   }
 `;
 
+const LIST_USERS_QUERY = `
+  query Users {
+    users {
+      id
+      displayName
+      email
+    }
+  }
+`;
+
 interface LldapCredentials {
   url: string;
   username: string;
@@ -119,6 +129,53 @@ export async function createLldapUser(input: CreateUserInput): Promise<LldapCrea
       return { ok: false, reason: 'graphql_error', message: 'LLDAP response did not include the created user.' };
     }
     return { ok: true, userId: created.id, displayName: created.displayName ?? input.displayName ?? input.id };
+  } catch (e) {
+    return { ok: false, reason: 'network_error', message: e instanceof Error ? e.message : 'Network error talking to LLDAP.' };
+  }
+}
+
+export interface LldapUser {
+  id: string;
+  displayName?: string;
+  email?: string;
+}
+
+export type LldapListUsersResult =
+  | { ok: true; users: LldapUser[] }
+  | { ok: false; reason: 'not_configured' | 'unreachable' | 'auth_failed' | 'graphql_error' | 'network_error'; message: string };
+
+/**
+ * List all LLDAP users. Used by the file-share template's Samba sync
+ * (#494) to mirror per-user accounts into Samba's tdbsam DB, and by
+ * future SSO-aware features that need to enumerate the identity
+ * directory.
+ *
+ * Returns the same `{ ok, ... }` discriminated union shape as
+ * `createLldapUser` so callers stay uniform.
+ */
+export async function listLldapUsers(): Promise<LldapListUsersResult> {
+  const auth = await authenticateWithLldap();
+  if (!auth.ok) {
+    return { ok: false, reason: auth.reason, message: auth.message };
+  }
+  try {
+    const res = await fetch(`${auth.baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${auth.token}`,
+      },
+      body: JSON.stringify({ query: LIST_USERS_QUERY }),
+      signal: AbortSignal.timeout(GRAPHQL_TIMEOUT_MS),
+    });
+    const data = await res.json().catch(() => ({})) as {
+      data?: { users?: LldapUser[] };
+      errors?: Array<{ message?: string }>;
+    };
+    if (data.errors?.length) {
+      return { ok: false, reason: 'graphql_error', message: data.errors[0]?.message ?? 'Unknown LLDAP error.' };
+    }
+    return { ok: true, users: data.data?.users ?? [] };
   } catch (e) {
     return { ok: false, reason: 'network_error', message: e instanceof Error ? e.message : 'Network error talking to LLDAP.' };
   }

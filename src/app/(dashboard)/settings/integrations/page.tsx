@@ -3,6 +3,7 @@
 import AccessRequestsSection from '../_lib/sections/AccessRequestsSection';
 import CredentialsSection from '../_lib/sections/CredentialsSection';
 import EmailNotificationsSection from '../_lib/sections/EmailNotificationsSection';
+import FileShareSection from '../_lib/sections/FileShareSection';
 import GatewaySection from '../_lib/sections/GatewaySection';
 import McpSection from '../_lib/sections/McpSection';
 import PublicDomainSection from '../_lib/sections/PublicDomainSection';
@@ -18,6 +19,7 @@ export default function IntegrationsSettingsPage() {
       <AccessRequestsSection />
       <CredentialsSection />
       <ReverseProxySection />
+      <FileShareSection />
       <EmailNotificationsSection />
       <McpSection />
       <TemplateRegistriesSection />
