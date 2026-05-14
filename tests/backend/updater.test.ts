@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Server } from 'socket.io';
 
 const execMock = vi.fn();
 const emitMock = vi.fn();
 
 type ProgressPayload = { step: string; progress: number; message: string };
-type GlobalWithUpdater = typeof global & { updaterIO?: { emit: typeof emitMock } };
+type GlobalWithUpdater = Omit<typeof global, 'updaterIO'> & { updaterIO?: Server };
 
 vi.mock('../../src/lib/executor', () => ({
   getExecutor: vi.fn(() => ({ exec: execMock })),
@@ -14,7 +15,7 @@ describe('performUpdate', () => {
   beforeEach(() => {
     execMock.mockReset();
     emitMock.mockReset();
-    (global as GlobalWithUpdater).updaterIO = { emit: emitMock };
+    (global as GlobalWithUpdater).updaterIO = { emit: emitMock } as unknown as Server;
   });
 
   afterEach(() => {

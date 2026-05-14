@@ -76,7 +76,11 @@ describe('ServicesPlugin E2E Data Rendering', () => {
                     }],
                     volumes: [],
                     files: {},
-                    proxy: []
+                    proxy: [],
+                    nodeIPs: [],
+                    unmanagedBundles: [],
+                    dismissedBundles: [],
+                    history: []
                 }
             },
             gateway: { provider: 'mock', status: 'down', uptime: 0 } as any,
@@ -123,7 +127,11 @@ describe('ServicesPlugin E2E Data Rendering', () => {
                     containers: [],
                     volumes: [],
                     files: {},
-                    proxy: []
+                    proxy: [],
+                    nodeIPs: [],
+                    unmanagedBundles: [],
+                    dismissedBundles: [],
+                    history: []
                 }
             },
             gateway: { provider: 'mock' } as any,
