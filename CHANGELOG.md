@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.31.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.4...servicebay-v3.31.0) (2026-05-14)
+
+
+### Features
+
+* **health:** per-domain reachability + letsdebug external probe ([#466](https://github.com/mdopp/servicebay/issues/466)) ([db64f3e](https://github.com/mdopp/servicebay/commit/db64f3e1be6e0250d7eeea3d3cae2091f44a29e1))
+
 ## [3.30.4](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.3...servicebay-v3.30.4) (2026-05-14)
 
 
