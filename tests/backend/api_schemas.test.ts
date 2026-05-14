@@ -6,6 +6,7 @@ import {
   HostString,
   HealthCheckTarget,
   BackupFileName,
+  CheckIdString,
 } from '../../src/lib/api/schemas';
 
 describe('ContainerId', () => {
@@ -73,6 +74,39 @@ describe('BackupFileName', () => {
   it('rejects path traversal and separators', () => {
     for (const bad of ['../etc/passwd', 'a/b', 'a\\b', '..', '.hidden']) {
       expect(BackupFileName.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+});
+
+describe('CheckIdString', () => {
+  it('accepts UUID-shaped IDs from HealthStore.saveCheck', () => {
+    expect(CheckIdString.safeParse('11111111-2222-3333-4444-555555555555').success).toBe(true);
+  });
+  it('accepts deterministic auto-managed IDs', () => {
+    for (const good of [
+      'domain:files.dopp.cloud',
+      'letsdebug:vault.dopp.cloud',
+      'lan_ip_drift',
+      'npm_auth',
+      'cert_expiry',
+      'cert_request_failure',
+    ]) {
+      expect(CheckIdString.safeParse(good).success, good).toBe(true);
+    }
+  });
+  it('rejects path traversal and shell metacharacters', () => {
+    for (const bad of [
+      '../etc/passwd',
+      'a/b',
+      'a\\b',
+      'foo;rm',
+      '`whoami`',
+      '$(echo)',
+      'with space',
+      '',
+      'x'.repeat(129),
+    ]) {
+      expect(CheckIdString.safeParse(bad).success, bad).toBe(false);
     }
   });
 });

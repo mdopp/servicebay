@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { HealthStore } from '@/lib/health/store';
 import { CheckRunner } from '@/lib/health/runner';
-import { UuidString } from '@/lib/api/schemas';
+import { CheckIdString } from '@/lib/api/schemas';
 import { parseRouteParam } from '@/lib/api/validate';
 import { apiError } from '@/lib/api/errors';
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const parsed = await parseRouteParam(params, 'id', UuidString);
+  const parsed = await parseRouteParam(params, 'id', CheckIdString);
   if (!parsed.ok) return parsed.response;
   const id = parsed.value;
   const checks = HealthStore.getChecks();

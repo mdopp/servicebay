@@ -41,6 +41,12 @@ export const BackupFileName = z.string()
   .refine(s => !s.startsWith('.'), 'leading dot not allowed')
   .refine(s => !s.includes('..'), 'parent traversal not allowed');
 
-// Generic UUID (v1–v5). HealthStore uses crypto.randomUUID().
-export const UuidString = z.string().uuid();
+// Health-check IDs. Auto-managed checks use deterministic, human-readable IDs
+// (`domain:<host>`, `letsdebug:<host>`, `lan_ip_drift`, …) while user-created
+// checks use UUIDs. Both shapes need to pass route validators. Constrained to
+// filename-safe chars + colon (POSIX accepts the latter; we never run on
+// Windows). Path separators stay rejected so traversal is impossible.
+export const CheckIdString = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/, {
+  message: 'invalid check id',
+});
 
