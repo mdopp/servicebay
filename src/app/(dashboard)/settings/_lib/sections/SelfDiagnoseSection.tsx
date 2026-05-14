@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, Loader2, Stethoscope } from 'lucide-react';
 import DiagnoseProbeList, {
   type DiagnoseProbe,
   type ProbeStatus,
 } from '@/components/DiagnoseProbeList';
+import { useSocket } from '@/hooks/useSocket';
 
 interface DiagnoseResult {
   node: string;
@@ -23,8 +24,14 @@ export default function SelfDiagnoseSection() {
   const [result, setResult] = useState<DiagnoseResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { socket } = useSocket();
+  // Keep `result` accessible to the socket-driven auto-refresh effect
+  // without re-binding it on every state change (which would tear down
+  // and re-establish the socket listener each render).
+  const hasResultRef = useRef(false);
+  hasResultRef.current = result !== null;
 
-  const run = async () => {
+  const run = useCallback(async () => {
     setRunning(true);
     setError(null);
     try {
@@ -39,7 +46,29 @@ export default function SelfDiagnoseSection() {
     } finally {
       setRunning(false);
     }
-  };
+  }, []);
+
+  // Phase 3a (#484): live-update the diagnose panel when underlying
+  // health-check results change. The server emits `health:update`
+  // every time a check ticks; we debounce 1 s so a burst (e.g. boot
+  // when many checks fire at once) coalesces into a single re-run.
+  // No-op until the operator has clicked "Run self-test" at least
+  // once — there's no point eagerly running the suite for someone
+  // who isn't looking at it.
+  useEffect(() => {
+    if (!socket) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onUpdate = () => {
+      if (!hasResultRef.current) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { void run(); }, 1000);
+    };
+    socket.on('health:update', onUpdate);
+    return () => {
+      socket.off('health:update', onUpdate);
+      if (timer) clearTimeout(timer);
+    };
+  }, [socket, run]);
 
   const counts = result ? result.probes.reduce<Record<ProbeStatus, number>>(
     (a, p) => ({ ...a, [p.status]: (a[p.status] || 0) + 1 }),
