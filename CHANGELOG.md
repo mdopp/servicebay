@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.38.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.37.0...servicebay-v3.38.0) (2026-05-14)
+
+
+### Features
+
+* **diagnose:** identify which container/service owns each unexpected port (closes [#497](https://github.com/mdopp/servicebay/issues/497)) ([#503](https://github.com/mdopp/servicebay/issues/503)) ([e2be224](https://github.com/mdopp/servicebay/commit/e2be224b0580b5d0f4f0768c781b7ac665bdde2c))
+* **file-share:** per-user Samba accounts via LLDAP→tdbsam sync (closes [#494](https://github.com/mdopp/servicebay/issues/494)) ([#511](https://github.com/mdopp/servicebay/issues/511)) ([c0b94fb](https://github.com/mdopp/servicebay/commit/c0b94fbdbac3cb39cff932ecea57d3020b629d27))
+* **home-assistant:** OIDC SSO via auth_oidc custom component (closes [#493](https://github.com/mdopp/servicebay/issues/493)) ([#509](https://github.com/mdopp/servicebay/issues/509)) ([c820ea5](https://github.com/mdopp/servicebay/commit/c820ea53ce063cab035e1abbc5c8bd9d1762e0e6))
+* **reverse-proxy:** LAN→Public migration orchestrator + pre-flight (PR-1 of [#265](https://github.com/mdopp/servicebay/issues/265)) ([#506](https://github.com/mdopp/servicebay/issues/506)) ([fae2fe4](https://github.com/mdopp/servicebay/commit/fae2fe4ec35504971a629690d534d89acc88c698))
+* **reverse-proxy:** UI for LAN→Public migration (PR-2 of [#265](https://github.com/mdopp/servicebay/issues/265)) ([#507](https://github.com/mdopp/servicebay/issues/507)) ([cec485e](https://github.com/mdopp/servicebay/commit/cec485e3ce98e2d710290182524b019141215ec6))
+* **sso:** AdGuard + Syncthing admin UIs behind Authelia forward-auth (closes [#495](https://github.com/mdopp/servicebay/issues/495)) ([#508](https://github.com/mdopp/servicebay/issues/508)) ([bed9cbb](https://github.com/mdopp/servicebay/commit/bed9cbbea524d28dd6a1d69ad18232e4f461538a))
+
+
+### Bug Fixes
+
+* **health:** accept deterministic check IDs in history+run routes (closes [#498](https://github.com/mdopp/servicebay/issues/498)) ([#500](https://github.com/mdopp/servicebay/issues/500)) ([86b3c77](https://github.com/mdopp/servicebay/commit/86b3c775d148ea724abcae4bf311644b4e483755))
+* **health:** npm_auth probe self-heals + refresh_now on Phase 3b probes (closes [#496](https://github.com/mdopp/servicebay/issues/496)) ([#502](https://github.com/mdopp/servicebay/issues/502)) ([95203d4](https://github.com/mdopp/servicebay/commit/95203d412abb8df1eaf81f0bd29f4127c62422c7))
+* **health:** treat letsdebug `Complete + result:null` as a transport error (closes [#499](https://github.com/mdopp/servicebay/issues/499)) ([#501](https://github.com/mdopp/servicebay/issues/501)) ([dfe7873](https://github.com/mdopp/servicebay/commit/dfe78730e51d0e911a62001d3d9232f855faec57))
+
 ## [3.37.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.36.0...servicebay-v3.37.0) (2026-05-14)
 
 
