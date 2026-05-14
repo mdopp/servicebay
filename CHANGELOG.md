@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.32.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.31.0...servicebay-v3.32.0) (2026-05-14)
+
+
+### Features
+
+* **diagnose:** per-domain unreachability probe with fix hints ([#468](https://github.com/mdopp/servicebay/issues/468)) ([5f2bbc0](https://github.com/mdopp/servicebay/commit/5f2bbc0cc3cf1482b9c52cac5046f844996b7e64))
+
 ## [3.31.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.4...servicebay-v3.31.0) (2026-05-14)
 
 
