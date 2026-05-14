@@ -81,10 +81,19 @@ async function submit(domain: string): Promise<number> {
 interface NormalisedPoll {
   status: string;
   problems: LetsdebugProblem[];
+  // True iff the response had a non-null `result`/`Result` field.
+  // letsdebug occasionally returns `{status:'Complete', result:null}`
+  // when the backend short-circuits a test (rate-limit, server error
+  // mid-probe). Without distinguishing this from a legitimate
+  // empty-problems result, an unrun test silently looks "all green".
+  hasResult: boolean;
 }
 
 function normalisePoll(raw: Record<string, unknown>): NormalisedPoll {
   const status = pick<string>(raw, 'status', 'Status') ?? '';
+  const hasResult =
+    ('result' in raw && raw.result !== null && raw.result !== undefined) ||
+    ('Result' in raw && raw.Result !== null && raw.Result !== undefined);
   const result = pick<Record<string, unknown>>(raw, 'result', 'Result');
   const problems = (pick<LetsdebugProblem[]>(result, 'problems', 'Problems') ?? []).map(p => {
     const o = p as unknown as Record<string, unknown>;
@@ -94,7 +103,7 @@ function normalisePoll(raw: Record<string, unknown>): NormalisedPoll {
       severity: pick<string>(o, 'severity', 'Severity'),
     };
   });
-  return { status, problems };
+  return { status, problems, hasResult };
 }
 
 async function poll(domain: string, id: number): Promise<NormalisedPoll> {
@@ -108,7 +117,16 @@ async function poll(domain: string, id: number): Promise<NormalisedPoll> {
     }
     const raw = (await res.json()) as Record<string, unknown>;
     const data = normalisePoll(raw);
-    if (data.status === 'Complete') return data;
+    if (data.status === 'Complete') {
+      // Guard against the `Complete + result:null` shape — letsdebug
+      // returns this when it didn't actually run a probe (rate limit,
+      // backend error). Surface as a transport-style error so the
+      // runner records `status:'fail'` instead of "no problems".
+      if (!data.hasResult) {
+        throw new Error('letsdebug returned status=Complete with no result payload (test was not actually run — likely rate-limit or backend error)');
+      }
+      return data;
+    }
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
   }
   throw new Error(`letsdebug timed out after ${(MAX_POLL_ATTEMPTS * POLL_INTERVAL_MS) / 1000}s`);
