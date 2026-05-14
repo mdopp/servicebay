@@ -32,11 +32,12 @@
  *
  * ## Rate-limit awareness
  *
- * Between submissions in a sweep we wait `SUBMIT_DELAY_MS` (30 s).
- * letsdebug 429s aggressively under repeated unauthenticated
- * submissions; this matches their observed tolerance in practice.
- * Total sweep time for 10 domains: ~5 min, well within the cache
- * TTL.
+ * No artificial inter-submission delay: each `await probeOne()`
+ * already takes 10-30 s (the poll waits for letsdebug's test to
+ * complete), so submissions are strictly one-at-a-time anyway.
+ * Total sweep time for 10 domains: ~3-5 min, well within the cache
+ * TTL. The 429 backoff below is the safety net if letsdebug
+ * decides we're going too fast despite that.
  */
 
 import { getConfig } from '@/lib/config';
@@ -53,9 +54,13 @@ export interface DomainExternalReachabilityResult {
 
 const CACHE_TTL_OK_MS    = 24 * 60 * 60 * 1000; // 24 h for successful checks
 const CACHE_TTL_FAIL_MS  =  10 * 60 * 1000;     // 10 min for transport errors
-const SUBMIT_DELAY_MS    =  30 * 1000;          // baseline gap between sweep submissions
 const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000;   // if letsdebug 429s mid-sweep, pause this long
 const SWEEP_INTERVAL_MS  =   4 * 60 * 60 * 1000; // periodic 4-h refresh
+// No fixed inter-submission delay: each probe already takes 10-30 s
+// naturally (the poll waits for letsdebug's test to complete), and
+// `await probeOne()` serialises strictly. The earlier 30 s gap was
+// overkill and the 429 backoff below catches the only case where we
+// need to slow down.
 
 /**
  * When letsdebug returns 429 we hold off until this timestamp. Any
@@ -167,10 +172,10 @@ async function sweepStaleDomains(): Promise<void> {
     if (stale.length === 0) return;
     logger.info(
       'diagnose:domain_external_reachability',
-      `Background sweep starting for ${stale.length} domain(s); ~${Math.ceil((stale.length * SUBMIT_DELAY_MS) / 60_000)} min total.`,
+      `Background sweep starting for ${stale.length} domain(s) — one at a time, each takes 10-30 s.`,
     );
-    for (let i = 0; i < stale.length; i++) {
-      const { rateLimited } = await probeOne(stale[i]);
+    for (const domain of stale) {
+      const { rateLimited } = await probeOne(domain);
       if (rateLimited) {
         // Bail the rest of the sweep — letsdebug just told us to
         // slow down. Wait `RATE_LIMIT_BACKOFF_MS` before any new
@@ -179,12 +184,9 @@ async function sweepStaleDomains(): Promise<void> {
         backoffUntil = Date.now() + RATE_LIMIT_BACKOFF_MS;
         logger.warn(
           'diagnose:domain_external_reachability',
-          `letsdebug 429 on ${stale[i]} — pausing sweep, next attempt in ${RATE_LIMIT_BACKOFF_MS / 60_000} min.`,
+          `letsdebug 429 on ${domain} — pausing sweep, next attempt in ${RATE_LIMIT_BACKOFF_MS / 60_000} min.`,
         );
         return;
-      }
-      if (i < stale.length - 1) {
-        await new Promise(r => setTimeout(r, SUBMIT_DELAY_MS));
       }
     }
   } finally {
@@ -230,19 +232,37 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
   let failedCount = 0;
   let warnCount = 0;
   let pendingCount = 0;
+  let probingCount = 0;
 
   for (const domain of publicDomains) {
+    const probing = inFlight.has(domain);
     const entry = cache.get(domain);
     if (!entry) {
-      pendingCount++;
+      // Differentiate "right now being checked" from "queued for the
+      // sweep but hasn't started yet" so the operator sees real
+      // progress on a re-run. Cached entries below render their
+      // real results regardless of whether this domain is the one
+      // currently being probed.
       const manualUrl = `https://letsdebug.net/?domain=${encodeURIComponent(domain)}&method=http-01`;
-      items.push({
-        id: domain,
-        label: domain,
-        detail: `Refresh in progress — re-run diagnose in a few minutes for results. Manual: ${manualUrl}`,
-        status: 'info',
-        actionIds: [],
-      });
+      if (probing) {
+        probingCount++;
+        items.push({
+          id: domain,
+          label: domain,
+          detail: `🔄 Probing now (letsdebug takes 10-30 s per domain). Re-run diagnose in a moment for the result. Manual: ${manualUrl}`,
+          status: 'info',
+          actionIds: [],
+        });
+      } else {
+        pendingCount++;
+        items.push({
+          id: domain,
+          label: domain,
+          detail: `⏳ Queued — waiting its turn in the sweep. Manual: ${manualUrl}`,
+          status: 'info',
+          actionIds: [],
+        });
+      }
       continue;
     }
     if (entry.error) {
@@ -272,7 +292,7 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
     });
   }
 
-  if (overall === 'ok' && pendingCount === 0) {
+  if (overall === 'ok' && pendingCount === 0 && probingCount === 0) {
     return {
       status: 'ok',
       detail: `${publicDomains.length} public domain${publicDomains.length === 1 ? '' : 's'} reachable from the internet.`,
@@ -280,14 +300,16 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
   }
 
   const parts: string[] = [];
-  if (failedCount) parts.push(`${failedCount} fatal`);
-  if (warnCount) parts.push(`${warnCount} warning`);
-  if (pendingCount) parts.push(`${pendingCount} refreshing`);
+  if (failedCount)   parts.push(`${failedCount} fatal`);
+  if (warnCount)     parts.push(`${warnCount} warning`);
+  if (probingCount)  parts.push(`${probingCount} probing`);
+  if (pendingCount)  parts.push(`${pendingCount} queued`);
 
+  const stillWorking = pendingCount > 0 || probingCount > 0;
   return {
-    status: pendingCount > 0 && overall === 'ok' ? 'info' : overall,
+    status: stillWorking && overall === 'ok' ? 'info' : overall,
     detail: `${parts.join(' · ')} of ${publicDomains.length} public domain${publicDomains.length === 1 ? '' : 's'}.`,
-    hint: 'A diagnose run kicks off a background refresh of every stale domain (one every 30 s to respect letsdebug\'s rate limit). The cache also auto-refreshes every 4 h without operator input. Re-run diagnose after the sweep completes for fresh data.',
+    hint: 'A diagnose run kicks off a background refresh of every stale domain, one at a time (each probe takes 10-30 s to complete). The cache also auto-refreshes every 4 h without operator input. If letsdebug rate-limits us mid-sweep, a 15 min backoff kicks in automatically.',
     items,
   };
 }
