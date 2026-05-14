@@ -168,13 +168,18 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
       continue;
     }
     if (entry.error) {
-      overall = worst(overall, 'warn');
-      warnCount++;
+      // Transport failure on letsdebug's side (rate-limit, WAF, bad
+      // response). NOT the operator's setup. Surface as 'info' with
+      // a manual fallback URL so the diagnose roll-up doesn't show
+      // a scary "warn" colour for what is actually our probe being
+      // flaky against a third-party service. Operator can still
+      // open the URL in a browser to get the real letsdebug view.
+      const manualUrl = `${'https://letsdebug.net'}/?domain=${encodeURIComponent(domain)}&method=http-01`;
       items.push({
         id: domain,
         label: domain,
-        detail: `letsdebug probe could not run: ${entry.error.slice(0, 160)}${entry.submissionUrl ? ` · Report: ${entry.submissionUrl}` : ''}`,
-        status: 'warn',
+        detail: `letsdebug probe could not run automatically (${entry.error.slice(0, 120)}). Open manually: ${manualUrl}`,
+        status: 'info',
         actionIds: [],
       });
       continue;
