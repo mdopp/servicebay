@@ -7,8 +7,12 @@ metadata:
     servicebay.role: dns
   annotations:
     servicebay.label: "AdGuard Home (DNS)"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
     servicebay.tier: "infrastructure"
+    # NPM proxies `<ADGUARD_SUBDOMAIN>.<PUBLIC_DOMAIN>` through Authelia
+    # forward-auth, so the auth pod must exist before this template's
+    # proxy host is created — without the gate the admin UI sits open.
+    servicebay.dependencies: "nginx,auth"
     servicebay.ports: "{{ADGUARD_ADMIN_PORT}}/tcp,53/udp,53/tcp"
     servicebay.config-mount: /opt/adguardhome/conf
 spec:

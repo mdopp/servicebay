@@ -6,7 +6,7 @@ metadata:
     app: file-share
   annotations:
     servicebay.label: "File Share (Syncthing + Samba + FileBrowser)"
-    servicebay.schema-version: "2"
+    servicebay.schema-version: "3"
     # FileBrowser is fronted by Authelia via the nginx proxy host — both
     # must be running before this template's post-deploy can wire SSO.
     servicebay.dependencies: "nginx,auth"
@@ -60,8 +60,16 @@ spec:
         value: "0"
       - name: PGID
         value: "0"
+      # Bind the GUI on loopback only. LAN devices reach Syncthing's
+      # web UI via `https://<SYNCTHING_SUBDOMAIN>.<PUBLIC_DOMAIN>`,
+      # which NPM gates with Authelia forward-auth. A 0.0.0.0 bind
+      # would let any LAN device hit `:8384` directly and skip the
+      # SSO gate. The Syncthing mobile/desktop apps speak the REST
+      # API on the same port with their own API keys — those keep
+      # working because they hit Syncthing through the local pod
+      # network (hostNetwork=true, so 127.0.0.1 is reachable).
       - name: STGUIADDRESS
-        value: "0.0.0.0:8384"
+        value: "127.0.0.1:8384"
       # Disable Syncthing's UPnP / NAT-PMP NAT-traversal (#415). The
       # FritzBox replies 403 to AddPortMapping on its IPv6 WAN entry
       # (WANIPConn2), which Syncthing then retries on a loop and

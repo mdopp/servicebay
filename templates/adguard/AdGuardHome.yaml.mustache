@@ -2,7 +2,14 @@ http:
   pprof:
     port: 6060
     enabled: false
-  address: 0.0.0.0:{{ADGUARD_ADMIN_PORT}}
+  # Bind on loopback only. The admin UI is reachable to LAN clients
+  # via `https://<ADGUARD_SUBDOMAIN>.<PUBLIC_DOMAIN>`, which NPM
+  # gates with Authelia forward-auth. A 0.0.0.0 bind would let any
+  # LAN device hit `:{{ADGUARD_ADMIN_PORT}}` directly and skip SSO.
+  # If Authelia is down, the operator can still reach AdGuard from
+  # the host itself (SSH tunnel or `curl localhost:{{ADGUARD_ADMIN_PORT}}`)
+  # using the local AdGuard credentials as a recovery backstop.
+  address: 127.0.0.1:{{ADGUARD_ADMIN_PORT}}
   session_ttl: 720h
 users:
   - name: {{ADGUARD_ADMIN_USER}}
