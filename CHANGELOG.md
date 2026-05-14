@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.36.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.35.0...servicebay-v3.36.0) (2026-05-14)
+
+
+### Features
+
+* **health:** lift letsdebug into a real health-check type; diagnose probe becomes a thin reader ([#483](https://github.com/mdopp/servicebay/issues/483)) ([#488](https://github.com/mdopp/servicebay/issues/488)) ([cf10f13](https://github.com/mdopp/servicebay/commit/cf10f134f013a97830134bffa97e6392d7e9d281))
+
 ## [3.35.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.34.1...servicebay-v3.35.0) (2026-05-14)
 
 
