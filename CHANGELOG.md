@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.33.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.33.0...servicebay-v3.33.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **docs:** correct lanIp comment to reflect single-domain rewrites ([e8f1cd1](https://github.com/mdopp/servicebay/commit/e8f1cd147966c19b1f94f77aae625bfe09725af2))
+
 ## [3.33.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.32.0...servicebay-v3.33.0) (2026-05-14)
 
 
