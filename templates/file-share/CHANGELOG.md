@@ -4,6 +4,26 @@ Tracks breaking changes to the `file-share` template's pod structure /
 variable shape. Each H2 corresponds to a value of
 `servicebay.schema-version` in `template.yml`.
 
+## v3 (breaking)
+
+**Syncthing GUI behind Authelia.**
+
+The Syncthing web UI used to bind on `0.0.0.0:8384`, so any LAN
+device could hit it directly and skip SSO. It now binds on
+`127.0.0.1:8384` and is reachable only through
+`https://<SYNCTHING_SUBDOMAIN>.<PUBLIC_DOMAIN>`, which NPM gates
+with Authelia forward-auth.
+
+Required action after re-deploy: log in to Syncthing via SSO at the
+new URL (your `<sync>.<domain>` proxy host gets the forward-auth
+snippet automatically). The Syncthing mobile/desktop apps continue
+to work — they authenticate with API keys against the REST API,
+not the GUI session.
+
+FileBrowser's `advanced_config` block also moved to the shared
+`__authelia_forward_auth__` sentinel. Pure refactor, no behaviour
+change.
+
 ## v2
 
 **FileBrowser bind address fix.**

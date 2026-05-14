@@ -20,13 +20,14 @@
   },
   "ADGUARD_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for AdGuard Home admin",
+    "description": "Subdomain for AdGuard Home admin — gated by Authelia forward-auth. AdGuard itself binds on 127.0.0.1, so the only way in is via SSO. Local AdGuard credentials remain as a recovery backstop when reached from the host loopback.",
     "default": "dns",
     "exposure": "lan",
     "proxyPort": "ADGUARD_ADMIN_PORT",
     "proxyConfig": {
       "block_exploits": true,
-      "ssl_forced": true
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
     }
   }
 }

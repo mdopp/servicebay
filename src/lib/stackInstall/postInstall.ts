@@ -27,6 +27,7 @@
 import Mustache from 'mustache';
 import type { VariableMeta } from '@/lib/registry';
 import { buildCredentialsManifest, formatCredentialsBanner, type Credential } from './credentialsManifest';
+import { expandForwardAuthSentinel } from './forwardAuth';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 
 /** Loopback fetch helper. The post-install pipeline runs server-side
@@ -107,12 +108,17 @@ function renderProxyConfig(
 ): VariableMeta['proxyConfig'] | undefined {
   if (!proxyConfig) return proxyConfig;
   if (!proxyConfig.advanced_config) return proxyConfig;
+  // Expand the `__authelia_forward_auth__` sentinel into the shared
+  // nginx snippet before the Mustache pass so the snippet's own
+  // {{PUBLIC_DOMAIN}} / {{AUTHELIA_PORT}} placeholders still get
+  // substituted from `view`.
+  const expanded = expandForwardAuthSentinel(proxyConfig.advanced_config) ?? proxyConfig.advanced_config;
   const savedEscape = Mustache.escape;
   Mustache.escape = (text: string) => text;
   try {
     return {
       ...proxyConfig,
-      advanced_config: Mustache.render(proxyConfig.advanced_config, view),
+      advanced_config: Mustache.render(expanded, view),
     };
   } finally {
     Mustache.escape = savedEscape;
