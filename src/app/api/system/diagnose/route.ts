@@ -12,6 +12,7 @@ import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
 import { checkDomainExternalReachability } from '@/lib/diagnose/probes/domainExternalReachability';
+import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import '@/lib/diagnose/probes/register';
 
@@ -733,6 +734,29 @@ export async function POST(request: Request) {
     probes.push({
       id: 'adguard_rewrites_missing',
       label: 'AdGuard DNS rewrites',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // Per-domain "why isn't this reachable" diagnosis. Cheap
+  // (single fetch + DNS lookup per host), runs both LAN and public
+  // domains, surfaces the per-row hint pointing at whichever
+  // existing probe carries the fix action.
+  try {
+    const du = await checkDomainUnreachable();
+    probes.push({
+      id: 'domain_unreachable',
+      label: 'Configured domains',
+      status: du.status,
+      detail: du.detail,
+      hint: du.hint,
+      _items: du.items,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'domain_unreachable',
+      label: 'Configured domains',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
