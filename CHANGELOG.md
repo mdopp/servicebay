@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.33.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.32.0...servicebay-v3.33.0) (2026-05-14)
+
+
+### Features
+
+* **routing:** use publicDomain for LAN-only services (drop home.arpa default) ([#471](https://github.com/mdopp/servicebay/issues/471)) ([ff69bb5](https://github.com/mdopp/servicebay/commit/ff69bb591378ca2f420491d9ded3a0dddfaf6bd8))
+
 ## [3.32.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.31.0...servicebay-v3.32.0) (2026-05-14)
 
 
