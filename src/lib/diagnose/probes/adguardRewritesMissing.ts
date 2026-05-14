@@ -39,21 +39,19 @@ export interface AdguardRewritesMissingResult {
 /** Build the expected set of AdGuard rewrite domains for the current
  *  install. Mirrors the loop inside `provisionPortalRouting` so the
  *  two stay in lockstep — if that function changes the rewrite shape,
- *  this needs to follow. */
+ *  this needs to follow.
+ *
+ *  Single-domain model: `publicDomain` when set, `home.arpa`
+ *  otherwise. There's no longer a dual-rewrite (both home.arpa AND
+ *  publicDomain) because the publicDomain wildcard alone covers
+ *  every LAN client's resolution needs once the operator has a
+ *  domain. */
 function buildExpectedRewrites(
-  lanDomain: string | undefined,
+  _lanDomain: string | undefined,
   publicDomain: string | undefined,
 ): string[] {
-  const domains: string[] = [];
-  const lan = (lanDomain && lanDomain.trim()) || DEFAULT_LAN_DOMAIN;
-  if (lan) domains.push(lan);
-  const pub = publicDomain?.trim();
-  if (pub && pub !== lan) domains.push(pub);
-  const out: string[] = [];
-  for (const d of domains) {
-    out.push(d, `www.${d}`, `*.${d}`);
-  }
-  return out;
+  const target = (publicDomain?.trim()) || DEFAULT_LAN_DOMAIN;
+  return [target, `www.${target}`, `*.${target}`];
 }
 
 export async function checkAdguardRewritesMissing(): Promise<AdguardRewritesMissingResult> {

@@ -71,10 +71,10 @@ describe('checkAdguardRewritesMissing', () => {
     state.rewrites = [];
     const r = await checkAdguardRewritesMissing();
     expect(r.status).toBe('warn');
-    // Expected: home.arpa trio + dopp.cloud trio = 6 entries.
-    expect(r.detail).toMatch(/6 missing/);
+    // Single-domain model: only the publicDomain trio is expected.
+    expect(r.detail).toMatch(/3 missing/);
     expect(r.detail).toContain('*.dopp.cloud');
-    expect(r.detail).toContain('*.home.arpa');
+    expect(r.detail).not.toContain('home.arpa');
     expect(r.hint).toMatch(/Reprovision/);
   });
 
@@ -83,9 +83,6 @@ describe('checkAdguardRewritesMissing', () => {
       { domain: 'dopp.cloud', answer: '192.168.1.10' },
       { domain: 'www.dopp.cloud', answer: '192.168.1.10' },
       { domain: '*.dopp.cloud', answer: '10.0.0.1' }, // stale
-      { domain: 'home.arpa', answer: '192.168.1.10' },
-      { domain: 'www.home.arpa', answer: '192.168.1.10' },
-      { domain: '*.home.arpa', answer: '192.168.1.10' },
     ];
     const r = await checkAdguardRewritesMissing();
     expect(r.status).toBe('warn');
@@ -98,13 +95,10 @@ describe('checkAdguardRewritesMissing', () => {
       { domain: 'dopp.cloud', answer: '192.168.1.10' },
       { domain: 'www.dopp.cloud', answer: '192.168.1.10' },
       { domain: '*.dopp.cloud', answer: '192.168.1.10' },
-      { domain: 'home.arpa', answer: '192.168.1.10' },
-      { domain: 'www.home.arpa', answer: '192.168.1.10' },
-      { domain: '*.home.arpa', answer: '192.168.1.10' },
     ];
     const r = await checkAdguardRewritesMissing();
     expect(r.status).toBe('ok');
-    expect(r.detail).toMatch(/6 portal\/wildcard rewrites in AdGuard point at 192\.168\.1\.10/);
+    expect(r.detail).toMatch(/3 portal\/wildcard rewrites in AdGuard point at 192\.168\.1\.10/);
   });
 
   it('skips the public domain when no public domain is configured (LAN-only mode)', async () => {
