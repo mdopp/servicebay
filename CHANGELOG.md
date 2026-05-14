@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.33.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.33.1...servicebay-v3.33.2) (2026-05-14)
+
+
+### Bug Fixes
+
+* **letsdebug:** parse Go-style PascalCase keys + downgrade transport errors ([#475](https://github.com/mdopp/servicebay/issues/475)) ([26c865f](https://github.com/mdopp/servicebay/commit/26c865f9cb77720567547f31f2e7c441622281b8))
+
 ## [3.33.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.33.0...servicebay-v3.33.1) (2026-05-14)
 
 
