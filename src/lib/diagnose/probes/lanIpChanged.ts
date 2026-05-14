@@ -16,6 +16,7 @@
 
 import { HealthStore } from '@/lib/health/store';
 import { LAN_IP_DRIFT_MESSAGE_PREFIX } from '@/lib/health/runner';
+import { registerRefreshNow } from './refreshHealthCheck';
 
 export interface LanIpProbeResult {
   status: 'ok' | 'warn' | 'info';
@@ -23,7 +24,10 @@ export interface LanIpProbeResult {
   hint?: string;
 }
 
+const PROBE_ID = 'lan_ip_changed_since_install';
 const CHECK_ID = 'lan_ip_drift';
+
+registerRefreshNow(PROBE_ID, CHECK_ID, 'LAN IP drift');
 
 export async function checkLanIpChanged(): Promise<LanIpProbeResult> {
   const result = HealthStore.getLastResult(CHECK_ID);

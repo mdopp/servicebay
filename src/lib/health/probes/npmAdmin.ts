@@ -10,31 +10,64 @@
  * makes a single shared home cheaper to maintain.
  *
  *   - `findNpmAdminUrl(node)` — locates the running nginx-web service
- *     and returns its `http://localhost:<adminPort>` URL, or null when
- *     nginx isn't installed/active.
+ *     and returns its `http://localhost:<adminPort>` URL, or a reason
+ *     code when it can't.
  *   - `getNpmToken(adminUrl)` — tries stored creds first, then the
  *     wizard's default (`admin@example.com`/`changeme`); returns null
  *     if all candidates 401.
  */
 import { getConfig } from '../../config';
 import { ServiceManager } from '../../services/ServiceManager';
+import { DigitalTwinStore } from '../../store/twin';
 
-/** Locate the running nginx-web service on `node` and return its admin URL.
- *  Returns null when nginx-web isn't installed or its admin port can't
- *  be derived from the service manifest. */
-export async function findNpmAdminUrl(node: string): Promise<string | null> {
+/**
+ * Discriminated result for `findNpmAdminUrl`.
+ *
+ *   - `url` — nginx is in the twin and we derived its admin port.
+ *   - `twin-not-ready` — the digital twin for this node hasn't been
+ *     populated yet (cold-start race after the runner fires before the
+ *     agent's first sync). Caller should surface this as info and let
+ *     the next scheduled tick self-correct rather than cementing a
+ *     misleading "not deployed" result for 5–15 min.
+ *   - `nginx-not-found` — twin has data, but no nginx entry exists —
+ *     genuine "NPM not installed" case.
+ */
+export type FindNpmAdminResult =
+  | { kind: 'url'; url: string }
+  | { kind: 'twin-not-ready' }
+  | { kind: 'nginx-not-found' };
+
+/** Locate the running nginx-web service on `node` and return its admin URL,
+ *  or a reason code explaining why we couldn't.
+ *
+ *  Note: deliberately does NOT short-circuit on `service.active === false`.
+ *  The `active` flag is unreliable for kube-deployed services because the
+ *  matching between the template service name (`nginx`) and the
+ *  systemd unit Quadlet generates (`nginx-pod.service`, container-by-
+ *  container `<sha>.service`) is brittle. We trust the twin entry's
+ *  presence + port mapping and let the caller's actual `fetch
+ *  ${adminUrl}/api/tokens` be the source of truth — if NPM is genuinely
+ *  stopped, the fetch fails with `ECONNREFUSED` and the caller surfaces
+ *  the precise reason instead of a misleading "not deployed". */
+export async function findNpmAdminUrl(node: string): Promise<FindNpmAdminResult> {
   try {
+    const twin = DigitalTwinStore.getInstance().nodes[node];
+    if (!twin || (twin.services.length === 0 && twin.containers.length === 0)) {
+      return { kind: 'twin-not-ready' };
+    }
     const services = await ServiceManager.listServices(node);
     const nginx = services.find(
       s => s.name === 'nginx' || s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
     );
-    if (!nginx?.active) return null;
+    if (!nginx) {
+      return { kind: 'nginx-not-found' };
+    }
     const ports = (nginx.ports ?? [])
       .map(p => parseInt(String(p.host ?? ''), 10))
       .filter(p => Number.isFinite(p) && p !== 80 && p !== 443);
-    return `http://localhost:${ports[0] ?? 81}`;
+    return { kind: 'url', url: `http://localhost:${ports[0] ?? 81}` };
   } catch {
-    return null;
+    return { kind: 'nginx-not-found' };
   }
 }
 

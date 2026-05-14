@@ -419,10 +419,14 @@ export class CheckRunner {
       if (!npm?.email || !npm?.password) {
         return encode({ status: 'info', detail: 'No NPM admin credentials stored — skipping staleness check.' });
       }
-      const adminUrl = await findNpmAdminUrl(node);
-      if (!adminUrl) {
+      const admin = await findNpmAdminUrl(node);
+      if (admin.kind === 'twin-not-ready') {
+        return encode({ status: 'info', detail: 'Digital twin not populated yet — check will retry on the next tick.' });
+      }
+      if (admin.kind === 'nginx-not-found') {
         return encode({ status: 'info', detail: 'Nginx Proxy Manager not deployed on this node — nothing to check.' });
       }
+      const adminUrl = admin.url;
       try {
         const res = await fetch(`${adminUrl}/api/tokens`, {
           method: 'POST',
@@ -484,10 +488,14 @@ export class CheckRunner {
       ({ status: payload.status === 'fail' ? ('fail' as const) : ('ok' as const), message: `${CERT_EXPIRY_MESSAGE_PREFIX}${JSON.stringify(payload)}` });
 
     try {
-      const adminUrl = await findNpmAdminUrl(node);
-      if (!adminUrl) {
+      const admin = await findNpmAdminUrl(node);
+      if (admin.kind === 'twin-not-ready') {
+        return encode({ status: 'info', detail: 'Digital twin not populated yet — check will retry on the next tick.' });
+      }
+      if (admin.kind === 'nginx-not-found') {
         return encode({ status: 'info', detail: 'Nginx Proxy Manager not deployed — no certificates to check.' });
       }
+      const adminUrl = admin.url;
       const token = await getNpmToken(adminUrl);
       if (!token) {
         return encode({ status: 'info', detail: 'Could not authenticate with NPM — skipping certificate check.' });

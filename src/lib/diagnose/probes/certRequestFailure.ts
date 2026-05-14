@@ -33,6 +33,7 @@ import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../
 import { HealthStore } from '@/lib/health/store';
 import { CERT_REQUEST_FAILURE_MESSAGE_PREFIX } from '@/lib/health/runner';
 import { parseLetsencryptTail } from '@/lib/health/probes/letsencryptLogParser';
+import { registerRefreshNow } from './refreshHealthCheck';
 
 // Re-export so callers (and the existing unit test) can import the
 // parser via the old module path.
@@ -260,3 +261,5 @@ registerProbeAction(
   },
   retryRequest,
 );
+
+registerRefreshNow(PROBE_ID, CHECK_ID, 'Cert request failure');
