@@ -581,6 +581,20 @@ app.prepare().then(() => {
       logger.warn('Server', `Bootstrap-token expiry init failed: ${err instanceof Error ? err.message : String(err)}`),
     );
 
+    // Sync domain-reachability health checks with the configured
+    // proxy hosts. Catches entries that pre-date the feature, and
+    // removes orphans for hosts that were deleted while ServiceBay
+    // was down. Fire-and-forget — failures degrade to "no dot" in
+    // the UI, never block boot.
+    (async () => {
+      try {
+        const { syncDomainChecks } = await import('./src/lib/health/domainChecks');
+        await syncDomainChecks();
+      } catch (err) {
+        logger.warn('Server', `Domain-check sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+
     // LAN IP reconcile (#318). Captures the install-time IP on first
     // boot and updates the stored value (with history) when the IP
     // drifts. Deferred 60s so the Local agent has time to come up

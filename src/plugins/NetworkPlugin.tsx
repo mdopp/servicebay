@@ -15,6 +15,7 @@ import { useServiceActions } from '@/hooks/useServiceActions';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
+import { DomainHealthDot } from '@/components/DomainHealthDot';
 import type { TerminalRef } from '@/components/Terminal';
 import { ServiceActionBar } from '@/components/ServiceActionBar';
 import { AttachedContainerList } from '@/components/AttachedContainerList';
@@ -583,19 +584,29 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                             {effectiveType !== 'proxy' && 'Verified Domains'}
                         </span>
                         <div className="flex flex-col gap-1">
-                            {displayDomains.map((domain: string) => (
-                                <a 
-                                    key={domain} 
-                                    href={domain.startsWith('http') ? domain : `https://${domain}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="flex items-center gap-2 text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-1 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-100 dark:border-blue-800/30 transition-colors"
-                                >
-                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-                                    <span className="truncate" title={domain}>{domain}</span>
-                                </a>
-                            ))}
+                            {displayDomains.map((domain: string) => {
+                                // Same domain-key normalisation the
+                                // Services overview uses: the health
+                                // check is registered against the bare
+                                // hostname, not the URL form.
+                                const bareDomain = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+                                const looksLikeDomain = /\./.test(bareDomain);
+                                return (
+                                    <a
+                                        key={domain}
+                                        href={domain.startsWith('http') ? domain : `https://${domain}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="flex items-center gap-2 text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-1 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-100 dark:border-blue-800/30 transition-colors"
+                                    >
+                                        {looksLikeDomain
+                                            ? <DomainHealthDot domain={bareDomain} />
+                                            : <div className="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0" />}
+                                        <span className="truncate" title={domain}>{domain}</span>
+                                    </a>
+                                );
+                            })}
                         </div>
                     </div>
                 )}
