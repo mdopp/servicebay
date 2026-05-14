@@ -10,6 +10,42 @@ operator's installed schema-version and the current one and surfaces
 them in the re-deploy dialog. Each `(breaking)` section needs an
 explicit acknowledgement before the deploy can proceed.
 
+## v5 (breaking) — #493
+
+**OIDC SSO via the `auth_oidc` custom component.**
+
+Home Assistant has no native OIDC auth provider, so this release
+adds the `auth_oidc` HACS-style integration directly into
+`<config>/custom_components/auth_oidc/`. The `post-deploy.py` hook
+downloads the pinned release tarball
+(https://github.com/christiaangoossens/hass-oidc-auth — version
+`HA_OIDC_AUTH_VERSION`, default `v0.6.0`) on every deploy and skips
+the network round-trip when the on-disk `.sb_installed_version`
+stamp already matches.
+
+The rendered `configuration.yaml.mustache` ships an `auth_oidc:` block
+pointing at the Authelia `discovery_url`, with
+`features.automatic_user_linking` + `automatic_person_creation` on
+and a roles mapping for `HA_OIDC_ADMIN_GROUP` / `HA_OIDC_USER_GROUP`
+(default `lldap_admin` / `lldap_strict_readonly`).
+
+Required action: re-deploy. After the deploy, the HA login screen
+shows a *Sign in with Authelia* button — click it, log in via SSO,
+and the LLDAP user lands as HA admin (when in `lldap_admin`) or
+regular user. The Companion app captures a HA-native long-lived
+token on first OIDC login and keeps working independently of
+Authelia from that point.
+
+**If you customised `/config/configuration.yaml` by hand**, back it
+up before re-deploying — the deploy step renders the template's
+`.mustache` over the live file. After re-deploy, merge your custom
+keys back in, leaving the new `auth_oidc:` block in place.
+
+Bumping `HA_OIDC_AUTH_VERSION` between deploys upgrades the
+component in place: the post-deploy detects the version mismatch,
+re-downloads the tarball, and restarts the HA container so the new
+code loads.
+
 ## v4 (breaking) — #420 / #422
 
 **Z-Wave JS UI always runs + reachable at `zwave.<lanDomain>`.**

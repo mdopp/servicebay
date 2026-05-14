@@ -401,5 +401,76 @@ class MediaScript(unittest.TestCase):
         self.assertNotIn("nav-pass", log_only)
 
 
+class HomeAssistantScript(unittest.TestCase):
+    """The HA post-deploy is gated on Z-Wave device presence (skips
+    udev + WS port config without it) and always tries the
+    `auth_oidc` install (#493). We mock urllib so the HA-readiness
+    probe + the OIDC verify call both run without touching a real
+    network."""
+
+    def test_no_zwave_no_ha_returns_zero(self):
+        m = load_script("home-assistant")
+        import urllib.error
+        import urllib.request
+        # All HTTP calls fail → HA not reachable; the script logs and
+        # returns 0 rather than crashing.
+
+        def always_unreachable(*_a, **_kw):
+            raise urllib.error.URLError("connection refused")
+
+        # Patch the ready-poll's timeout + sleep so the unreachable path
+        # exits in milliseconds instead of the 3-minute production wait.
+        env = {"HA_OIDC_AUTH_VERSION": "v0.6.0"}
+        with run_with_env(env), \
+                mock.patch.object(urllib.request, "urlopen", always_unreachable), \
+                mock.patch.object(m, "HA_READY_TIMEOUT", 0.01), \
+                mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertIn("No ZWAVE_DEVICE set", out)
+        self.assertIn("HA did not respond", out)
+
+    def test_already_installed_skips_download(self):
+        """When the on-disk version stamp matches HA_OIDC_AUTH_VERSION,
+        the script must skip the tarball download entirely. We assert
+        this by configuring urllib so any HTTPS GET to github.com
+        triggers a test failure."""
+        m = load_script("home-assistant")
+        import tempfile
+        import urllib.request
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # Pre-seed the stamp so install_auth_oidc returns False.
+            target = os.path.join(tmp, "home-assistant", "homeassistant", "custom_components", "auth_oidc")
+            os.makedirs(target, exist_ok=True)
+            with open(os.path.join(target, ".sb_installed_version"), "w") as fh:
+                fh.write("v0.6.0\n")
+
+            def fake_urlopen(req, *_a, **_kw):
+                url = req.full_url if hasattr(req, "full_url") else str(req)
+                if "github.com" in url:
+                    raise AssertionError(f"unexpected tarball download: {url}")
+                # HA-readiness probe → return 200 so wait_ha_ready proceeds.
+                # OIDC verify call → return 200.
+                class _R:
+                    status = 200
+                    def read(self):
+                        return b"<html></html>"
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+                return _R()
+
+            env = {"HA_OIDC_AUTH_VERSION": "v0.6.0", "DATA_DIR": tmp}
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("already installed", out)
+            self.assertIn("/auth/oidc/welcome answered", out)
+
+
 if __name__ == "__main__":
     unittest.main()
