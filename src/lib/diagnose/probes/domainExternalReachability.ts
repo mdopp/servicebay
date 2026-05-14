@@ -56,9 +56,20 @@ interface CacheEntry {
 }
 const cache = new Map<string, CacheEntry>();
 
-function isPublicDomain(domain: string): boolean {
-  if (!domain) return false;
-  return !domain.endsWith('.home.arpa') && !domain.endsWith('.local');
+/**
+ * "Is this entry meant to be reachable from the internet?"
+ *   - Trust `exposure` first (persisted since we started reusing the
+ *     public domain for LAN-only services).
+ *   - Fall back to suffix-based heuristic for older persisted entries
+ *     that don't carry `exposure`.
+ * letsdebug.net only makes sense for `public` entries — running it
+ * for LAN-only ones is wasted budget against their rate limit and
+ * always reports the same "DNS doesn't resolve" answer.
+ */
+function isPublicEntry(entry: { domain: string; exposure?: 'public' | 'lan' }): boolean {
+  if (entry.exposure) return entry.exposure === 'public';
+  if (!entry.domain) return false;
+  return !entry.domain.endsWith('.home.arpa') && !entry.domain.endsWith('.local');
 }
 
 function isCacheFresh(entry: CacheEntry): boolean {
@@ -117,7 +128,7 @@ function pickDomainsToRefresh(allDomains: string[]): string[] {
 export async function checkDomainExternalReachability(): Promise<DomainExternalReachabilityResult> {
   const config = await getConfig();
   const hosts = config.reverseProxy?.hosts ?? [];
-  const publicDomains = Array.from(new Set(hosts.filter(h => isPublicDomain(h.domain)).map(h => h.domain)));
+  const publicDomains = Array.from(new Set(hosts.filter(isPublicEntry).map(h => h.domain)));
 
   if (publicDomains.length === 0) {
     return {

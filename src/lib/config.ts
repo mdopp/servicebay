@@ -55,6 +55,22 @@ export interface ProxyHostEntry {
   sslConfigured?: boolean;
   /** Timestamp of creation */
   createdAt?: string;
+  /**
+   * Operator-facing intent: `public` services are meant to be
+   * reachable from the internet (Let's Encrypt cert at install time,
+   * public DNS A-record at the operator's registrar), `lan` services
+   * are LAN-only (no public DNS record needed; AdGuard's wildcard
+   * `*.<publicDomain> → <lanIp>` handles internal resolution). The
+   * field is persisted here so the continuous `domain` health check
+   * and the diagnose probes can decide:
+   *   - the expected scheme for the NPM probe (`https` for public,
+   *     `http` for LAN — NPM's ssl_forced only fires for public),
+   *   - whether to bother letsdebug.net with this domain (skipped
+   *     entirely for `lan` since it'll never have a public record).
+   * Missing on entries that pre-date this field; treat as `lan` so
+   * the conservative default applies.
+   */
+  exposure?: 'public' | 'lan';
 }
 
 export interface ReverseProxyConfig {
