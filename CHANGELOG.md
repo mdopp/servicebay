@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.30.4](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.3...servicebay-v3.30.4) (2026-05-14)
+
+
+### Bug Fixes
+
+* **proxy:** treat existing NPM proxy host as success, not 400 failure ([#464](https://github.com/mdopp/servicebay/issues/464)) ([d3e4610](https://github.com/mdopp/servicebay/commit/d3e46106a4f5238702090443c1f341e45161338b))
+
 ## [3.30.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.30.2...servicebay-v3.30.3) (2026-05-13)
 
 
