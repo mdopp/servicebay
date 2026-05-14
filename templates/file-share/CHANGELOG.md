@@ -4,6 +4,39 @@ Tracks breaking changes to the `file-share` template's pod structure /
 variable shape. Each H2 corresponds to a value of
 `servicebay.schema-version` in `template.yml`.
 
+## v4 (breaking) — #494
+
+**Per-user Samba accounts via LLDAP → tdbsam sync.**
+
+Samba used to mount the share with a single shared service account
+(`SHARE_USER` / `SHARE_PASSWORD`). Every family member typed the
+same credentials — no audit trail, no per-user permissions, no way
+to revoke one device without rotating everyone's password.
+
+Now each LLDAP user maps to their own Samba `tdbsam` account.
+Samba can't speak OIDC and the Argon2/bcrypt → NT-hash conversion
+isn't reversible, so the password lives in Samba's own DB. Set or
+regenerate it from **Settings → Integrations → File Share** —
+clicking the per-user button flashes a fresh random password once
+for the operator to copy and share.
+
+The share's `SAMBA_VOLUME_CONFIG_data` no longer pins
+`valid users = <SHARE_USER>`; any tdbsam user mounts the share with
+their own LLDAP id. `SHARE_USER` + `SHARE_PASSWORD` remain as a
+backward-compat fallback so existing installs keep working until
+the operator migrates each family member onto their LLDAP account.
+
+Lifecycle is automatic: every visit to **Settings → Integrations →
+File Share** runs the LLDAP → tdbsam sync (adds missing accounts
+with random initial passwords, removes orphans). LLDAP user
+creation in another tab + clicking *Sync* surfaces the new user
+ready for a password set.
+
+Required action: redeploy `file-share`. Existing mounts on
+`SHARE_USER` keep working with the same password. New LLDAP users
+need their Samba password set once via the Settings panel before
+they can mount.
+
 ## v3 (breaking)
 
 **Syncthing GUI behind Authelia.**

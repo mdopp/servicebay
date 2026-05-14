@@ -6,7 +6,7 @@ metadata:
     app: file-share
   annotations:
     servicebay.label: "File Share (Syncthing + Samba + FileBrowser)"
-    servicebay.schema-version: "3"
+    servicebay.schema-version: "4"
     # FileBrowser is fronted by Authelia via the nginx proxy host — both
     # must be running before this template's post-deploy can wire SSO.
     servicebay.dependencies: "nginx,auth"
@@ -87,7 +87,19 @@ spec:
       - mountPath: /var/syncthing/config
         name: syncthing-config
 
-  # 2. Samba — SMB/CIFS network shares with simple user/password auth
+  # 2. Samba — SMB/CIFS network shares with per-user authentication.
+  #
+  # Per-user accounts are synced from LLDAP into Samba's tdbsam DB by
+  # ServiceBay's /api/system/file-share/samba/users endpoint and managed
+  # operator-side via Settings → Integrations → File Share. Samba can't
+  # speak OIDC, so the password lives in tdbsam — set/regenerated from
+  # the UI, deliberately not derived from the LLDAP password (Argon2/
+  # bcrypt → NT-hash is not a reversible operation).
+  #
+  # SHARE_USER + SHARE_PASSWORD remain as a legacy fallback so existing
+  # installs keep working until the operator migrates family members
+  # onto LLDAP-backed Samba accounts. The share config no longer pins
+  # `valid users` to a single name — any tdbsam user can mount.
   - name: samba
     image: docker.io/servercontainers/samba:latest
     env:
@@ -96,7 +108,7 @@ spec:
       - name: ACCOUNT_{{SHARE_USER}}
         value: "{{SHARE_PASSWORD}}"
       - name: SAMBA_VOLUME_CONFIG_data
-        value: "[data]; path=/data; valid users = {{SHARE_USER}}; guest ok = no; read only = no; browseable = yes;"
+        value: "[data]; path=/data; guest ok = no; read only = no; browseable = yes;"
     volumeMounts:
       - mountPath: /data
         name: shared-data

@@ -170,6 +170,27 @@ def main() -> int:
         # silently disappears with the install log scroll. See #317.
         return 1
 
+    # ── Samba ↔ LLDAP first-sync (#494) ────────────────────────────────
+    # Trigger the API endpoint that adds tdbsam accounts for every
+    # LLDAP user. Best-effort: a failure here just means the operator
+    # has to click "Sync" in Settings → Integrations → File Share to
+    # populate accounts. Without this step the operator opens the UI
+    # to an empty list on first install and has to click Sync
+    # themselves; with it, the per-user accounts are ready for a
+    # password-set right after deploy.
+    samba_sync_url = f"{sb_api}/api/system/file-share/samba/users"
+    sync_status, sync_body = post_json(samba_sync_url, {}, timeout=30)
+    if sync_status == 200 and sync_body and sync_body.get("ok"):
+        users = sync_body.get("users") or []
+        added = sync_body.get("added") or []
+        log(f"✅ Samba ↔ LLDAP sync complete — {len(users)} user(s) in directory, {len(added)} new account(s) added with random initial passwords (set them via Settings → Integrations → File Share before first mount).")
+    elif sync_status == 503:
+        log(f"ℹ️  Samba sync skipped: LLDAP not reachable yet. Open Settings → Integrations → File Share once LLDAP is up to populate accounts.")
+    elif sync_status == 404:
+        log(f"ℹ️  Samba sync skipped: file-share-samba container not running yet. Try again once the pod is healthy.")
+    else:
+        log(f"⚠️  Samba ↔ LLDAP sync returned HTTP {sync_status}. Open Settings → Integrations → File Share to populate accounts manually.")
+
     return 0
 
 
