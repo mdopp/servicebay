@@ -251,9 +251,46 @@ async function ensureLanAccessList(baseUrl: string, token: string, nodeIp: strin
 }
 
 /**
+ * Look up an existing NPM proxy host by domain. Returns the proxy
+ * host object (with `id`) when found, `null` when not present. Used
+ * by `createProxyHost` so a second create-attempt for the same
+ * domain isn't reported as a failure when the host already exists
+ * from a prior install / re-trigger of the provisioner.
+ */
+async function findProxyHostByDomain(baseUrl: string, token: string, domain: string): Promise<{ id: number } | null> {
+    try {
+        const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts?expand=owner,access_list,certificate`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return null;
+        const list = (await res.json()) as Array<{ id: number; domain_names?: string[] }>;
+        const existing = list.find(h => Array.isArray(h.domain_names) && h.domain_names.includes(domain));
+        return existing ? { id: existing.id } : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Create a proxy host in NPM via its REST API.
+ *
+ * Idempotent: if NPM already has a host for this domain we return its
+ * existing record instead of POSTing a duplicate. The apex/www route
+ * provisioner runs from several places (install runner, AdGuard
+ * post-deploy hook, the 60-s post-boot timer), so a second call
+ * frequently lands on a domain that's already configured — without
+ * this guard NPM 400s and `config.reverseProxy.hosts[].created`
+ * flips back to `false`, surfacing as a false-positive in the
+ * `proxy_route_missing` diagnose probe.
  */
 async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRequest, accessListId: number = 0) {
+    const existing = await findProxyHostByDomain(baseUrl, token, host.domain);
+    if (existing) {
+        return existing;
+    }
+
     const pc = host.proxyConfig || {};
     const body = {
         domain_names: [host.domain],
@@ -293,6 +330,16 @@ async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRe
     });
 
     if (!res.ok) {
+        // Belt-and-braces: NPM can race with us between the pre-check
+        // and the POST (two concurrent provisioners), so a 400 here
+        // might still mean "exists" rather than an actual rejection.
+        // Look it up once more before reporting the failure.
+        if (res.status === 400) {
+            const racedExisting = await findProxyHostByDomain(baseUrl, token, host.domain);
+            if (racedExisting) {
+                return racedExisting;
+            }
+        }
         const err = await res.json().catch(() => ({}));
         throw new Error(err.message || `NPM API returned ${res.status}`);
     }
