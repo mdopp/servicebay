@@ -2,8 +2,9 @@
  * LAN-IP detection + reconciliation (#249, D19-PR9).
  *
  * ServiceBay's LAN IP feeds two places: AdGuard wildcard rewrites
- * (`*.home.arpa` → IP) and NPM proxy-host `forward_host` entries.
- * If the IP changes mid-life, both go stale.
+ * (`*.<publicDomain>` → IP, or `*.home.arpa` on LAN-only installs)
+ * and NPM proxy-host `forward_host` entries. If the IP changes
+ * mid-life, both go stale.
  *
  * Install-time captures the IP via `ip route get 1.1.1.1` agent-side
  * (whichever interface holds the default route). Boot-time reconcile
