@@ -23,6 +23,7 @@ import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { CERT_EXPIRY_MESSAGE_PREFIX } from '@/lib/health/runner';
+import { registerRefreshNow } from './refreshHealthCheck';
 
 const PROBE_ID = 'cert_expiry';
 const CHECK_ID = 'cert_expiry';
@@ -178,3 +179,5 @@ registerProbeAction(
   },
   renewCert,
 );
+
+registerRefreshNow(PROBE_ID, CHECK_ID, 'Cert expiry');

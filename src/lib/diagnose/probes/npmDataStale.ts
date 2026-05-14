@@ -30,6 +30,7 @@ import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { NPM_AUTH_MESSAGE_PREFIX } from '@/lib/health/runner';
+import { registerRefreshNow } from './refreshHealthCheck';
 
 export interface NpmDataStaleResult {
   /** undefined when not applicable (no nginx-web, or NPM not reachable). */
@@ -253,3 +254,5 @@ registerProbeAction(
   },
   useExistingNpmCreds,
 );
+
+registerRefreshNow(PROBE_ID, CHECK_ID, 'NPM auth');
