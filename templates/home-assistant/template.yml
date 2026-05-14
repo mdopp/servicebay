@@ -6,7 +6,7 @@ metadata:
     app: home-assistant
   annotations:
     servicebay.label: "Home Assistant"
-    servicebay.schema-version: "4"
+    servicebay.schema-version: "5"
     # Home Assistant is reached at home.<domain> via nginx, and (when
     # the operator enables it) authenticates via Authelia.
     servicebay.dependencies: "nginx,auth"

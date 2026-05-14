@@ -22,3 +22,26 @@ http:
     - 192.168.0.0/16
     - 10.0.0.0/8
     - 172.16.0.0/12
+
+# OIDC auth via the `auth_oidc` custom component (installed by
+# post-deploy.py from a pinned tarball — see HA_OIDC_AUTH_VERSION).
+# HA core has no native OIDC provider yet, so this is the bridge.
+# Restart HA after first install for the integration to register the
+# `/auth/oidc/*` endpoints; subsequent re-deploys skip the reinstall
+# when the version stamp on disk already matches HA_OIDC_AUTH_VERSION.
+auth_oidc:
+  client_id: homeassistant
+  client_secret: {{HA_OIDC_SECRET}}
+  discovery_url: https://auth.{{PUBLIC_DOMAIN}}/.well-known/openid-configuration
+  features:
+    # LLDAP-side `sub` claim auto-binds to the matching HA user record
+    # on first SSO login, so existing local accounts don't get
+    # duplicated.
+    automatic_user_linking: true
+    # Auto-create a `person` entity for new SSO users — without this
+    # the HA UI shows the user as unattached and dashboards filtered
+    # by `person.*` skip them.
+    automatic_person_creation: true
+  roles:
+    admin: "{{HA_OIDC_ADMIN_GROUP}}"
+    user:  "{{HA_OIDC_USER_GROUP}}"

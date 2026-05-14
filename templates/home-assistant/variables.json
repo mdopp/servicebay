@@ -27,7 +27,22 @@
   },
   "HA_OIDC_SECRET": {
     "type": "secret",
-    "description": "OIDC client secret for the Home Assistant client registered with Authelia. Auto-generated and pinned via clientSecretVar so Authelia always uses the same value. HA itself does not have a native OIDC auth provider — use this secret when configuring a custom integration (e.g. homeassistant_auth_oidc via HACS)."
+    "description": "OIDC client secret for the Home Assistant client registered with Authelia. Auto-generated and pinned via clientSecretVar so Authelia always uses the same value. Both Authelia and the auth_oidc custom component (installed by post-deploy) read this secret."
+  },
+  "HA_OIDC_AUTH_VERSION": {
+    "type": "text",
+    "description": "Pinned release tag of the auth_oidc custom component (https://github.com/christiaangoossens/hass-oidc-auth). post-deploy downloads + extracts the matching tarball into <config>/custom_components/auth_oidc/ on every deploy and skips the network round-trip when the on-disk version stamp already matches. Bump this string and re-deploy to upgrade.",
+    "default": "v0.6.0"
+  },
+  "HA_OIDC_ADMIN_GROUP": {
+    "type": "text",
+    "description": "LLDAP group whose members become Home Assistant admins via auth_oidc's `roles` mapping. Anyone outside this group lands as a regular user.",
+    "default": "lldap_admin"
+  },
+  "HA_OIDC_USER_GROUP": {
+    "type": "text",
+    "description": "LLDAP group whose members can log into Home Assistant as a non-admin user. Members of HA_OIDC_ADMIN_GROUP also pass this check automatically.",
+    "default": "lldap_strict_readonly"
   },
   "HA_SUBDOMAIN": {
     "type": "subdomain",
