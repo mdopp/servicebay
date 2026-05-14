@@ -127,11 +127,24 @@ function renderProxyConfig(
  * Hosts are split by their declared `exposure`:
  *   - `public` → `<sub>.<PUBLIC_DOMAIN>` (Let's Encrypt cert, externally
  *     reachable once DNS points here).
- *   - `lan`    → `<sub>.<LAN_DOMAIN or 'home.arpa'>` so admin-only UIs
- *     (e.g. Z-Wave JS at `zwave.home.arpa`) never accidentally land on
- *     the public domain — that previously produced a `zwave.<publicDomain>`
- *     entry the DNS-verify probe nagged about, and would have exposed the
- *     UI publicly if the operator ever created the A record.
+ *   - `lan`    → `<sub>.<PUBLIC_DOMAIN>` too. The split is enforced by
+ *     the AdGuard wildcard rewrite `*.<PUBLIC_DOMAIN> → <lanIp>` — LAN
+ *     clients reach NPM directly without leaving the network, the same
+ *     names from outside resolve via public DNS only for the public-
+ *     exposure subset (the operator's DNS provider has explicit A/CNAME
+ *     records only for those). LAN-only services have no public-DNS
+ *     entry → external clients get NXDOMAIN, exactly as intended. This
+ *     replaces the older `<sub>.home.arpa` model which required either
+ *     AdGuard as the DHCP DNS (LAN SPOF) or special-casing in FritzBox
+ *     (refused per RFC 8375).
+ *
+ *     Operators on a fully LAN-only install (no public domain) fall back
+ *     to `home.arpa` so the old model still works there — fixed
+ *     `<sub>.home.arpa` is the only sensible answer when there's no
+ *     public domain to graft onto.
+ *
+ *     An explicit `LAN_DOMAIN` variable still wins so existing setups
+ *     keep behaving the same after upgrade (back-compat).
  *
  * Public-exposure hosts are skipped when no `PUBLIC_DOMAIN` is set
  * (LAN-only install).
@@ -148,7 +161,12 @@ export function buildProxyHosts(variables: StackVariable[]): {
   }[];
 } {
   const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-  const lanDomain = variables.find(v => v.name === 'LAN_DOMAIN')?.value || 'home.arpa';
+  // LAN_DOMAIN wins (explicit operator choice). Else use the public
+  // domain itself — relies on the AdGuard wildcard `*.<publicDomain>
+  // → <lanIp>` that the portal provisioner installs at boot. Else fall
+  // back to `home.arpa` (LAN-only installs with no public domain).
+  const explicitLanDomain = variables.find(v => v.name === 'LAN_DOMAIN')?.value;
+  const lanDomain = explicitLanDomain || domain || 'home.arpa';
   const view = variables.reduce<Record<string, string>>(
     (acc, v) => { acc[v.name] = v.value; return acc; },
     {},

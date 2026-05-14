@@ -556,13 +556,25 @@ export async function POST(request: Request) {
                 forwardPort: h.forwardPort,
                 created: results.find(r => r.domain === h.domain)?.success ?? false,
                 createdAt: new Date().toISOString(),
+                // Persist exposure so downstream consumers (domain
+                // health checks, diagnose probes, letsdebug filter)
+                // can tell `lan` from `public` without trying to
+                // re-derive it from the domain string — which doesn't
+                // work now that LAN-only services live on the public
+                // domain too.
+                exposure: h.exposure,
             }));
-            // Merge: update existing entries by domain, append new ones
+            // Merge: update existing entries by domain, append new
+            // ones. Preserve the previous `exposure` value when the
+            // incoming entry doesn't carry one (older clients).
             const merged = [...existingHosts];
             for (const entry of newEntries) {
                 const idx = merged.findIndex(e => e.domain === entry.domain);
-                if (idx >= 0) merged[idx] = entry;
-                else merged.push(entry);
+                if (idx >= 0) {
+                    merged[idx] = { ...merged[idx], ...entry, exposure: entry.exposure ?? merged[idx].exposure };
+                } else {
+                    merged.push(entry);
+                }
             }
             await updateConfig({
                 reverseProxy: {

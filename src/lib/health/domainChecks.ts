@@ -37,8 +37,21 @@ function isLanDomain(domain: string): boolean {
   return domain.endsWith('.home.arpa') || domain.endsWith('.local');
 }
 
+/**
+ * Source of truth for "is this entry public or LAN-only?":
+ *   1. Persisted `entry.exposure` (set since the publicDomain LAN
+ *      switch — required because LAN-only hosts can now live on the
+ *      same domain as public ones).
+ *   2. Fallback to the legacy heuristic for entries persisted before
+ *      that schema field existed.
+ */
+function isPublicExposure(entry: ProxyHostEntry): boolean {
+  if (entry.exposure) return entry.exposure === 'public';
+  return !isLanDomain(entry.domain);
+}
+
 function buildCheck(entry: ProxyHostEntry, now: string): CheckConfig {
-  const isPublic = !isLanDomain(entry.domain);
+  const isPublic = isPublicExposure(entry);
   return {
     id: `${DOMAIN_CHECK_PREFIX}${entry.domain}`,
     name: `Domain — ${entry.domain}`,

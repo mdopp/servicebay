@@ -47,21 +47,43 @@ describe('buildProxyHosts', () => {
     });
   });
 
-  it('routes lan-exposure subdomains onto the LAN domain (default home.arpa)', () => {
+  it('routes lan-exposure subdomains onto the public domain when one is configured', () => {
+    // Architectural shift: LAN-only services share the public domain
+    // (e.g. `zwave.example.com`). The AdGuard wildcard
+    // `*.<publicDomain> → <lanIp>` keeps LAN clients on the local IP
+    // without any external DNS dependency, and the absence of a public
+    // A-record for the LAN-only subset stops external resolution dead.
     const { hosts } = buildProxyHosts([
       v('PUBLIC_DOMAIN', 'example.com'),
       v('ZWAVE_JS_SUBDOMAIN', 'zwave', subdomain('lan', '8091')),
     ]);
     expect(hosts).toHaveLength(1);
     expect(hosts[0]).toMatchObject({
-      domain: 'zwave.home.arpa',
+      domain: 'zwave.example.com',
       forwardPort: 8091,
       exposure: 'lan',
       service: 'zwave_js',
     });
   });
 
-  it('honours LAN_DOMAIN override when present', () => {
+  it('falls back to home.arpa when no public domain is configured', () => {
+    // LAN-only install: there's nothing to graft onto. Keep the old
+    // `<sub>.home.arpa` behaviour so RFC 8375 + AdGuard rewrites
+    // still give the operator a working LAN-only setup.
+    const { hosts } = buildProxyHosts([
+      v('ZWAVE_JS_SUBDOMAIN', 'zwave', subdomain('lan', '8091')),
+    ]);
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toMatchObject({
+      domain: 'zwave.home.arpa',
+      exposure: 'lan',
+    });
+  });
+
+  it('honours an explicit LAN_DOMAIN override when present', () => {
+    // Operator escape hatch: explicit `LAN_DOMAIN` wins over both
+    // defaults. Existing installs that pinned the old `home.arpa`
+    // setup keep their proxy hosts pointing where they expect.
     const { hosts } = buildProxyHosts([
       v('PUBLIC_DOMAIN', 'example.com'),
       v('LAN_DOMAIN', 'lan.example'),
@@ -77,7 +99,7 @@ describe('buildProxyHosts', () => {
     ]);
     expect(hosts).toHaveLength(1);
     expect(hosts[0]).toMatchObject({
-      domain: 'mystery.home.arpa',
+      domain: 'mystery.example.com',
       exposure: 'lan',
     });
   });
@@ -92,7 +114,10 @@ describe('buildProxyHosts', () => {
     const byDomain = Object.fromEntries(hosts.map(h => [h.domain, h]));
     expect(byDomain['home.dopp.cloud'].exposure).toBe('public');
     expect(byDomain['photos.dopp.cloud'].exposure).toBe('public');
-    expect(byDomain['zwave.home.arpa'].exposure).toBe('lan');
+    // Same domain for public and lan now — the AdGuard wildcard +
+    // absence of a public A-record for the LAN-only one provides
+    // the split-horizon implicitly.
+    expect(byDomain['zwave.dopp.cloud'].exposure).toBe('lan');
     expect(hosts).toHaveLength(3);
   });
 
@@ -102,6 +127,7 @@ describe('buildProxyHosts', () => {
       v('ZWAVE_JS_SUBDOMAIN', 'zwave', subdomain('lan', '8091')),
     ]);
     expect(domain).toBeUndefined();
+    // No public domain → fallback `home.arpa` covers the LAN entry.
     expect(hosts.map(h => h.domain)).toEqual(['zwave.home.arpa']);
   });
 

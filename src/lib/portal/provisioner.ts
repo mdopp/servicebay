@@ -84,17 +84,19 @@ function buildPortalProxyHost(domain: string, lanIp: string): {
     forwardHost: string;
     forwardScheme: string;
     service: string;
+    exposure: 'public' | 'lan';
   }>;
 } {
   const port = parseInt(process.env.PORT ?? '5888', 10);
-  // Encode both names into a single NPM host. The /api/system/nginx/
-  // proxy-hosts route currently creates one NPM host per domain
-  // entry, so we pass two list entries with the same target. NPM's
-  // de-dupe behaviour will collapse them on update.
+  // The portal apex is reachable from outside (operator sees it at
+  // the public domain), so exposure is `public`. Without this the
+  // letsdebug check and the domain-health dot defaulted via the
+  // suffix heuristic — now that LAN-only hosts can share the public
+  // domain, the heuristic isn't safe and we set the value explicitly.
   return {
     hosts: [
-      { domain, forwardPort: port, forwardHost: lanIp, forwardScheme: 'http', service: 'servicebay-portal' },
-      { domain: `www.${domain}`, forwardPort: port, forwardHost: lanIp, forwardScheme: 'http', service: 'servicebay-portal' },
+      { domain, forwardPort: port, forwardHost: lanIp, forwardScheme: 'http', service: 'servicebay-portal', exposure: 'public' },
+      { domain: `www.${domain}`, forwardPort: port, forwardHost: lanIp, forwardScheme: 'http', service: 'servicebay-portal', exposure: 'public' },
     ],
   };
 }

@@ -57,6 +57,16 @@ function isLanDomain(domain: string): boolean {
   return domain.endsWith('.home.arpa') || domain.endsWith('.local');
 }
 
+/**
+ * Trust the persisted `exposure` flag when it's there (set by the
+ * apex/NPM provisioner since the publicDomain-LAN switch); fall back
+ * to the suffix heuristic for older entries.
+ */
+function entryIsLan(entry: ProxyHostEntry): boolean {
+  if (entry.exposure) return entry.exposure === 'lan';
+  return isLanDomain(entry.domain);
+}
+
 interface Diagnosis {
   /** Severity for the per-item row. */
   status: 'warn' | 'fail';
@@ -163,7 +173,7 @@ async function fetchWithHostHeader(npmUrl: string, hostHeader: string): Promise<
 async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<Diagnosis | null> {
   const domain = host.domain;
   const lanIp = config.reverseProxy?.lanIp;
-  const isLan = isLanDomain(domain);
+  const isLan = entryIsLan(host);
   const scheme = isLan ? 'http' : 'https';
 
   // 1. Did NPM actually accept the proxy host?
