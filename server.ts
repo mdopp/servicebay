@@ -595,6 +595,20 @@ app.prepare().then(() => {
       }
     })();
 
+    // Periodic letsdebug refresh (every 4 h) so a dashboard left
+    // open overnight wakes up with fresh external-reachability data
+    // without the operator having to re-run diagnose. The probe's
+    // own implementation throttles serial submissions per rate
+    // limit; this just starts the timer.
+    (async () => {
+      try {
+        const { startBackgroundSweep } = await import('./src/lib/diagnose/probes/domainExternalReachability');
+        startBackgroundSweep();
+      } catch (err) {
+        logger.warn('Server', `External reachability sweep init failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+
     // LAN IP reconcile (#318). Captures the install-time IP on first
     // boot and updates the stored value (with history) when the IP
     // drifts. Deferred 60s so the Local agent has time to come up
