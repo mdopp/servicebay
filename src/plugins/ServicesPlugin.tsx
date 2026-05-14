@@ -10,6 +10,7 @@ import PluginLoading from '@/components/PluginLoading';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
+import TemplateUpgradesPendingBanner from '@/components/TemplateUpgradesPendingBanner';
 import { DomainHealthDot } from '@/components/DomainHealthDot';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import PluginHelp from '@/components/PluginHelp';
@@ -1412,8 +1413,9 @@ export default function ServicesPlugin() {
                 }}
             />
 
-      <PageHeader 
-        title="Services" 
+      <TemplateUpgradesPendingBanner />
+      <PageHeader
+        title="Services"
         showBack={false} 
         helpId="services"
         actions={
