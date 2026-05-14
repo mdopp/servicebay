@@ -62,7 +62,11 @@ describe('ContainersPlugin Port Rendering', () => {
                     services: [],
                     volumes: [],
                     files: {},
-                    proxy: []
+                    proxy: [],
+                    nodeIPs: [],
+                    unmanagedBundles: [],
+                    dismissedBundles: [],
+                    history: []
                 }
             },
             gateway: { provider: 'mock' } as any,
@@ -126,13 +130,17 @@ describe('ContainersPlugin Port Rendering', () => {
                     services: [],
                     volumes: [],
                     files: {},
-                    proxy: []
+                    proxy: [],
+                    nodeIPs: [],
+                    unmanagedBundles: [],
+                    dismissedBundles: [],
+                    history: []
                 }
             },
             gateway: { provider: 'mock' } as any,
             proxy: { provider: 'nginx', routes: [] }
         };
-        
+
         mockUseDigitalTwin.mockReturnValue({
             data: mockSnapshot,
             isConnected: true,

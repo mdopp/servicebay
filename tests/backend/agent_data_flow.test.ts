@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DigitalTwinStore } from '../../src/lib/store/twin';
 import { EnrichedContainer, ServiceUnit } from '../../src/lib/agent/types';
@@ -21,7 +20,7 @@ describe('DigitalTwinStore Data Flow', () => {
       active: true,
       subState: 'running',
       ports: [
-        { host_port: 53, container_port: 53, protocol: 'tcp' }
+        { hostPort: 53, containerPort: 53, protocol: 'tcp' }
       ],
       associatedContainerIds: ['cid1'],
       isManaged: true,
@@ -40,7 +39,7 @@ describe('DigitalTwinStore Data Flow', () => {
       status: 'Up',
       created: 12345,
       ports: [
-        { host_port: 53, container_port: 53, protocol: 'tcp' }
+        { hostPort: 53, containerPort: 53, protocol: 'tcp' }
       ],
       mounts: [],
       labels: {},
@@ -99,7 +98,7 @@ describe('DigitalTwinStore Data Flow', () => {
      const container: EnrichedContainer = {
          id: 'nginx-cid',
          names: ['nginx'], // Matching name
-         ports: [{ host_port: 80, container_port: 80, protocol: 'tcp' }],
+         ports: [{ hostPort: 80, containerPort: 80, protocol: 'tcp' }],
          image: 'nginx',
          state: 'running',
          status: 'up',
@@ -222,15 +221,18 @@ describe('DigitalTwinStore Data Flow', () => {
 
       // B. Check Proxy Configuration (The new source of truth)
       expect(enrichedService.proxyConfiguration).toBeDefined();
-      expect(enrichedService.proxyConfiguration.servers).toHaveLength(2);
-      
-      const server1 = enrichedService.proxyConfiguration.servers.find((s: any) => s.server_name.includes('app.example.com'));
+      const proxyConfig = enrichedService.proxyConfiguration as {
+        servers: Array<{ server_name: string; listen: string }>;
+      };
+      expect(proxyConfig.servers).toHaveLength(2);
+
+      const server1 = proxyConfig.servers.find((s) => s.server_name.includes('app.example.com'));
       expect(server1).toBeDefined();
-      expect(server1.listen).toContain('443 ssl'); // SSL enabled
-      
-      const server2 = enrichedService.proxyConfiguration.servers.find((s: any) => s.server_name.includes('api.example.com'));
+      expect(server1!.listen).toContain('443 ssl'); // SSL enabled
+
+      const server2 = proxyConfig.servers.find((s) => s.server_name.includes('api.example.com'));
       expect(server2).toBeDefined();
-      expect(server2.listen).toContain('80'); // No SSL
+      expect(server2!.listen).toContain('80'); // No SSL
 
       // C. Check Effective Ports (Should be derived from routes)
       // Expect 80 and 443 because at least one route has SSL and one has 80
@@ -324,7 +326,7 @@ describe('DigitalTwinStore Data Flow', () => {
           description: 'My App',
           path: '',
           active: true,
-            ports: [{ host_port: 8080, container_port: 8080, protocol: 'tcp' }],
+            ports: [{ hostPort: 8080, containerPort: 8080, protocol: 'tcp' }],
             isManaged: true,
           isServiceBay: false
       };

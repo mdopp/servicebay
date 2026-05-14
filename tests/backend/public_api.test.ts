@@ -28,8 +28,8 @@ Image=nginx
   it('types should be accessible', () => {
     // This test verifies that the types are exported for type-checking
     // In practice, users would import these types for their own usage
-    const _typeCheck: typeof ServiceBundle | undefined = undefined;
-    const _directives: typeof QuadletDirectives | undefined = undefined;
+    const _typeCheck: ServiceBundle | undefined = undefined;
+    const _directives: QuadletDirectives | undefined = undefined;
     expect(_typeCheck).toBeUndefined();
     expect(_directives).toBeUndefined();
   });

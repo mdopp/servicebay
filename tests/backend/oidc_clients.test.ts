@@ -194,7 +194,7 @@ describe('POST /api/system/authelia/oidc-clients', () => {
     // Verify the config was written with the new client
     const writeCall = mockAgent.sendCommand.mock.calls.find((c: any) => c[0] === 'write_file');
     expect(writeCall).toBeDefined();
-    const writtenContent = writeCall[1].content;
+    const writtenContent = writeCall![1].content;
     expect(writtenContent).toContain('client_id: immich');
     expect(writtenContent).toContain('https://photos.example.com/auth/login');
     expect(writtenContent).toContain('https://photos.example.com/user-settings');

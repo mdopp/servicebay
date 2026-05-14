@@ -70,7 +70,8 @@ describe('CheckRunner', () => {
             target: 'https://example.com',
             interval: 60,
             enabled: true,
-            httpConfig: { expectedStatus: 200 }
+            httpConfig: { expectedStatus: 200 },
+            created_at: '2024-01-01T00:00:00Z'
         };
 
         // Mock fetch
@@ -98,7 +99,8 @@ describe('CheckRunner', () => {
             target: 'https://example.com',
             interval: 60,
             enabled: true,
-            httpConfig: { expectedStatus: 200 }
+            httpConfig: { expectedStatus: 200 },
+            created_at: '2024-01-01T00:00:00Z'
         };
 
         global.fetch = vi.fn().mockResolvedValue({
@@ -121,7 +123,8 @@ describe('CheckRunner', () => {
             type: 'ping',
             target: 'localhost',
             interval: 60,
-            enabled: true
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z'
          };
 
          const result = await CheckRunner.run(check);
@@ -135,7 +138,8 @@ describe('CheckRunner', () => {
             type: 'ping',
             target: 'failhost',
             interval: 60,
-            enabled: true
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z'
          };
 
          const result = await CheckRunner.run(check);
@@ -150,7 +154,8 @@ describe('CheckRunner', () => {
             type: 'script',
             target: 'if (1 !== 1) throw new Error("Math is broken")',
             interval: 60,
-            enabled: true
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z'
         };
 
         const result = await CheckRunner.run(check);
@@ -164,7 +169,8 @@ describe('CheckRunner', () => {
             type: 'script',
             target: 'throw new Error("Custom Failure")',
             interval: 60,
-            enabled: true
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z'
         };
 
         const result = await CheckRunner.run(check);
