@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.34.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.34.0...servicebay-v3.34.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **letsdebug:** drop the 30s inter-submission delay — strict await serialises already ([#479](https://github.com/mdopp/servicebay/issues/479)) ([8e28407](https://github.com/mdopp/servicebay/commit/8e28407e28d3e7aea176d21cb90cd4ab662e3926))
+
 ## [3.34.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.33.2...servicebay-v3.34.0) (2026-05-14)
 
 
