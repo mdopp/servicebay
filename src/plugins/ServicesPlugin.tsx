@@ -10,6 +10,7 @@ import PluginLoading from '@/components/PluginLoading';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
+import { DomainHealthDot } from '@/components/DomainHealthDot';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import PluginHelp from '@/components/PluginHelp';
 import FileViewerOverlay from '@/components/FileViewerOverlay';
@@ -732,17 +733,28 @@ export default function ServicesPlugin() {
                                 <div className="flex flex-col col-span-2">
                                     <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Domains</span>
                                     <div className="flex flex-wrap gap-1 mt-0.5">
-                                        {service.verifiedDomains.map(d => (
-                                            <a 
-                                                key={d} 
-                                                href={d.startsWith('http') ? d : `https://${d}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded hover:underline"
-                                            >
-                                                {d}
-                                            </a>
-                                        ))}
+                                        {service.verifiedDomains.map(d => {
+                                            // Strip scheme + trailing path so the health-check key
+                                            // (registered against the bare domain) matches whatever
+                                            // form the digital twin gives us back. Only domains that
+                                            // look like a hostname get a dot — internal markers like
+                                            // `localhost-nginx-proxy-manager` slip through unchanged.
+                                            const bareDomain = d.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+                                            const looksLikeDomain = /\./.test(bareDomain);
+                                            return (
+                                                <span key={d} className="inline-flex items-center gap-1.5 text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded">
+                                                    {looksLikeDomain && <DomainHealthDot domain={bareDomain} />}
+                                                    <a
+                                                        href={d.startsWith('http') ? d : `https://${d}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="hover:underline"
+                                                    >
+                                                        {d}
+                                                    </a>
+                                                </span>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}

@@ -11,6 +11,7 @@ import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing'
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
+import { checkDomainExternalReachability } from '@/lib/diagnose/probes/domainExternalReachability';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import '@/lib/diagnose/probes/register';
 
@@ -732,6 +733,29 @@ export async function POST(request: Request) {
     probes.push({
       id: 'adguard_rewrites_missing',
       label: 'AdGuard DNS rewrites',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // External reachability via letsdebug.net. Slow (10-30 s per
+  // domain) but cached for 24 h inside the probe, so re-runs only
+  // hammer letsdebug when results expire. Caught — a probe outage
+  // shouldn't block the rest of diagnose.
+  try {
+    const dr = await checkDomainExternalReachability();
+    probes.push({
+      id: 'domain_external_reachability',
+      label: 'External reachability',
+      status: dr.status,
+      detail: dr.detail,
+      hint: dr.hint,
+      _items: dr.items,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'domain_external_reachability',
+      label: 'External reachability',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

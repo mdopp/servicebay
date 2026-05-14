@@ -66,6 +66,11 @@ export class CheckRunner {
           if (bkMsg) message = bkMsg;
           status = 'ok';
           break;
+        case 'domain':
+          const domainMsg = await this.runDomainCheck(check);
+          if (domainMsg) message = domainMsg;
+          status = 'ok';
+          break;
       }
     } catch (e: unknown) {
       status = 'fail';
@@ -122,6 +127,57 @@ export class CheckRunner {
           }
         }
       }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Probe a configured domain end-to-end:
+   *   1. DNS resolves (implicit — fetch fails if it doesn't).
+   *   2. The expected scheme answers within the timeout.
+   *   3. Response is NOT NPM's default "Congratulations" page —
+   *      that would mean the proxy host exists but isn't routed
+   *      to a real backend, which reads identically to a healthy
+   *      200 without the body sniff.
+   *   4. For https: TLS validates (Node fetch throws on invalid
+   *      cert chains; we surface the error string verbatim).
+   *
+   * The message returned is a short human-readable detail
+   * ("https reachable, 200", "https failed: cert expired", etc.)
+   * that the UI shows in the dot's tooltip. Throwing flips the
+   * outer try/catch into `status: 'fail'` with the thrown message.
+   */
+  private static async runDomainCheck(check: CheckConfig): Promise<string> {
+    const cfg = check.domainConfig;
+    if (!cfg) throw new Error('domainConfig missing');
+    const scheme = cfg.expectedScheme;
+    const url = `${scheme}://${check.target}/`;
+    await assertHttpTargetAllowed(url);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        redirect: 'manual', // Don't auto-follow http→https; the redirect IS the signal.
+      });
+      // 4xx/5xx with NPM's default page = proxy route missing.
+      // Detect via the body — NPM ships its "Congratulations!" page
+      // on the default vhost.
+      if (res.status === 404 || res.status === 503) {
+        const body = await res.text().catch(() => '');
+        if (body.includes('Congratulations') || body.includes('nginx-proxy-manager')) {
+          throw new Error(`${scheme} reached NPM default page (proxy host wired but no backend?)`);
+        }
+      }
+      if (!res.ok && res.status < 300) {
+        throw new Error(`${scheme} returned HTTP ${res.status}`);
+      }
+      // 3xx is fine — typical for services that auto-redirect /
+      // (Authelia from `/` to its login). We're only checking
+      // reachability + correct scheme.
+      return `${scheme} reachable, HTTP ${res.status}`;
     } finally {
       clearTimeout(timeout);
     }
