@@ -133,51 +133,72 @@ export class CheckRunner {
   }
 
   /**
-   * Probe a configured domain end-to-end:
-   *   1. DNS resolves (implicit — fetch fails if it doesn't).
-   *   2. The expected scheme answers within the timeout.
-   *   3. Response is NOT NPM's default "Congratulations" page —
-   *      that would mean the proxy host exists but isn't routed
-   *      to a real backend, which reads identically to a healthy
-   *      200 without the body sniff.
-   *   4. For https: TLS validates (Node fetch throws on invalid
-   *      cert chains; we surface the error string verbatim).
+   * Probe a configured domain by talking directly to NPM on the LAN
+   * IP with a `Host:` header — *not* by resolving the domain name.
+   * This is the only probe that works for `.home.arpa` from inside
+   * ServiceBay's container, which doesn't use AdGuard as its own
+   * resolver (it uses whatever the host's /etc/resolv.conf points
+   * at — typically the FritzBox, which has no answer for the
+   * RFC 8375 reserved zone). Public domains also benefit: we test
+   * the proxy routing without depending on router hairpin or public
+   * DNS being healthy.
    *
-   * The message returned is a short human-readable detail
-   * ("https reachable, 200", "https failed: cert expired", etc.)
-   * that the UI shows in the dot's tooltip. Throwing flips the
-   * outer try/catch into `status: 'fail'` with the thrown message.
+   *   1. Hit `http://<lanIp>:80/` with `Host: <domain>`.
+   *   2. NPM picks the matching virtual host, applies any
+   *      ssl_forced 301 redirect (visible as 301 → Location:
+   *      https://<domain>/), and then forwards to the backend.
+   *   3. We accept anything 2xx-3xx as "routing healthy".
+   *      For `https` (ssl_forced) routes we expect a 301/302
+   *      with `Location:` starting `https://<domain>` — that
+   *      proves NPM both *knows* this vhost and the cert binding
+   *      is in place.
+   *   4. NPM's default "Congratulations" body on 404/503 means the
+   *      proxy host doesn't exist *yet* for this domain — same
+   *      symptom as a half-finished install.
+   *
+   * No SSRF guard: hitting our own LAN IP is the point.
    */
   private static async runDomainCheck(check: CheckConfig): Promise<string> {
     const cfg = check.domainConfig;
     if (!cfg) throw new Error('domainConfig missing');
-    const scheme = cfg.expectedScheme;
-    const url = `${scheme}://${check.target}/`;
-    await assertHttpTargetAllowed(url);
+    const expectedScheme = cfg.expectedScheme;
 
+    // Resolve NPM's address via config — `reverseProxy.lanIp` is what
+    // the install wizard captures and reconciles on every boot.
+    const { getConfig } = await import('../config');
+    const config = await getConfig();
+    const lanIp = config.reverseProxy?.lanIp;
+    if (!lanIp) throw new Error('reverseProxy.lanIp not configured — cannot probe NPM');
+
+    const url = `http://${lanIp}:80/`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
       const res = await fetch(url, {
         signal: controller.signal,
-        redirect: 'manual', // Don't auto-follow http→https; the redirect IS the signal.
+        redirect: 'manual', // `Location:` of a 301 is the proof of life for ssl_forced.
+        headers: { Host: check.target },
       });
-      // 4xx/5xx with NPM's default page = proxy route missing.
-      // Detect via the body — NPM ships its "Congratulations!" page
-      // on the default vhost.
+
       if (res.status === 404 || res.status === 503) {
         const body = await res.text().catch(() => '');
         if (body.includes('Congratulations') || body.includes('nginx-proxy-manager')) {
-          throw new Error(`${scheme} reached NPM default page (proxy host wired but no backend?)`);
+          throw new Error(`Proxy host for ${check.target} not configured in NPM`);
         }
       }
-      if (!res.ok && res.status < 300) {
-        throw new Error(`${scheme} returned HTTP ${res.status}`);
+
+      // For ssl_forced (public) routes NPM answers 301 → https://...
+      // — that's the healthy state for an https-expected domain.
+      if (expectedScheme === 'https' && (res.status === 301 || res.status === 302)) {
+        const loc = res.headers.get('location') || '';
+        if (loc.startsWith('https://')) return `routed via NPM, ssl_forced redirect to ${loc}`;
+        return `routed via NPM, redirect ${res.status} to ${loc || '(empty)'}`;
       }
-      // 3xx is fine — typical for services that auto-redirect /
-      // (Authelia from `/` to its login). We're only checking
-      // reachability + correct scheme.
-      return `${scheme} reachable, HTTP ${res.status}`;
+
+      if (res.status >= 200 && res.status < 400) {
+        return `routed via NPM, HTTP ${res.status}`;
+      }
+      throw new Error(`NPM returned HTTP ${res.status}`);
     } finally {
       clearTimeout(timeout);
     }
