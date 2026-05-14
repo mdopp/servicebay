@@ -595,17 +595,18 @@ app.prepare().then(() => {
       }
     })();
 
-    // Periodic letsdebug refresh (every 4 h) so a dashboard left
-    // open overnight wakes up with fresh external-reachability data
-    // without the operator having to re-run diagnose. The probe's
-    // own implementation throttles serial submissions per rate
-    // limit; this just starts the timer.
+    // Per-public-domain letsdebug health checks (4 h interval).
+    // Phase 2 of #483: the periodic sweep that used to live inside
+    // the diagnose probe now runs through the regular health-check
+    // scheduler. This call creates one `letsdebug:<domain>` check
+    // per public proxy host on boot — the file watcher picks them
+    // up and schedules them like any other check.
     (async () => {
       try {
-        const { startBackgroundSweep } = await import('./src/lib/diagnose/probes/domainExternalReachability');
-        startBackgroundSweep();
+        const { syncLetsdebugChecks } = await import('./src/lib/health/letsdebugChecks');
+        await syncLetsdebugChecks();
       } catch (err) {
-        logger.warn('Server', `External reachability sweep init failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn('Server', `Letsdebug-check sync failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
 
