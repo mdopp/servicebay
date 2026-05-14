@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.35.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.34.1...servicebay-v3.35.0) (2026-05-14)
+
+
+### Features
+
+* **diagnose:** per-row "Refresh now" + last-checked timestamp on letsdebug rows ([#482](https://github.com/mdopp/servicebay/issues/482), closes [#480](https://github.com/mdopp/servicebay/issues/480)) ([#485](https://github.com/mdopp/servicebay/issues/485)) ([d04c0d4](https://github.com/mdopp/servicebay/commit/d04c0d4ea90aa4981846c0502003f7eb1c9d2b3b))
+
 ## [3.34.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.34.0...servicebay-v3.34.1) (2026-05-14)
 
 
