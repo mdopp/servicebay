@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.34.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.33.2...servicebay-v3.34.0) (2026-05-14)
+
+
+### Features
+
+* **letsdebug:** background sweep + on-diagnose all-domain refresh + 429 backoff ([#477](https://github.com/mdopp/servicebay/issues/477)) ([9ce07d1](https://github.com/mdopp/servicebay/commit/9ce07d17c2150079fa5052d2604aca921c5b2ab9))
+
 ## [3.33.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.33.1...servicebay-v3.33.2) (2026-05-14)
 
 
