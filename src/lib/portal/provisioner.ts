@@ -190,25 +190,25 @@ export async function provisionPortalRouting(): Promise<ProvisionResult> {
   // host — that's where browser traffic actually hits ServiceBay.
   const proxyHost = await provisionNpmProxyHost(activeDomain);
 
-  // AdGuard rewrites. Two-domain split-horizon for typical home installs:
-  //   * `lanDomain` (default `home.arpa`) — always present. Devices
-  //     resolving `<lan>` or `*.<lan>` need to hit ServiceBay directly.
-  //   * `publicDomain` (e.g. `dopp.cloud`) — when set, LAN devices
-  //     resolving `<public>` or `*.<public>` should bypass the
-  //     FritzBox-hairpin-NAT and reach ServiceBay over the LAN.
-  // For each domain we install three rewrites:
+  // AdGuard rewrites. We pick exactly one domain to terminate LAN
+  // resolution on:
+  //   * `publicDomain` when set — LAN clients querying any
+  //     `<sub>.<publicDomain>` get the LAN IP (hairpin-NAT bypass for
+  //     public services; the only resolution path for LAN-only
+  //     services since they have no public DNS record).
+  //   * `home.arpa` otherwise — pure LAN-only install with nothing
+  //     to graft onto.
+  // For the chosen domain we install three rewrites:
   //   - <domain> → lanIp                       (portal apex)
   //   - www.<domain> → lanIp                   (portal apex, with www)
   //   - *.<domain> → lanIp                     (subdomain catch-all)
-  // AdGuard accepts both literal and wildcard patterns at the same
-  // endpoint; the wildcard pattern is the standard catch-all for any
-  // service subdomain (vault, immich, dns, …) that NPM routes by
-  // Host-header behind ServiceBay.
   const rewriteDomains = new Set<string>();
-  const lanDomain = config.reverseProxy?.lanDomain ?? 'home.arpa';
   const publicDomain = config.reverseProxy?.publicDomain;
-  if (lanDomain) rewriteDomains.add(lanDomain);
-  if (publicDomain) rewriteDomains.add(publicDomain);
+  if (publicDomain) {
+    rewriteDomains.add(publicDomain);
+  } else {
+    rewriteDomains.add('home.arpa');
+  }
 
   const rewrites: Record<string, RewriteResult> = {};
   for (const d of rewriteDomains) {

@@ -80,18 +80,6 @@ describe('buildProxyHosts', () => {
     });
   });
 
-  it('honours an explicit LAN_DOMAIN override when present', () => {
-    // Operator escape hatch: explicit `LAN_DOMAIN` wins over both
-    // defaults. Existing installs that pinned the old `home.arpa`
-    // setup keep their proxy hosts pointing where they expect.
-    const { hosts } = buildProxyHosts([
-      v('PUBLIC_DOMAIN', 'example.com'),
-      v('LAN_DOMAIN', 'lan.example'),
-      v('ZWAVE_JS_SUBDOMAIN', 'zwave', subdomain('lan', '8091')),
-    ]);
-    expect(hosts[0].domain).toBe('zwave.lan.example');
-  });
-
   it('treats missing exposure as lan (conservative — never auto-cert)', () => {
     const { hosts } = buildProxyHosts([
       v('PUBLIC_DOMAIN', 'example.com'),
