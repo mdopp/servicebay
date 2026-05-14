@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.37.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.36.0...servicebay-v3.37.0) (2026-05-14)
+
+
+### Features
+
+* **diagnose:** live-update self-diagnose panel on health:update + fix dead 'pass' branch ([#490](https://github.com/mdopp/servicebay/issues/490)) ([7756514](https://github.com/mdopp/servicebay/commit/77565145fe0369959ce2c545c8ef774ae8d318ac))
+* **health:** migrate cert_expiry, cert_request_failure, lan_ip, npm_auth into health-check types (Phase 3b, closes [#484](https://github.com/mdopp/servicebay/issues/484)) ([#492](https://github.com/mdopp/servicebay/issues/492)) ([cab591a](https://github.com/mdopp/servicebay/commit/cab591a043ddfe7a85fa9d9ab80fdc7938f8a239))
+
 ## [3.36.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.35.0...servicebay-v3.36.0) (2026-05-14)
 
 
