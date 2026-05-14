@@ -583,13 +583,15 @@ export async function POST(request: Request) {
                     hosts: merged,
                 },
             });
-            // Keep domain-reachability health checks in sync with the
-            // newly persisted host list. Fire-and-forget: failures
-            // are non-blocking and the next call (or boot-time sync)
-            // catches up.
+            // Keep domain-reachability + letsdebug health checks in
+            // sync with the newly persisted host list. Fire-and-forget:
+            // failures are non-blocking and the next call (or boot-time
+            // sync) catches up.
             try {
                 const { syncDomainChecks } = await import('@/lib/health/domainChecks');
+                const { syncLetsdebugChecks } = await import('@/lib/health/letsdebugChecks');
                 void syncDomainChecks();
+                void syncLetsdebugChecks();
             } catch { /* nice-to-have observability — never block deploy */ }
         } catch (e) {
             logger.warn('ProxyHosts', `Failed to persist proxy host config: ${e}`);

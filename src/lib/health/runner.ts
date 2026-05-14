@@ -7,6 +7,16 @@ import { agentManager } from '../agent/manager';
 import { getConfig } from '../config';
 import { assertHttpTargetAllowed } from './ssrfGuard';
 import { ContainerId, ServiceName, HostString } from '../api/schemas';
+import { runLetsdebugForDomain } from '../letsdebug/client';
+
+/**
+ * Encoded payload for letsdebug-type results so the diagnose probe
+ * can recover the full `{ problems, submissionUrl }` shape from the
+ * persisted `CheckResult.message`. Prefix lets cheap consumers
+ * detect "structured letsdebug data" vs. "plaintext transport error"
+ * without parsing every message.
+ */
+export const LETSDEBUG_MESSAGE_PREFIX = 'letsdebug:';
 
 export class CheckRunner {
   static async run(check: CheckConfig): Promise<CheckResult> {
@@ -71,6 +81,18 @@ export class CheckRunner {
           if (domainMsg) message = domainMsg;
           status = 'ok';
           break;
+        case 'letsdebug': {
+          // letsdebug returns 0..N problems with severity 'fatal' or
+          // 'warning'. Status 'fail' is reserved for fatal problems +
+          // transport errors so the health page only goes red on
+          // genuinely broken external reachability; warnings are
+          // encoded in the message and the diagnose probe surfaces
+          // them as amber rows.
+          const r = await this.runLetsdebugCheck(check);
+          message = r.message;
+          status = r.status;
+          break;
+        }
       }
     } catch (e: unknown) {
       status = 'fail';
@@ -202,6 +224,53 @@ export class CheckRunner {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /**
+   * Run letsdebug.net against `check.target` (a public domain) and
+   * encode the result back into the CheckResult shape.
+   *
+   *   - reachable, no problems → status 'ok', message ''.
+   *   - reachable with warnings only → status 'ok', message
+   *     prefixed `letsdebug:` + JSON-encoded payload.
+   *   - reachable with a fatal problem → status 'fail', same encoded
+   *     payload (so the diagnose probe can render the problem text
+   *     and submission URL without re-running the probe).
+   *   - transport error / 429 / parse failure → status 'fail',
+   *     message is the plaintext error so the operator sees what
+   *     happened on the health page directly.
+   *
+   * The 4 h interval (set in `letsdebugChecks.ts`) is the rate-limit
+   * shield — a 429 just means the next scheduled tick wins, and the
+   * diagnose probe's per-row `refresh_now` action bypasses the wait
+   * if the operator wants confirmation sooner.
+   */
+  private static async runLetsdebugCheck(
+    check: CheckConfig,
+  ): Promise<{ status: 'ok' | 'fail'; message: string }> {
+    let result;
+    try {
+      result = await runLetsdebugForDomain(check.target);
+    } catch (e) {
+      return {
+        status: 'fail',
+        message: `letsdebug error: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+    if (result.problems.length === 0) {
+      return { status: 'ok', message: '' };
+    }
+    const hasFatal = result.problems.some(
+      p => (p.severity || '').toLowerCase() === 'fatal',
+    );
+    const payload = JSON.stringify({
+      problems: result.problems,
+      submissionUrl: result.submissionUrl,
+    });
+    return {
+      status: hasFatal ? 'fail' : 'ok',
+      message: `${LETSDEBUG_MESSAGE_PREFIX}${payload}`,
+    };
   }
 
   private static async runPingCheck(host: string, executor: Executor) {

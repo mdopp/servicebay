@@ -30,6 +30,30 @@ vi.mock('../../src/lib/executor', () => {
 });
 vi.mock('../../src/lib/nodes');
 
+// letsdebug client is exercised by its own unit tests; mock here so
+// CheckRunner.run('letsdebug', ...) returns a known shape without any
+// network calls.
+vi.mock('../../src/lib/letsdebug/client', () => ({
+    runLetsdebugForDomain: vi.fn(async (domain: string) => {
+        if (domain === 'fatal.example.com') {
+            return {
+                problems: [{ name: 'X', explanation: 'broken', severity: 'fatal' }],
+                submissionUrl: 'https://letsdebug.net/?id=1',
+            };
+        }
+        if (domain === 'warn.example.com') {
+            return {
+                problems: [{ name: 'Y', explanation: 'meh', severity: 'warning' }],
+                submissionUrl: 'https://letsdebug.net/?id=2',
+            };
+        }
+        if (domain === 'throw.example.com') {
+            throw new Error('HTTP 429');
+        }
+        return { problems: [], submissionUrl: 'https://letsdebug.net/?id=3' };
+    }),
+}));
+
 // Mock child_process for Ping check
 vi.mock('child_process', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -176,5 +200,69 @@ describe('CheckRunner', () => {
         const result = await CheckRunner.run(check);
         expect(result.status).toBe('fail');
         expect(result.message).toContain('Custom Failure');
+    });
+
+    it('should pass a letsdebug check with no problems', async () => {
+        const check: CheckConfig = {
+            id: 'letsdebug:ok.example.com',
+            name: 'External reachability — ok.example.com',
+            type: 'letsdebug',
+            target: 'ok.example.com',
+            interval: 14400,
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z',
+        };
+        const result = await CheckRunner.run(check);
+        expect(result.status).toBe('ok');
+        expect(result.message).toBe('');
+    });
+
+    it('should encode warnings in the message and stay status:ok', async () => {
+        const check: CheckConfig = {
+            id: 'letsdebug:warn.example.com',
+            name: 'External reachability — warn.example.com',
+            type: 'letsdebug',
+            target: 'warn.example.com',
+            interval: 14400,
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z',
+        };
+        const result = await CheckRunner.run(check);
+        expect(result.status).toBe('ok');
+        expect(result.message).toMatch(/^letsdebug:/);
+        const payload = JSON.parse(result.message!.slice('letsdebug:'.length));
+        expect(payload.problems).toHaveLength(1);
+        expect(payload.submissionUrl).toMatch(/letsdebug\.net/);
+    });
+
+    it('should escalate to status:fail when any problem is fatal', async () => {
+        const check: CheckConfig = {
+            id: 'letsdebug:fatal.example.com',
+            name: 'External reachability — fatal.example.com',
+            type: 'letsdebug',
+            target: 'fatal.example.com',
+            interval: 14400,
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z',
+        };
+        const result = await CheckRunner.run(check);
+        expect(result.status).toBe('fail');
+        expect(result.message).toMatch(/^letsdebug:/);
+    });
+
+    it('should report transport errors as status:fail with plaintext message', async () => {
+        const check: CheckConfig = {
+            id: 'letsdebug:throw.example.com',
+            name: 'External reachability — throw.example.com',
+            type: 'letsdebug',
+            target: 'throw.example.com',
+            interval: 14400,
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z',
+        };
+        const result = await CheckRunner.run(check);
+        expect(result.status).toBe('fail');
+        expect(result.message).toMatch(/letsdebug error: HTTP 429/);
+        expect(result.message).not.toMatch(/^letsdebug:/);
     });
 });
