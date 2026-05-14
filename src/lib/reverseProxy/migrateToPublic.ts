@@ -47,7 +47,7 @@ export interface MigrationOptions {
   dryRun: boolean;
 }
 
-export interface ProxyHostStep {
+interface ProxyHostStep {
   kind: 'npm-dual-server-name';
   hostId: number;
   domain: string;
@@ -59,7 +59,7 @@ export interface ProxyHostStep {
   skipped: boolean;
 }
 
-export interface AutheliaStep {
+interface AutheliaStep {
   kind: 'authelia-config';
   node: string;
   configPath: string;
@@ -69,7 +69,7 @@ export interface AutheliaStep {
   noop: boolean;
 }
 
-export interface CertRequestStep {
+interface CertRequestStep {
   kind: 'cert-request';
   hostId: number;
   domain: string;

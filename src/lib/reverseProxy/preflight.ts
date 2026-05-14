@@ -25,8 +25,8 @@ import { HealthStore } from '../health/store';
 import { getConfig } from '../config';
 import { logger } from '../logger';
 
-export type CheckId = 'dns' | 'http01' | 'port-forward';
-export type CheckStatus = 'pass' | 'fail' | 'unknown';
+type CheckId = 'dns' | 'http01' | 'port-forward';
+type CheckStatus = 'pass' | 'fail' | 'unknown';
 
 export interface PreflightCheck {
   id: CheckId;
