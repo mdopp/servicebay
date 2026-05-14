@@ -40,11 +40,15 @@ async function runAllStale(): Promise<ProbeActionResult> {
   // Run in parallel; CheckRunner.run is independent per-check.
   // Cap concurrent runs implicitly via Promise.allSettled — for the
   // ~10-20 checks a typical install has this is fine.
+  // CheckRunner.run emits status:'ok'|'fail' (not 'pass'); an earlier
+  // version of this code compared against 'pass' and silently counted
+  // every success as a failure, so the toast always read "0 passed,
+  // N failed" even when every stale check came back green.
   const results = await Promise.allSettled(stale.map(c => CheckRunner.run(c)));
   let passed = 0;
   let failed = 0;
   for (const r of results) {
-    if (r.status === 'fulfilled' && r.value && (r.value as { status?: string }).status === 'pass') {
+    if (r.status === 'fulfilled' && r.value?.status === 'ok') {
       passed += 1;
     } else {
       failed += 1;
