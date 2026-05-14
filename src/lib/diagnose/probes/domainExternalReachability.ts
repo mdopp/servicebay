@@ -6,7 +6,7 @@
  *
  * ## Refresh model
  *
- * Three layers, each respecting letsdebug's rate limit:
+ * Four layers, each respecting letsdebug's rate limit:
  *
  *   1. **On every diagnose run** — read the cache as-is, return
  *      immediately. If anything is stale, kick off a non-blocking
@@ -24,6 +24,15 @@
  *   3. **Per-domain in-flight lock** — ensures concurrent diagnose
  *      runs + the periodic timer don't duplicate submissions for
  *      the same domain.
+ *
+ *   4. **Per-row `refresh_now` action** — operator clicks a row's
+ *      "Refresh now" button, the dispatcher calls
+ *      `forceRefreshDomain(domain)` which bypasses the 15 min 429
+ *      backoff and awaits a single probe. The UI re-runs diagnose
+ *      after the action returns, so the row shows the new state
+ *      without a second click. Use when the periodic sweep is
+ *      paused (rate-limited) or the operator wants confirmation
+ *      they just fixed something.
  *
  * ## Cache TTL
  *
@@ -43,7 +52,9 @@
 import { getConfig } from '@/lib/config';
 import { runLetsdebugForDomain, type LetsdebugProblem } from '../../letsdebug/client';
 import { logger } from '../../logger';
-import type { ProbeItem } from '../actions';
+import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
+
+const PROBE_ID = 'domain_external_reachability';
 
 export interface DomainExternalReachabilityResult {
   status: 'ok' | 'warn' | 'fail' | 'info';
@@ -92,6 +103,24 @@ function isPublicEntry(entry: { domain: string; exposure?: 'public' | 'lan' }): 
 function isCacheFresh(entry: CacheEntry): boolean {
   const ttl = entry.error ? CACHE_TTL_FAIL_MS : CACHE_TTL_OK_MS;
   return Date.now() - entry.fetchedAt < ttl;
+}
+
+/**
+ * Compact "X ago" string for the operator-facing "last checked" suffix
+ * on each row. Bins coarsen as age grows — minute granularity is the
+ * right resolution at <1h, hour granularity beyond. We round down so
+ * a probe that just landed reads "just now" rather than "1 min ago".
+ */
+function formatRelativeAge(fetchedAt: number, now: number = Date.now()): string {
+  const seconds = Math.max(0, Math.floor((now - fetchedAt) / 1000));
+  if (seconds < 30)                  return 'just now';
+  if (seconds < 60)                  return `${seconds} s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60)                  return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24)                    return `${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} d ago`;
 }
 
 function severityForProblem(p: LetsdebugProblem): 'warn' | 'fail' {
@@ -195,6 +224,28 @@ async function sweepStaleDomains(): Promise<void> {
 }
 
 /**
+ * Operator-initiated single-domain refresh — bypasses both the
+ * 4 h cache TTL and the 15 min 429 backoff (the operator is
+ * explicitly asking to retry now). Awaits the probe so the
+ * caller can re-fetch immediately afterwards and render fresh
+ * data. Returns the resulting cache entry.
+ *
+ * This is the handler behind the `refresh_now` per-row action;
+ * exported separately so unit tests can drive it without going
+ * through the dispatcher.
+ */
+export async function forceRefreshDomain(domain: string): Promise<CacheEntry | null> {
+  // Clear the backoff gate so this one probe can fire. The gate is
+  // only meant to throttle automatic sweeps; if the operator clicks
+  // refresh, they want a result, not a "please wait" message. We
+  // don't restore the old value — if letsdebug 429s again, the new
+  // backoff window starts from this attempt's failure.
+  backoffUntil = 0;
+  await probeOne(domain);
+  return cache.get(domain) ?? null;
+}
+
+/**
  * Kick off the periodic sweep timer. Safe to call multiple times —
  * second call is a no-op. server.ts calls this once on boot;
  * `checkDomainExternalReachability` also calls it lazily so the
@@ -237,13 +288,15 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
   for (const domain of publicDomains) {
     const probing = inFlight.has(domain);
     const entry = cache.get(domain);
+    const manualUrl = `https://letsdebug.net/?domain=${encodeURIComponent(domain)}&method=http-01`;
     if (!entry) {
       // Differentiate "right now being checked" from "queued for the
       // sweep but hasn't started yet" so the operator sees real
       // progress on a re-run. Cached entries below render their
       // real results regardless of whether this domain is the one
-      // currently being probed.
-      const manualUrl = `https://letsdebug.net/?domain=${encodeURIComponent(domain)}&method=http-01`;
+      // currently being probed. `refresh_now` is offered on
+      // queued-but-not-yet-running rows so the operator can jump
+      // their domain ahead of the sweep without waiting their turn.
       if (probing) {
         probingCount++;
         items.push({
@@ -260,19 +313,19 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
           label: domain,
           detail: `⏳ Queued — waiting its turn in the sweep. Manual: ${manualUrl}`,
           status: 'info',
-          actionIds: [],
+          actionIds: ['refresh_now'],
         });
       }
       continue;
     }
+    const ageSuffix = ` · Last checked ${formatRelativeAge(entry.fetchedAt)}`;
     if (entry.error) {
-      const manualUrl = `https://letsdebug.net/?domain=${encodeURIComponent(domain)}&method=http-01`;
       items.push({
         id: domain,
         label: domain,
-        detail: `letsdebug probe could not run automatically (${entry.error.slice(0, 120)}). Open manually: ${manualUrl}`,
+        detail: `letsdebug probe could not run automatically (${entry.error.slice(0, 120)}). Open manually: ${manualUrl}${ageSuffix}`,
         status: 'info',
-        actionIds: [],
+        actionIds: ['refresh_now'],
       });
       continue;
     }
@@ -286,9 +339,9 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
     items.push({
       id: domain,
       label: domain,
-      detail: `${top.name || 'problem'}: ${(top.explanation || '').slice(0, 200)}${entry.submissionUrl ? ` · Report: ${entry.submissionUrl}` : ''}`,
+      detail: `${top.name || 'problem'}: ${(top.explanation || '').slice(0, 200)}${entry.submissionUrl ? ` · Report: ${entry.submissionUrl}` : ''}${ageSuffix}`,
       status: itemStatus,
-      actionIds: [],
+      actionIds: ['refresh_now'],
     });
   }
 
@@ -309,7 +362,80 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
   return {
     status: stillWorking && overall === 'ok' ? 'info' : overall,
     detail: `${parts.join(' · ')} of ${publicDomains.length} public domain${publicDomains.length === 1 ? '' : 's'}.`,
-    hint: 'A diagnose run kicks off a background refresh of every stale domain, one at a time (each probe takes 10-30 s to complete). The cache also auto-refreshes every 4 h without operator input. If letsdebug rate-limits us mid-sweep, a 15 min backoff kicks in automatically.',
+    hint: 'A diagnose run kicks off a background refresh of every stale domain, one at a time (each probe takes 10-30 s to complete). The cache also auto-refreshes every 4 h without operator input. If letsdebug rate-limits us mid-sweep, a 15 min backoff kicks in automatically. Click "Refresh now" on any row to jump that domain ahead of the queue and ignore the backoff.',
     items,
   };
+}
+
+/**
+ * `refresh_now` — operator-initiated single-domain re-probe. Bypasses
+ * the rate-limit backoff (the operator is explicitly asking for a
+ * fresh result). Waits for the probe to complete (10-30 s) so the
+ * UI re-fetches diagnose right after and the row already shows the
+ * new state — no second click required.
+ */
+async function refreshNow({ itemId }: { itemId?: string }): Promise<ProbeActionResult> {
+  if (!itemId) {
+    return { ok: false, message: 'No domain supplied — nothing to refresh.', refresh: false };
+  }
+  try {
+    const entry = await forceRefreshDomain(itemId);
+    if (!entry) {
+      // probeOne always writes a cache entry (success or error
+      // branch); a null here means something went very wrong above
+      // the cache layer, e.g. a thrown error we don't catch.
+      return {
+        ok: false,
+        message: `Probe for ${itemId} did not produce a result.`,
+        refresh: true,
+      };
+    }
+    if (entry.error) {
+      logger.warn(
+        'diagnose:domain_external_reachability',
+        `refresh_now for ${itemId} failed: ${entry.error}`,
+      );
+      return {
+        ok: false,
+        message: `letsdebug couldn't be reached for ${itemId}: ${entry.error.slice(0, 160)}`,
+        refresh: true,
+      };
+    }
+    return {
+      ok: true,
+      message: entry.problems.length === 0
+        ? `${itemId} is reachable from the internet.`
+        : `${itemId} has ${entry.problems.length} problem(s) — see the row for details.`,
+      refresh: true,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      message: `Refresh failed: ${e instanceof Error ? e.message : String(e)}`,
+      refresh: false,
+    };
+  }
+}
+
+registerProbeAction(
+  PROBE_ID,
+  {
+    id: 'refresh_now',
+    label: 'Refresh now',
+    description:
+      'Re-runs letsdebug for this domain immediately, ignoring the 15 min rate-limit backoff. Takes 10-30 s — the row updates in place when the probe finishes.',
+  },
+  refreshNow,
+);
+
+/**
+ * Test-only: reset the in-memory cache + in-flight set + backoff so
+ * each unit test starts from a known empty state. Production code
+ * must never call this.
+ */
+export function _resetCacheForTesting(): void {
+  cache.clear();
+  inFlight.clear();
+  backoffUntil = 0;
+  sweepActive = false;
 }

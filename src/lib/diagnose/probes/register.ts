@@ -25,5 +25,6 @@ import './podsAndEngine';
 import './certExpiry';
 import './certRequestFailure';
 import './adguardRewritesMissing';
+import './domainExternalReachability';
 
 export {};
