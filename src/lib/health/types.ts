@@ -1,4 +1,23 @@
-export type CheckType = 'http' | 'ping' | 'script' | 'podman' | 'service' | 'systemd' | 'fritzbox' | 'node' | 'agent' | 'backup' | 'domain' | 'letsdebug';
+export type CheckType =
+  | 'http'
+  | 'ping'
+  | 'script'
+  | 'podman'
+  | 'service'
+  | 'systemd'
+  | 'fritzbox'
+  | 'node'
+  | 'agent'
+  | 'backup'
+  | 'domain'
+  | 'letsdebug'
+  // Phase 3b (#484): four diagnose probes lifted into the health-check
+  // subsystem. Each runs on its own schedule and persists results;
+  // their diagnose-side modules became thin HealthStore readers.
+  | 'lan_ip_drift'
+  | 'npm_auth'
+  | 'cert_expiry'
+  | 'cert_request_failure';
 
 export interface CheckConfig {
   id: string;

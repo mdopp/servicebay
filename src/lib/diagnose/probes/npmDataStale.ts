@@ -5,29 +5,31 @@
  * SQLite database that no longer matches the wizard's expected one
  * (the volume survived a reinstall / restore).
  *
- * Without this probe the symptom is silent: proxy-host creation 401s
- * once at install time, the wizard prompts for credentials, and from
- * then on every install/redeploy hits the same wall. With it the
- * operator sees a single fix-button on the diagnose page.
- *
- * Detection: try POST /api/tokens against the local NPM admin URL with
- * the stored credentials. 401 → stale. 5xx / connection failure → NPM
- * is just down (don't surface this probe; the existing pods/units
- * probes already cover that).
+ * Phase 3b of the diagnose / health-check rework (#484): this probe
+ * is now a **thin reader** over the health-check subsystem. The
+ * actual detection runs on an `npm_auth`-type singleton check (15 min
+ * interval, see `health/init.ts`) and the result is persisted to
+ * `HealthStore`. Result persistence, scheduling, and the Phase 3a SSE
+ * broadcast all live there — this file just reads the latest result
+ * back into the diagnose narrative.
  *
  * Action `reset_volume` (destructive) wipes NPM's data dir and restarts
  * the service so it re-seeds with the wizard's INITIAL_ADMIN_*
  * credentials. Action `use_existing` (non-destructive) accepts the
  * password the operator knows works and persists it to config — no
  * data loss, the right path for "I already changed the password
- * outside the wizard."
+ * outside the wizard."  Both action handlers stay here because they
+ * mutate operator-facing state (config / NPM volume) at the moment of
+ * the click — only the detection moved into the health subsystem.
  */
 
 import { agentManager } from '@/lib/agent/manager';
-import { getConfig, updateConfig } from '@/lib/config';
+import { updateConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
+import { HealthStore } from '@/lib/health/store';
+import { NPM_AUTH_MESSAGE_PREFIX } from '@/lib/health/runner';
 
 export interface NpmDataStaleResult {
   /** undefined when not applicable (no nginx-web, or NPM not reachable). */
@@ -36,9 +38,57 @@ export interface NpmDataStaleResult {
   hint?: string;
 }
 
-/** Locate the running nginx-web service on `node` and return its admin URL.
- *  Returns null when nginx-web isn't installed or its admin port can't
- *  be derived from the service manifest. */
+const PROBE_ID = 'npm_data_stale';
+const CHECK_ID = 'npm_auth';
+
+/** Reader: surfaces the latest persisted `npm_auth` health-check
+ *  result. Diagnose route used to call this with `(nodeName)` — the
+ *  arg is now unused because the singleton check captures the node
+ *  via its `nodeName` field. The signature drops the arg entirely so
+ *  the call site is a plain `await checkNpmDataStale()`. */
+export async function checkNpmDataStale(): Promise<NpmDataStaleResult> {
+  const result = HealthStore.getLastResult(CHECK_ID);
+  if (!result) {
+    return {
+      status: 'info',
+      detail: 'Check has not run yet. Open Settings → Health to trigger it manually.',
+    };
+  }
+  if (result.message && result.message.startsWith(NPM_AUTH_MESSAGE_PREFIX)) {
+    try {
+      const json = result.message.slice(NPM_AUTH_MESSAGE_PREFIX.length);
+      const parsed = JSON.parse(json);
+      if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
+        return {
+          status: parsed.status,
+          detail: parsed.detail,
+          hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
+        };
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (result.status === 'fail') {
+    return {
+      status: 'info',
+      detail: `Check failed to run: ${result.message || 'unknown error'}`,
+    };
+  }
+  return {
+    status: 'info',
+    detail: 'NPM auth check produced no actionable signal.',
+  };
+}
+
+// ─── Action handlers (kept in the probe file) ───────────────────────────
+//
+// Local copy of `findNpmAdminUrl` so the click-time action paths don't
+// depend on health/runner internals.  Mirrors the helper in
+// `src/lib/health/probes/npmAdmin.ts` — kept duplicated because the
+// action handlers run with a different lifecycle (one-shot, operator
+// click) and we don't want to entangle them with the runner's import
+// graph.
 async function findNpmAdminUrl(node: string): Promise<string | null> {
   try {
     const services = await ServiceManager.listServices(node);
@@ -46,7 +96,6 @@ async function findNpmAdminUrl(node: string): Promise<string | null> {
       s => s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
     );
     if (!nginx?.active) return null;
-    // Admin port is the published host port that isn't 80 or 443.
     const ports = (nginx.ports ?? [])
       .map(p => parseInt(String(p.host ?? ''), 10))
       .filter(p => Number.isFinite(p) && p !== 80 && p !== 443);
@@ -56,62 +105,6 @@ async function findNpmAdminUrl(node: string): Promise<string | null> {
     return null;
   }
 }
-
-/** Run the detection. Returns a partial probe payload — diagnose route
- *  glues on the id/label/actions from the registry. */
-export async function checkNpmDataStale(node: string): Promise<NpmDataStaleResult> {
-  const config = await getConfig();
-  const npm = config.reverseProxy?.npm;
-  if (!npm?.email || !npm?.password) {
-    // No stored creds — nothing to check. Skip with info status.
-    return {
-      status: 'info',
-      detail: 'No NPM admin credentials stored — skipping staleness check.',
-    };
-  }
-  const adminUrl = await findNpmAdminUrl(node);
-  if (!adminUrl) {
-    return {
-      status: 'info',
-      detail: 'Nginx Proxy Manager not deployed on this node — nothing to check.',
-    };
-  }
-
-  // Authenticate with stored creds. 401 → stale; everything else (200,
-  // 5xx, network error) we treat as "not stale-with-confidence" and
-  // surface info-only — the existing pods/units probes already handle
-  // "NPM is down" cases.
-  try {
-    const res = await fetch(`${adminUrl}/api/tokens`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identity: npm.email, secret: npm.password }),
-      signal: AbortSignal.timeout(4000),
-    });
-    if (res.ok) {
-      return { status: 'ok', detail: 'NPM accepts the stored admin credentials.' };
-    }
-    if (res.status === 401) {
-      return {
-        status: 'fail',
-        detail:
-          'Nginx Proxy Manager is rejecting the stored admin credentials. This usually means a previous install left an admin password in the NPM database that no longer matches.',
-        hint: 'If you know the password NPM is actually using, click "Use existing password" below to save it (no data loss). Otherwise "Reset NPM data" wipes the database and re-seeds with the wizard credentials.',
-      };
-    }
-    return {
-      status: 'info',
-      detail: `NPM auth probe returned HTTP ${res.status} — assuming transient.`,
-    };
-  } catch (e) {
-    return {
-      status: 'info',
-      detail: `Could not reach NPM at ${adminUrl}: ${e instanceof Error ? e.message : String(e)}`,
-    };
-  }
-}
-
-const PROBE_ID = 'npm_data_stale';
 
 /** Action: stop nginx-web, wipe its data volume, restart it. NPM's
  *  next start re-seeds the admin user from the

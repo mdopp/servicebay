@@ -560,7 +560,7 @@ export async function POST(request: Request) {
   // 12) NPM admin credentials staleness — probe-action handlers
   //     attached automatically when status !== 'ok' (see withActions).
   try {
-    const npmStale = await checkNpmDataStale(nodeName);
+    const npmStale = await checkNpmDataStale();
     if (npmStale.status) {
       probes.push({
         id: 'npm_data_stale',
@@ -584,7 +584,7 @@ export async function POST(request: Request) {
   //     value captured at install, or when the IP has flipped > 1
   //     time in 30 days.
   try {
-    const lanIp = await checkLanIpChanged(nodeName);
+    const lanIp = await checkLanIpChanged();
     probes.push({
       id: 'lan_ip_changed_since_install',
       label: 'LAN IP stability',
@@ -672,7 +672,7 @@ export async function POST(request: Request) {
   //     where no certs exist; warn at ≤14d, fail when expired. Per-row
   //     "Renew now" action triggers NPM's ACME endpoint.
   try {
-    const ce = await checkCertExpiry(nodeName);
+    const ce = await checkCertExpiry();
     probes.push({
       id: 'cert_expiry',
       label: 'TLS certificates',
@@ -697,7 +697,7 @@ export async function POST(request: Request) {
   //      (info) when the log is missing, the last failure is older than
   //      24h, or the file is unparseable.
   try {
-    const crf = await checkCertRequestFailure(nodeName);
+    const crf = await checkCertRequestFailure();
     probes.push({
       id: 'cert_request_failure',
       label: 'Let\'s Encrypt cert requests',

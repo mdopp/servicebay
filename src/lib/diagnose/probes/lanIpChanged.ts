@@ -5,17 +5,17 @@
  * (suggests DHCP renewal-induced drift, signaling the operator
  * should set up a reservation).
  *
- * Detection is read-only — compares the stored `config.reverseProxy.lanIp`
- * to the current `detectLanIp()` result. Doesn't auto-reconcile; that's
- * the boot-time path (separate concern in server.ts).
- *
- * Action `set_dhcp_reservation` is FritzBox-only via TR-064 — wired
- * up alongside the router-DNS probe in D19-PR6 (#263). For now, the
- * probe registers no actions — surfacing the warning is enough.
+ * Phase 3b of the diagnose / health-check rework (#484): this probe
+ * is now a **thin reader** over the health-check subsystem. Detection
+ * runs on a `lan_ip_drift`-type singleton check (5 min interval, see
+ * `health/init.ts`) and the result is persisted to `HealthStore`.
+ * Result persistence, scheduling, and the Phase 3a SSE broadcast all
+ * live there — this file just reads the latest result back into the
+ * diagnose narrative.
  */
 
-import { getConfig } from '@/lib/config';
-import { detectLanIp, recentChanges } from '@/lib/lanIp';
+import { HealthStore } from '@/lib/health/store';
+import { LAN_IP_DRIFT_MESSAGE_PREFIX } from '@/lib/health/runner';
 
 export interface LanIpProbeResult {
   status: 'ok' | 'warn' | 'info';
@@ -23,51 +23,39 @@ export interface LanIpProbeResult {
   hint?: string;
 }
 
-const RECENT_DAYS = 30;
-const RECENT_THRESHOLD = 1; // > 1 change in 30 days → warn
+const CHECK_ID = 'lan_ip_drift';
 
-export async function checkLanIpChanged(node: string): Promise<LanIpProbeResult> {
-  const config = await getConfig();
-  const stored = config.reverseProxy?.lanIp;
-  const current = await detectLanIp(node);
-
-  if (!current) {
+export async function checkLanIpChanged(): Promise<LanIpProbeResult> {
+  const result = HealthStore.getLastResult(CHECK_ID);
+  if (!result) {
     return {
       status: 'info',
-      detail: 'Could not detect ServiceBay\'s LAN IP — `ip route get` returned no result.',
+      detail: 'Check has not run yet. Open Settings → Health to trigger it manually.',
     };
   }
-
-  if (!stored) {
-    return {
-      status: 'info',
-      detail: `LAN IP is ${current}. No install-time value recorded yet.`,
-    };
-  }
-
-  const history = config.reverseProxy?.lanIpHistory ?? [];
-  const changes = recentChanges(history, RECENT_DAYS);
-
-  if (current === stored) {
-    if (changes > RECENT_THRESHOLD) {
-      return {
-        status: 'warn',
-        detail: `LAN IP is currently ${current}, matching install. But it has changed ${changes} times in the last ${RECENT_DAYS} days.`,
-        hint: 'Set up a DHCP reservation in your router so the IP doesn\'t drift — this avoids brief outages while AdGuard rewrites + NPM forward-hosts catch up.',
-      };
+  if (result.message && result.message.startsWith(LAN_IP_DRIFT_MESSAGE_PREFIX)) {
+    try {
+      const json = result.message.slice(LAN_IP_DRIFT_MESSAGE_PREFIX.length);
+      const parsed = JSON.parse(json);
+      if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
+        return {
+          status: parsed.status === 'ok' || parsed.status === 'warn' ? parsed.status : 'info',
+          detail: parsed.detail,
+          hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
+        };
+      }
+    } catch {
+      // fall through to fail-style rendering
     }
+  }
+  if (result.status === 'fail') {
     return {
-      status: 'ok',
-      detail: `LAN IP ${current} matches the install-time value.`,
+      status: 'info',
+      detail: `Check failed to run: ${result.message || 'unknown error'}`,
     };
   }
-
-  // Mismatch — fired before the boot-time reconcile auto-updates.
   return {
-    status: 'warn',
-    detail: `LAN IP is now ${current}, but install-time was ${stored}. AdGuard rewrites + NPM forward-hosts will be reconciled on next boot.`,
-    hint: changes > RECENT_THRESHOLD
-      ? `This is the ${changes + 1}-th change in the last ${RECENT_DAYS} days — set a DHCP reservation in your router to stop the drift.`
-      : 'A one-off change is fine; ServiceBay reconciles automatically on the next boot.',
+    status: 'info',
+    detail: 'LAN IP drift check produced no actionable signal.',
   };
 }

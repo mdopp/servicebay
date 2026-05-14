@@ -88,6 +88,42 @@ export async function initializeDefaultChecks() {
     console.error('Failed to list managed services for auto-discovery', e);
   }
 
+  // Phase 3b singleton checks (#484): four former diagnose probes
+  // now run on the health-check scheduler. Each uses a deterministic
+  // id so subsequent boots find them idempotently — the diagnose-side
+  // readers look up the result by this exact id, so do NOT use
+  // crypto.randomUUID here.
+  //
+  //   - lan_ip_drift           — 5 min;   compares config.reverseProxy.lanIp
+  //                              to the live `ip route get` result.
+  //   - npm_auth               — 15 min;  POST /api/tokens against NPM
+  //                              with stored creds; 401 → stale.
+  //   - cert_expiry            — 1 h;     lists letsencrypt certs and
+  //                              flags ≤14d / expired ones.
+  //   - cert_request_failure   — 10 min;  tails NPM letsencrypt.log
+  //                              and surfaces recent ACME failures.
+  const phase3bChecks: Array<{ id: string; name: string; interval: number }> = [
+    { id: 'lan_ip_drift', name: 'LAN IP drift', interval: 300 },
+    { id: 'npm_auth', name: 'NPM admin auth', interval: 900 },
+    { id: 'cert_expiry', name: 'TLS certificate expiry', interval: 3600 },
+    { id: 'cert_request_failure', name: 'Let\'s Encrypt cert requests', interval: 600 },
+  ];
+  for (const cfg of phase3bChecks) {
+    if (!exists(cfg.id, 'Local')) {
+      logger.info('Health', `Adding ${cfg.id} singleton check`);
+      HealthStore.saveCheck({
+        id: cfg.id,
+        name: cfg.name,
+        type: cfg.id as 'lan_ip_drift' | 'npm_auth' | 'cert_expiry' | 'cert_request_failure',
+        target: 'Local',
+        interval: cfg.interval,
+        enabled: true,
+        created_at: new Date().toISOString(),
+        nodeName: 'Local',
+      });
+    }
+  }
+
   // 4. Agent Health Checks
   try {
       const nodes = await listNodes();
