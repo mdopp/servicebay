@@ -8,6 +8,10 @@ import { getConfig } from '../config';
 import { assertHttpTargetAllowed } from './ssrfGuard';
 import { ContainerId, ServiceName, HostString } from '../api/schemas';
 import { runLetsdebugForDomain } from '../letsdebug/client';
+import { detectLanIp, recentChanges } from '../lanIp';
+import { findNpmAdminUrl, getNpmToken } from './probes/npmAdmin';
+import { parseLetsencryptTail } from './probes/letsencryptLogParser';
+import { logger } from '../logger';
 
 /**
  * Encoded payload for letsdebug-type results so the diagnose probe
@@ -17,6 +21,20 @@ import { runLetsdebugForDomain } from '../letsdebug/client';
  * without parsing every message.
  */
 export const LETSDEBUG_MESSAGE_PREFIX = 'letsdebug:';
+
+/**
+ * Phase 3b (#484) — message-prefix discriminators for the four
+ * diagnose probes lifted into the health-check subsystem. Each runner
+ * encodes its probe-shaped payload as JSON behind the matching prefix
+ * so the thin diagnose readers can `JSON.parse` it back into the
+ * exact `{ status, detail, hint, items? }` row they used to compute
+ * themselves. Plaintext messages (no prefix) mean a transport error
+ * and are surfaced as `info` on the diagnose side.
+ */
+export const LAN_IP_DRIFT_MESSAGE_PREFIX = 'lan_ip_drift:';
+export const NPM_AUTH_MESSAGE_PREFIX = 'npm_auth:';
+export const CERT_EXPIRY_MESSAGE_PREFIX = 'cert_expiry:';
+export const CERT_REQUEST_FAILURE_MESSAGE_PREFIX = 'cert_request_failure:';
 
 export class CheckRunner {
   static async run(check: CheckConfig): Promise<CheckResult> {
@@ -89,6 +107,30 @@ export class CheckRunner {
           // encoded in the message and the diagnose probe surfaces
           // them as amber rows.
           const r = await this.runLetsdebugCheck(check);
+          message = r.message;
+          status = r.status;
+          break;
+        }
+        case 'lan_ip_drift': {
+          const r = await this.runLanIpDriftCheck(check);
+          message = r.message;
+          status = r.status;
+          break;
+        }
+        case 'npm_auth': {
+          const r = await this.runNpmAuthCheck(check);
+          message = r.message;
+          status = r.status;
+          break;
+        }
+        case 'cert_expiry': {
+          const r = await this.runCertExpiryCheck(check);
+          message = r.message;
+          status = r.status;
+          break;
+        }
+        case 'cert_request_failure': {
+          const r = await this.runCertRequestFailureCheck(check);
           message = r.message;
           status = r.status;
           break;
@@ -271,6 +313,368 @@ export class CheckRunner {
       status: hasFatal ? 'fail' : 'ok',
       message: `${LETSDEBUG_MESSAGE_PREFIX}${payload}`,
     };
+  }
+
+  /**
+   * Phase 3b runner methods — each lifts a former diagnose probe into
+   * a periodic health check.  Convention:
+   *
+   *   - On a successful evaluation we encode the probe's
+   *     `{ status, detail, hint?, items? }` JSON behind the
+   *     check-type prefix and report `CheckResult.status='ok'` for
+   *     payload statuses 'ok' | 'warn' | 'info', and 'fail' for the
+   *     payload-level 'fail'.  This keeps the health page green on
+   *     yellow/info conditions — the same convention letsdebug uses —
+   *     while still broadcasting on every tick so the SSE
+   *     auto-refresh wired up in Phase 3a picks up warning changes
+   *     too.
+   *   - Transport / unexpected errors fall through to a plaintext
+   *     `fail` message (no prefix); the diagnose reader displays them
+   *     as an `info` row with "Check failed to run: …".
+   */
+
+  /**
+   * `lan_ip_drift` — compares ServiceBay's currently-detected LAN IP
+   * to the install-time value captured in
+   * `config.reverseProxy.lanIp`. Mirrors the former
+   * `checkLanIpChanged` probe.
+   */
+  private static async runLanIpDriftCheck(
+    check: CheckConfig,
+  ): Promise<{ status: 'ok' | 'fail'; message: string }> {
+    const RECENT_DAYS = 30;
+    const RECENT_THRESHOLD = 1;
+    try {
+      const config = await getConfig();
+      const stored = config.reverseProxy?.lanIp;
+      const node = check.nodeName ?? 'Local';
+      const current = await detectLanIp(node);
+
+      let payload: { status: 'ok' | 'warn' | 'info'; detail: string; hint?: string };
+      if (!current) {
+        payload = {
+          status: 'info',
+          detail: 'Could not detect ServiceBay\'s LAN IP — `ip route get` returned no result.',
+        };
+      } else if (!stored) {
+        payload = {
+          status: 'info',
+          detail: `LAN IP is ${current}. No install-time value recorded yet.`,
+        };
+      } else {
+        const history = config.reverseProxy?.lanIpHistory ?? [];
+        const changes = recentChanges(history, RECENT_DAYS);
+        if (current === stored) {
+          if (changes > RECENT_THRESHOLD) {
+            payload = {
+              status: 'warn',
+              detail: `LAN IP is currently ${current}, matching install. But it has changed ${changes} times in the last ${RECENT_DAYS} days.`,
+              hint: 'Set up a DHCP reservation in your router so the IP doesn\'t drift — this avoids brief outages while AdGuard rewrites + NPM forward-hosts catch up.',
+            };
+          } else {
+            payload = {
+              status: 'ok',
+              detail: `LAN IP ${current} matches the install-time value.`,
+            };
+          }
+        } else {
+          payload = {
+            status: 'warn',
+            detail: `LAN IP is now ${current}, but install-time was ${stored}. AdGuard rewrites + NPM forward-hosts will be reconciled on next boot.`,
+            hint:
+              changes > RECENT_THRESHOLD
+                ? `This is the ${changes + 1}-th change in the last ${RECENT_DAYS} days — set a DHCP reservation in your router to stop the drift.`
+                : 'A one-off change is fine; ServiceBay reconciles automatically on the next boot.',
+          };
+        }
+      }
+      return {
+        status: 'ok',
+        message: `${LAN_IP_DRIFT_MESSAGE_PREFIX}${JSON.stringify(payload)}`,
+      };
+    } catch (e) {
+      return {
+        status: 'fail',
+        message: `lan_ip_drift error: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
+
+  /**
+   * `npm_auth` — verifies that the stored NPM admin credentials still
+   * work against the locally-running NPM instance. Mirrors the former
+   * `checkNpmDataStale` probe; 401 → stale (payload `fail`),
+   * unreachable / 5xx → info, 2xx → ok.
+   */
+  private static async runNpmAuthCheck(
+    check: CheckConfig,
+  ): Promise<{ status: 'ok' | 'fail'; message: string }> {
+    const node = check.nodeName ?? 'Local';
+    try {
+      const config = await getConfig();
+      const npm = config.reverseProxy?.npm;
+      const encode = (payload: { status: 'ok' | 'warn' | 'fail' | 'info'; detail: string; hint?: string }) =>
+        ({ status: payload.status === 'fail' ? ('fail' as const) : ('ok' as const), message: `${NPM_AUTH_MESSAGE_PREFIX}${JSON.stringify(payload)}` });
+
+      if (!npm?.email || !npm?.password) {
+        return encode({ status: 'info', detail: 'No NPM admin credentials stored — skipping staleness check.' });
+      }
+      const adminUrl = await findNpmAdminUrl(node);
+      if (!adminUrl) {
+        return encode({ status: 'info', detail: 'Nginx Proxy Manager not deployed on this node — nothing to check.' });
+      }
+      try {
+        const res = await fetch(`${adminUrl}/api/tokens`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identity: npm.email, secret: npm.password }),
+          signal: AbortSignal.timeout(4000),
+        });
+        if (res.ok) {
+          return encode({ status: 'ok', detail: 'NPM accepts the stored admin credentials.' });
+        }
+        if (res.status === 401) {
+          return encode({
+            status: 'fail',
+            detail:
+              'Nginx Proxy Manager is rejecting the stored admin credentials. This usually means a previous install left an admin password in the NPM database that no longer matches.',
+            hint: 'If you know the password NPM is actually using, click "Use existing password" below to save it (no data loss). Otherwise "Reset NPM data" wipes the database and re-seeds with the wizard credentials.',
+          });
+        }
+        return encode({ status: 'info', detail: `NPM auth probe returned HTTP ${res.status} — assuming transient.` });
+      } catch (e) {
+        return encode({
+          status: 'info',
+          detail: `Could not reach NPM at ${adminUrl}: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    } catch (e) {
+      return {
+        status: 'fail',
+        message: `npm_auth error: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
+
+  /**
+   * `cert_expiry` — lists NPM-managed Let's Encrypt certificates and
+   * flags those expiring within 14 days (warn) or already expired
+   * (fail). Items carry the numeric NPM cert id, which the diagnose
+   * row's `renew_cert` action uses to call NPM's renew endpoint.
+   */
+  private static async runCertExpiryCheck(
+    check: CheckConfig,
+  ): Promise<{ status: 'ok' | 'fail'; message: string }> {
+    const WARN_DAYS = 14;
+    const node = check.nodeName ?? 'Local';
+    interface NpmCert {
+      id: number;
+      provider?: string;
+      domain_names?: string[];
+      expires_on?: string;
+    }
+    interface CertItem {
+      id: string;
+      label: string;
+      detail: string;
+      status: 'warn' | 'fail';
+      actionIds: string[];
+    }
+    const encode = (payload: { status: 'ok' | 'warn' | 'fail' | 'info'; detail: string; hint?: string; items?: CertItem[] }) =>
+      ({ status: payload.status === 'fail' ? ('fail' as const) : ('ok' as const), message: `${CERT_EXPIRY_MESSAGE_PREFIX}${JSON.stringify(payload)}` });
+
+    try {
+      const adminUrl = await findNpmAdminUrl(node);
+      if (!adminUrl) {
+        return encode({ status: 'info', detail: 'Nginx Proxy Manager not deployed — no certificates to check.' });
+      }
+      const token = await getNpmToken(adminUrl);
+      if (!token) {
+        return encode({ status: 'info', detail: 'Could not authenticate with NPM — skipping certificate check.' });
+      }
+      let certs: NpmCert[];
+      try {
+        const res = await fetch(`${adminUrl}/api/nginx/certificates`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!res.ok) {
+          return encode({ status: 'info', detail: `NPM certificates API returned HTTP ${res.status}.` });
+        }
+        certs = (await res.json()) as NpmCert[];
+      } catch (e) {
+        return encode({ status: 'info', detail: `Could not list NPM certificates: ${e instanceof Error ? e.message : String(e)}` });
+      }
+
+      const leCerts = (certs ?? []).filter(c => c.provider === 'letsencrypt');
+      if (leCerts.length === 0) {
+        return encode({ status: 'info', detail: 'No Let\'s Encrypt certificates managed by NPM.' });
+      }
+      const now = Date.now();
+      const items: CertItem[] = [];
+      let expiringSoon = 0;
+      let expired = 0;
+      for (const c of leCerts) {
+        if (!c.expires_on) continue;
+        const exp = Date.parse(c.expires_on);
+        if (!Number.isFinite(exp)) continue;
+        const daysLeft = Math.floor((exp - now) / (1000 * 60 * 60 * 24));
+        const domains = (c.domain_names ?? []).join(', ') || `cert ${c.id}`;
+        if (daysLeft < 0) {
+          expired += 1;
+          items.push({
+            id: String(c.id),
+            label: domains,
+            detail: `EXPIRED ${-daysLeft} day${daysLeft === -1 ? '' : 's'} ago — services served via this cert show browser warnings.`,
+            status: 'fail',
+            actionIds: ['renew_cert'],
+          });
+        } else if (daysLeft <= WARN_DAYS) {
+          expiringSoon += 1;
+          items.push({
+            id: String(c.id),
+            label: domains,
+            detail: `Expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`,
+            status: 'warn',
+            actionIds: ['renew_cert'],
+          });
+        }
+      }
+      if (items.length === 0) {
+        return encode({
+          status: 'ok',
+          detail: `${leCerts.length} Let's Encrypt cert${leCerts.length === 1 ? '' : 's'} managed; none expiring in ${WARN_DAYS} days.`,
+        });
+      }
+      const status: 'warn' | 'fail' = expired > 0 ? 'fail' : 'warn';
+      return encode({
+        status,
+        detail:
+          expired > 0
+            ? `${expired} expired + ${expiringSoon} expiring soon out of ${leCerts.length} Let's Encrypt cert${leCerts.length === 1 ? '' : 's'}.`
+            : `${expiringSoon} of ${leCerts.length} Let's Encrypt cert${leCerts.length === 1 ? '' : 's'} expiring within ${WARN_DAYS} days.`,
+        hint:
+          'NPM auto-renews on a schedule; click "Renew now" if you want to force a refresh ahead of expiry. Failed renewals usually mean DNS or port-80 challenge changed since issuance.',
+        items,
+      });
+    } catch (e) {
+      return {
+        status: 'fail',
+        message: `cert_expiry error: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
+
+  /**
+   * `cert_request_failure` — tails NPM's `letsencrypt.log` and
+   * extracts recent ACME failures via the shared
+   * `parseLetsencryptTail` parser (kept in the diagnose-side module
+   * since it has its own dedicated test). Each failed domain becomes
+   * a payload item carrying the show_log_tail + retry_request
+   * action ids.
+   */
+  private static async runCertRequestFailureCheck(
+    check: CheckConfig,
+  ): Promise<{ status: 'ok' | 'fail'; message: string }> {
+    const FRESHNESS_HOURS = 24;
+    const TAIL_BYTES = 65_536;
+    const node = check.nodeName ?? 'Local';
+    interface CrfItem {
+      id: string;
+      label: string;
+      detail: string;
+      status: 'fail';
+      actionIds: string[];
+    }
+    const encode = (payload: { status: 'ok' | 'warn' | 'fail' | 'info'; detail: string; hint?: string; items?: CrfItem[] }) =>
+      ({ status: payload.status === 'fail' ? ('fail' as const) : ('ok' as const), message: `${CERT_REQUEST_FAILURE_MESSAGE_PREFIX}${JSON.stringify(payload)}` });
+
+    const safePath = (p: string) => /^\/[A-Za-z0-9_./-]+$/.test(p);
+
+    try {
+      const config = await getConfig();
+      const dataDir = config.templateSettings?.DATA_DIR ?? '/mnt/data';
+      const path = `${dataDir}/nginx-proxy-manager/data/logs/letsencrypt.log`;
+      if (!safePath(path)) {
+        logger.warn('health:cert_request_failure', `Refusing tail of unsafe path: ${path}`);
+        return encode({ status: 'info', detail: 'NPM data dir is not a safe POSIX absolute path — skipping log read.' });
+      }
+
+      // Read the log tail via the agent. Mirrors the former probe's
+      // `readLogTail`. Any error → info (treated identically to
+      // "log doesn't exist yet"); the existing pods / npm_auth probes
+      // already cover hard NPM-down cases.
+      let tail = '';
+      try {
+        const agent = await agentManager.ensureAgent(node);
+        const res = (await agent.sendCommand(
+          'exec',
+          { command: `tail -c ${TAIL_BYTES} ${path} 2>/dev/null` },
+          { timeoutMs: 5_000 },
+        )) as { code?: number; stdout?: string };
+        if (res.code !== 0) {
+          return encode({ status: 'info', detail: 'No letsencrypt.log found — NPM hasn\'t attempted any cert requests yet.' });
+        }
+        tail = res.stdout ?? '';
+      } catch (e) {
+        logger.warn(
+          'health:cert_request_failure',
+          `tail letsencrypt.log failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return encode({ status: 'info', detail: 'Could not read letsencrypt.log — assuming no cert requests yet.' });
+      }
+      if (tail.length === 0) {
+        return encode({ status: 'info', detail: 'No letsencrypt.log found — NPM hasn\'t attempted any cert requests yet.' });
+      }
+
+      const parsed = parseLetsencryptTail(tail);
+      if (parsed.failures.length === 0 && !parsed.rateLimited) {
+        return encode({ status: 'ok', detail: 'No Let\'s Encrypt cert failures in the recent NPM log.' });
+      }
+      if (parsed.ts) {
+        const ageMs = Date.now() - parsed.ts;
+        if (ageMs > FRESHNESS_HOURS * 3_600_000) {
+          return encode({
+            status: 'ok',
+            detail: `Last cert failure was ${Math.round(ageMs / 3_600_000)}h ago (outside the ${FRESHNESS_HOURS}h freshness window). Treating as resolved.`,
+          });
+        }
+      }
+
+      const byDomain = new Map<string, { domain: string; type: string; detail: string }>();
+      for (const f of parsed.failures) byDomain.set(f.domain, f);
+      const items: CrfItem[] = [];
+      for (const [domain, f] of byDomain) {
+        const detail = f.detail.length > 140 ? `${f.detail.slice(0, 140)}…` : f.detail;
+        items.push({
+          id: domain,
+          label: domain,
+          detail: `ACME ${f.type} challenge failed: ${detail}`,
+          status: 'fail',
+          actionIds: ['show_log_tail', 'retry_request'],
+        });
+      }
+      if (parsed.rateLimited && items.length === 0) {
+        items.push({
+          id: 'rate-limited',
+          label: 'Let\'s Encrypt rate limit',
+          detail: 'Hit the ACME rate limit (5 failed validations / host / hour). Wait ~1h and fix the root cause before retrying.',
+          status: 'fail',
+          actionIds: ['show_log_tail'],
+        });
+      }
+      return encode({
+        status: 'fail',
+        detail: `${items.length} domain${items.length === 1 ? '' : 's'} with recent ACME failure${items.length === 1 ? '' : 's'} in NPM\'s letsencrypt.log.`,
+        hint: 'Most common cause is public port 80 not reachable from the internet. Run letsdebug.net for an external view of what the ACME server sees, then click Retry once the underlying cause is fixed.',
+        items,
+      });
+    } catch (e) {
+      return {
+        status: 'fail',
+        message: `cert_request_failure error: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
   }
 
   private static async runPingCheck(host: string, executor: Executor) {

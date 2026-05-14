@@ -7,13 +7,22 @@
  * expandable details block) and a `retry_request` action (re-runs NPM's
  * renew endpoint).
  *
- * Silent (info) when no log exists, when the last failure is older than
- * `FRESHNESS_HOURS`, or when the log is unparseable — keeps the diagnose
- * surface tidy until something is actually broken.
+ * Phase 3b of the diagnose / health-check rework (#484): this probe
+ * is now a **thin reader** over the health-check subsystem. Detection
+ * runs on a `cert_request_failure`-type singleton check (10 min
+ * interval, see `health/init.ts`); the runner calls into the shared
+ * parser at `health/probes/letsencryptLogParser.ts`.  Result
+ * persistence, scheduling, and the Phase 3a SSE broadcast all live in
+ * the health subsystem — this file just reads the latest result back
+ * into the diagnose narrative.
  *
- * House style: helpers (`findNpmAdminUrl`, `getNpmToken`) are duplicated
- * from `certExpiry.ts` rather than extracted into a shared module — see
- * the note in `danglingProxy.ts:29`.
+ * The two action handlers (`show_log_tail`, `retry_request`) stay
+ * here because they mutate NPM state at click-time (one-shot read or
+ * cert renew).
+ *
+ * `parseLetsencryptTail` is re-exported from the new shared module so
+ * the existing test in `certRequestFailure.test.ts` keeps importing it
+ * from this path unchanged.
  */
 
 import { agentManager } from '@/lib/agent/manager';
@@ -21,10 +30,16 @@ import { getConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
+import { HealthStore } from '@/lib/health/store';
+import { CERT_REQUEST_FAILURE_MESSAGE_PREFIX } from '@/lib/health/runner';
+import { parseLetsencryptTail } from '@/lib/health/probes/letsencryptLogParser';
+
+// Re-export so callers (and the existing unit test) can import the
+// parser via the old module path.
+export { parseLetsencryptTail };
 
 const PROBE_ID = 'cert_request_failure';
-const FRESHNESS_HOURS = 24;
-const TAIL_BYTES = 65_536;
+const CHECK_ID = 'cert_request_failure';
 
 export interface CertRequestFailureResult {
   status: 'ok' | 'warn' | 'fail' | 'info';
@@ -33,28 +48,71 @@ export interface CertRequestFailureResult {
   items?: ProbeItem[];
 }
 
-interface ParsedFailure {
-  domain: string;
-  type: string;
-  detail: string;
+/** Reader: surfaces the latest persisted `cert_request_failure`
+ *  health-check result. Diagnose route used to call this with
+ *  `(nodeName)` — the arg is now unused; the singleton check captures
+ *  the node via its `nodeName` field. */
+export async function checkCertRequestFailure(): Promise<CertRequestFailureResult> {
+  const result = HealthStore.getLastResult(CHECK_ID);
+  if (!result) {
+    return {
+      status: 'info',
+      detail: 'Check has not run yet. Open Settings → Health to trigger it manually.',
+    };
+  }
+  if (result.message && result.message.startsWith(CERT_REQUEST_FAILURE_MESSAGE_PREFIX)) {
+    try {
+      const json = result.message.slice(CERT_REQUEST_FAILURE_MESSAGE_PREFIX.length);
+      const parsed = JSON.parse(json);
+      if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
+        return {
+          status: parsed.status,
+          detail: parsed.detail,
+          hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
+          items: Array.isArray(parsed.items) ? (parsed.items as ProbeItem[]) : undefined,
+        };
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (result.status === 'fail') {
+    return {
+      status: 'info',
+      detail: `Check failed to run: ${result.message || 'unknown error'}`,
+    };
+  }
+  return { status: 'info', detail: 'Cert request failure check produced no actionable signal.' };
 }
 
-export interface ParsedFailureBlock {
-  failures: ParsedFailure[];
-  rateLimited: boolean;
-  /** Newest timestamp anywhere in the tail (epoch ms, UTC-interpreted). */
-  ts?: number;
-}
+// ─── Action handlers (kept in the probe file) ───────────────────────────
+
+const TAIL_BYTES_FOR_DISPLAY = 16_384;
 
 function letsencryptLogPath(dataDir: string): string {
   return `${dataDir}/nginx-proxy-manager/data/logs/letsencrypt.log`;
 }
 
-// Refuse to compose a shell command unless the path is a clean POSIX
-// absolute path. DATA_DIR comes from config and is admin-editable; this
-// is belt-and-braces against an accidental shell-meta in the value.
 function safePath(p: string): boolean {
   return /^\/[A-Za-z0-9_./-]+$/.test(p);
+}
+
+async function readLogTail(node: string, path: string, bytes: number): Promise<string | null> {
+  if (!safePath(path)) {
+    logger.warn('diagnose:cert_request_failure', `Refusing tail of unsafe path: ${path}`);
+    return null;
+  }
+  try {
+    const agent = await agentManager.ensureAgent(node);
+    const res = await agent.sendCommand('exec', {
+      command: `tail -c ${bytes} ${path} 2>/dev/null`,
+    }, { timeoutMs: 5_000 }) as { code?: number; stdout?: string };
+    if (res.code !== 0) return null;
+    return res.stdout ?? '';
+  } catch (e) {
+    logger.warn('diagnose:cert_request_failure', `tail letsencrypt.log failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
 }
 
 async function findNpmAdminUrl(node: string): Promise<string | null> {
@@ -98,138 +156,11 @@ async function getNpmToken(adminUrl: string): Promise<string | null> {
   return null;
 }
 
-async function readLogTail(node: string, path: string, bytes = TAIL_BYTES): Promise<string | null> {
-  if (!safePath(path)) {
-    logger.warn('diagnose:cert_request_failure', `Refusing tail of unsafe path: ${path}`);
-    return null;
-  }
-  try {
-    const agent = await agentManager.ensureAgent(node);
-    const res = await agent.sendCommand('exec', {
-      command: `tail -c ${bytes} ${path} 2>/dev/null`,
-    }, { timeoutMs: 5_000 }) as { code?: number; stdout?: string };
-    if (res.code !== 0) return null;
-    return res.stdout ?? '';
-  } catch (e) {
-    logger.warn('diagnose:cert_request_failure', `tail letsencrypt.log failed: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  }
-}
-
-const STRUCTURED_FAILURE_RE = /Domain:\s*(\S+)\s*\n\s*Type:\s*(\S+)\s*\n\s*Detail:\s*([^\n]+)/g;
-// Legacy/inline format used by older certbot releases.
-const INLINE_FAILURE_RE = /Failed authorization procedure\.\s+(\S+)\s+\(([^)]+)\):\s+urn:ietf:params:acme:error:\S+\s*::\s*([^\n]+)/g;
-const RATE_LIMIT_RE = /urn:ietf:params:acme:error:rateLimited/i;
-const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/gm;
-
-export function parseLetsencryptTail(tail: string): ParsedFailureBlock {
-  // Scope to the slice starting at the most recent "Some challenges
-  // have failed" line so older failure blocks higher up don't leak in.
-  // Failures in certbot output come AFTER the marker line, so we
-  // start at the beginning of that line. Fall back to the full tail
-  // when the marker isn't present — older log lines sometimes just
-  // have "Challenge failed for domain X" without it.
-  const lastMarker = tail.lastIndexOf('Some challenges have failed');
-  const sliceStart = lastMarker >= 0
-    ? Math.max(0, tail.lastIndexOf('\n', lastMarker) + 1)
-    : 0;
-  const slice = tail.slice(sliceStart);
-
-  const failures: ParsedFailure[] = [];
-  STRUCTURED_FAILURE_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = STRUCTURED_FAILURE_RE.exec(slice)) !== null) {
-    failures.push({ domain: m[1].trim(), type: m[2].trim(), detail: m[3].trim() });
-  }
-  if (failures.length === 0) {
-    INLINE_FAILURE_RE.lastIndex = 0;
-    while ((m = INLINE_FAILURE_RE.exec(slice)) !== null) {
-      failures.push({ domain: m[1].trim(), type: m[2].trim(), detail: m[3].trim() });
-    }
-  }
-
-  const rateLimited = RATE_LIMIT_RE.test(slice);
-
-  let ts: number | undefined;
-  TIMESTAMP_RE.lastIndex = 0;
-  const tsMatches = slice.match(TIMESTAMP_RE);
-  if (tsMatches && tsMatches.length > 0) {
-    const last = tsMatches[tsMatches.length - 1];
-    const parsed = Date.parse(`${last.replace(' ', 'T')}Z`);
-    if (Number.isFinite(parsed)) ts = parsed;
-  }
-
-  return { failures, rateLimited, ts };
-}
-
-export async function checkCertRequestFailure(node: string): Promise<CertRequestFailureResult> {
-  const config = await getConfig();
-  const dataDir = config.templateSettings?.DATA_DIR ?? '/mnt/data';
-  const path = letsencryptLogPath(dataDir);
-
-  const tail = await readLogTail(node, path);
-  if (tail === null || tail.length === 0) {
-    return {
-      status: 'info',
-      detail: 'No letsencrypt.log found — NPM hasn\'t attempted any cert requests yet.',
-    };
-  }
-
-  const parsed = parseLetsencryptTail(tail);
-  if (parsed.failures.length === 0 && !parsed.rateLimited) {
-    return { status: 'ok', detail: 'No Let\'s Encrypt cert failures in the recent NPM log.' };
-  }
-
-  if (parsed.ts) {
-    const ageMs = Date.now() - parsed.ts;
-    if (ageMs > FRESHNESS_HOURS * 3_600_000) {
-      return {
-        status: 'ok',
-        detail: `Last cert failure was ${Math.round(ageMs / 3_600_000)}h ago (outside the ${FRESHNESS_HOURS}h freshness window). Treating as resolved.`,
-      };
-    }
-  }
-
-  // De-duplicate by domain (most recent wins thanks to insertion order).
-  const byDomain = new Map<string, ParsedFailure>();
-  for (const f of parsed.failures) byDomain.set(f.domain, f);
-
-  const items: ProbeItem[] = [];
-  for (const [domain, f] of byDomain) {
-    const detail = f.detail.length > 140 ? `${f.detail.slice(0, 140)}…` : f.detail;
-    items.push({
-      id: domain,
-      label: domain,
-      detail: `ACME ${f.type} challenge failed: ${detail}`,
-      status: 'fail',
-      actionIds: ['show_log_tail', 'retry_request'],
-    });
-  }
-  if (parsed.rateLimited && items.length === 0) {
-    items.push({
-      id: 'rate-limited',
-      label: 'Let\'s Encrypt rate limit',
-      detail: 'Hit the ACME rate limit (5 failed validations / host / hour). Wait ~1h and fix the root cause before retrying.',
-      status: 'fail',
-      actionIds: ['show_log_tail'],
-    });
-  }
-
-  return {
-    status: 'fail',
-    detail: `${items.length} domain${items.length === 1 ? '' : 's'} with recent ACME failure${items.length === 1 ? '' : 's'} in NPM\'s letsencrypt.log.`,
-    hint: 'Most common cause is public port 80 not reachable from the internet. Run letsdebug.net for an external view of what the ACME server sees, then click Retry once the underlying cause is fixed.',
-    items,
-  };
-}
-
-// ─── Action handlers ────────────────────────────────────────────────────
-
 async function showLogTail({ node }: { node: string }): Promise<ProbeActionResult> {
   const config = await getConfig();
   const dataDir = config.templateSettings?.DATA_DIR ?? '/mnt/data';
   const path = letsencryptLogPath(dataDir);
-  const tail = await readLogTail(node, path, 16_384);
+  const tail = await readLogTail(node, path, TAIL_BYTES_FOR_DISPLAY);
   if (tail === null) {
     return { ok: false, message: `Could not read ${path}.`, refresh: false };
   }

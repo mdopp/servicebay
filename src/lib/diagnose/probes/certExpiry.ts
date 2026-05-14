@@ -4,20 +4,28 @@
  * Each item gets a per-row "Renew now" action that triggers NPM's
  * cert renewal endpoint.
  *
- * Silent (status: info) in LAN-domain mode where no certs exist —
- * keeps the diagnose surface tidy until the operator switches to
- * public-domain mode (D19-PR8 / #265). Also silent on the cold path
- * (no NPM, no creds, no response) — the existing pods / npm_data_stale
- * probes already cover those cases.
+ * Phase 3b of the diagnose / health-check rework (#484): this probe
+ * is now a **thin reader** over the health-check subsystem. Detection
+ * runs on a `cert_expiry`-type singleton check (1 h interval, see
+ * `health/init.ts`) and the result is persisted to `HealthStore`.
+ * Result persistence, scheduling, and the Phase 3a SSE broadcast all
+ * live there — this file just reads the latest result back into the
+ * diagnose narrative.
+ *
+ * The `renew_cert` action handler stays here because it mutates NPM
+ * state at click-time (re-runs the ACME challenge for one cert id) —
+ * only the detection moved into the health subsystem.
  */
 
 import { getConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
+import { HealthStore } from '@/lib/health/store';
+import { CERT_EXPIRY_MESSAGE_PREFIX } from '@/lib/health/runner';
 
 const PROBE_ID = 'cert_expiry';
-const WARN_DAYS = 14;
+const CHECK_ID = 'cert_expiry';
 
 export interface CertExpiryResult {
   status: 'ok' | 'warn' | 'fail' | 'info';
@@ -26,13 +34,46 @@ export interface CertExpiryResult {
   items?: ProbeItem[];
 }
 
-interface NpmCert {
-  id: number;
-  provider?: string;
-  nice_name?: string;
-  domain_names?: string[];
-  expires_on?: string;
+/** Reader: surfaces the latest persisted `cert_expiry` health-check
+ *  result. Items carry the numeric NPM cert id encoded by the runner;
+ *  `renew_cert` decodes it back to a `/api/nginx/certificates/<id>/renew`
+ *  POST against NPM.  Diagnose route used to call this with
+ *  `(nodeName)` — the arg is now unused because the singleton check
+ *  captures the node via its `nodeName` field. */
+export async function checkCertExpiry(): Promise<CertExpiryResult> {
+  const result = HealthStore.getLastResult(CHECK_ID);
+  if (!result) {
+    return {
+      status: 'info',
+      detail: 'Check has not run yet. Open Settings → Health to trigger it manually.',
+    };
+  }
+  if (result.message && result.message.startsWith(CERT_EXPIRY_MESSAGE_PREFIX)) {
+    try {
+      const json = result.message.slice(CERT_EXPIRY_MESSAGE_PREFIX.length);
+      const parsed = JSON.parse(json);
+      if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
+        return {
+          status: parsed.status,
+          detail: parsed.detail,
+          hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
+          items: Array.isArray(parsed.items) ? (parsed.items as ProbeItem[]) : undefined,
+        };
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (result.status === 'fail') {
+    return {
+      status: 'info',
+      detail: `Check failed to run: ${result.message || 'unknown error'}`,
+    };
+  }
+  return { status: 'info', detail: 'Cert expiry check produced no actionable signal.' };
 }
+
+// ─── Action handlers (kept in the probe file) ───────────────────────────
 
 async function findNpmAdminUrl(node: string): Promise<string | null> {
   try {
@@ -73,83 +114,6 @@ async function getNpmToken(adminUrl: string): Promise<string | null> {
     } catch { /* try next */ }
   }
   return null;
-}
-
-export async function checkCertExpiry(node: string): Promise<CertExpiryResult> {
-  const adminUrl = await findNpmAdminUrl(node);
-  if (!adminUrl) {
-    return { status: 'info', detail: 'Nginx Proxy Manager not deployed — no certificates to check.' };
-  }
-  const token = await getNpmToken(adminUrl);
-  if (!token) {
-    return { status: 'info', detail: 'Could not authenticate with NPM — skipping certificate check.' };
-  }
-  let certs: NpmCert[];
-  try {
-    const res = await fetch(`${adminUrl}/api/nginx/certificates`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) {
-      return { status: 'info', detail: `NPM certificates API returned HTTP ${res.status}.` };
-    }
-    certs = await res.json() as NpmCert[];
-  } catch (e) {
-    return { status: 'info', detail: `Could not list NPM certificates: ${e instanceof Error ? e.message : String(e)}` };
-  }
-
-  // NPM tracks self-uploaded certs too; the diagnose value is in
-  // letsencrypt-managed ones (NPM auto-renews them but renewal can
-  // fail silently — DNS challenge regression, rate limit, etc).
-  const leCerts = (certs ?? []).filter(c => c.provider === 'letsencrypt');
-  if (leCerts.length === 0) {
-    return { status: 'info', detail: 'No Let\'s Encrypt certificates managed by NPM.' };
-  }
-  const now = Date.now();
-  const items: ProbeItem[] = [];
-  let expiringSoon = 0;
-  let expired = 0;
-  for (const c of leCerts) {
-    if (!c.expires_on) continue;
-    const exp = Date.parse(c.expires_on);
-    if (!Number.isFinite(exp)) continue;
-    const daysLeft = Math.floor((exp - now) / (1000 * 60 * 60 * 24));
-    const domains = (c.domain_names ?? []).join(', ') || `cert ${c.id}`;
-    if (daysLeft < 0) {
-      expired += 1;
-      items.push({
-        id: String(c.id),
-        label: domains,
-        detail: `EXPIRED ${-daysLeft} day${daysLeft === -1 ? '' : 's'} ago — services served via this cert show browser warnings.`,
-        status: 'fail',
-        actionIds: ['renew_cert'],
-      });
-    } else if (daysLeft <= WARN_DAYS) {
-      expiringSoon += 1;
-      items.push({
-        id: String(c.id),
-        label: domains,
-        detail: `Expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`,
-        status: 'warn',
-        actionIds: ['renew_cert'],
-      });
-    }
-  }
-  if (items.length === 0) {
-    return {
-      status: 'ok',
-      detail: `${leCerts.length} Let's Encrypt cert${leCerts.length === 1 ? '' : 's'} managed; none expiring in ${WARN_DAYS} days.`,
-    };
-  }
-  const status: 'warn' | 'fail' = expired > 0 ? 'fail' : 'warn';
-  return {
-    status,
-    detail: expired > 0
-      ? `${expired} expired + ${expiringSoon} expiring soon out of ${leCerts.length} Let's Encrypt cert${leCerts.length === 1 ? '' : 's'}.`
-      : `${expiringSoon} of ${leCerts.length} Let's Encrypt cert${leCerts.length === 1 ? '' : 's'} expiring within ${WARN_DAYS} days.`,
-    hint: 'NPM auto-renews on a schedule; click "Renew now" if you want to force a refresh ahead of expiry. Failed renewals usually mean DNS or port-80 challenge changed since issuance.',
-    items,
-  };
 }
 
 async function renewCert({

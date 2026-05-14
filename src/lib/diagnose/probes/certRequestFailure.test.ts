@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { CheckResult } from '@/lib/health/types';
 
 const state = {
   config: {} as any,
   services: [] as any[],
+  results: new Map<string, CheckResult>(),
 };
 
 const mockAgent = { sendCommand: vi.fn() };
@@ -18,6 +20,12 @@ vi.mock('@/lib/services/ServiceManager', () => ({
 
 vi.mock('@/lib/agent/manager', () => ({
   agentManager: { ensureAgent: vi.fn(() => Promise.resolve(mockAgent)) },
+}));
+
+vi.mock('@/lib/health/store', () => ({
+  HealthStore: {
+    getLastResult: (id: string) => state.results.get(id) ?? null,
+  },
 }));
 
 const mockFetch = vi.fn();
@@ -35,6 +43,7 @@ beforeEach(() => {
     templateSettings: { DATA_DIR: '/mnt/data' },
   };
   state.services = ACTIVE_NGINX;
+  state.results = new Map();
   mockAgent.sendCommand.mockReset();
   mockFetch.mockReset();
 });
@@ -100,65 +109,55 @@ acme.errors.Error: urn:ietf:params:acme:error:rateLimited :: Error creating new 
   });
 });
 
-// ─── Probe top-level ────────────────────────────────────────────────────
+// ─── Reader (Phase 3b: thin HealthStore reader) ─────────────────────────
 
-describe('checkCertRequestFailure', () => {
-  function mockTail(stdout: string, code = 0) {
-    mockAgent.sendCommand.mockResolvedValueOnce({ code, stdout, stderr: '' });
-  }
-
-  it('returns info when the log tail is empty', async () => {
-    mockTail('');
-    const out = await checkCertRequestFailure('Local');
+describe('checkCertRequestFailure (reader)', () => {
+  it('returns info when HealthStore has no result yet', async () => {
+    const out = await checkCertRequestFailure();
     expect(out.status).toBe('info');
-    expect(out.detail).toMatch(/hasn't attempted/);
+    expect(out.detail).toMatch(/has not run yet/);
   });
 
-  it('returns ok when tail has no failure markers', async () => {
-    mockTail('2026-05-12 00:00:00,000:INFO:certbot:All clean.');
-    const out = await checkCertRequestFailure('Local');
-    expect(out.status).toBe('ok');
-  });
-
-  it('returns fail with one item per failed domain', async () => {
-    const recent = new Date(Date.now() - 60_000).toISOString().replace('T', ' ').slice(0, 19);
-    mockTail(`${recent},123:ERROR:certbot:Some challenges have failed.
-  Domain: vault.dopp.cloud
-  Type:   connection
-  Detail: 1.2.3.4: Fetching http://vault.dopp.cloud/.well-known/acme-challenge/abc: Connection refused`);
-    const out = await checkCertRequestFailure('Local');
+  it('decodes the runner-encoded payload into the probe shape', async () => {
+    const payload = {
+      status: 'fail',
+      detail: '1 domain with recent ACME failure in NPM\'s letsencrypt.log.',
+      hint: 'Most common cause is port 80 not reachable.',
+      items: [
+        {
+          id: 'vault.dopp.cloud',
+          label: 'vault.dopp.cloud',
+          detail: 'ACME connection challenge failed: refused',
+          status: 'fail',
+          actionIds: ['show_log_tail', 'retry_request'],
+        },
+      ],
+    };
+    state.results.set('cert_request_failure', {
+      check_id: 'cert_request_failure',
+      timestamp: new Date().toISOString(),
+      status: 'fail',
+      message: `cert_request_failure:${JSON.stringify(payload)}`,
+      latency: 100,
+    });
+    const out = await checkCertRequestFailure();
     expect(out.status).toBe('fail');
+    expect(out.detail).toMatch(/1 domain with recent ACME failure/);
     expect(out.items).toHaveLength(1);
     expect(out.items?.[0].label).toBe('vault.dopp.cloud');
-    expect(out.items?.[0].detail).toMatch(/Connection refused/);
-    expect(out.items?.[0].actionIds).toEqual(['show_log_tail', 'retry_request']);
   });
 
-  it('returns ok when the failure is older than the freshness window', async () => {
-    // 48h old → outside the 24h freshness window.
-    const old = new Date(Date.now() - 48 * 3600_000).toISOString().replace('T', ' ').slice(0, 19);
-    mockTail(`${old},000:ERROR:certbot:Some challenges have failed.
-  Domain: vault.dopp.cloud
-  Type:   connection
-  Detail: stale failure`);
-    const out = await checkCertRequestFailure('Local');
-    expect(out.status).toBe('ok');
-    expect(out.detail).toMatch(/outside the .* freshness window/);
-  });
-
-  it('surfaces a rate-limit pseudo-item when no per-domain block', async () => {
-    const recent = new Date(Date.now() - 60_000).toISOString().replace('T', ' ').slice(0, 19);
-    mockTail(`${recent},000:ERROR:certbot:Some challenges have failed.
-acme.errors.Error: urn:ietf:params:acme:error:rateLimited :: too many failed authorizations recently`);
-    const out = await checkCertRequestFailure('Local');
-    expect(out.status).toBe('fail');
-    expect(out.items?.[0].label).toMatch(/rate limit/i);
-  });
-
-  it('returns info when reading the log fails (non-zero exit)', async () => {
-    mockTail('', 1);
-    const out = await checkCertRequestFailure('Local');
+  it('surfaces transport-error plaintext as info', async () => {
+    state.results.set('cert_request_failure', {
+      check_id: 'cert_request_failure',
+      timestamp: new Date().toISOString(),
+      status: 'fail',
+      message: 'cert_request_failure error: agent timeout',
+      latency: 100,
+    });
+    const out = await checkCertRequestFailure();
     expect(out.status).toBe('info');
+    expect(out.detail).toMatch(/Check failed to run.*agent timeout/);
   });
 });
 
