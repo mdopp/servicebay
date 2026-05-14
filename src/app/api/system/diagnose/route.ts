@@ -3,6 +3,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { HealthStore } from '@/lib/health/store';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { actionsForProbe, resolveItemActions, type ProbeAction, type ProbeItem, type ResolvedProbeItem } from '@/lib/diagnose/actions';
+import { buildPortSourceMap, renderUnexpectedPort, type TwinPortService, type TwinPortContainer } from '@/lib/diagnose/portsProbe';
 import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
 import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
@@ -260,19 +261,19 @@ export async function POST(request: Request) {
   //    service or a standard system port. Dumping all 30 open ports
   //    in the detail string was noise; the operator just installed
   //    those services and knows nginx listens on 80. Show count +
-  //    any actual surprise ports inline.
+  //    any actual surprise ports with their owning container/service
+  //    so the operator doesn't have to cross-reference manually.
+  //    See `lib/diagnose/portsProbe.ts` for the source-walk helpers.
   const ports = trimOutput(listen.stdout, 50).split('\n').filter(Boolean);
-  const expectedPorts = new Set<string>([
-    '22',   // sshd
-    '5888', // servicebay itself
-  ]);
   const portsTwin = DigitalTwinStore.getInstance().nodes[nodeName];
-  for (const svc of ((portsTwin?.services ?? []) as { ports?: { hostPort?: number }[] }[])) {
-    for (const p of (svc.ports ?? [])) {
-      if (typeof p.hostPort === 'number') expectedPorts.add(String(p.hostPort));
-    }
-  }
-  const unexpected = ports.filter(p => !expectedPorts.has(p));
+  const portSource = buildPortSourceMap(
+    portsTwin?.services as TwinPortService[] | undefined,
+    portsTwin?.containers as TwinPortContainer[] | undefined,
+  );
+  const unexpected = ports.filter(p => {
+    const n = parseInt(p, 10);
+    return !Number.isFinite(n) || !portSource.has(n);
+  });
   probes.push({
     id: 'ports',
     label: 'Open TCP ports',
@@ -281,7 +282,7 @@ export async function POST(request: Request) {
       ? 'No ports detected — services may still be starting.'
       : unexpected.length === 0
         ? `${ports.length} ports listening, all match installed services or standard system ports.`
-        : `${ports.length} ports listening; ${unexpected.length} not mapped to a known service: ${unexpected.join(', ')}.`,
+        : `${ports.length} ports listening; ${unexpected.length} not mapped to a known service: ${unexpected.map(p => renderUnexpectedPort(p, portSource)).join(', ')}.`,
   });
 
   // 6) USB serial devices (Z-Wave / Zigbee sticks)
