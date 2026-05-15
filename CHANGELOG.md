@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.41.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.41.0...servicebay-v3.41.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **install:** wizard auto-open + NPM creds survive OS reinstall / clean-install ([#536](https://github.com/mdopp/servicebay/issues/536)) ([fd5fa83](https://github.com/mdopp/servicebay/commit/fd5fa83e9d228460b9c5801ff0cf2a1a63cbfc95))
+
 ## [3.41.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.9...servicebay-v3.41.0) (2026-05-15)
 
 
