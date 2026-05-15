@@ -191,9 +191,18 @@ def restart_zwave_js() -> None:
         )
         if result.returncode == 0:
             log(f"   restarted {ZWAVE_CONTAINER_NAME} so the new settings take effect.")
-        else:
-            log(f"   ⚠️ podman restart {ZWAVE_CONTAINER_NAME} exited {result.returncode}: {result.stderr.strip()}")
-            log("   New WS settings will load on next pod restart.")
+            return
+        stderr = result.stderr.strip()
+        # First-deploy race: post-deploy ran before podman play kube
+        # finished spawning the pod's containers. The container will
+        # come up shortly and pick the env-var + file up on its first
+        # boot, so no restart is needed — only flag genuine restart
+        # failures.
+        if "no such container" in stderr.lower() or "no container with name" in stderr.lower():
+            log(f"   {ZWAVE_CONTAINER_NAME} not running yet — settings will apply when the pod brings it up.")
+            return
+        log(f"   ⚠️ podman restart {ZWAVE_CONTAINER_NAME} exited {result.returncode}: {stderr}")
+        log("   New WS settings will load on next pod restart.")
     except (subprocess.SubprocessError, OSError) as exc:
         log(f"   ⚠️ Could not restart zwave-js: {exc}. Settings will apply on next pod restart.")
 
@@ -376,7 +385,7 @@ def verify_oidc_endpoint(timeout: float = 90.0) -> bool:
 
 
 def configure_auth_oidc() -> None:
-    version = env("HA_OIDC_AUTH_VERSION", "v0.6.0").strip()
+    version = env("HA_OIDC_AUTH_VERSION", "v1.1.0").strip()
     if not version:
         log("⚠️  HA_OIDC_AUTH_VERSION is empty — skipping auth_oidc install.")
         return

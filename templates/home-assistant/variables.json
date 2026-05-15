@@ -32,7 +32,7 @@
   "HA_OIDC_AUTH_VERSION": {
     "type": "text",
     "description": "Pinned release tag of the auth_oidc custom component (https://github.com/christiaangoossens/hass-oidc-auth). post-deploy downloads + extracts the matching tarball into <config>/custom_components/auth_oidc/ on every deploy and skips the network round-trip when the on-disk version stamp already matches. Bump this string and re-deploy to upgrade.",
-    "default": "v0.6.0"
+    "default": "v1.1.0"
   },
   "HA_OIDC_ADMIN_GROUP": {
     "type": "text",
