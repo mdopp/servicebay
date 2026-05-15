@@ -35,6 +35,7 @@ export const LAN_IP_DRIFT_MESSAGE_PREFIX = 'lan_ip_drift:';
 export const NPM_AUTH_MESSAGE_PREFIX = 'npm_auth:';
 export const CERT_EXPIRY_MESSAGE_PREFIX = 'cert_expiry:';
 export const CERT_REQUEST_FAILURE_MESSAGE_PREFIX = 'cert_request_failure:';
+export const DNS_ROUTING_MESSAGE_PREFIX = 'dns_routing:';
 
 export class CheckRunner {
   static async run(check: CheckConfig): Promise<CheckResult> {
@@ -131,6 +132,12 @@ export class CheckRunner {
         }
         case 'cert_request_failure': {
           const r = await this.runCertRequestFailureCheck(check);
+          message = r.message;
+          status = r.status;
+          break;
+        }
+        case 'dns_routing': {
+          const r = await this.runDnsRoutingCheck(check);
           message = r.message;
           status = r.status;
           break;
@@ -282,10 +289,11 @@ export class CheckRunner {
    *     message is the plaintext error so the operator sees what
    *     happened on the health page directly.
    *
-   * The 4 h interval (set in `letsdebugChecks.ts`) is the rate-limit
-   * shield — a 429 just means the next scheduled tick wins, and the
-   * diagnose probe's per-row `refresh_now` action bypasses the wait
-   * if the operator wants confirmation sooner.
+   * Continuous sweeps are retired (#letsdebug-429); the `dns_routing`
+   * check now answers "does my domain still point at me?" via DoH.
+   * This runner stays for the diagnose row's on-demand
+   * `run_letsdebug` action — slow + rate-limited upstream, fine for a
+   * per-domain button click.
    */
   private static async runLetsdebugCheck(
     check: CheckConfig,
@@ -312,6 +320,84 @@ export class CheckRunner {
     return {
       status: hasFatal ? 'fail' : 'ok',
       message: `${LETSDEBUG_MESSAGE_PREFIX}${payload}`,
+    };
+  }
+
+  /**
+   * `dns_routing` — resolves the target domain via Cloudflare's
+   * 1.1.1.1 DoH JSON API and compares the returned A record to
+   * `twin.gateway.publicIp`. Replaces the continuous letsdebug sweep
+   * for "does my domain still point at me?"; the full letsdebug
+   * taxonomy stays available via the diagnose row's on-demand
+   * action.
+   *
+   * Behaviour:
+   *   - `gateway.publicIp` is unknown ('0.0.0.0' or empty) → status
+   *     'ok' with an info-shaped payload. Without a known public IP
+   *     there's nothing meaningful to compare against (router not
+   *     polled yet, or gateway provider = mock).
+   *   - DoH returns no A record → status 'fail' (NXDOMAIN-ish).
+   *   - A record(s) found but none match the public IP → status
+   *     'fail' (routes elsewhere — operator pointed DNS at the wrong
+   *     IP, or LE forgot to renew, or the public IP rotated).
+   *   - At least one A record matches → status 'ok'.
+   *
+   * Transport errors (network glitch, DoH timeout) fall through as
+   * plaintext `fail` so the diagnose reader can render an `info` row
+   * with the underlying cause.
+   */
+  private static async runDnsRoutingCheck(
+    check: CheckConfig,
+  ): Promise<{ status: 'ok' | 'fail'; message: string }> {
+    const domain = check.target;
+    if (!domain) {
+      return { status: 'fail', message: 'dns_routing check has no target domain.' };
+    }
+
+    // Pull publicIp from the twin. Imported lazily to avoid a cycle
+    // between the health runner and the twin store at module-init.
+    const { DigitalTwinStore } = await import('../store/twin');
+    const expectedIp = DigitalTwinStore.getInstance().gateway?.publicIp ?? '';
+    const haveExpected = !!expectedIp && expectedIp !== '0.0.0.0';
+
+    // Cloudflare DoH JSON API — no auth, no rate-limit issues at the
+    // volume we run (one request per public domain every ~15 min).
+    // ct=application/dns-json keeps the body small. AbortSignal
+    // caps the wait so a flaky network doesn't stall the runner.
+    let answers: string[];
+    try {
+      const url = `https://1.1.1.1/dns-query?name=${encodeURIComponent(domain)}&type=A`;
+      const res = await fetch(url, {
+        headers: { Accept: 'application/dns-json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        return { status: 'fail', message: `DoH lookup HTTP ${res.status}` };
+      }
+      const body = (await res.json()) as { Answer?: { type: number; data: string }[] };
+      answers = (body.Answer ?? [])
+        .filter(a => a.type === 1) // A records
+        .map(a => a.data);
+    } catch (e) {
+      return { status: 'fail', message: `DoH lookup failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
+
+    const payload: { expected: string | null; resolved: string[]; matched: boolean } = {
+      expected: haveExpected ? expectedIp : null,
+      resolved: answers,
+      matched: haveExpected && answers.includes(expectedIp),
+    };
+
+    if (!haveExpected) {
+      // No known public IP — surface what we found but don't shout.
+      return { status: 'ok', message: `${DNS_ROUTING_MESSAGE_PREFIX}${JSON.stringify(payload)}` };
+    }
+    if (answers.length === 0) {
+      return { status: 'fail', message: `${DNS_ROUTING_MESSAGE_PREFIX}${JSON.stringify(payload)}` };
+    }
+    return {
+      status: payload.matched ? 'ok' : 'fail',
+      message: `${DNS_ROUTING_MESSAGE_PREFIX}${JSON.stringify(payload)}`,
     };
   }
 

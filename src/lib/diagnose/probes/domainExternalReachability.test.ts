@@ -8,6 +8,11 @@ const state = {
   results: new Map<string, CheckResult>(),
   runOutcome: { status: 'ok' as 'ok' | 'fail', message: '' as string },
   runCallCount: 0,
+  letsdebugCalls: [] as string[],
+  letsdebugResult: undefined as
+    | { problems: { name?: string; explanation?: string; severity?: string }[]; submissionUrl: string }
+    | undefined,
+  letsdebugError: undefined as Error | undefined,
 };
 
 vi.mock('@/lib/config', () => ({
@@ -23,6 +28,7 @@ vi.mock('@/lib/health/store', () => ({
 }));
 
 vi.mock('@/lib/health/runner', () => ({
+  DNS_ROUTING_MESSAGE_PREFIX: 'dns_routing:',
   LETSDEBUG_MESSAGE_PREFIX: 'letsdebug:',
   CheckRunner: {
     run: vi.fn((check: CheckConfig) => {
@@ -32,12 +38,20 @@ vi.mock('@/lib/health/runner', () => ({
         timestamp: new Date().toISOString(),
         status: state.runOutcome.status,
         message: state.runOutcome.message,
-        latency: 100,
+        latency: 5,
       };
       state.results.set(check.id, result);
       return Promise.resolve(result);
     }),
   },
+}));
+
+vi.mock('@/lib/letsdebug/client', () => ({
+  runLetsdebugForDomain: vi.fn((domain: string) => {
+    state.letsdebugCalls.push(domain);
+    if (state.letsdebugError) return Promise.reject(state.letsdebugError);
+    return Promise.resolve(state.letsdebugResult);
+  }),
 }));
 
 import {
@@ -46,10 +60,29 @@ import {
 } from './domainExternalReachability';
 import { dispatchProbeAction } from '../actions';
 
-const NOW = Date.UTC(2026, 4, 14, 12, 0, 0);
-
+const NOW = Date.UTC(2026, 4, 15, 12, 0, 0);
 const isoNow = () => new Date(NOW).toISOString();
 const isoAgo = (ms: number) => new Date(NOW - ms).toISOString();
+
+function makeDnsRoutingCheck(domain: string): CheckConfig {
+  return {
+    id: `dns_routing:${domain}`,
+    name: `DNS routing — ${domain}`,
+    type: 'dns_routing',
+    target: domain,
+    interval: 900,
+    enabled: true,
+    created_at: isoNow(),
+  };
+}
+
+function dnsRoutingPayload(opts: { expected: string | null; resolved: string[]; matched: boolean }) {
+  return `dns_routing:${JSON.stringify(opts)}`;
+}
+
+function letsdebugPayload(problems: { name?: string; explanation?: string; severity?: string }[], submissionUrl = 'https://letsdebug.net/x.example.com/1') {
+  return `letsdebug:${JSON.stringify({ problems, submissionUrl })}`;
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -63,204 +96,222 @@ beforeEach(() => {
     },
   };
   state.checks = [
-    {
-      id: 'letsdebug:one.example.com',
-      name: 'External reachability — one.example.com',
-      type: 'letsdebug',
-      target: 'one.example.com',
-      interval: 14400,
-      enabled: true,
-      created_at: isoNow(),
-    },
-    {
-      id: 'letsdebug:two.example.com',
-      name: 'External reachability — two.example.com',
-      type: 'letsdebug',
-      target: 'two.example.com',
-      interval: 14400,
-      enabled: true,
-      created_at: isoNow(),
-    },
+    makeDnsRoutingCheck('one.example.com'),
+    makeDnsRoutingCheck('two.example.com'),
   ];
-  state.results = new Map();
+  state.results.clear();
   state.runOutcome = { status: 'ok', message: '' };
   state.runCallCount = 0;
+  state.letsdebugCalls = [];
+  state.letsdebugResult = { problems: [], submissionUrl: 'https://letsdebug.net/one.example.com/42' };
+  state.letsdebugError = undefined;
 });
 
 describe('checkDomainExternalReachability', () => {
-  it('renders "First check pending" when HealthStore has no result yet', async () => {
-    const result = await checkDomainExternalReachability();
-    expect(result.items).toHaveLength(2);
-    expect(result.items![0].detail).toMatch(/First check pending/);
-    expect(result.items![0].actionIds).toContain('refresh_now');
-    expect(result.detail).toMatch(/pending/);
+  it('returns ok with empty detail when no public hosts are configured', async () => {
+    state.config = { reverseProxy: { hosts: [{ domain: 'lan-only.home.arpa' }] } };
+    const r = await checkDomainExternalReachability();
+    expect(r.status).toBe('ok');
+    expect(r.detail).toMatch(/No public domains configured/);
+    expect(r.items).toBeUndefined();
   });
 
-  it('omits the row for a healthy domain (ok + empty message)', async () => {
-    state.results.set('letsdebug:one.example.com', {
-      check_id: 'letsdebug:one.example.com',
-      timestamp: isoAgo(15 * 60_000), // 15 min ago
+  it('reports `info` + pending row when the dns_routing check has not yet run', async () => {
+    const r = await checkDomainExternalReachability();
+    expect(r.status).toBe('info');
+    expect(r.items).toHaveLength(2);
+    expect(r.items![0].status).toBe('info');
+    expect(r.items![0].detail).toMatch(/First check pending/);
+    expect(r.items![0].actionIds).toEqual(['refresh_now', 'run_letsdebug']);
+  });
+
+  it('omits healthy rows when DNS matches the gateway IP and reports overall ok', async () => {
+    state.results.set('dns_routing:one.example.com', {
+      check_id: 'dns_routing:one.example.com',
+      timestamp: isoAgo(60_000),
       status: 'ok',
-      message: '',
-      latency: 200,
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
-    // two.example.com has no result → pending row.
-    const result = await checkDomainExternalReachability();
-    const rows = result.items?.map(i => i.id);
-    expect(rows).not.toContain('one.example.com');
-    expect(rows).toContain('two.example.com');
-  });
-
-  it('renders a problem row with last-checked + Report URL for an encoded payload', async () => {
-    const payload = JSON.stringify({
-      problems: [{ name: 'IssueX', explanation: 'thing broke', severity: 'warning' }],
-      submissionUrl: 'https://letsdebug.net/?id=1',
-    });
-    state.results.set('letsdebug:one.example.com', {
-      check_id: 'letsdebug:one.example.com',
-      timestamp: isoAgo(12 * 60_000), // 12 min ago
+    state.results.set('dns_routing:two.example.com', {
+      check_id: 'dns_routing:two.example.com',
+      timestamp: isoAgo(60_000),
       status: 'ok',
-      message: `letsdebug:${payload}`,
-      latency: 200,
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
-    const result = await checkDomainExternalReachability();
-    const row = result.items?.find(i => i.id === 'one.example.com');
-    expect(row).toBeDefined();
-    expect(row!.detail).toMatch(/IssueX: thing broke/);
-    expect(row!.detail).toMatch(/Report: https/);
-    expect(row!.detail).toMatch(/Last checked 12 min ago/);
-    expect(row!.status).toBe('warn');
-    expect(row!.actionIds).toContain('refresh_now');
+    const r = await checkDomainExternalReachability();
+    expect(r.status).toBe('ok');
+    expect(r.items).toBeUndefined();
+    expect(r.detail).toMatch(/2 public domains resolving to your public IP/);
   });
 
-  it('escalates to fail when any problem is severity=fatal', async () => {
-    const payload = JSON.stringify({
-      problems: [{ name: 'IssueY', explanation: 'really broken', severity: 'fatal' }],
-      submissionUrl: null,
+  it('flags a domain whose A record points at a different IP as fail', async () => {
+    state.results.set('dns_routing:one.example.com', {
+      check_id: 'dns_routing:one.example.com',
+      timestamp: isoAgo(60_000),
+      status: 'fail',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
+    });
+    state.results.set('dns_routing:two.example.com', {
+      check_id: 'dns_routing:two.example.com',
+      timestamp: isoAgo(60_000),
+      status: 'ok',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+    });
+    const r = await checkDomainExternalReachability();
+    expect(r.status).toBe('fail');
+    expect(r.items).toHaveLength(1);
+    expect(r.items![0].id).toBe('one.example.com');
+    expect(r.items![0].detail).toMatch(/198\.51\.100\.7/);
+    expect(r.items![0].detail).toMatch(/your gateway IP is 203\.0\.113\.5/);
+  });
+
+  it('flags a domain with no public A record as fail', async () => {
+    state.results.set('dns_routing:one.example.com', {
+      check_id: 'dns_routing:one.example.com',
+      timestamp: isoAgo(60_000),
+      status: 'fail',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: [], matched: false }),
+    });
+    state.results.set('dns_routing:two.example.com', {
+      check_id: 'dns_routing:two.example.com',
+      timestamp: isoAgo(60_000),
+      status: 'ok',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+    });
+    const r = await checkDomainExternalReachability();
+    expect(r.status).toBe('fail');
+    expect(r.items).toHaveLength(1);
+    expect(r.items![0].detail).toMatch(/no A record/);
+  });
+
+  it('surfaces transport errors (no payload, fail status) as info rows', async () => {
+    state.results.set('dns_routing:one.example.com', {
+      check_id: 'dns_routing:one.example.com',
+      timestamp: isoAgo(30_000),
+      status: 'fail',
+      message: 'DoH lookup failed: connect ETIMEDOUT',
+    });
+    state.results.set('dns_routing:two.example.com', {
+      check_id: 'dns_routing:two.example.com',
+      timestamp: isoAgo(30_000),
+      status: 'ok',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+    });
+    const r = await checkDomainExternalReachability();
+    expect(r.items).toHaveLength(1);
+    expect(r.items![0].status).toBe('info');
+    expect(r.items![0].detail).toMatch(/DNS check could not run/);
+  });
+
+  it('appends letsdebug summary to a flagged row when one exists', async () => {
+    state.results.set('dns_routing:one.example.com', {
+      check_id: 'dns_routing:one.example.com',
+      timestamp: isoAgo(60_000),
+      status: 'fail',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
     });
     state.results.set('letsdebug:one.example.com', {
       check_id: 'letsdebug:one.example.com',
-      timestamp: isoNow(),
+      timestamp: isoAgo(120_000),
       status: 'fail',
-      message: `letsdebug:${payload}`,
-      latency: 200,
+      message: letsdebugPayload([{ name: 'ANotWorking', explanation: 'port 80 unreachable', severity: 'fatal' }]),
     });
-    const result = await checkDomainExternalReachability();
-    const row = result.items?.find(i => i.id === 'one.example.com');
-    expect(row!.status).toBe('fail');
-    expect(result.status).toBe('fail');
-  });
-
-  it('renders a transport-error row for a plaintext fail message', async () => {
-    state.results.set('letsdebug:one.example.com', {
-      check_id: 'letsdebug:one.example.com',
-      timestamp: isoAgo(2 * 60_000),
-      status: 'fail',
-      message: 'letsdebug error: HTTP 429',
-      latency: 200,
+    state.results.set('dns_routing:two.example.com', {
+      check_id: 'dns_routing:two.example.com',
+      timestamp: isoAgo(60_000),
+      status: 'ok',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
-    const result = await checkDomainExternalReachability();
-    const row = result.items?.find(i => i.id === 'one.example.com');
-    expect(row).toBeDefined();
-    expect(row!.detail).toMatch(/could not run automatically/);
-    expect(row!.detail).toMatch(/HTTP 429/);
-    expect(row!.detail).toMatch(/Last checked 2 min ago/);
-    expect(row!.actionIds).toContain('refresh_now');
-  });
-
-  it('returns ok when no public domains are configured', async () => {
-    state.config = { reverseProxy: { hosts: [] } };
-    const result = await checkDomainExternalReachability();
-    expect(result.status).toBe('ok');
-    expect(result.items).toBeUndefined();
+    const r = await checkDomainExternalReachability();
+    expect(r.items).toHaveLength(1);
+    expect(r.items![0].detail).toMatch(/ANotWorking/);
+    expect(r.items![0].detail).toMatch(/port 80 unreachable/);
   });
 });
 
-describe('refresh_now action', () => {
-  it('runs the matching health check and reports the result', async () => {
-    state.runOutcome = { status: 'ok', message: '' };
+describe('refresh_now action (DoH)', () => {
+  it('runs the dns_routing check and reports matched=true', async () => {
+    state.runOutcome = {
+      status: 'ok',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+    };
     const r = await dispatchProbeAction({
       probeId: 'domain_external_reachability',
-      actionId: 'refresh_now',
-      node: 'Local',
+      actionId: 'refresh_now', node: 'Local',
       itemId: 'one.example.com',
     });
-    expect(r.ok).toBe(true);
-    expect(r.message).toMatch(/reachable/);
     expect(state.runCallCount).toBe(1);
-  });
-
-  it('reports problem count when the check finds issues', async () => {
-    const payload = JSON.stringify({
-      problems: [
-        { name: 'A', explanation: 'a', severity: 'warning' },
-        { name: 'B', explanation: 'b', severity: 'warning' },
-      ],
-      submissionUrl: null,
-    });
-    state.runOutcome = { status: 'ok', message: `letsdebug:${payload}` };
-    const r = await dispatchProbeAction({
-      probeId: 'domain_external_reachability',
-      actionId: 'refresh_now',
-      node: 'Local',
-      itemId: 'one.example.com',
-    });
     expect(r.ok).toBe(true);
-    expect(r.message).toMatch(/2 problem/);
-  });
-
-  it('surfaces transport errors and still refreshes the UI', async () => {
-    state.runOutcome = { status: 'fail', message: 'letsdebug error: timeout' };
-    const r = await dispatchProbeAction({
-      probeId: 'domain_external_reachability',
-      actionId: 'refresh_now',
-      node: 'Local',
-      itemId: 'one.example.com',
-    });
-    expect(r.ok).toBe(false);
-    expect(r.message).toMatch(/timeout/);
+    expect(r.message).toMatch(/matches your gateway/);
     expect(r.refresh).toBe(true);
   });
 
-  it('returns ok:false when no domain is supplied', async () => {
+  it('reports ok:false when DNS does not match', async () => {
+    state.runOutcome = {
+      status: 'fail',
+      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
+    };
     const r = await dispatchProbeAction({
       probeId: 'domain_external_reachability',
-      actionId: 'refresh_now',
-      node: 'Local',
+      actionId: 'refresh_now', node: 'Local',
+      itemId: 'one.example.com',
     });
     expect(r.ok).toBe(false);
-    expect(r.message).toMatch(/No domain/);
+    expect(r.message).toMatch(/198\.51\.100\.7/);
   });
 
-  it('returns ok:false when the check does not exist', async () => {
-    state.checks = []; // no checks at all
+  it('reports ok:false when the matching check does not exist', async () => {
+    state.checks = state.checks.filter(c => c.id !== 'dns_routing:one.example.com');
     const r = await dispatchProbeAction({
       probeId: 'domain_external_reachability',
-      actionId: 'refresh_now',
-      node: 'Local',
-      itemId: 'missing.example.com',
+      actionId: 'refresh_now', node: 'Local',
+      itemId: 'one.example.com',
     });
     expect(r.ok).toBe(false);
-    expect(r.message).toMatch(/No external-reachability check/);
+    expect(r.message).toMatch(/No DNS routing check found/);
   });
 });
 
-describe('formatRelativeAge', () => {
-  const { formatRelativeAge } = _internalsForTesting;
-  const NOW2 = Date.UTC(2026, 4, 14, 12, 0, 0);
-  it('renders "just now" for <30s', () => {
-    expect(formatRelativeAge(NOW2 - 5_000, NOW2)).toBe('just now');
+describe('run_letsdebug action', () => {
+  it('invokes letsdebug client and saves the result', async () => {
+    state.letsdebugResult = { problems: [], submissionUrl: 'https://letsdebug.net/one.example.com/99' };
+    const r = await dispatchProbeAction({
+      probeId: 'domain_external_reachability',
+      actionId: 'run_letsdebug', node: 'Local',
+      itemId: 'one.example.com',
+    });
+    expect(state.letsdebugCalls).toEqual(['one.example.com']);
+    expect(r.ok).toBe(true);
+    expect(r.message).toMatch(/passed letsdebug/);
+    const saved = state.results.get('letsdebug:one.example.com');
+    expect(saved).toBeDefined();
+    expect(saved!.message).toMatch(/^letsdebug:/);
   });
-  it('renders seconds for <60s', () => {
-    expect(formatRelativeAge(NOW2 - 45_000, NOW2)).toBe('45 s ago');
+
+  it('surfaces a friendly 429 message when letsdebug rate-limits', async () => {
+    state.letsdebugError = new Error('letsdebug submission HTTP 429');
+    const r = await dispatchProbeAction({
+      probeId: 'domain_external_reachability',
+      actionId: 'run_letsdebug', node: 'Local',
+      itemId: 'one.example.com',
+    });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/rate-limited/);
+    // Saved as a transport-error result so the row shows "last run failed".
+    expect(state.results.get('letsdebug:one.example.com')?.status).toBe('fail');
   });
-  it('renders minutes for <1h', () => {
-    expect(formatRelativeAge(NOW2 - 12 * 60_000, NOW2)).toBe('12 min ago');
+});
+
+describe('_internalsForTesting', () => {
+  it('decodes dns_routing payload', () => {
+    const p = _internalsForTesting.decodeDnsRouting(
+      dnsRoutingPayload({ expected: '1.1.1.1', resolved: ['1.1.1.1'], matched: true }),
+    );
+    expect(p?.matched).toBe(true);
+    expect(p?.expected).toBe('1.1.1.1');
   });
-  it('renders hours for <24h', () => {
-    expect(formatRelativeAge(NOW2 - 5 * 60 * 60_000, NOW2)).toBe('5 h ago');
-  });
-  it('renders days otherwise', () => {
-    expect(formatRelativeAge(NOW2 - 3 * 24 * 60 * 60_000, NOW2)).toBe('3 d ago');
+
+  it('returns null for a plaintext message', () => {
+    expect(_internalsForTesting.decodeDnsRouting('connect ETIMEDOUT')).toBeNull();
   });
 });

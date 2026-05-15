@@ -17,7 +17,15 @@ export type CheckType =
   | 'lan_ip_drift'
   | 'npm_auth'
   | 'cert_expiry'
-  | 'cert_request_failure';
+  | 'cert_request_failure'
+  // DoH-based external view that replaces the continuous letsdebug
+  // sweep. Cheap enough to run every 15 min (no third-party rate
+  // limits — Cloudflare's 1.1.1.1 DoH absorbs household-grade traffic
+  // without complaint). Surfaces "domain A record matches my known
+  // public IP". For the full taxonomy (CAA, port-80 sim, etc.) the
+  // operator triggers an on-demand letsdebug run from the diagnose
+  // row's action button.
+  | 'dns_routing';
 
 export interface CheckConfig {
   id: string;

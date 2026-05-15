@@ -19,7 +19,7 @@ vi.mock('@/lib/agent/manager', () => ({
   agentManager: { ensureAgent: vi.fn() },
 }));
 vi.mock('@/lib/health/domainChecks', () => ({ syncDomainChecks: vi.fn() }));
-vi.mock('@/lib/health/letsdebugChecks', () => ({ syncLetsdebugChecks: vi.fn() }));
+vi.mock('@/lib/health/dnsRoutingChecks', () => ({ syncDnsRoutingChecks: vi.fn() }));
 
 import { getConfig, updateConfig } from '@/lib/config';
 import {

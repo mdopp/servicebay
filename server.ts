@@ -595,18 +595,18 @@ app.prepare().then(() => {
       }
     })();
 
-    // Per-public-domain letsdebug health checks (4 h interval).
-    // Phase 2 of #483: the periodic sweep that used to live inside
-    // the diagnose probe now runs through the regular health-check
-    // scheduler. This call creates one `letsdebug:<domain>` check
-    // per public proxy host on boot — the file watcher picks them
-    // up and schedules them like any other check.
+    // Per-public-domain DNS routing health checks (15 min interval).
+    // Replaces the old continuous letsdebug sweep (#letsdebug-429) —
+    // uses Cloudflare DoH for a free, rate-limit-free "does my domain
+    // still point at me?" signal. Boot-time sync creates a
+    // `dns_routing:<domain>` check per public proxy host AND cleans
+    // up any legacy `letsdebug:<domain>` checks from prior versions.
     (async () => {
       try {
-        const { syncLetsdebugChecks } = await import('./src/lib/health/letsdebugChecks');
-        await syncLetsdebugChecks();
+        const { syncDnsRoutingChecks } = await import('./src/lib/health/dnsRoutingChecks');
+        await syncDnsRoutingChecks();
       } catch (err) {
-        logger.warn('Server', `Letsdebug-check sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn('Server', `DNS-routing sync failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
 

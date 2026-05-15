@@ -1,42 +1,24 @@
 /**
- * `domain_external_reachability` probe — surfaces what letsdebug.net
- * sees from the internet's view of every public-exposure domain
- * (DNS, port-80 reachability, ACME readiness).
+ * `domain_external_reachability` probe — surfaces the external view
+ * of every public-exposure domain. Composed of two layers:
  *
- * Phase 2 of the diagnose / health-check rework (#483): this probe
- * is now a **thin reader** over the health-check subsystem. The
- * actual probing is a `letsdebug`-type health check (4 h interval),
- * managed by `letsdebugChecks.ts` and run by `health/runner.ts`.
- * Result persistence, scheduling, socket broadcast, and rate-limit
- * tolerance all live there — this file just joins the latest
- * results into the diagnose narrative + handles the per-row
- * "Refresh now" action.
+ *   1. **Continuous: DoH-based DNS routing** (the `dns_routing` health
+ *      check). Cheap, free, no third-party rate limits — answers
+ *      "does public DNS resolve this domain to my known public IP?"
+ *      every 15 min via Cloudflare 1.1.1.1.
+ *   2. **On-demand: letsdebug.net** (`run_letsdebug` action below).
+ *      The full taxonomy — CAA records, port-80 HTTP-01 simulation,
+ *      DNSSEC drift, ACME readiness — for when DNS looks right but
+ *      something else is wrong. The operator clicks the button per
+ *      domain; results are saved as a transient `letsdebug:<domain>`
+ *      result so the row reads "letsdebug last ran X ago".
  *
- * ## Row rendering rules
- *
- *   - HealthStore has no result for `letsdebug:<domain>` yet
- *     → "⏳ First check pending — runs within a few seconds of boot
- *        or right after a new public domain is added."
- *   - `status='ok'` + empty message
- *     → row is omitted from the items list (healthy, no signal).
- *   - `status='ok' | 'fail'` + `letsdebug:<json>` payload
- *     → parse, render top problem + Report URL + Last checked Xago.
- *   - `status='fail'` + plaintext message (transport error / 429)
- *     → render "letsdebug probe could not run automatically" + the
- *       manual letsdebug URL so the operator can submit by hand.
- *
- * ## Refresh model
- *
- * Two layers:
- *
- *   1. **Scheduled check** (4 h interval) — fires automatically once
- *      a check exists, no operator action needed. The health-check
- *      file watcher re-schedules whenever proxy hosts change.
- *
- *   2. **Per-row `refresh_now` action** — operator clicks, the
- *      dispatcher runs the matching health check synchronously
- *      (bypasses the next-tick wait) and the UI re-fetches diagnose
- *      so the row reflects the new state without a second click.
+ * History: the probe used to drive a continuous `letsdebug:<domain>`
+ * check on a 4 h timer. letsdebug rate-limits by source IP and most
+ * household NAT pools share traffic with other servicebay instances,
+ * so the 4 h sweep 429'd in practice. This rewrite moves continuous
+ * monitoring onto DoH and keeps letsdebug as the deep-diagnostic
+ * affordance.
  */
 
 import { getConfig } from '@/lib/config';
@@ -47,12 +29,16 @@ import {
 } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { CheckRunner } from '@/lib/health/runner';
-import { LETSDEBUG_MESSAGE_PREFIX } from '@/lib/health/runner';
+import {
+  DNS_ROUTING_MESSAGE_PREFIX,
+  LETSDEBUG_MESSAGE_PREFIX,
+} from '@/lib/health/runner';
 import type { CheckResult } from '@/lib/health/types';
-import type { LetsdebugProblem } from '@/lib/letsdebug/client';
+import { runLetsdebugForDomain, type LetsdebugProblem } from '@/lib/letsdebug/client';
 import { logger } from '@/lib/logger';
 
 const PROBE_ID = 'domain_external_reachability';
+const DNS_ROUTING_CHECK_PREFIX = 'dns_routing:';
 const LETSDEBUG_CHECK_PREFIX = 'letsdebug:';
 
 export interface DomainExternalReachabilityResult {
@@ -66,16 +52,6 @@ function isPublicEntry(entry: { domain: string; exposure?: 'public' | 'lan' }): 
   if (entry.exposure) return entry.exposure === 'public';
   if (!entry.domain) return false;
   return !entry.domain.endsWith('.home.arpa') && !entry.domain.endsWith('.local');
-}
-
-function severityForProblem(p: LetsdebugProblem): 'warn' | 'fail' {
-  return (p.severity || '').toLowerCase() === 'fatal' ? 'fail' : 'warn';
-}
-
-function worst(a: 'ok' | 'warn' | 'fail', b: 'ok' | 'warn' | 'fail'): 'ok' | 'warn' | 'fail' {
-  if (a === 'fail' || b === 'fail') return 'fail';
-  if (a === 'warn' || b === 'warn') return 'warn';
-  return 'ok';
 }
 
 /**
@@ -95,15 +71,33 @@ function formatRelativeAge(fetchedAt: number, now: number = Date.now()): string 
   return `${days} d ago`;
 }
 
-interface DecodedPayload {
+interface DnsRoutingPayload {
+  expected: string | null;
+  resolved: string[];
+  matched: boolean;
+}
+
+function decodeDnsRouting(message: string | undefined): DnsRoutingPayload | null {
+  if (!message || !message.startsWith(DNS_ROUTING_MESSAGE_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(message.slice(DNS_ROUTING_MESSAGE_PREFIX.length));
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    return {
+      expected: typeof parsed.expected === 'string' ? parsed.expected : null,
+      resolved: Array.isArray(parsed.resolved) ? parsed.resolved.filter((s: unknown) => typeof s === 'string') : [],
+      matched: !!parsed.matched,
+    };
+  } catch {
+    return null;
+  }
+}
+
+interface LetsdebugPayload {
   problems: LetsdebugProblem[];
   submissionUrl: string | null;
 }
 
-/** Extract the structured `{ problems, submissionUrl }` payload from
- *  a result message, or null if the message isn't a letsdebug-encoded
- *  one (e.g. a plaintext transport error). */
-function decodeMessage(message: string | undefined): DecodedPayload | null {
+function decodeLetsdebug(message: string | undefined): LetsdebugPayload | null {
   if (!message || !message.startsWith(LETSDEBUG_MESSAGE_PREFIX)) return null;
   try {
     const json = message.slice(LETSDEBUG_MESSAGE_PREFIX.length);
@@ -124,9 +118,14 @@ async function listPublicDomains(): Promise<string[]> {
   return Array.from(new Set(hosts.filter(isPublicEntry).map(h => h.domain)));
 }
 
+function worst(a: 'ok' | 'warn' | 'fail', b: 'ok' | 'warn' | 'fail'): 'ok' | 'warn' | 'fail' {
+  if (a === 'fail' || b === 'fail') return 'fail';
+  if (a === 'warn' || b === 'warn') return 'warn';
+  return 'ok';
+}
+
 export async function checkDomainExternalReachability(): Promise<DomainExternalReachabilityResult> {
   const publicDomains = await listPublicDomains();
-
   if (publicDomains.length === 0) {
     return {
       status: 'ok',
@@ -141,57 +140,98 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
   let pendingCount = 0;
 
   for (const domain of publicDomains) {
-    const manualUrl = `https://letsdebug.net/?domain=${encodeURIComponent(domain)}&method=http-01`;
-    const checkId = `${LETSDEBUG_CHECK_PREFIX}${domain}`;
-    const result: CheckResult | null = HealthStore.getLastResult(checkId);
-    if (!result) {
-      // No result yet — the check exists (boot-time sync creates it)
-      // but its 4 h timer hasn't fired or the first tick is in
-      // flight. The operator can click "Refresh now" to skip the
-      // wait.
+    const dnsResult: CheckResult | null = HealthStore.getLastResult(`${DNS_ROUTING_CHECK_PREFIX}${domain}`);
+    const letsdebugResult: CheckResult | null = HealthStore.getLastResult(`${LETSDEBUG_CHECK_PREFIX}${domain}`);
+
+    // First-check pending — the dns_routing tick hasn't fired yet.
+    if (!dnsResult) {
       pendingCount++;
       items.push({
         id: domain,
         label: domain,
-        detail: `⏳ First check pending — runs within a few seconds of boot. Manual: ${manualUrl}`,
+        detail: '⏳ First check pending — runs within ~15 min of boot. Click Refresh now to skip the wait.',
         status: 'info',
-        actionIds: ['refresh_now'],
+        actionIds: ['refresh_now', 'run_letsdebug'],
       });
       continue;
     }
-    const ageSuffix = ` · Last checked ${formatRelativeAge(Date.parse(result.timestamp))}`;
-    const payload = decodeMessage(result.message);
-    if (!payload) {
-      // status='fail' with a plaintext message → transport error.
-      // status='ok' with no message → healthy, omit row.
-      if (result.status === 'ok' && !result.message) continue;
+
+    const dnsAge = ` · Last checked ${formatRelativeAge(Date.parse(dnsResult.timestamp))}`;
+    const dnsPayload = decodeDnsRouting(dnsResult.message);
+
+    // dns_routing transport error → plaintext message, no payload. Surface as info row.
+    if (!dnsPayload && dnsResult.status === 'fail') {
+      pendingCount++;
       items.push({
         id: domain,
         label: domain,
-        detail: `letsdebug probe could not run automatically (${(result.message ?? 'unknown error').slice(0, 120)}). Open manually: ${manualUrl}${ageSuffix}`,
+        detail: `DNS check could not run (${(dnsResult.message ?? 'unknown error').slice(0, 120)})${dnsAge}`,
         status: 'info',
-        actionIds: ['refresh_now'],
+        actionIds: ['refresh_now', 'run_letsdebug'],
       });
       continue;
     }
-    if (payload.problems.length === 0) continue; // healthy with no payload — omit
-    const itemStatus = payload.problems.some(p => severityForProblem(p) === 'fail') ? 'fail' : 'warn';
-    overall = worst(overall, itemStatus);
-    if (itemStatus === 'fail') failedCount++; else warnCount++;
-    const top = payload.problems[0];
+
+    // No payload + ok status → unknown public IP, nothing useful to compare.
+    if (!dnsPayload) continue;
+
+    // Compose the per-row narrative.
+    let rowStatus: 'ok' | 'warn' | 'fail';
+    let rowDetail: string;
+
+    if (dnsPayload.expected === null) {
+      // gateway.publicIp not known yet — say what we resolved, don't shout.
+      rowStatus = 'ok';
+      rowDetail = `Resolves externally to ${dnsPayload.resolved.join(', ') || '(no A record)'} — public IP not yet known to compare against${dnsAge}`;
+    } else if (dnsPayload.resolved.length === 0) {
+      rowStatus = 'fail';
+      rowDetail = `Public DNS returned no A record — domain doesn't resolve from the internet${dnsAge}`;
+    } else if (dnsPayload.matched) {
+      rowStatus = 'ok';
+      rowDetail = `Public DNS → ${dnsPayload.expected} (matches your gateway)${dnsAge}`;
+    } else {
+      rowStatus = 'fail';
+      rowDetail = `Public DNS → ${dnsPayload.resolved.join(', ')} but your gateway IP is ${dnsPayload.expected}. Update the DNS A record at your registrar${dnsAge}`;
+    }
+
+    // Append letsdebug summary line when the operator has run one.
+    if (letsdebugResult) {
+      const ldAge = formatRelativeAge(Date.parse(letsdebugResult.timestamp));
+      const ldPayload = decodeLetsdebug(letsdebugResult.message);
+      if (ldPayload) {
+        if (ldPayload.problems.length === 0) {
+          rowDetail += `\nLetsdebug (${ldAge}): no problems`;
+        } else {
+          const top = ldPayload.problems[0];
+          rowDetail += `\nLetsdebug (${ldAge}): ${top.name || 'problem'} — ${(top.explanation || '').slice(0, 160)}`;
+          if (ldPayload.submissionUrl) rowDetail += ` · ${ldPayload.submissionUrl}`;
+          // Letsdebug result escalates row status if DNS said ok.
+          const ldStatus: 'warn' | 'fail' = ldPayload.problems.some(p => (p.severity || '').toLowerCase() === 'fatal') ? 'fail' : 'warn';
+          if (rowStatus === 'ok') rowStatus = ldStatus;
+        }
+      } else if (letsdebugResult.status === 'fail') {
+        rowDetail += `\nLetsdebug last run failed: ${(letsdebugResult.message ?? '').slice(0, 120)}`;
+      }
+    }
+
+    // Skip healthy rows from the items list so the probe collapses to a happy summary.
+    if (rowStatus === 'ok' && dnsPayload.matched) continue;
+
+    if (rowStatus === 'fail') failedCount++; else warnCount++;
+    overall = worst(overall, rowStatus);
     items.push({
       id: domain,
       label: domain,
-      detail: `${top.name || 'problem'}: ${(top.explanation || '').slice(0, 200)}${payload.submissionUrl ? ` · Report: ${payload.submissionUrl}` : ''}${ageSuffix}`,
-      status: itemStatus,
-      actionIds: ['refresh_now'],
+      detail: rowDetail,
+      status: rowStatus,
+      actionIds: ['refresh_now', 'run_letsdebug'],
     });
   }
 
   if (overall === 'ok' && pendingCount === 0) {
     return {
       status: 'ok',
-      detail: `${publicDomains.length} public domain${publicDomains.length === 1 ? '' : 's'} reachable from the internet.`,
+      detail: `${publicDomains.length} public domain${publicDomains.length === 1 ? '' : 's'} resolving to your public IP.`,
     };
   }
 
@@ -203,60 +243,98 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
   return {
     status: pendingCount > 0 && overall === 'ok' ? 'info' : overall,
     detail: `${parts.join(' · ')} of ${publicDomains.length} public domain${publicDomains.length === 1 ? '' : 's'}.`,
-    hint: 'Every public domain runs an external reachability check every 4 h via letsdebug.net. The result lives in the health-check subsystem (Settings → Health) — this row is a join into that data. Click "Refresh now" on any row to bypass the wait and re-probe immediately.',
+    hint: 'DNS routing is checked every 15 min via Cloudflare DoH (no rate limits). For the full ACME / port-80 / CAA taxonomy click "Run letsdebug" on a row — that hits letsdebug.net once on demand.',
     items,
   };
 }
 
 /**
- * `refresh_now` — operator-initiated single-domain re-probe. Runs
- * the matching letsdebug health check synchronously (10-30 s) and
- * saves the result so the UI's auto-refresh picks up the new state
- * without a second click. Bypasses the next-tick wait — there's no
- * separate rate-limit backoff in Phase 2 because the 4 h interval
- * already keeps us well under letsdebug's threshold.
+ * `refresh_now` — operator-initiated single-domain re-probe of the
+ * DoH-based `dns_routing` check. Synchronous (sub-second under normal
+ * conditions); the UI's auto-refresh picks up the new state without
+ * a second click.
  */
 async function refreshNow({ itemId }: { itemId?: string }): Promise<ProbeActionResult> {
   if (!itemId) {
     return { ok: false, message: 'No domain supplied — nothing to refresh.', refresh: false };
   }
-  const checkId = `${LETSDEBUG_CHECK_PREFIX}${itemId}`;
+  const checkId = `${DNS_ROUTING_CHECK_PREFIX}${itemId}`;
   const check = HealthStore.getChecks().find(c => c.id === checkId);
   if (!check) {
     return {
       ok: false,
-      message: `No external-reachability check found for ${itemId}. It should appear automatically — try reloading.`,
+      message: `No DNS routing check found for ${itemId}. It should appear automatically — try reloading.`,
       refresh: true,
     };
   }
   try {
     const result = await CheckRunner.run(check);
-    if (result.status === 'fail' && !result.message?.startsWith(LETSDEBUG_MESSAGE_PREFIX)) {
-      // Plaintext message → transport error (429, timeout, parse fail).
-      logger.warn(
-        'diagnose:domain_external_reachability',
-        `refresh_now for ${itemId} failed: ${result.message}`,
-      );
-      return {
-        ok: false,
-        message: `letsdebug couldn't be reached for ${itemId}: ${(result.message ?? 'unknown').slice(0, 160)}`,
-        refresh: true,
-      };
+    const payload = decodeDnsRouting(result.message);
+    if (!payload) {
+      return { ok: false, message: `DNS check failed for ${itemId}: ${(result.message ?? '').slice(0, 160)}`, refresh: true };
     }
-    const payload = result.message ? decodeMessage(result.message) : null;
-    const problemCount = payload?.problems.length ?? 0;
     return {
-      ok: true,
-      message: problemCount === 0
-        ? `${itemId} is reachable from the internet.`
-        : `${itemId} has ${problemCount} problem(s) — see the row for details.`,
+      ok: result.status === 'ok' && payload.matched,
+      message: payload.matched
+        ? `${itemId} resolves to ${payload.expected} — matches your gateway.`
+        : payload.resolved.length === 0
+          ? `${itemId} doesn't resolve from public DNS.`
+          : `${itemId} resolves to ${payload.resolved.join(', ')} (expected ${payload.expected}).`,
       refresh: true,
     };
   } catch (e) {
+    return { ok: false, message: `Refresh failed: ${e instanceof Error ? e.message : String(e)}`, refresh: false };
+  }
+}
+
+/**
+ * `run_letsdebug` — operator-initiated deep external diagnostic via
+ * letsdebug.net. Slow (10-30 s) and rate-limited upstream, which is
+ * exactly why it's behind a button instead of a recurring sweep.
+ * Stores the result under a transient `letsdebug:<domain>` key so
+ * the row can render "Letsdebug X ago" alongside the continuous DNS
+ * answer until the next refresh overwrites it.
+ */
+async function runLetsdebug({ itemId }: { itemId?: string }): Promise<ProbeActionResult> {
+  if (!itemId) {
+    return { ok: false, message: 'No domain supplied — nothing to check.', refresh: false };
+  }
+  const checkId = `${LETSDEBUG_CHECK_PREFIX}${itemId}`;
+  try {
+    const result = await runLetsdebugForDomain(itemId);
+    const payload = JSON.stringify({
+      problems: result.problems,
+      submissionUrl: result.submissionUrl,
+    });
+    const hasFatal = result.problems.some(p => (p.severity || '').toLowerCase() === 'fatal');
+    HealthStore.saveResult({
+      check_id: checkId,
+      timestamp: new Date().toISOString(),
+      status: hasFatal ? 'fail' : 'ok',
+      message: `${LETSDEBUG_MESSAGE_PREFIX}${payload}`,
+    });
+    return {
+      ok: result.problems.length === 0,
+      message: result.problems.length === 0
+        ? `${itemId} passed letsdebug — no problems.`
+        : `${itemId} has ${result.problems.length} problem(s) — see the row for details.`,
+      refresh: true,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.warn('diagnose:run_letsdebug', `${itemId}: ${msg}`);
+    HealthStore.saveResult({
+      check_id: checkId,
+      timestamp: new Date().toISOString(),
+      status: 'fail',
+      message: msg,
+    });
     return {
       ok: false,
-      message: `Refresh failed: ${e instanceof Error ? e.message : String(e)}`,
-      refresh: false,
+      message: msg.includes('429')
+        ? `letsdebug rate-limited this request. Try again in a few minutes, or use https://letsdebug.net/?domain=${encodeURIComponent(itemId)}&method=http-01 directly.`
+        : `letsdebug failed for ${itemId}: ${msg.slice(0, 160)}`,
+      refresh: true,
     };
   }
 }
@@ -265,19 +343,30 @@ registerProbeAction(
   PROBE_ID,
   {
     id: 'refresh_now',
-    label: 'Refresh now',
+    label: 'Refresh DNS check',
     description:
-      'Re-runs letsdebug for this domain immediately, skipping the wait for the next scheduled check. Takes 10-30 s — the row updates in place when the probe finishes.',
+      'Re-runs the DoH-based DNS routing check for this domain immediately. Free, no rate limits — completes in well under a second.',
   },
   refreshNow,
 );
 
+registerProbeAction(
+  PROBE_ID,
+  {
+    id: 'run_letsdebug',
+    label: 'Run letsdebug',
+    description:
+      'Deep external diagnostic via letsdebug.net — checks DNS + port 80 + CAA + ACME readiness. Slow (10-30 s) and rate-limited upstream, so use sparingly when DNS routing looks correct but something else is wrong.',
+  },
+  runLetsdebug,
+);
+
 /**
  * Test-only helpers. Exported for the unit test; production code
- * must not call these (decodeMessage is internal, formatRelativeAge
- * is a presentation helper).
+ * must not call these.
  */
 export const _internalsForTesting = {
   formatRelativeAge,
-  decodeMessage,
+  decodeDnsRouting,
+  decodeLetsdebug,
 };
