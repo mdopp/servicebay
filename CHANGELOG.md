@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.9](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.8...servicebay-v3.40.9) (2026-05-15)
+
+
+### Bug Fixes
+
+* **diagnose:** replace continuous letsdebug with DoH-based DNS routing ([#532](https://github.com/mdopp/servicebay/issues/532)) ([dac2cb6](https://github.com/mdopp/servicebay/commit/dac2cb6b1f42b0e65ed412abfd02f1f69a9ccbec))
+
 ## [3.40.8](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.7...servicebay-v3.40.8) (2026-05-15)
 
 
