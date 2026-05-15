@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.2...servicebay-v3.40.3) (2026-05-15)
+
+
+### Bug Fixes
+
+* **installer:** hide Clean install on single-template re-deploys ([#520](https://github.com/mdopp/servicebay/issues/520)) ([c1c8f03](https://github.com/mdopp/servicebay/commit/c1c8f03e1f0593465d8375c409337498bb5119bc))
+
 ## [3.40.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.1...servicebay-v3.40.2) (2026-05-15)
 
 
