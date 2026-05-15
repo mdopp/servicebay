@@ -40,7 +40,7 @@ import { buildCredentialsManifest, type Credential } from '@/lib/stackInstall/cr
 import { provisionPortalWithRetries } from '@/lib/stackInstall/portalProvision';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
-import { getConfig } from '@/lib/config';
+import { getConfig, saveConfig } from '@/lib/config';
 import {
   appendLog,
   getJob,
@@ -668,6 +668,29 @@ async function runJob(jobId: string): Promise<void> {
       totalCount: input.items.filter(i => i.checked).length,
     },
   });
+
+  // The CoreOS first-boot installer writes `stackSetupPending: true`
+  // to flag "we set the box up, but no stack services are deployed
+  // yet". The OnboardingWizard / Sidebar / /setup page all read that
+  // flag. Historically it was only cleared by the operator clicking
+  // "Finish" on /setup — so even after one or many successful
+  // installs the flag stayed armed, the wizard's auto-open kept
+  // suppressing (terminal-job + stackSetupPending branch), and a
+  // re-install required clicking Finish on the *old* setup view
+  // first. Now: a successful install proves the operator has stack
+  // services. Clear the flag inline so the next re-install flow
+  // doesn't get gated by stale onboarding state.
+  try {
+    const cfg = await getConfig();
+    if (cfg.stackSetupPending) {
+      delete cfg.stackSetupPending;
+      await saveConfig(cfg);
+    }
+  } catch (e) {
+    // Best-effort: a config write failure shouldn't fail the install
+    // job itself — the operator can always click Finish manually.
+    await log(jobId, `(note) couldn't clear stackSetupPending: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /** Public entry-point. Fires off `runJob` as a detached task — caller
