@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.39.0...servicebay-v3.40.0) (2026-05-15)
+
+
+### Features
+
+* **services:** one-click Update & restart from upgrade banner (closes [#510](https://github.com/mdopp/servicebay/issues/510)) ([#514](https://github.com/mdopp/servicebay/issues/514)) ([46303fa](https://github.com/mdopp/servicebay/commit/46303fa87e5ff5845c9faf61b0f6fdff0912291b))
+
 ## [3.39.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.38.0...servicebay-v3.39.0) (2026-05-15)
 
 
