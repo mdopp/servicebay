@@ -316,9 +316,9 @@ async function realHealthDeps(): Promise<HealthDeps> {
     syncChecks: async () => {
       try {
         const { syncDomainChecks } = await import('../health/domainChecks');
-        const { syncLetsdebugChecks } = await import('../health/letsdebugChecks');
+        const { syncDnsRoutingChecks } = await import('../health/dnsRoutingChecks');
         await syncDomainChecks();
-        await syncLetsdebugChecks();
+        await syncDnsRoutingChecks();
       } catch (e) {
         logger.warn('migrate-to-public', `Health-check resync failed: ${e instanceof Error ? e.message : String(e)}`);
       }
