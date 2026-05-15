@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.41.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.9...servicebay-v3.41.0) (2026-05-15)
+
+
+### Features
+
+* **certs:** archive NPM data on reset + auto-restore on fresh install ([#534](https://github.com/mdopp/servicebay/issues/534)) ([bdf7395](https://github.com/mdopp/servicebay/commit/bdf73954dac3ccd567f63d6d4c06d49ca9bf999b))
+
 ## [3.40.9](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.8...servicebay-v3.40.9) (2026-05-15)
 
 
