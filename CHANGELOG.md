@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.39.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.38.0...servicebay-v3.39.0) (2026-05-15)
+
+
+### Features
+
+* **services:** surface pending template upgrades on the Services page (partial [#510](https://github.com/mdopp/servicebay/issues/510)) ([#512](https://github.com/mdopp/servicebay/issues/512)) ([127a715](https://github.com/mdopp/servicebay/commit/127a7150f1cbff3a17ac09f523e0c129e749439b))
+
 ## [3.38.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.37.0...servicebay-v3.38.0) (2026-05-14)
 
 
