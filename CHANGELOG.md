@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.1...servicebay-v3.40.2) (2026-05-15)
+
+
+### Bug Fixes
+
+* **installer:** pass deployed services as dep satisfiers on single-template re-deploy ([#518](https://github.com/mdopp/servicebay/issues/518)) ([f952dd9](https://github.com/mdopp/servicebay/commit/f952dd92d24b1b9732d95ad08c6794c3ce35a8df))
+
 ## [3.40.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.0...servicebay-v3.40.1) (2026-05-15)
 
 
