@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.6](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.5...servicebay-v3.40.6) (2026-05-15)
+
+
+### Bug Fixes
+
+* post-install polish (link scheme, device discovery, sidecar ports) ([#526](https://github.com/mdopp/servicebay/issues/526)) ([6cde339](https://github.com/mdopp/servicebay/commit/6cde33992b17bacde5daed07f3b01f1e239b9d9d))
+
 ## [3.40.5](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.4...servicebay-v3.40.5) (2026-05-15)
 
 
