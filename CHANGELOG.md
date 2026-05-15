@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.7](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.6...servicebay-v3.40.7) (2026-05-15)
+
+
+### Bug Fixes
+
+* **setup:** drop stale jobId pin so /setup picks up a new re-deploy ([#528](https://github.com/mdopp/servicebay/issues/528)) ([f378397](https://github.com/mdopp/servicebay/commit/f378397947bbd3a92b6dd2494013fdbf199e4649))
+
 ## [3.40.6](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.5...servicebay-v3.40.6) (2026-05-15)
 
 
