@@ -6,7 +6,7 @@ metadata:
     app: home-assistant
   annotations:
     servicebay.label: "Home Assistant"
-    servicebay.schema-version: "5"
+    servicebay.schema-version: "6"
     # Home Assistant is reached at home.<domain> via nginx, and (when
     # the operator enables it) authenticates via Authelia.
     servicebay.dependencies: "nginx,auth"
@@ -45,6 +45,14 @@ spec:
       value: "{{ZWAVE_SECRET}}"
     - name: ZWAVEJS_EXTERNAL_CONFIG
       value: "/usr/src/app/store/.config-db"
+    # Pre-seeded by post-deploy on first install: pins serverEnabled=true
+    # and serverPort=3001 so the HA → zwave-js websocket binds off port
+    # 3000 (which NPM's internal admin backend occupies on the same host
+    # under hostNetwork). zwave-js-ui re-reads this file on every boot;
+    # overrides anything the operator may set in the UI's "Home Assistant"
+    # tab, so deleting the file is the escape hatch for manual control.
+    - name: ZWAVE_EXTERNAL_SETTINGS
+      value: "/usr/src/app/store/sb-external-settings.json"
     volumeMounts:
     - mountPath: /usr/src/app/store
       name: zwave-config

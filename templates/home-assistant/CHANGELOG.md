@@ -10,6 +10,35 @@ operator's installed schema-version and the current one and surfaces
 them in the re-deploy dialog. Each `(breaking)` section needs an
 explicit acknowledgement before the deploy can proceed.
 
+## v6
+
+**Z-Wave JS WS server pinned via `ZWAVE_EXTERNAL_SETTINGS`.**
+
+Z-Wave JS UI needs its HA WebSocket server enabled and bound to a
+port other than 3000 — port 3000 on the host is occupied by NPM's
+internal admin backend (NPM uses `hostNetwork`, so its container's
+`127.0.0.1:3000` listener takes the host's `127.0.0.1:3000`). The
+previous post-deploy patched `gateway.wsServer` / `gateway.wsServerPort`
+via the REST API; those field names don't exist in zwave-js-ui, so
+the patch silently did nothing and operators had to enable the
+server in the UI by hand.
+
+This release adds a `ZWAVE_EXTERNAL_SETTINGS` env var on the
+`zwave-js` container pointing at
+`/usr/src/app/store/sb-external-settings.json`. The post-deploy
+seeds that file with `serverEnabled: true`, `serverPort: 3001`,
+`serverHost: "0.0.0.0"` on first install and restarts the zwave-js
+container so the values take effect immediately. Subsequent deploys
+detect the file and skip; if you'd rather manage the WS server
+yourself via the UI, set a `zwave.serverPort` in
+`/usr/src/app/store/settings.json` *before* re-deploying and the
+post-deploy will skip writing the override.
+
+Required action: nothing. Existing installs continue to work — if
+you'd previously configured the WS server manually in the UI, that
+config wins because the seeding step honours your existing
+`settings.json`.
+
 ## v5 (breaking) — #493
 
 **OIDC SSO via the `auth_oidc` custom component.**

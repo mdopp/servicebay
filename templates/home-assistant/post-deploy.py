@@ -12,11 +12,15 @@ Responsibilities:
      mode 0666. The rule fires on every device detection event, survives
      reboots and re-installs on any machine.
 
-  2. **Z-Wave JS WS port** — configures the Z-Wave JS UI Home Assistant
-     WebSocket server to port 3001 (NPM's admin UI occupies port 3000 on the
-     same hostNetwork pod, so 3000 is always taken). Waits for Z-Wave JS UI to
-     be up on port 8091, then PATCHes gateway.wsServer + gateway.wsServerPort
-     via the REST API. Idempotent — skips if already correct.
+  2. **Z-Wave JS WS port** — seeds the JSON file pointed at by the
+     `ZWAVE_EXTERNAL_SETTINGS` env var (declared in template.yml) so
+     zwave-js-ui binds its HA WebSocket server on port 3001. Port 3000 is
+     unavailable on the host because NPM uses hostNetwork and its internal
+     admin backend binds 127.0.0.1:3000 — even though the host nginx in the
+     same container only exposes 80/443/81 externally. The external-settings
+     file is read by zwave-js-ui on every boot; we only write it when it's
+     missing AND the operator has not already configured a serverPort via
+     the UI (stored in settings.json under `zwave.serverPort`).
 
   3. **auth_oidc custom component** — downloads the pinned release tarball
      of the `auth_oidc` HA custom component (#493) and drops it into
@@ -44,10 +48,9 @@ import urllib.request
 UDEV_RULE_DIR = "/etc/udev/rules.d"
 UDEV_RULE_FILE = "99-zwave.rules"
 
-ZWAVEJS_API = "http://127.0.0.1:8091"
 ZWAVEJS_WS_PORT = 3001
-ZWAVEJS_READY_TIMEOUT = 60.0
-ZWAVEJS_READY_INTERVAL = 2.0
+ZWAVEJS_WS_HOST = "0.0.0.0"
+ZWAVE_CONTAINER_NAME = "home-assistant-zwave-js"
 REQUEST_TIMEOUT = 10.0
 
 # auth_oidc install
@@ -119,63 +122,80 @@ def _reload_udev(zwave_device: str) -> None:
 
 # ── Z-Wave JS WS port ──────────────────────────────────────────────────────────
 
-def _request(method: str, url: str, payload: object | None = None) -> tuple[int, object | None]:
-    body = json.dumps(payload).encode() if payload is not None else None
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+def _zwave_store_dir() -> str:
+    """Host-side path of the zwave-js container's /usr/src/app/store
+    mount. Must stay in sync with the volume declaration in
+    template.yml."""
+    base = env("DATA_DIR", "/mnt/data")
+    return os.path.join(base, "home-assistant", "zwave-js")
+
+
+def _zwave_external_settings_path() -> str:
+    # Filename must match the ZWAVE_EXTERNAL_SETTINGS env var in template.yml.
+    return os.path.join(_zwave_store_dir(), "sb-external-settings.json")
+
+
+def _zwave_ui_has_serverport() -> bool:
+    """True iff settings.json (written by zwave-js-ui when the operator
+    saves anything in Settings → Home Assistant) already pins a
+    serverPort. We honour that and leave the external-settings file
+    unwritten — external settings would otherwise silently override
+    the operator's choice on every boot."""
+    in_store = os.path.join(_zwave_store_dir(), "settings.json")
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            raw = resp.read().decode()
-            return resp.status, json.loads(raw) if raw else None
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read().decode())
-        except Exception:  # pylint: disable=broad-except
-            return e.code, None
-    except Exception:  # pylint: disable=broad-except
-        return 0, None
+        with open(in_store, encoding="utf-8") as fh:
+            stored = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(stored.get("zwave", {}).get("serverPort"))
 
 
-def _wait_zwavejs_ready() -> bool:
-    deadline = time.time() + ZWAVEJS_READY_TIMEOUT
-    while time.time() < deadline:
-        code, _ = _request("GET", f"{ZWAVEJS_API}/api/health")
-        if code == 200:
-            return True
-        time.sleep(ZWAVEJS_READY_INTERVAL)
-    return False
+def ensure_zwave_external_settings() -> bool:
+    """Seed the JSON file zwave-js-ui reads via ZWAVE_EXTERNAL_SETTINGS.
+    Returns True iff a file was just written (caller restarts the
+    zwave-js container so the new values take effect immediately —
+    without that, the operator would only see the change on the next
+    reboot)."""
+    path = _zwave_external_settings_path()
+    if os.path.isfile(path):
+        log(f"   {os.path.basename(path)} already in place — leaving untouched.")
+        return False
+    if _zwave_ui_has_serverport():
+        log("   Existing UI-configured serverPort found in settings.json — not overriding.")
+        return False
+
+    desired = {
+        "serverEnabled": True,
+        "serverPort": ZWAVEJS_WS_PORT,
+        "serverHost": ZWAVEJS_WS_HOST,
+    }
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(desired, fh, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        log(f"   ⚠️ Could not write {path}: {exc}. Z-Wave JS will need WS server enabled in the UI.")
+        return False
+    log(f"   wrote {path}: serverEnabled=true, serverPort={ZWAVEJS_WS_PORT}, serverHost={ZWAVEJS_WS_HOST}")
+    return True
 
 
-def configure_ws_port() -> None:
-    log(f"   Waiting for Z-Wave JS UI (port 8091)...")
-    if not _wait_zwavejs_ready():
-        log("   ⚠️  Z-Wave JS UI not ready in time.")
-        log(f"   Set WS port manually: Settings → Home Assistant → WS Server Port → {ZWAVEJS_WS_PORT}")
-        return
-
-    code, data = _request("GET", f"{ZWAVEJS_API}/api/settings")
-    if code != 200 or not isinstance(data, dict):
-        log(f"   ⚠️  GET /api/settings failed (HTTP {code}). Set WS port manually.")
-        return
-
-    # The settings object may be top-level or wrapped in a "settings" key.
-    settings = data.get("settings", data)
-    gateway = settings.get("gateway", {})
-
-    if gateway.get("wsServer") is True and gateway.get("wsServerPort") == ZWAVEJS_WS_PORT:
-        log(f"   Z-Wave JS WS server already on port {ZWAVEJS_WS_PORT} — skipping.")
-        return
-
-    gateway["wsServer"] = True
-    gateway["wsServerPort"] = ZWAVEJS_WS_PORT
-    settings["gateway"] = gateway
-
-    post_body = {"settings": settings} if "settings" in data else settings
-    code2, _ = _request("POST", f"{ZWAVEJS_API}/api/settings", post_body)
-    if code2 in (200, 201, 204):
-        log(f"   ✅ Z-Wave JS WS server set to port {ZWAVEJS_WS_PORT}.")
-    else:
-        log(f"   ⚠️  POST /api/settings failed (HTTP {code2}). Set WS port manually.")
+def restart_zwave_js() -> None:
+    try:
+        result = subprocess.run(
+            ["podman", "container", "restart", ZWAVE_CONTAINER_NAME],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            log(f"   restarted {ZWAVE_CONTAINER_NAME} so the new settings take effect.")
+        else:
+            log(f"   ⚠️ podman restart {ZWAVE_CONTAINER_NAME} exited {result.returncode}: {result.stderr.strip()}")
+            log("   New WS settings will load on next pod restart.")
+    except (subprocess.SubprocessError, OSError) as exc:
+        log(f"   ⚠️ Could not restart zwave-js: {exc}. Settings will apply on next pod restart.")
 
 
 # ── auth_oidc custom component (#493) ────────────────────────────────────────
@@ -399,12 +419,13 @@ def main() -> int:
         log(f"Z-Wave stick configured ({zwave_device}) — ensuring host udev permissions...")
         ensure_udev_rule(zwave_device)
         log("✅ Z-Wave JS will have device access after each system boot.")
-
-        log(f"Configuring Z-Wave JS WS server port ({ZWAVEJS_WS_PORT})...")
-        configure_ws_port()
-        log(f"✅ Connect Home Assistant to Z-Wave JS: ws://localhost:{ZWAVEJS_WS_PORT}")
     else:
-        log("No ZWAVE_DEVICE set — skipping udev rule and WS port config.")
+        log("No ZWAVE_DEVICE set — skipping udev rule.")
+
+    log(f"Seeding Z-Wave JS WS server config (port {ZWAVEJS_WS_PORT})...")
+    if ensure_zwave_external_settings():
+        restart_zwave_js()
+    log(f"✅ Connect Home Assistant to Z-Wave JS: ws://localhost:{ZWAVEJS_WS_PORT}")
 
     configure_auth_oidc()
 
