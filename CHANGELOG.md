@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.5](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.4...servicebay-v3.40.5) (2026-05-15)
+
+
+### Bug Fixes
+
+* **home-assistant:** pin auth_oidc default to v1.1.0 + quiet zwave restart race ([#524](https://github.com/mdopp/servicebay/issues/524)) ([b4e76c7](https://github.com/mdopp/servicebay/commit/b4e76c7f017ac7a4ecfd9e150d74dd57436533b6))
+
 ## [3.40.4](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.3...servicebay-v3.40.4) (2026-05-15)
 
 
