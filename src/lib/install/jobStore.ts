@@ -25,6 +25,14 @@ import type { Credential } from '@/lib/stackInstall/credentialsManifest';
 
 const JOBS_DIR = path.join(DATA_DIR, 'install-jobs');
 
+/** Captured at module load — effectively the current server process's
+ *  start time. Used by /api/install/status to distinguish a terminal
+ *  job that belongs to this server instance from one that's left over
+ *  on disk from a previous boot (e.g. after an OS re-install where
+ *  the install-jobs dir survives on the RAID mount but the jobs it
+ *  contains reference a long-gone server process). */
+export const PROCESS_STARTED_AT = new Date().toISOString();
+
 /** Pruning threshold — keep this many most-recent jobs on disk so the
  *  /api/install/status route can fetch a finished job's logs after the
  *  Done step lands. Older jobs get cleaned up on each createJob call. */

@@ -179,7 +179,12 @@ def main() -> int:
     # themselves; with it, the per-user accounts are ready for a
     # password-set right after deploy.
     samba_sync_url = f"{sb_api}/api/system/file-share/samba/users"
-    sync_status, sync_body = post_json(samba_sync_url, {}, timeout=30)
+    # 90s budget: the endpoint does up to 20s of LLDAP GraphQL (auth +
+    # query, both 10s timeouts) followed by a podman exec per user. On
+    # a freshly-installed stack LLDAP is often still warming up — a
+    # 30s outer cap routinely tripped before the GraphQL response
+    # landed and the wizard surfaced a misleading "HTTP 0" line.
+    sync_status, sync_body = post_json(samba_sync_url, {}, timeout=90)
     if sync_status == 200 and sync_body and sync_body.get("ok"):
         users = sync_body.get("users") or []
         added = sync_body.get("added") or []

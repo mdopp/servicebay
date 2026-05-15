@@ -581,6 +581,45 @@ async function runJob(jobId: string): Promise<void> {
             command: `mkdir -p "${dataDir}" && tar xzf "${archivePath}" -C "${dataDir}"`,
           });
           await log(jobId, `✅ Cert archive restored. NPM will pick up existing certs on first start.`);
+
+          // The archive contains NPM's sqlite DB, which has the previous
+          // admin credentials bcrypt-hashed inside. NPM ignores
+          // INITIAL_ADMIN_* env vars when the user table is already
+          // seeded, so the wizard's fresh random NGINX_ADMIN_PASSWORD
+          // would never authenticate — bootstrap times out, all cert
+          // requests cascade-fail with "defaults_rejected". Saved creds
+          // from config.reverseProxy.npm survived the reset (it only
+          // wipes service data, not config), so override the wizard's
+          // generated values with them to match what's actually in the
+          // restored DB.
+          const savedEmail = cfg.reverseProxy?.npm?.email;
+          const savedPassword = cfg.reverseProxy?.npm?.password;
+          if (savedEmail && savedPassword) {
+            // Mutate `input.variables` in-place. The deploy loop reads
+            // through the same reference (see line 268), so the
+            // override propagates without persisting back to the job
+            // state. `updateJob` deliberately disallows input updates
+            // to keep the wizard's submitted intent immutable on disk
+            // — a server restart mid-install transitions the job to
+            // `crashed` anyway, and the operator restarts from the
+            // wizard with fresh state.
+            let overrode = false;
+            for (const v of input.variables) {
+              if (v.name === 'NGINX_ADMIN_EMAIL' && v.value !== savedEmail) {
+                v.value = savedEmail;
+                overrode = true;
+              }
+              if (v.name === 'NGINX_ADMIN_PASSWORD' && v.value !== savedPassword) {
+                v.value = savedPassword;
+                overrode = true;
+              }
+            }
+            if (overrode) {
+              await log(jobId, `🔑 Reusing NPM admin (${savedEmail}) from before the reset so the restored DB stays accessible.`);
+            }
+          } else {
+            await log(jobId, `(note) cert archive restored, but no NPM admin password saved in config — bootstrap will likely prompt for the existing password.`);
+          }
         }
       }
     } catch (e) {
