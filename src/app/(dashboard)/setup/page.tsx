@@ -353,6 +353,17 @@ export default function SetupPage() {
           setLogs(prev => prev + data.logs);
           logsOffsetRef.current = data.logsOffset;
         }
+        // Once the pinned job hits a terminal phase, drop the pin so
+        // the next tick fetches with no jobId — that lets the API
+        // hand back a freshly-started install when the operator kicks
+        // off a re-deploy. Without this /setup stays glued to the
+        // previous finished job and never re-discovers the new one.
+        // If nothing newer is running we'll just re-pin to the same
+        // terminal job on the next tick; the id-change branch above
+        // won't fire (same id), so the log buffer is preserved.
+        if (data.job && TERMINAL_PHASES.includes(data.job.phase)) {
+          lastJobIdRef.current = null;
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }

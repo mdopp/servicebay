@@ -35,13 +35,16 @@ export async function GET(request: Request) {
     const sinceBytes = parseInt(url.searchParams.get('logsSince') || '0', 10);
 
     let job = jobId ? await getJob(jobId) : await getCurrentJob();
-    const jobIsActive = !!job; // getCurrentJob only returns active phases
     if (!job && !jobId) {
       // Fall through to the most-recent job so /setup + Sidebar can
       // still show the "click Finish" state after the operator
       // minimised the wizard.
       job = await getLatestJob();
     }
+    // Derive from phase, not existence — querying a specific terminal
+    // jobId returns a job in `done`/`error`/`aborted`/`crashed`, which
+    // is NOT active. /setup keys its pinning logic off this flag.
+    const jobIsActive = !!job && (job.phase === 'running' || job.phase === 'needs_credentials');
 
     const config = await getConfig();
     const stackSetupPending = config.stackSetupPending === true;
