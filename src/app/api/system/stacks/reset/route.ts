@@ -84,6 +84,33 @@ export async function POST(request: NextRequest) {
 
     const agent = await agentManager.ensureAgent(nodeName);
 
+    // Snapshot NPM's data dir (cert files + DB) to a path that survives
+    // the wipe below. Without this, every clean install burns a fresh
+    // batch of Let's Encrypt issuances and we run head-first into the
+    // "5 duplicate certs / 168h" rate limit after a few re-deploys.
+    // Archive path is intentionally under /mnt/data/servicebay/cert-archive/
+    // — neither this endpoint nor any other code path wipes that.
+    let certArchive: string | null = null;
+    try {
+      const npmDir = `${dataDir}/nginx-proxy-manager`;
+      const probe = await agent.sendCommand('exec', {
+        command: `[ -d "${npmDir}/letsencrypt/live" ] && find "${npmDir}/letsencrypt/live" -mindepth 1 -maxdepth 1 -type d | head -1 || true`,
+      });
+      const hasCerts = !!(probe.stdout || '').trim();
+      if (hasCerts) {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const archivePath = `/mnt/data/servicebay/cert-archive/npm-${ts}.tar.gz`;
+        await agent.sendCommand('exec', {
+          command: `mkdir -p /mnt/data/servicebay/cert-archive && tar czf "${archivePath}" -C "${dataDir}" nginx-proxy-manager`,
+        });
+        certArchive = archivePath;
+        logger.info('StackReset', `Archived NPM data to ${archivePath} before wipe.`);
+      }
+    } catch (e) {
+      // Best-effort — a failed archive shouldn't block the reset.
+      logger.warn('StackReset', `Cert archive failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     // Wipe stack data dir contents (but keep the dir itself).
     await agent.sendCommand('exec', {
       command: `find ${dataDir} -mindepth 1 -maxdepth 1 -exec rm -rf {} +`,
@@ -102,6 +129,7 @@ export async function POST(request: NextRequest) {
       deleted,
       failed,
       protected: Array.from(PROTECTED),
+      certArchive,
     });
   } catch (error) {
     return apiError(error, { tag: 'api:system:stacks:reset', status: 500 });

@@ -548,6 +548,48 @@ async function runJob(jobId: string): Promise<void> {
 
   const ctx: DeployContext = { jobId, input, scriptCredentials, deployed: [] };
 
+  // Cert archive restore — runs once before the deploy loop when nginx
+  // is in the install set AND the volume on disk is empty (fresh
+  // install). The reset endpoint snapshots NPM's data dir to
+  // /mnt/data/servicebay/cert-archive/ before wiping; restoring the
+  // most-recent snapshot here lets NPM come up with the previous
+  // certificate + sqlite-DB state intact, so re-issuance is skipped
+  // and we don't burn LE's 5-duplicate-certs-per-168h limit.
+  if (selected.some(s => s.name === 'nginx' && !s.alreadyInstalled)) {
+    try {
+      const { agentManager } = await import('@/lib/agent/manager');
+      const { getConfig } = await import('@/lib/config');
+      const cfg = await getConfig();
+      const dataDir = cfg.templateSettings?.DATA_DIR || '/mnt/data/stacks';
+      const node = input.node || 'Local';
+      const agent = await agentManager.ensureAgent(node);
+      // Only restore on a fresh NPM dir — leave existing cert state
+      // alone so a re-deploy that isn't preceded by a reset doesn't
+      // clobber whatever the operator did since the last archive.
+      const probe = await agent.sendCommand('exec', {
+        command: `[ -d "${dataDir}/nginx-proxy-manager" ] && find "${dataDir}/nginx-proxy-manager" -mindepth 1 -maxdepth 1 | head -1 || true`,
+      });
+      const npmDirHasContent = !!(probe.stdout || '').trim();
+      if (!npmDirHasContent) {
+        const newest = await agent.sendCommand('exec', {
+          command: `ls -1t /mnt/data/servicebay/cert-archive/npm-*.tar.gz 2>/dev/null | head -1 || true`,
+        });
+        const archivePath = (newest.stdout || '').trim();
+        if (archivePath) {
+          await log(jobId, `🔒 Restoring NPM cert archive from ${archivePath} — skipping re-issuance against Let's Encrypt.`);
+          await agent.sendCommand('exec', {
+            command: `mkdir -p "${dataDir}" && tar xzf "${archivePath}" -C "${dataDir}"`,
+          });
+          await log(jobId, `✅ Cert archive restored. NPM will pick up existing certs on first start.`);
+        }
+      }
+    } catch (e) {
+      // Best-effort — a restore failure shouldn't block the install.
+      // Operator can always click "Retry Let's Encrypt" in NPM later.
+      await log(jobId, `(note) cert archive restore skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   // Deploy loop.
   for (const item of selected) {
     if (abortFlags.get(jobId)) {
