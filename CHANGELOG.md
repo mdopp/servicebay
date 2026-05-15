@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.0...servicebay-v3.40.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **installer:** auto-select node on single-node installs ([#516](https://github.com/mdopp/servicebay/issues/516)) ([106d1a3](https://github.com/mdopp/servicebay/commit/106d1a31227a79463cc52fe08e67062460fb7d6d))
+
 ## [3.40.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.39.0...servicebay-v3.40.0) (2026-05-15)
 
 
