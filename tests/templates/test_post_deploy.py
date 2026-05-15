@@ -430,6 +430,74 @@ class HomeAssistantScript(unittest.TestCase):
         self.assertIn("No ZWAVE_DEVICE set", out)
         self.assertIn("HA did not respond", out)
 
+    def test_seeds_zwave_external_settings_on_first_install(self):
+        """`ensure_zwave_external_settings` must write the file with the
+        correct keys + values when the store dir is empty, and skip
+        when an operator-managed settings.json already pins a
+        serverPort. The container restart is best-effort and must not
+        crash the run even when podman isn't on PATH."""
+        import tempfile
+        import urllib.error
+        import urllib.request
+
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"HA_OIDC_AUTH_VERSION": "v0.6.0", "DATA_DIR": tmp}
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen",
+                                      lambda *_a, **_kw: (_ for _ in ()).throw(urllib.error.URLError("nope"))), \
+                    mock.patch.object(m, "HA_READY_TIMEOUT", 0.01), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("Seeding Z-Wave JS WS server config", out)
+            self.assertIn("serverPort=3001", out)
+
+            seeded = os.path.join(tmp, "home-assistant", "zwave-js", "sb-external-settings.json")
+            self.assertTrue(os.path.isfile(seeded), f"expected file at {seeded}")
+            with open(seeded) as fh:
+                data = json.load(fh)
+            self.assertEqual(data, {"serverEnabled": True, "serverPort": 3001, "serverHost": "0.0.0.0"})
+
+            # Second run: file exists, must not be touched + must log skip.
+            mtime_before = os.path.getmtime(seeded)
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen",
+                                      lambda *_a, **_kw: (_ for _ in ()).throw(urllib.error.URLError("nope"))), \
+                    mock.patch.object(m, "HA_READY_TIMEOUT", 0.01), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc2, out2 = capture_main(m)
+            self.assertEqual(rc2, 0)
+            self.assertIn("already in place", out2)
+            self.assertEqual(os.path.getmtime(seeded), mtime_before)
+
+    def test_skips_external_settings_when_ui_serverport_already_set(self):
+        """If settings.json already has a `zwave.serverPort`, the operator
+        chose it via the UI — don't override silently."""
+        import tempfile
+        import urllib.error
+        import urllib.request
+
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            zwave_dir = os.path.join(tmp, "home-assistant", "zwave-js")
+            os.makedirs(zwave_dir, exist_ok=True)
+            with open(os.path.join(zwave_dir, "settings.json"), "w") as fh:
+                json.dump({"zwave": {"serverPort": 8888}}, fh)
+
+            env = {"HA_OIDC_AUTH_VERSION": "v0.6.0", "DATA_DIR": tmp}
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen",
+                                      lambda *_a, **_kw: (_ for _ in ()).throw(urllib.error.URLError("nope"))), \
+                    mock.patch.object(m, "HA_READY_TIMEOUT", 0.01), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("UI-configured serverPort", out)
+            self.assertFalse(os.path.isfile(os.path.join(zwave_dir, "sb-external-settings.json")))
+
     def test_already_installed_skips_download(self):
         """When the on-disk version stamp matches HA_OIDC_AUTH_VERSION,
         the script must skip the tarball download entirely. We assert
