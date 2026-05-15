@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.8](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.7...servicebay-v3.40.8) (2026-05-15)
+
+
+### Bug Fixes
+
+* **install:** auto-clear stackSetupPending on successful install ([#530](https://github.com/mdopp/servicebay/issues/530)) ([ec46cf0](https://github.com/mdopp/servicebay/commit/ec46cf0d8eab0f0897cfb378a8f83c711669e945))
+
 ## [3.40.7](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.6...servicebay-v3.40.7) (2026-05-15)
 
 
