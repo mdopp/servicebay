@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.40.4](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.3...servicebay-v3.40.4) (2026-05-15)
+
+
+### Bug Fixes
+
+* **home-assistant:** pin zwave-js WS port via ZWAVE_EXTERNAL_SETTINGS ([#522](https://github.com/mdopp/servicebay/issues/522)) ([95a7ee0](https://github.com/mdopp/servicebay/commit/95a7ee01e7f987a3b9aad9c4e4385ef613bcbeaa))
+
 ## [3.40.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.40.2...servicebay-v3.40.3) (2026-05-15)
 
 
