@@ -664,6 +664,23 @@ ${SERVICEBAY_SSH_PRIV}
               os.replace(tmp, OLD)
               os.remove(NEW)
               print(f"setup-config-merge: merged config.iso.json into config.json (preserved {kept} runtime path(s)).")
+
+              # Wipe install-jobs from the previous OS instance. The
+              # job files survive a re-install (RAID mount), and the
+              # OnboardingWizard's auto-open gates on "no terminal
+              # job exists" — stale jobs from before the re-install
+              # suppress the wizard. They're also useless after a re-
+              # install: their logs reference container IDs and paths
+              # that no longer exist. Drop them so the wizard fires
+              # cleanly on first boot.
+              import shutil
+              jobs_dir = os.path.join(DIR, "install-jobs")
+              if os.path.isdir(jobs_dir):
+                  try:
+                      shutil.rmtree(jobs_dir)
+                      print("setup-config-merge: cleared stale install-jobs from previous OS install.")
+                  except OSError as e:
+                      print(f"setup-config-merge: could not clear install-jobs: {e}", file=sys.stderr)
               return 0
 
           if __name__ == "__main__":

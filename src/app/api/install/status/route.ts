@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentJob, getJob, getLatestJob, readLog } from '@/lib/install/jobStore';
+import { getCurrentJob, getJob, getLatestJob, PROCESS_STARTED_AT, readLog } from '@/lib/install/jobStore';
 import { getConfig } from '@/lib/config';
 import { apiError } from '@/lib/api/errors';
 
@@ -19,6 +19,9 @@ export const dynamic = 'force-dynamic';
  *     jobIsActive:   <true while phase is running|needs_credentials>
  *     stackSetupPending: <config flag — true while the operator hasn't
  *                    clicked Finish on /setup>
+ *     serverStartedAt: <ISO timestamp the current server process booted at;
+ *                    lets the wizard tell a job from *this* boot apart from
+ *                    one left over on disk after an OS re-install>
  *     logs / logsOffset
  *   }
  *
@@ -54,6 +57,7 @@ export async function GET(request: Request) {
         job: null,
         jobIsActive: false,
         stackSetupPending,
+        serverStartedAt: PROCESS_STARTED_AT,
         logs: '',
         logsOffset: 0,
       });
@@ -64,6 +68,7 @@ export async function GET(request: Request) {
       job,
       jobIsActive,
       stackSetupPending,
+      serverStartedAt: PROCESS_STARTED_AT,
       logs: logs.content,
       logsOffset: logs.nextOffset,
     });

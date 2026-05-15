@@ -371,11 +371,26 @@ export default function OnboardingWizard() {
       checkOnboardingStatus(),
       fetch('/api/install/status', { cache: 'no-store' })
         .then(r => r.ok ? r.json() : null)
-        .then(d => d as { job?: { phase?: string } | null; jobIsActive?: boolean } | null)
+        .then(d => d as {
+          job?: { phase?: string; startedAt?: string } | null;
+          jobIsActive?: boolean;
+          serverStartedAt?: string;
+        } | null)
         .catch(() => null),
     ]).then(([s, installStatus]) => {
       setStatus(s);
-      const hasTerminalJob = !!installStatus?.job && installStatus.jobIsActive === false;
+      // A terminal job suppresses the wizard auto-open only when it
+      // belongs to the current server process. After an OS re-install
+      // the install-jobs dir survives on the RAID mount, so a stale
+      // terminal job from the previous boot would otherwise gate the
+      // wizard off and the operator never gets prompted to deploy
+      // their stack. setup-config-merge.py wipes the dir post-merge;
+      // this client-side check is defense-in-depth.
+      const job = installStatus?.job;
+      const jobIsFromThisBoot = !!job?.startedAt
+        && !!installStatus?.serverStartedAt
+        && job.startedAt >= installStatus.serverStartedAt;
+      const hasTerminalJob = !!job && installStatus?.jobIsActive === false && jobIsFromThisBoot;
 
       // If the server reports an active install job and we're NOT
       // already tracking it locally, auto-attach to it. This is the

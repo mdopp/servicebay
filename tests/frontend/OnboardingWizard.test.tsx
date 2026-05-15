@@ -294,6 +294,52 @@ describe('OnboardingWizard', () => {
             expect(screen.queryByText(/Welcome to ServiceBay/i)).toBeNull();
         });
 
+        // Defense-in-depth for the OS-reinstall path: install-jobs/ on
+        // the RAID mount survives an OS re-flash, so /api/install/status
+        // can return a terminal job that pre-dates the new server's boot.
+        // That job must NOT suppress the wizard's auto-open — the operator
+        // is on a freshly re-installed box and needs to be prompted to
+        // deploy their stack.
+        it('still auto-opens when the latest terminal job pre-dates this server boot', async () => {
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+            const serverStartedAt = new Date('2026-05-15T10:00:00Z').toISOString();
+            const oldJobStartedAt = new Date('2026-05-01T08:00:00Z').toISOString();
+            (global.fetch as any).mockImplementation((url: string) => {
+                if (url.includes('/api/install/status')) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                        job: {
+                            id: 'old-job',
+                            source: 'wizard',
+                            phase: 'done',
+                            startedAt: oldJobStartedAt,
+                            updatedAt: oldJobStartedAt,
+                            endedAt: oldJobStartedAt,
+                            progress: { currentItem: null, deployedNames: [], totalCount: 0 },
+                            credentialsManifest: [],
+                        },
+                        jobIsActive: false,
+                        stackSetupPending: true,
+                        serverStartedAt,
+                        logs: '',
+                        logsOffset: 0,
+                    }) });
+                }
+                if (url.includes('/api/services')) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+                }
+                if (url.includes('/api/system/nginx/status')) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ installed: false }) });
+                }
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+            });
+
+            render(<OnboardingWizard />);
+
+            await waitFor(() => {
+                expect(screen.getAllByText(/ServiceBay Setup/i).length).toBeGreaterThan(0);
+            });
+        });
+
         it('renders an honest step counter even in stacks-only mode', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
 
