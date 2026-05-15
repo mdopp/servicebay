@@ -32,6 +32,11 @@ interface InstallerModalProps {
 interface SelectItem {
   name: string;
   checked: boolean;
+  /** Marks a service that's already deployed. Carried through to the
+   *  install runner's topo-sort as a dependency satisfier so a
+   *  single-template re-deploy (banner upgrade button) doesn't get
+   *  rejected for "depends on nginx, auth, which are not selected". */
+  alreadyInstalled?: boolean;
 }
 
 export default function InstallerModal({ template, readme, isOpen, onClose }: InstallerModalProps) {
@@ -68,19 +73,49 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     if (!isOpen) return;
     controller.reset();
     setDeviceOptions({});
-    if (template.type === 'stack') {
-      const parsed: SelectItem[] = [];
-      const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)/;
-      for (const line of readme.split('\n')) {
-        const match = line.match(regex);
-        if (match) {
-          parsed.push({ name: match[2].trim(), checked: match[1].toLowerCase() === 'x' });
+
+    let cancelled = false;
+    void (async () => {
+      // Existing services seed `alreadyInstalled` so the runner's
+      // dependency topo-sort recognises pre-deployed services like
+      // nginx and auth as satisfiers.
+      let existing = new Set<string>();
+      try {
+        const res = await fetch('/api/services');
+        if (res.ok) {
+          const services: { name?: string }[] = await res.json();
+          existing = new Set(
+            services
+              .map(s => s.name?.toLowerCase())
+              .filter((n): n is string => !!n),
+          );
         }
+      } catch { /* best-effort */ }
+      if (cancelled) return;
+
+      if (template.type === 'stack') {
+        const parsed: SelectItem[] = [];
+        const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)/;
+        for (const line of readme.split('\n')) {
+          const match = line.match(regex);
+          if (match) {
+            parsed.push({ name: match[2].trim(), checked: match[1].toLowerCase() === 'x' });
+          }
+        }
+        setSelectItems(parsed);
+      } else {
+        const targetLower = template.name.toLowerCase();
+        const items: SelectItem[] = [{ name: template.name, checked: true }];
+        for (const name of existing) {
+          if (name !== targetLower) {
+            items.push({ name, checked: false, alreadyInstalled: true });
+          }
+        }
+        setSelectItems(items);
       }
-      setSelectItems(parsed);
-    } else {
-      setSelectItems([{ name: template.name, checked: true }]);
-    }
+    })();
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, template, readme]);
 
@@ -118,7 +153,9 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     setAdvancing(true);
     try {
       await controller.startConfigure(
-        selectItems.filter(i => i.checked).map(i => ({ name: i.name, checked: true })),
+        selectItems
+          .filter(i => i.checked || i.alreadyInstalled)
+          .map(i => ({ name: i.name, checked: i.checked, alreadyInstalled: i.alreadyInstalled })),
         {},
       );
     } finally {
