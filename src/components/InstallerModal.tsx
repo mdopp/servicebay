@@ -54,7 +54,13 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   const allUpgradesReady = checkedItems.length > 0 && checkedItems.every(i => upgradeReady[i.name] === true);
 
   useEffect(() => {
-    getNodes().then(setNodes);
+    getNodes().then(ns => {
+      setNodes(ns);
+      // Single-node installs: the picker in StackInstallFlow hides itself
+      // when nodes.length <= 1, so without this the Install button would
+      // stay disabled forever (selectedNode never gets set).
+      if (ns.length === 1) setSelectedNode(ns[0].Name);
+    });
   }, []);
 
   // Reset state when re-opening (modal persists in the DOM between opens).
