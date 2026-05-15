@@ -57,6 +57,11 @@ interface ConfigureFormProps extends CommonProps {
   beforeVariables?: React.ReactNode;
   /** Rendered below the variable form. */
   afterVariables?: React.ReactNode;
+  /** Show the Clean install toggle. Defaults to true. Single-template
+   *  re-deploys (e.g. the upgrade banner) pass false because the
+   *  reset action is system-wide — wiping every stack to update one
+   *  service is never what the operator meant. */
+  allowCleanInstall?: boolean;
 }
 
 export function StackInstallConfigureForm({
@@ -68,6 +73,7 @@ export function StackInstallConfigureForm({
   deviceContext,
   beforeVariables,
   afterVariables,
+  allowCleanInstall = true,
 }: ConfigureFormProps) {
   const { variables, cleanInstall, cleanInstallConfirm, setCleanInstall, setCleanInstallConfirm, setVariableValue, setVariableExposure } = controller;
   const groups = groupVariablesByTemplate(variables).filter(g => g.key !== '_global');
@@ -91,37 +97,39 @@ export function StackInstallConfigureForm({
         </div>
       )}
 
-      <div className="border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3">
-        <label className="flex items-start gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={cleanInstall}
-            onChange={(e) => { setCleanInstall(e.target.checked); if (!e.target.checked) setCleanInstallConfirm(''); }}
-            className="mt-0.5"
-          />
-          <div className="text-sm text-amber-900 dark:text-amber-100">
-            <strong>Clean install</strong> — wipe existing service data first.
-            <p className="text-xs text-amber-800 dark:text-amber-200/80 mt-1">
-              Stops every stack service, deletes their Quadlet definitions and the contents of <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. ServiceBay itself is not affected.
-            </p>
-          </div>
-        </label>
-        {cleanInstall && (
-          <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
-            <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
-              Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
-            </label>
+      {allowCleanInstall && (
+        <div className="border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3">
+          <label className="flex items-start gap-2 cursor-pointer">
             <input
-              type="text"
-              value={cleanInstallConfirm}
-              onChange={(e) => setCleanInstallConfirm(e.target.value)}
-              className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
-              placeholder="RESET"
-              autoComplete="off"
+              type="checkbox"
+              checked={cleanInstall}
+              onChange={(e) => { setCleanInstall(e.target.checked); if (!e.target.checked) setCleanInstallConfirm(''); }}
+              className="mt-0.5"
             />
-          </div>
-        )}
-      </div>
+            <div className="text-sm text-amber-900 dark:text-amber-100">
+              <strong>Clean install</strong> — wipe existing service data first.
+              <p className="text-xs text-amber-800 dark:text-amber-200/80 mt-1">
+                Stops every stack service, deletes their Quadlet definitions and the contents of <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. ServiceBay itself is not affected.
+              </p>
+            </div>
+          </label>
+          {cleanInstall && (
+            <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
+              <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
+                Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
+              </label>
+              <input
+                type="text"
+                value={cleanInstallConfirm}
+                onChange={(e) => setCleanInstallConfirm(e.target.value)}
+                className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
+                placeholder="RESET"
+                autoComplete="off"
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {beforeVariables}
 
@@ -372,6 +380,7 @@ export default function StackInstallFlow(props: {
   afterVariables?: React.ReactNode;
   beforeLog?: React.ReactNode;
   doneFooter?: React.ReactNode;
+  allowCleanInstall?: boolean;
 }) {
   const phase = props.controller.phase;
   if (phase === 'configure') {
@@ -385,6 +394,7 @@ export default function StackInstallFlow(props: {
         deviceContext={props.deviceContext}
         beforeVariables={props.beforeVariables}
         afterVariables={props.afterVariables}
+        allowCleanInstall={props.allowCleanInstall}
       />
     );
   }

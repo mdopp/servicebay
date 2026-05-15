@@ -235,6 +235,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
               nodes={nodes}
               selectedNode={selectedNode}
               onSelectNode={setSelectedNode}
+              allowCleanInstall={template.type === 'stack'}
               deviceContext={{
                 deviceOptions,
                 loadingDevices,
