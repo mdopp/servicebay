@@ -574,6 +574,27 @@ export default function ServicesPlugin() {
         setShowRegistryOverlay(false);
     }, []);
 
+    // Domains the reverse proxy actually serves over HTTPS. LAN-only
+    // routes (NPM access-list locked, no LE cert provisioned) only
+    // listen on port 80; linking them via https:// gives the operator
+    // a TLS error on first click. Cross-reference each verifiedDomain
+    // against the proxy's per-server `listen` array — a "443 ssl" entry
+    // means the domain has an active TLS listener.
+    const httpsDomains = useMemo(() => {
+        const out = new Set<string>();
+        type ProxyServer = { server_name?: string[]; listen?: string[] };
+        const proxyService = services.find(s =>
+            (s as ServiceViewModel & { proxyConfiguration?: { servers?: ProxyServer[] } }).proxyConfiguration?.servers,
+        ) as (ServiceViewModel & { proxyConfiguration?: { servers?: ProxyServer[] } }) | undefined;
+        const proxyServers = proxyService?.proxyConfiguration?.servers ?? [];
+        for (const srv of proxyServers) {
+            const hasTls = (srv.listen ?? []).some(l => /\b443\b.*\bssl\b|\bssl\b.*\b443\b|^443\s+ssl$/.test(l));
+            if (!hasTls) continue;
+            for (const name of srv.server_name ?? []) out.add(name.toLowerCase());
+        }
+        return out;
+    }, [services]);
+
     const ServiceCard = ({ service }: { service: ServiceViewModel }) => {
         const dedupedPorts = useMemo(() => {
             const uniquePortsMap = new Map<string, ServicePort>();
@@ -742,11 +763,16 @@ export default function ServicesPlugin() {
                                             // `localhost-nginx-proxy-manager` slip through unchanged.
                                             const bareDomain = d.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
                                             const looksLikeDomain = /\./.test(bareDomain);
+                                            // Pick the scheme NPM actually serves for this domain.
+                                            // LAN-only services have no 443 listener → linking
+                                            // them via https:// produces a TLS error on click.
+                                            const scheme = httpsDomains.has(bareDomain.toLowerCase()) ? 'https' : 'http';
+                                            const href = d.startsWith('http') ? d : `${scheme}://${d}`;
                                             return (
                                                 <span key={d} className="inline-flex items-center gap-1.5 text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded">
                                                     {looksLikeDomain && <DomainHealthDot domain={bareDomain} />}
                                                     <a
-                                                        href={d.startsWith('http') ? d : `https://${d}`}
+                                                        href={href}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
                                                         className="hover:underline"

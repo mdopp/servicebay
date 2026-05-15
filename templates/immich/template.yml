@@ -63,6 +63,11 @@ spec:
       # Pin redis to loopback so hostNetwork doesn't accidentally
       # expose it on the LAN. immich-server reaches it via 127.0.0.1.
       args: ["--bind", "127.0.0.1", "--protected-mode", "yes"]
+      # Declared so the digital twin attributes 127.0.0.1:6379 to this
+      # container — without it the diagnose ports probe flags 6379 as
+      # "unknown" even though it's the immich pod's redis sidecar.
+      ports:
+        - containerPort: 6379
 
     - name: database
       image: docker.io/tensorchord/pgvecto-rs:pg14-v0.2.0
@@ -86,6 +91,11 @@ spec:
           value: "postgres"
         - name: POSTGRES_DB
           value: "immich"
+      # Declared so the digital twin attributes 127.0.0.1:5432 to this
+      # container — without it the diagnose ports probe flags 5432 as
+      # "unknown" even though it's the immich pod's postgres sidecar.
+      ports:
+        - containerPort: 5432
       volumeMounts:
         - mountPath: /var/lib/postgresql/data
           name: pgdata
