@@ -236,6 +236,21 @@ def configure_abs_oidc(
         jwks_url = f"{issuer_url}/jwks.json"
 
     # 3. Write auth settings.
+    #
+    # `authOpenIDSubfolderForRedirectURLs` is the critical one — ABS
+    # 2.17.4 added that key and its v2.17.4 DB migration sets it to ''
+    # only for installs that ALREADY had OIDC enabled at migration
+    # time. ServiceBay's flow is install ABS first → migrations run
+    # → post-deploy enables OIDC, so the migration's "OIDC not yet
+    # enabled" branch leaves the key undefined. ABS's web frontend
+    # then reads `undefined` literally and POSTs
+    # `redirect_uri=https://books.<domain>/undefined/auth/openid/callback`
+    # to Authelia, which rightly rejects with `invalid_request`
+    # ("redirect_uri does not match any of the OAuth 2.0 Client's
+    # pre-registered redirect_uris"). Setting this to '' (empty
+    # string == no subfolder) makes the frontend build the
+    # registered URI shape (`/auth/openid/callback`). Operator-side
+    # symptom captured verbatim in templates/media/CHANGELOG.md v3.
     code, resp = request_json(
         "PATCH", f"{abs_base}/api/auth-settings",
         {
@@ -252,6 +267,7 @@ def configure_abs_oidc(
             "authOpenIDAutoRegister": True,
             "authOpenIDMatchExistingBy": "email",
             "authOpenIDTokenSigningAlgorithm": "RS256",
+            "authOpenIDSubfolderForRedirectURLs": "",
         },
         token=token,
     )

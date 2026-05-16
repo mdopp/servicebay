@@ -23,9 +23,24 @@ export const AUTHELIA_FORWARD_AUTH_SENTINEL = '__authelia_forward_auth__';
  * `{{AUTHELIA_PORT}}` so it survives the Mustache pass that turns
  * cross-template placeholders into concrete values at install time.
  *
- * Kept identical to the FileBrowser-shipped variant so the helper can
- * be back-substituted into `templates/file-share/variables.json`
- * without a behaviour change.
+ * **Authelia 4.38+ endpoint:** `/api/authz/forward-auth`. The legacy
+ * `/api/verify` was deprecated in v4.38 — Authelia 4.39 refuses to
+ * read the (Secure) session cookie when /api/verify is called over
+ * `http://` (logs: *"Target URL 'http://127.0.0.1:9091/api/verify'
+ * has an insecure scheme 'http', only the 'https' and 'wss' schemes
+ * are supported so session cookies can be transmitted securely"*).
+ * Operators saw FileBrowser bounce them to its local login form with
+ * an empty `Remote-User` header even with a valid Authelia session;
+ * root cause traced via container logs (Authelia kept logging the
+ * verify request as `user=<anonymous>`). The new endpoint takes the
+ * forwarded URL via `X-Forwarded-*` headers and is transport-aware,
+ * so the cookie is read correctly even when nginx proxies to it
+ * over http on the loopback.
+ *
+ * Also drops the explicit `error_page 401 =302` redirect — the new
+ * endpoint returns a 302 with the correct `Location: auth.<domain>`
+ * header on its own when the user isn't authenticated, so we don't
+ * need to rewrite the status code on the nginx side.
  */
 export const AUTHELIA_FORWARD_AUTH_SNIPPET = [
   'auth_request /authelia;',
@@ -34,21 +49,29 @@ export const AUTHELIA_FORWARD_AUTH_SNIPPET = [
   'auth_request_set $groups $upstream_http_remote_groups;',
   'auth_request_set $name $upstream_http_remote_name;',
   'auth_request_set $email $upstream_http_remote_email;',
+  'auth_request_set $redirect $upstream_http_location;',
   'proxy_set_header Remote-User $user;',
   'proxy_set_header Remote-Groups $groups;',
   'proxy_set_header Remote-Name $name;',
   'proxy_set_header Remote-Email $email;',
-  'error_page 401 =302 https://auth.{{PUBLIC_DOMAIN}}/?rd=$target_url;',
+  // Authelia's forward-auth endpoint already returns a Location header
+  // pointing at the auth portal with the correct rd= param; honour it
+  // verbatim. Fall back to the bare portal URL if no Location came back
+  // (e.g. transient Authelia error) so the operator at least lands
+  // somewhere they can re-authenticate.
+  'error_page 401 =302 $redirect;',
   '',
   'location = /authelia {',
   '    internal;',
-  '    proxy_pass http://127.0.0.1:{{AUTHELIA_PORT}}/api/verify;',
+  '    proxy_pass http://127.0.0.1:{{AUTHELIA_PORT}}/api/authz/forward-auth;',
   '    proxy_pass_request_body off;',
   '    proxy_set_header Content-Length "";',
-  '    proxy_set_header X-Original-URL $scheme://$http_host$request_uri;',
-  '    proxy_set_header X-Real-IP $remote_addr;',
-  '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+  '    proxy_set_header X-Forwarded-Method $request_method;',
   '    proxy_set_header X-Forwarded-Proto $scheme;',
+  '    proxy_set_header X-Forwarded-Host $http_host;',
+  '    proxy_set_header X-Forwarded-Uri $request_uri;',
+  '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+  '    proxy_set_header X-Real-IP $remote_addr;',
   '}',
 ].join('\n');
 

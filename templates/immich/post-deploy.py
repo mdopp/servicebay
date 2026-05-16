@@ -238,14 +238,24 @@ def main() -> int:
         #     `client_secret_post` is the safer default for first-time
         #     setups (won't trip basic-auth parsing on proxies).
         #   - profileSigningAlgorithm: signing algo Immich expects on
-        #     the userinfo JWT. Authelia doesn't sign userinfo by
-        #     default, but the field still has to be a non-empty
-        #     string. `RS256` matches Authelia's id_token signing.
+        #     the userinfo JWT response. Authelia does NOT sign
+        #     `/api/oidc/userinfo` by default (the response is plain
+        #     JSON, not a JWS). Earlier code set `RS256` here on the
+        #     theory that "the field has to be a non-empty string" —
+        #     that was wrong. Immich's openid-client@6.x then expects
+        #     a JWT in the response and throws
+        #     `OAUTH_JWT_USERINFO_EXPECTED` when it gets JSON
+        #     ("Failed to finish oauth" 500). `none` tells Immich
+        #     userinfo is unsigned JSON and the callback completes.
+        #     If a future operator wants signed userinfo, they
+        #     additionally need `userinfo_signed_response_alg` on
+        #     the Authelia client registration — at which point
+        #     they can flip this back to `RS256`.
         #   - roleClaim: optional claim name that maps to Immich admin
         #     role. Empty string opts out of role-based assignment —
         #     operators promote to admin manually for now.
         "tokenEndpointAuthMethod": "client_secret_post",
-        "profileSigningAlgorithm": "RS256",
+        "profileSigningAlgorithm": "none",
         "roleClaim": "",
         "mobileOverrideEnabled": False,
         "mobileRedirectUri": "",
