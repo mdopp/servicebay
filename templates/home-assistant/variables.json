@@ -36,13 +36,13 @@
   },
   "HA_OIDC_ADMIN_GROUP": {
     "type": "text",
-    "description": "LLDAP group whose members become Home Assistant admins via auth_oidc's `roles` mapping. Anyone outside this group lands as a regular user.",
-    "default": "lldap_admin"
+    "description": "LLDAP group whose members become Home Assistant admins via auth_oidc's `roles` mapping. Anyone outside this group lands as a regular user. Default matches what `src/app/api/system/lldap/seed/route.ts` actually creates (`admins`, `family`) — earlier defaults named `lldap_admin` / `lldap_strict_readonly` were aspirational and locked every fresh install out of HA with 'not in the correct group'.",
+    "default": "admins"
   },
   "HA_OIDC_USER_GROUP": {
     "type": "text",
-    "description": "LLDAP group whose members can log into Home Assistant as a non-admin user. Members of HA_OIDC_ADMIN_GROUP also pass this check automatically.",
-    "default": "lldap_strict_readonly"
+    "description": "LLDAP group whose members can log into Home Assistant as a non-admin user. Members of HA_OIDC_ADMIN_GROUP also pass this check automatically. Default matches the seeded `family` group.",
+    "default": "family"
   },
   "HA_SUBDOMAIN": {
     "type": "subdomain",
