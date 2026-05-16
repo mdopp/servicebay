@@ -90,7 +90,7 @@ describe('checkAdguardRewritesMissing', () => {
     expect(r.detail).toContain('*.dopp.cloud → 10.0.0.1');
   });
 
-  it('returns ok when every expected rewrite is present and correct', async () => {
+  it('returns ok and lists each expected rewrite when the count is small', async () => {
     state.rewrites = [
       { domain: 'dopp.cloud', answer: '192.168.1.10' },
       { domain: 'www.dopp.cloud', answer: '192.168.1.10' },
@@ -98,7 +98,12 @@ describe('checkAdguardRewritesMissing', () => {
     ];
     const r = await checkAdguardRewritesMissing();
     expect(r.status).toBe('ok');
-    expect(r.detail).toMatch(/3 portal\/wildcard rewrites in AdGuard point at 192\.168\.1\.10/);
+    // #550 polish: ≤5 entries get named explicitly so the operator
+    // sees *which* domains are mapped, not just a count.
+    expect(r.detail).toContain('3 portal/wildcard rewrites');
+    expect(r.detail).toContain('dopp.cloud → 192.168.1.10');
+    expect(r.detail).toContain('www.dopp.cloud → 192.168.1.10');
+    expect(r.detail).toContain('*.dopp.cloud → 192.168.1.10');
   });
 
   it('skips the public domain when no public domain is configured (LAN-only mode)', async () => {
@@ -110,8 +115,16 @@ describe('checkAdguardRewritesMissing', () => {
     ];
     const r = await checkAdguardRewritesMissing();
     expect(r.status).toBe('ok');
-    expect(r.detail).toMatch(/3 portal\/wildcard rewrites/);
+    expect(r.detail).toContain('3 portal/wildcard rewrites');
+    // LAN-only domains also get named individually under the 5-entry threshold.
+    expect(r.detail).toContain('home.arpa → 192.168.1.10');
   });
+
+  // Single-domain model: buildExpectedRewrites never returns more than
+  // 3 entries today, so the >5 count-only fallback in the OK message
+  // isn't exercisable end-to-end through the current API. The
+  // threshold guard is defense for future changes (when we add
+  // additional rewrite types) — code-reading review covers it.
 });
 
 describe('adguard_rewrites_missing.reprovision', () => {

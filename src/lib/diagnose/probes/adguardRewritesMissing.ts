@@ -122,11 +122,23 @@ export async function checkAdguardRewritesMissing(): Promise<AdguardRewritesMiss
   }
 
   if (missing.length === 0 && stale.length === 0) {
+    // OK-message polish (#550): when the rewrite count is small enough
+    // to scan at a glance, name them explicitly so the operator sees
+    // *which* domains are mapped — not just a count. Above ~5 entries
+    // the listing turns into noise and the count is more useful.
+    const LISTING_THRESHOLD = 5;
+    if (expected.length <= LISTING_THRESHOLD) {
+      const listing = expected.map(d => `${d} → ${lanIp}`).join(', ');
+      return {
+        status: 'ok',
+        detail: `${expected.length} portal/wildcard rewrite${
+          expected.length === 1 ? '' : 's'
+        } in AdGuard: ${listing}.`,
+      };
+    }
     return {
       status: 'ok',
-      detail: `${expected.length} portal/wildcard rewrite${
-        expected.length === 1 ? '' : 's'
-      } in AdGuard point at ${lanIp}.`,
+      detail: `${expected.length} portal/wildcard rewrites in AdGuard point at ${lanIp}.`,
     };
   }
 
