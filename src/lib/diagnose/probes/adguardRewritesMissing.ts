@@ -146,8 +146,14 @@ export async function checkAdguardRewritesMissing(): Promise<AdguardRewritesMiss
 /** Action handler — re-runs `provisionPortalRouting` end-to-end, the
  *  same code path the install wizard and the 60s-post-boot hook use.
  *  Surfaces the structured `detail` summary as `details` so the
- *  operator sees which rewrites were added vs unchanged. */
-async function reprovision(): Promise<ProbeActionResult> {
+ *  operator sees which rewrites were added vs unchanged.
+ *
+ *  Exported (not just registered) so `domain_unreachable` can mount
+ *  the same handler under its own action namespace when it diagnoses
+ *  a missing/drifted AdGuard rewrite — operator clicks the button on
+ *  the failing domain row directly, no probe-to-probe navigation.
+ */
+export async function reprovision(): Promise<ProbeActionResult> {
   try {
     const result = await provisionPortalRouting();
     if (!result.ok) {

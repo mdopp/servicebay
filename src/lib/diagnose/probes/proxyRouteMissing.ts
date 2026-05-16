@@ -72,7 +72,14 @@ async function findEntry(domain: string): Promise<ProxyHostEntry | null> {
   return hosts.find(h => h.domain === domain) ?? null;
 }
 
-async function retryCreate({
+/**
+ * Shared with `domain_unreachable` — when that probe diagnoses
+ * "proxy host not confirmed in NPM", it surfaces this same retry as
+ * an inline per-row action so the operator doesn't have to navigate.
+ * Exported (not just registered) so the sibling probe can mount it
+ * under its own action namespace.
+ */
+export async function retryCreate({
   node,
   itemId,
 }: {

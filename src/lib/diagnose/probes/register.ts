@@ -26,5 +26,6 @@ import './certExpiry';
 import './certRequestFailure';
 import './adguardRewritesMissing';
 import './domainExternalReachability';
+import './domainUnreachable';
 
 export {};
