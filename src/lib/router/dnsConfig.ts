@@ -103,6 +103,93 @@ export async function setFritzBoxDhcpDns(targetIp: string): Promise<RouterCallRe
 }
 
 /**
+ * Tell the FritzBox to use `targetIp` as its OWN upstream DNS resolver
+ * — what shows up in the FritzBox UI under "Internet → Account
+ * Information → DNS Server → Use other DNSv4 servers". Different from
+ * `setFritzBoxDhcpDns`: that one changes what the FritzBox hands out
+ * to LAN clients (DHCP option 6); this one changes what the FritzBox
+ * itself queries for upstream resolution.
+ *
+ * Use case: the operator wants to keep the FritzBox as the DHCP DNS
+ * for LAN clients (typical default, fewer client-side surprises) but
+ * route the FritzBox's own resolver through AdGuard. Both setups —
+ * "AdGuard as LAN DNS" and "FritzBox as LAN DNS, AdGuard as upstream" —
+ * achieve household-wide AdGuard filtering; this helper lets a probe
+ * action lock in the second.
+ *
+ * Tries `WANIPConnection:1` first, falls back to `WANPPPConnection:1`.
+ * The FritzBox must be configured to allow override (UI: "Use other
+ * DNSv4 servers" rather than "From provider") — otherwise the call
+ * returns HTTP 401 / 501 and we surface that as `failed` with a
+ * pointer to the UI toggle.
+ */
+export async function setFritzBoxWanDns(targetIp: string): Promise<RouterCallResult> {
+  const config = await getConfig();
+  const gateway = config.gateway;
+  if (!gateway || gateway.type !== 'fritzbox') {
+    return { result: 'no_gateway', detail: 'Gateway not configured as FritzBox in Settings → Gateway.' };
+  }
+  if (!gateway.username || !gateway.password) {
+    return {
+      result: 'no_credentials',
+      detail: 'TR-064 needs FritzBox username + password (Settings → Gateway). Without them, set the upstream DNS manually in the FritzBox UI.',
+    };
+  }
+
+  const scheme = gateway.ssl ? 'https' : 'http';
+  const port = gateway.ssl ? 49443 : 49000;
+  const auth = `Basic ${Buffer.from(`${gateway.username}:${gateway.password}`).toString('base64')}`;
+  const attempts: Array<{ serviceType: string; controlUrl: string }> = [
+    { serviceType: 'urn:dslforum-org:service:WANIPConnection:1', controlUrl: '/upnp/control/wanipconnection1' },
+    { serviceType: 'urn:dslforum-org:service:WANPPPConnection:1', controlUrl: '/upnp/control/wanpppconn1' },
+  ];
+
+  const errors: string[] = [];
+  for (const a of attempts) {
+    try {
+      const url = `${scheme}://${gateway.host}:${port}${a.controlUrl}`;
+      const body = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:SetDNSServers xmlns:u="${a.serviceType}">
+<NewDNSServers>${targetIp}</NewDNSServers>
+</u:SetDNSServers>
+</s:Body>
+</s:Envelope>`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
+          'SOAPAction': `"${a.serviceType}#SetDNSServers"`,
+          'Authorization': auth,
+        },
+        body,
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (res.ok) {
+        logger.info('router:dnsConfig', `FritzBox SetDNSServers (WAN upstream) accepted via ${a.serviceType}`);
+        return { result: 'ok' };
+      }
+      const text = await res.text().catch(() => '');
+      if (res.status === 401) {
+        return {
+          result: 'no_credentials',
+          detail: 'FritzBox rejected the TR-064 credentials. Re-check Settings → Gateway.',
+        };
+      }
+      errors.push(`${a.serviceType}: HTTP ${res.status} ${text.slice(0, 120)}`);
+    } catch (e) {
+      errors.push(`${a.serviceType}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  logger.warn('router:dnsConfig', `FritzBox SetDNSServers (WAN upstream) failed: ${errors.join(' | ')}`);
+  return {
+    result: 'failed',
+    detail: 'FritzBox declined SetDNSServers on both WAN services. Most common cause: "Internet → Account Information → DNS Server" is set to "From provider" — switch it to "Use other DNSv4 servers" once and retry; subsequent TR-064 writes then succeed.',
+  };
+}
+
+/**
  * Force the FritzBox to drop its WAN connection and reconnect. The box
  * does this automatically within ~5–30s; on DSL/cable installs the
  * external IP usually changes, on FTTH/static-IP installs it doesn't.

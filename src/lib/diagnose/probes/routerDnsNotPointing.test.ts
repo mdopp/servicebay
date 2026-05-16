@@ -4,10 +4,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const state = {
   setResult: { result: 'ok' } as any,
   reconnectResult: { result: 'ok' } as any,
+  setWanResult: { result: 'ok' } as any,
 };
 
 vi.mock('@/lib/router/dnsConfig', () => ({
   setFritzBoxDhcpDns: vi.fn(() => Promise.resolve(state.setResult)),
+  setFritzBoxWanDns: vi.fn(() => Promise.resolve(state.setWanResult)),
   reconnectFritzBox: vi.fn(() => Promise.resolve(state.reconnectResult)),
 }));
 
@@ -29,6 +31,7 @@ import './routerDnsNotPointing';
 beforeEach(() => {
   state.setResult = { result: 'ok' };
   state.reconnectResult = { result: 'ok' };
+  state.setWanResult = { result: 'ok' };
 });
 
 describe('router_dns_not_pointing.reconnect_fritzbox', () => {
@@ -76,5 +79,49 @@ describe('router_dns_not_pointing.reconnect_fritzbox', () => {
     // Generic fallback should mention "Neu verbinden" so the user knows the
     // manual workaround.
     expect(result.message).toMatch(/Neu verbinden/);
+  });
+});
+
+describe('router_dns_not_pointing.configure_fritzbox_upstream', () => {
+  it('returns ok with a topology-aware success message', async () => {
+    const result = await dispatchProbeAction({
+      probeId: 'router_dns_not_pointing',
+      actionId: 'configure_fritzbox_upstream',
+      node: 'Local',
+    });
+    expect(result.ok).toBe(true);
+    // Success message should name the topology so the operator knows
+    // which valid pattern they just locked in.
+    expect(result.message).toMatch(/upstream/);
+    expect(result.message).toContain('192.168.1.10');
+    expect(result.refresh).toBe(true);
+  });
+
+  it('surfaces the "switch to Use other DNSv4 servers" hint on failure', async () => {
+    state.setWanResult = {
+      result: 'failed',
+      detail: 'FritzBox declined SetDNSServers on both WAN services. Most common cause: "Internet → Account Information → DNS Server" is set to "From provider" — switch it to "Use other DNSv4 servers" once and retry; subsequent TR-064 writes then succeed.',
+    };
+    const result = await dispatchProbeAction({
+      probeId: 'router_dns_not_pointing',
+      actionId: 'configure_fritzbox_upstream',
+      node: 'Local',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/Use other DNSv4 servers/);
+  });
+
+  it('returns a credential-specific message when the box rejects auth', async () => {
+    state.setWanResult = {
+      result: 'no_credentials',
+      detail: 'FritzBox rejected the TR-064 credentials. Re-check Settings → Gateway.',
+    };
+    const result = await dispatchProbeAction({
+      probeId: 'router_dns_not_pointing',
+      actionId: 'configure_fritzbox_upstream',
+      node: 'Local',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('rejected the TR-064 credentials');
   });
 });
