@@ -101,6 +101,15 @@ export async function POST(request: NextRequest) {
           redirect_uris: redirectUris,
           scopes: oidc.scopes,
           client_secret: sharedSecret || generateSecret(),
+          // RFC 6749 default is `client_secret_basic`. Templates whose
+          // OIDC client library uses a different default (Immich's admin
+          // API explicitly sends `client_secret_post`) override here.
+          // Without this field, Authelia's registration locked every
+          // client to `client_secret_post` and Vaultwarden's
+          // `openidconnect-rs` calls failed with "client registration
+          // does not allow this method" — operator-reported regression.
+          token_endpoint_auth_method:
+            oidc.token_endpoint_auth_method || 'client_secret_basic',
         });
       }
     }
@@ -191,7 +200,7 @@ export async function POST(request: NextRequest) {
         scopes: client.scopes || ['openid', 'profile', 'email', 'groups'],
         response_types: ['code'],
         grant_types: ['authorization_code'],
-        token_endpoint_auth_method: 'client_secret_post',
+        token_endpoint_auth_method: client.token_endpoint_auth_method || 'client_secret_basic',
       });
       added.push(client.client_id);
     }

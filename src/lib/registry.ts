@@ -367,6 +367,24 @@ export interface OidcClientConfig {
    * endpoint generate a fresh random secret each time (legacy behaviour).
    */
   clientSecretVar?: string;
+  /**
+   * Which credential transport the service's OIDC client library uses to
+   * authenticate against Authelia's token endpoint. Authelia per-client
+   * registration locks this to a single method — if the service sends
+   * a different one, the token call fails with
+   * `invalid_client / "client registration does not allow this method"`.
+   *
+   * Common values per service:
+   *   - `client_secret_basic` — RFC 6749 default; what `openidconnect-rs`
+   *     (Vaultwarden) sends. **Use this for new clients unless the
+   *     upstream service explicitly documents `_post`.**
+   *   - `client_secret_post` — what Immich's admin-API-driven
+   *     configuration writes; also Audiobookshelf, Navidrome.
+   *
+   * Omit for the platform default (`client_secret_basic` from the
+   * oidc-clients route).
+   */
+  token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post';
 }
 
 export interface VariableMeta {
