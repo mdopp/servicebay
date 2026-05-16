@@ -46,28 +46,65 @@ and we write the relevant fields ourselves. The Hermes image's
 entrypoint takes care of bootstrapping the rest (Honcho DB,
 FTS5 index, SOUL.md skeleton) idempotently on each start.
 
+## Adding MCP servers
+
+Per the upstream
+[MCP config reference](https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference),
+MCP servers are configured in `config.yaml` under a top-level
+`mcp_servers:` key — **not** through an HTTP route. There is no
+`POST /mcp/servers` endpoint on the API server. Two ways to wire
+new servers from a script:
+
+1. **Merge into `config.yaml` from another template's `post-deploy.py`.**
+   Read the existing `${DATA_DIR}/hermes/config.yaml` (the `model:`
+   block this template wrote), splice in an `mcp_servers:` section,
+   write back, and trigger a pod restart via
+   `POST /api/services/hermes/action {action: "restart"}`. That's
+   the path OSCAR's `oscar-household` template takes.
+2. **Hand-edit and reload.** `hermes config edit`, add the
+   `mcp_servers:` block, then send `/reload-mcp` in any active
+   gateway session. Interactive — fine for one-off changes from a
+   running gateway, not from a deploy script.
+
+There's no documented non-interactive `/reload-mcp` HTTP trigger,
+so scripted reconfiguration restarts the pod.
+
 ## Connecting messaging gateways (Signal, Telegram, …)
 
-These are **post-install, interactive** flows (QR-code scan for
-Signal device-link, bot-token paste for Telegram). They don't
-belong in `post-deploy.py`. Two options:
+These have **a genuinely interactive step that neither side of a
+ServiceBay deploy can do**. Signal is the clearest case:
 
-- **OSCAR's `oscar-household` template** — if you're running OSCAR,
-  the household pod handles Signal pairing and `hermes mcp add`
-  wiring. See `mdopp/oscar/templates/oscar-household/`.
-- **Manual.** SSH into the host and:
-  ```
-  podman exec -it hermes hermes gateway setup signal
-  podman exec -it hermes hermes mcp add <name> <url> <token>
-  ```
-  Yes, this contradicts the no-`podman exec` policy. The policy
-  applies to *required deploy-time* steps, not to *post-install
-  optional* operator actions taken later. Document any gateway you
-  add in your own runbook.
+1. **Operator runs `signal-cli link -n "HermesAgent"`** to generate
+   a linking QR code. The QR has to be scanned by the operator's
+   physical phone via the Signal app. This step is irreducibly
+   manual — no daemon and no script can do it.
+2. **Hermes-side configuration** (SIGNAL_HTTP_URL, SIGNAL_ACCOUNT,
+   SIGNAL_ALLOWED_USERS, …) lands in `${DATA_DIR}/hermes/.env` and
+   *is* env-driven, so it can be scripted by a downstream template
+   (e.g. OSCAR's `oscar-household`) once the operator has done the
+   QR scan.
 
-If you find yourself wiring the same gateway on every household,
-that's a signal to push the pairing flow upstream into Hermes
-(env-var or CLI-flag-driven) and update this template.
+The boundary is: **pairing is manual, env-var wiring after pairing
+is scriptable.** Downstream templates can drive step 2 but never
+step 1.
+
+After pairing, the gateway runs automatically because this template
+starts Hermes with `gateway run`. Manual operator path to do the
+QR pairing once after install (see the
+[Signal setup docs](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal)):
+
+```
+podman exec -it hermes signal-cli link -n "HermesAgent"
+# scan the QR with the operator's phone; signal-cli writes
+# credentials into the Hermes data volume.
+```
+
+This contradicts the no-`podman exec` policy from
+`UX_PHILOSOPHY.md`, but the policy applies to *required deploy-time
+steps*, not *post-install optional* operator actions. The same
+applies to other messaging platforms (Telegram bot-token paste,
+Discord OAuth, etc.) — those have a one-time interactive setup
+before the bot is paired with a chat account.
 
 ## Dashboard (optional)
 
@@ -95,13 +132,27 @@ SQLite-backed service: stop the pod, copy the directory, restart.
 
 ## Health checks
 
-Baseline `service:hermes` is auto-created. No HTTP health endpoint
-is documented upstream, so no `http` check is added — degraded API
-states surface via the auto-created service check and the install
-log. Add a `script`-type check from the wizard if you want a
-custom probe (e.g. "the SQLite file is readable").
+Baseline `service:hermes` is auto-created. Hermes also exposes
+**HTTP health endpoints** documented at the
+[API-server reference](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server):
 
-See `docs/TEMPLATE_AUTHORING.md` § Health checks.
+- `GET /health` → `{"status": "ok"}`
+- `GET /v1/health` → same content, for OpenAI-compatible clients
+- `GET /health/detailed` → extended report (active sessions,
+  running agents, resource usage)
+
+Whether `/health` is exempt from `API_SERVER_KEY` bearer auth is
+not explicitly called out in the docs (the auth section frames
+auth as a property of the API server as a whole). Test against
+your install before wiring an `http`-type ServiceBay check at this
+endpoint — if bearer auth is enforced, fall back to a
+`script`-type check that does
+`curl -H "Authorization: Bearer $HERMES_API_KEY" http://127.0.0.1:<port>/health`
+(or use `/health/detailed` for richer signal).
+
+See `docs/TEMPLATE_AUTHORING.md` § Health checks for the
+contract; the auto-created `service:hermes` is the safe baseline
+either way.
 
 ## Logging
 
