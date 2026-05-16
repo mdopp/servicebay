@@ -71,16 +71,6 @@
     "description": "Host path to your music library. Defaults to the file-share template's data dir, so files dropped into the Samba share appear automatically.",
     "default": "/mnt/data/stacks/file-share/data/Music"
   },
-  "NAVIDROME_OIDC_ENABLED": {
-    "type": "select",
-    "description": "Enable Navidrome ↔ Authelia SSO. On by default so family members sign in with the household password. Flip to false if you hit an SSO regression and want to fall back to local Navidrome accounts.",
-    "options": ["true", "false"],
-    "default": "true"
-  },
-  "NAVIDROME_OIDC_SECRET": {
-    "type": "secret",
-    "description": "OIDC client secret for Navidrome ↔ Authelia. Auto-generated; pinned via clientSecretVar so Authelia and Navidrome share the same value."
-  },
   "PUBLIC_DOMAIN": {
     "type": "text",
     "description": "Public domain (used to build the SSO authority URL https://auth.<domain> and the redirect URL).",
@@ -88,22 +78,15 @@
   },
   "NAVIDROME_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for Navidrome (web UI + Symfonium endpoint)",
+    "description": "Subdomain for Navidrome (web UI + Symfonium endpoint). SSO is via Authelia forward-auth (Remote-User header); Subsonic API clients bypass it and use the local admin password.",
     "default": "music",
     "exposure": "public",
     "proxyPort": "NAVIDROME_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
       "block_exploits": true,
-      "ssl_forced": true
-    },
-    "oidcClient": {
-      "client_id": "navidrome",
-      "client_name": "Navidrome",
-      "authorization_policy": "one_factor",
-      "redirect_uris": ["/auth/oidc/callback"],
-      "scopes": ["openid", "profile", "email"],
-      "clientSecretVar": "NAVIDROME_OIDC_SECRET"
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__\n# Subsonic API endpoints bypass Authelia — mobile clients (Symfonium,\n# play:Sub, DSub, etc.) send their own Basic auth or u/p/t Subsonic\n# credentials and don't speak OIDC / forward-auth.\nlocation /rest/ {\n  proxy_pass $forward_scheme://$server:$port;\n  proxy_set_header Host $host;\n  proxy_set_header X-Real-IP $remote_addr;\n  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n  proxy_set_header X-Forwarded-Proto $scheme;\n  auth_request off;\n}\nlocation /share/ {\n  # Public share links — never gated.\n  proxy_pass $forward_scheme://$server:$port;\n  proxy_set_header Host $host;\n  auth_request off;\n}"
     }
   }
 }

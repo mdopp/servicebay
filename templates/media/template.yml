@@ -7,7 +7,7 @@ metadata:
     servicebay.role: media
   annotations:
     servicebay.label: "Media (Audiobookshelf + Navidrome)"
-    servicebay.schema-version: "2"
+    servicebay.schema-version: "3"
     # Audiobookshelf's post-deploy registers an OIDC client in Authelia
     # and its public URLs route through nginx — both prerequisites.
     servicebay.dependencies: "nginx,auth"
@@ -51,27 +51,35 @@ spec:
         value: "@every 1h"
       - name: ND_ENABLEUSEREDITING
         value: "true"
-      # OIDC against Authelia (v2 / #413). The previous
-      # ND_REVERSEPROXYUSERHEADER setup expected NPM to forward an
-      # Authelia-injected `Remote-User` header, but the proxy host was
-      # never wired up with Authelia forward-auth — so the header
-      # never arrived and only the local admin worked. OIDC is the
-      # consistent pattern across services in ServiceBay and lets
-      # Navidrome display an explicit "Sign in with Authelia" button.
-      # Subsonic API calls (mobile apps) bypass this and continue to
-      # use the local admin account.
-      - name: ND_OIDC_ENABLED
-        value: "{{NAVIDROME_OIDC_ENABLED}}"
-      - name: ND_OIDC_ISSUER
-        value: "https://auth.{{PUBLIC_DOMAIN}}"
-      - name: ND_OIDC_CLIENTID
-        value: "navidrome"
-      - name: ND_OIDC_CLIENTSECRET
-        value: "{{NAVIDROME_OIDC_SECRET}}"
-      - name: ND_OIDC_REDIRECTURL
-        value: "https://{{NAVIDROME_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}/auth/oidc/callback"
-      - name: ND_OIDC_AUTOREGISTER
-        value: "true"
+      # SSO via Authelia forward-auth (#560, schema v3).
+      #
+      # Navidrome 0.61.2 (and current master) has ZERO native OIDC
+      # support — verified against upstream `conf/configuration.go`,
+      # which has no oidc/openid options at all. The v2 attempt to
+      # wire `ND_OIDC_*` env vars (#413) was based on a misreading
+      # of community docs; those env vars were silently ignored and
+      # the Navidrome login page only showed the local-account form.
+      # Operators typing their LLDAP credentials got 401.
+      #
+      # What Navidrome does support is a `Remote-User`-header path,
+      # exposed via `ND_EXTAUTH_USERHEADER` (formerly the deprecated
+      # `ND_REVERSEPROXYUSERHEADER`). When NPM forwards a verified
+      # `Remote-User` header — which now works after the
+      # `forwardAuth.ts` update to Authelia 4.38's
+      # `/api/authz/forward-auth` endpoint, also in this PR — Navidrome
+      # auto-creates the matching user on first visit. Subsonic API
+      # clients (mobile apps) bypass forward-auth via a /rest/* exception
+      # in the proxy host's nginx config and use the local admin
+      # password the install banner surfaces.
+      - name: ND_EXTAUTH_USERHEADER
+        value: "Remote-User"
+      # CIDRs that are trusted to forward Remote-User. NPM and
+      # Navidrome both run hostNetwork on the same box, so the source
+      # IP nginx connects from is either 127.0.0.1 or the host's LAN
+      # IP. The RFC1918 block covers any homelab LAN + localhost
+      # without hard-coding the operator's LAN range.
+      - name: ND_EXTAUTH_TRUSTEDSOURCES
+        value: "127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     ports:
       - containerPort: {{NAVIDROME_PORT}}
     volumeMounts:

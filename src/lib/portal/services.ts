@@ -59,8 +59,14 @@ export interface PortalCard {
   setupAssets: SetupAsset[];
 }
 
-/** Read a template's variables.json (best-effort, returns empty record on miss). */
-async function readVariables(templateName: string): Promise<Record<string, { type?: string; default?: string }>> {
+/** Read a template's variables.json (best-effort, returns empty record on miss).
+ *
+ *  Includes `proxyPort` so `resolveServiceUrl` can discriminate
+ *  multi-subdomain templates (HA + Z-Wave JS, ABS + Navidrome) by
+ *  forwardPort — `buildProxyHosts` shares the `service` field
+ *  across every host within a template, so a service-name match is
+ *  ambiguous. See `resolveServiceUrl` for the lookup. */
+async function readVariables(templateName: string): Promise<Record<string, { type?: string; default?: string; proxyPort?: string }>> {
   try {
     const content = await fs.readFile(path.join(TEMPLATES_PATH, templateName, 'variables.json'), 'utf-8');
     return JSON.parse(content);
@@ -114,14 +120,45 @@ export async function resolveServiceUrl(
   const sub = variables[chosenVar]?.default;
   if (typeof sub !== 'string' || !sub) return null;
 
-  // Prefer a created proxy-host entry. The wizard's `buildProxyHosts`
-  // derives `service` per subdomain variable: lowercase `<NAME>` from
-  // `<NAME>_SUBDOMAIN`. Match against that so operator-customized
-  // subdomains (e.g. `agenda` instead of `caldav` for Radicale) get
-  // honoured even when the install renamed away from the default.
-  const expectedService = chosenVar.replace(/_SUBDOMAIN$/i, '').toLowerCase();
-  const hostEntry = (config.reverseProxy?.hosts ?? []).find(
-    h => h.created && h.service === expectedService,
+  // Prefer a created proxy-host entry. Match by the variable's
+  // `proxyPort` (resolved to a number) — `buildProxyHosts` writes
+  // `service: <templateName>` on every host in the same template,
+  // which means single-template/multi-subdomain pods (home-assistant
+  // has HA + ZWAVE_JS + MATTER, media has ABS + NAVIDROME) all share
+  // a `service` value and can't be discriminated by it. The Home
+  // Assistant portal card was opening `zwave.<domain>` instead of
+  // `home.<domain>` because the legacy `service === <expected>`
+  // match never hit and the fallback picked the first-listed
+  // subdomain variable. Same root cause family as the LLDAP
+  // deep-link bug fixed in #554.
+  //
+  // `proxyPort` can be a literal port string ("8123") or a variable
+  // name ("ABS_PORT"); resolve both. Operator-customized port values
+  // (via reconfigure) land in templateSettings — use those when
+  // present, else fall back to the schema default.
+  const proxyPortRaw = variables[chosenVar]?.proxyPort;
+  let forwardPort: number | null = null;
+  if (proxyPortRaw) {
+    const direct = Number(proxyPortRaw);
+    if (Number.isFinite(direct) && direct > 0) {
+      forwardPort = direct;
+    } else {
+      // Treat as a variable reference; look up its current value.
+      const refValue =
+        config.templateSettings?.[proxyPortRaw] ?? variables[proxyPortRaw]?.default;
+      const indirect = Number(refValue);
+      if (Number.isFinite(indirect) && indirect > 0) forwardPort = indirect;
+    }
+  }
+  const hosts = config.reverseProxy?.hosts ?? [];
+  const hostEntry = hosts.find(h =>
+    h.created && (
+      // Primary: port-based discriminator (works for multi-subdomain templates).
+      (forwardPort !== null && h.forwardPort === forwardPort)
+      // Fallback: legacy single-subdomain match — keeps installs that
+      // pre-date `templateName` injection working.
+      || h.service === chosenVar.replace(/_SUBDOMAIN$/i, '').toLowerCase()
+    ),
   );
   if (hostEntry) {
     return `${scheme}://${hostEntry.domain}`;
