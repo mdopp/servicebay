@@ -438,6 +438,35 @@ def main() -> int:
 
     configure_auth_oidc()
 
+    # ── Health check ─────────────────────────────────────────────────────────
+    # Worked example for docs/TEMPLATE_AUTHORING.md § Health checks.
+    # The auto-created service:home-assistant check catches "systemd thinks
+    # HA is down". The HTTP check below catches "HA's API is unreachable
+    # despite the process running" — login-loop after a bad core upgrade,
+    # YAML config-reload error that wedged the API, etc. Best-effort: a
+    # non-200 here doesn't block the install.
+    sb_api = env("SB_API_URL", "http://localhost:3000")
+    sb_token = env("SB_API_TOKEN")
+    body = json.dumps({
+        "id": "home-assistant-api",
+        "name": "Home Assistant API",
+        "type": "http",
+        "target": f"{HA_API}/",
+        "interval": 60,
+        "enabled": True,
+        "httpConfig": {"expectedStatus": 200},
+    }).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if sb_token:
+        headers["X-SB-Internal-Token"] = sb_token
+    try:
+        req = urllib.request.Request(f"{sb_api}/api/health/checks", data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                log(f"✅ Registered HTTP health check 'home-assistant-api' against {HA_API}/")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+        log(f"⚠️ Could not register HTTP health check: {e}. The auto-created service:home-assistant check still applies.")
+
     return 0
 
 
