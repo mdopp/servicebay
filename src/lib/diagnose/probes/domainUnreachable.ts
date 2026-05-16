@@ -41,7 +41,11 @@ import dns from 'dns/promises';
 import { getConfig, type ProxyHostEntry, type AppConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { listRewrites } from '@/lib/adguard/rewrites';
-import type { ProbeItem } from '../actions';
+import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
+import { retryCreate as retryCreateProxyHost } from './proxyRouteMissing';
+import { reprovision as reprovisionAdguardRewrites } from './adguardRewritesMissing';
+
+const PROBE_ID = 'domain_unreachable';
 
 export interface DomainUnreachableResult {
   status: 'ok' | 'warn' | 'fail' | 'info';
@@ -67,6 +71,30 @@ function entryIsLan(entry: ProxyHostEntry): boolean {
   return isLanDomain(entry.domain);
 }
 
+/**
+ * `cause` is the discriminator that maps to inline auto-fix actions
+ * on the item. The `reason` + `fixHint` strings stay as prose for
+ * operators reading; `cause` is the machine-readable hook that
+ * decides which fix button shows up on the row.
+ *
+ * When a cause has no automatic fix today (TLS errors, raw refused,
+ * timeouts) we leave it as `'other'` — the row still renders with
+ * the prose hint, just no button.
+ */
+type DiagnosisCause =
+  | 'proxy_not_created'           // → retry_create (shared w/ proxy_route_missing)
+  | 'adguard_rewrite_missing'      // → reprovision (shared w/ adguard_rewrites_missing)
+  | 'adguard_rewrite_drifted'      // → reprovision (same handler; idempotent)
+  | 'public_dns_missing'           // → show_public_dns_instructions (new informational)
+  | 'lan_ip_not_set'               // → no action yet; #549 (lan_ip_changed) will add reconcile
+  | 'tls_failed'                   // → no action; cert_request_failure has the retry
+  | 'connection_refused'           // → no action; backend service issue
+  | 'timeout'                      // → no action; manual investigation
+  | 'npm_route_missing'            // → retry_create (same as proxy_not_created)
+  | 'backend_unhealthy'            // → no action; container-log inspection
+  | 'redirect_misconfigured'       // → no action; NPM config issue
+  | 'other';                       // → no action
+
 interface Diagnosis {
   /** Severity for the per-item row. */
   status: 'warn' | 'fail';
@@ -74,6 +102,25 @@ interface Diagnosis {
   reason: string;
   /** Where the operator finds the fix; rendered as the row hint. */
   fixHint: string;
+  /** Machine-readable failure-class — drives the inline actionIds. */
+  cause: DiagnosisCause;
+}
+
+/** Map diagnosed cause → action IDs to attach to the item.
+ *  Causes not in this map render with prose hint only. */
+function actionsForCause(cause: DiagnosisCause): string[] {
+  switch (cause) {
+    case 'proxy_not_created':
+    case 'npm_route_missing':
+      return ['retry_create'];
+    case 'adguard_rewrite_missing':
+    case 'adguard_rewrite_drifted':
+      return ['reprovision'];
+    case 'public_dns_missing':
+      return ['show_public_dns_instructions'];
+    default:
+      return [];
+  }
 }
 
 async function resolveOrNull(hostname: string): Promise<string[] | null> {
@@ -181,7 +228,8 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
     return {
       status: 'warn',
       reason: 'Proxy host not confirmed in NPM (install-time creation failed).',
-      fixHint: 'See `proxy_route_missing` → Retry create. Most common cause: wrong NPM credentials (see `npm_data_stale`).',
+      fixHint: 'Click "Retry create" below — pushes this route into NPM via the same path the install wizard uses. Most common cause if it keeps failing: wrong NPM credentials (see `npm_data_stale`).',
+      cause: 'proxy_not_created',
     };
   }
 
@@ -196,14 +244,16 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
       return {
         status: 'fail',
         reason: 'No matching AdGuard rewrite for this domain — LAN clients can\'t resolve it.',
-        fixHint: 'See `adguard_rewrites_missing` → Reprovision.',
+        fixHint: 'Click "Reprovision AdGuard rewrites" below — re-runs the install-time provisioner (idempotent, only touches missing entries).',
+        cause: 'adguard_rewrite_missing',
       };
     }
     if (lanIp && !rewriteAnswers.includes(lanIp)) {
       return {
         status: 'fail',
         reason: `AdGuard rewrite points at ${rewriteAnswers.join(', ')} but ServiceBay's LAN IP is ${lanIp} (drifted since install?).`,
-        fixHint: 'See `adguard_rewrites_missing` → Reprovision (refreshes the rewrite to the current LAN IP).',
+        fixHint: 'Click "Reprovision AdGuard rewrites" below — refreshes the rewrite to the current LAN IP.',
+        cause: 'adguard_rewrite_drifted',
       };
     }
   } else {
@@ -214,7 +264,8 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
       return {
         status: 'fail',
         reason: 'Hostname does not resolve via public DNS. A-record likely missing.',
-        fixHint: 'Add an A-record at your DNS provider pointing the apex/wildcard at your WAN IP. See `router_dns_not_pointing` for the LAN side of the same trio.',
+        fixHint: 'Click "Show DNS instructions" below for the exact A-record you need to add at your registrar.',
+        cause: 'public_dns_missing',
       };
     }
   }
@@ -228,7 +279,8 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
     return {
       status: 'warn',
       reason: 'reverseProxy.lanIp not set; cannot probe NPM routing.',
-      fixHint: 'Trigger a LAN-IP reconcile by restarting ServiceBay, or set it explicitly via Settings → Reverse Proxy.',
+      fixHint: 'Trigger a LAN-IP reconcile by restarting ServiceBay, or set it explicitly via Settings → Reverse Proxy. The `lan_ip_changed` probe will get a dedicated reconcile action in a future release.',
+      cause: 'lan_ip_not_set',
     };
   }
   const probe = await fetchWithHostHeader(`http://${lanIp}:80/`, domain);
@@ -237,7 +289,8 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
       return {
         status: 'fail',
         reason: `Connection refused on ${scheme}://${domain} — NPM running, but no backend answering port ${host.forwardPort}.`,
-        fixHint: 'Check that the `${host.service}` service is running. If it is, the proxy host\'s forward_port may not match the container\'s listen port.'.replace('${host.service}', host.service),
+        fixHint: `Check that the \`${host.service}\` service is running. If it is, the proxy host's forward_port may not match the container's listen port.`,
+        cause: 'connection_refused',
       };
     }
     if (probe.reason === 'tls') {
@@ -245,6 +298,7 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
         status: 'fail',
         reason: `TLS handshake failed: ${probe.detail.slice(0, 160)}`,
         fixHint: 'See `cert_request_failure` → Retry now. If Let\'s Encrypt rate-limited you, wait ~1 h and check that public port 80 is reachable.',
+        cause: 'tls_failed',
       };
     }
     if (probe.reason === 'timeout') {
@@ -252,12 +306,14 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
         status: 'fail',
         reason: 'Request timed out before NPM responded.',
         fixHint: 'NPM may be down or the backend is hanging. Restart the nginx service from Services, or check container logs.',
+        cause: 'timeout',
       };
     }
     return {
       status: 'fail',
       reason: `Reachability check failed: ${probe.detail.slice(0, 160)}`,
       fixHint: 'Check NPM and the backing service\'s container logs.',
+      cause: 'other',
     };
   }
 
@@ -268,13 +324,15 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
       return {
         status: 'fail',
         reason: `NPM has no proxy host matching Host: ${domain} — the route isn't actually configured even though the config says created=true.`,
-        fixHint: 'See `proxy_route_missing` → Retry create.',
+        fixHint: 'Click "Retry create" below to push the route into NPM.',
+        cause: 'npm_route_missing',
       };
     }
     return {
       status: 'warn',
       reason: `Backend returned HTTP ${probe.status}.`,
       fixHint: `'${host.service}' is reachable through NPM but the upstream is unhealthy. Check its container logs.`,
+      cause: 'backend_unhealthy',
     };
   }
 
@@ -290,6 +348,7 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
       status: 'warn',
       reason: `NPM redirected ${probe.status} → ${loc || '(empty Location)'}; expected https://${domain}/.`,
       fixHint: 'The NPM host for this domain may have ssl_forced toggled off, or the cert isn\'t bound. See `cert_request_failure`.',
+      cause: 'redirect_misconfigured',
     };
   }
 
@@ -338,7 +397,7 @@ export async function checkDomainUnreachable(): Promise<DomainUnreachableResult>
     label: host.domain,
     detail: `${diagnosis.reason}  ·  Fix: ${diagnosis.fixHint}`,
     status: diagnosis.status,
-    actionIds: [],
+    actionIds: actionsForCause(diagnosis.cause),
   }));
 
   const parts: string[] = [];
@@ -348,7 +407,88 @@ export async function checkDomainUnreachable(): Promise<DomainUnreachableResult>
   return {
     status: overall,
     detail: `${parts.join(' · ')} of ${hosts.length} configured domain${hosts.length === 1 ? '' : 's'}.`,
-    hint: 'Each row shows what went wrong and which other probe carries the fix action.',
+    hint: 'Each row shows what went wrong. When the failure has a known auto-fix, the row has a button — click it. When the fix is genuinely manual (DNS A-records, TLS rate limits), the row carries the instructions inline.',
     items,
   };
 }
+
+// ─── Action handlers ────────────────────────────────────────────────────
+//
+// Two handlers are *re-exports* of the same logic registered on sibling
+// probes. We mount them here too so the operator gets the fix button on
+// the offending domain row directly — no probe-to-probe navigation.
+
+/** Render an instructions block for the public A-record case.
+ *
+ *  We deliberately don't try to look up the operator's WAN IP from
+ *  here — `dns_routing` health checks already track it and the
+ *  diagnose page can cross-reference. Instructions name the apex
+ *  the operator already configured (`config.publicDomain`) and tell
+ *  them the exact record to add. */
+async function showPublicDnsInstructions({ itemId }: { itemId?: string }): Promise<ProbeActionResult> {
+  if (!itemId) {
+    return { ok: false, message: 'No domain supplied.', refresh: false };
+  }
+  const config = await getConfig();
+  const apex = config.reverseProxy?.publicDomain || itemId.replace(/^[^.]+\./, '') || '<your apex>';
+  const lines = [
+    `Public DNS isn't resolving \`${itemId}\` yet. Add this record at your DNS provider:`,
+    '',
+    `  Type:  A`,
+    `  Host:  *.${apex}     (wildcard — covers every subdomain)`,
+    `  Value: <your WAN IP>     (find it at https://api.ipify.org or any "what's my IP" service)`,
+    `  TTL:   300              (5 min — faster propagation if you need to change it)`,
+    '',
+    `If you'd rather pin each subdomain explicitly, add an A record for \`${itemId}\` only,`,
+    `same Value + TTL. The wildcard form is simpler and survives adding new services later.`,
+    '',
+    `On a dynamic public IP, see your registrar's DDNS docs (Cloudflare, MyFRITZ!, DuckDNS, etc.) —`,
+    `the FritzBox can update DDNS automatically under Internet → Freigaben → DynDNS.`,
+    '',
+    `After the record propagates (~5 min), re-run this diagnose probe — the row should clear.`,
+  ];
+  return {
+    ok: true,
+    message: 'Instructions ready below.',
+    details: lines.join('\n'),
+    refresh: false,
+  };
+}
+
+registerProbeAction(
+  PROBE_ID,
+  {
+    id: 'retry_create',
+    label: 'Retry create',
+    description:
+      'Pushes this proxy host into Nginx Proxy Manager. Same handler as the `proxy_route_missing` probe — registered here so the fix button is on the domain row directly, no probe navigation.',
+  },
+  retryCreateProxyHost,
+);
+
+registerProbeAction(
+  PROBE_ID,
+  {
+    id: 'reprovision',
+    label: 'Reprovision AdGuard rewrites',
+    description:
+      'Re-runs the install-time portal provisioner so AdGuard\'s rewrite for this domain points at ServiceBay\'s current LAN IP. Idempotent — existing rewrites with the right answer are left alone. Same handler as the `adguard_rewrites_missing` probe.',
+  },
+  reprovisionAdguardRewrites,
+);
+
+registerProbeAction(
+  PROBE_ID,
+  {
+    id: 'show_public_dns_instructions',
+    label: 'Show DNS instructions',
+    description:
+      'Renders the exact A-record to add at your DNS registrar to make this public domain resolvable. Informational only — public DNS configuration is manual by nature.',
+  },
+  showPublicDnsInstructions,
+);
+
+logger.debug(
+  'diagnose:probes',
+  `Registered ${PROBE_ID} actions: retry_create, reprovision, show_public_dns_instructions`,
+);
