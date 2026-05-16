@@ -78,4 +78,76 @@ describe('getLldapUserDeepLink', () => {
     const link = await getLldapUserDeepLink('alice');
     expect(link).toBeNull();
   });
+
+  // Real-world regression: the `auth` template owns both
+  // LLDAP_SUBDOMAIN and AUTHELIA_SUBDOMAIN, so buildProxyHosts
+  // writes `service: 'auth'` on both (via meta.templateName injected
+  // by useStackInstall.ts). The pre-fix lookup matched on
+  // `service === 'lldap'`, never hit, and silently fell back to
+  // `http://localhost:17170`. We now discriminate by port instead.
+  it('matches the LLDAP host by forwardPort when service is the template name "auth"', async () => {
+    mockConfig.lldap = { url: 'http://localhost:17170', username: 'admin', password: 'x' };
+    mockConfig.reverseProxy = {
+      hosts: [
+        { domain: 'ldap.dopp.cloud', service: 'auth', forwardPort: 17170, created: true },
+        { domain: 'auth.dopp.cloud', service: 'auth', forwardPort: 9091, created: true },
+      ],
+    };
+
+    const link = await getLldapUserDeepLink('mdopp');
+    expect(link).toBe('https://ldap.dopp.cloud/user/mdopp');
+  });
+
+  it('picks the LLDAP host, not the Authelia host, when both share service=auth', async () => {
+    // Order shouldn't matter — port match wins regardless of which entry
+    // appears first in hosts[].
+    mockConfig.lldap = { url: 'http://localhost:17170', username: 'admin', password: 'x' };
+    mockConfig.reverseProxy = {
+      hosts: [
+        { domain: 'auth.dopp.cloud', service: 'auth', forwardPort: 9091, created: true },
+        { domain: 'ldap.dopp.cloud', service: 'auth', forwardPort: 17170, created: true },
+      ],
+    };
+
+    const link = await getLldapUserDeepLink('mdopp');
+    expect(link).toBe('https://ldap.dopp.cloud/user/mdopp');
+  });
+
+  it('honours a non-default LLDAP port via config.lldap.url', async () => {
+    mockConfig.lldap = { url: 'http://localhost:18888' };
+    mockConfig.reverseProxy = {
+      hosts: [
+        { domain: 'ldap.dopp.cloud', service: 'auth', forwardPort: 18888, created: true },
+      ],
+    };
+
+    const link = await getLldapUserDeepLink('mdopp');
+    expect(link).toBe('https://ldap.dopp.cloud/user/mdopp');
+  });
+
+  it('falls back to http for pure LAN-only domains (home.arpa) with no wildcard cert', async () => {
+    mockConfig.lldap = { url: 'http://localhost:17170' };
+    mockConfig.reverseProxy = {
+      hosts: [
+        { domain: 'ldap.home.arpa', service: 'auth', forwardPort: 17170, created: true },
+      ],
+    };
+
+    const link = await getLldapUserDeepLink('mdopp');
+    // .home.arpa has no LE cert; https would fail in the browser.
+    expect(link).toBe('http://ldap.home.arpa/user/mdopp');
+  });
+
+  it('returns null when only an Authelia host is created (no LLDAP entry to point at)', async () => {
+    mockConfig.lldap = { url: 'http://localhost:17170' };
+    mockConfig.reverseProxy = {
+      hosts: [
+        { domain: 'auth.dopp.cloud', service: 'auth', forwardPort: 9091, created: true },
+      ],
+    };
+
+    // No host whose forwardPort = 17170; lldap.url fallback works.
+    const link = await getLldapUserDeepLink('mdopp');
+    expect(link).toBe('http://localhost:17170/user/mdopp');
+  });
 });

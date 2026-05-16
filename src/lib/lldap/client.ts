@@ -194,11 +194,54 @@ export async function listLldapUsers(): Promise<LldapListUsersResult> {
  * browser (#442). Falls back to `config.lldap.url` for LAN-only installs
  * with no NPM entry, where localhost may at least work for an admin
  * browsing from the server itself.
+ *
+ * **Discriminator: forwardPort, not service name.** LLDAP_SUBDOMAIN
+ * lives in the `auth` template alongside AUTHELIA_SUBDOMAIN, so the
+ * installer's `buildProxyHosts` writes `service: 'auth'` on both
+ * hosts (`templateName` from `useStackInstall` populates that field;
+ * see `lib/stackInstall/postInstall.ts`). Matching on
+ * `service === 'lldap'` silently fails and the deep-link falls
+ * through to the localhost URL — what the operator reported when
+ * the approval flow opened a tab pointing at `http://localhost:17170/user/<id>`
+ * instead of `https://ldap.<domain>/user/<id>`. We discriminate by
+ * port instead: parse LLDAP_PORT out of `config.lldap.url` (always
+ * `http://localhost:<LLDAP_PORT>`) and find the host whose
+ * `forwardPort` matches. Falls back to the legacy `service === 'lldap'`
+ * match for any older install where the field happens to carry that
+ * literal value.
+ *
+ * Scheme: NPM serves subdomains under `publicDomain` via its
+ * wildcard Let's Encrypt cert — HTTPS works whether the entry is
+ * tagged `public` or `lan`. Pure `.home.arpa` / `.local` domains
+ * have no cert; fall back to HTTP for those so the link actually
+ * loads.
  */
 export async function getLldapUserDeepLink(userId: string): Promise<string | null> {
   const config = await getConfig();
-  const proxied = config.reverseProxy?.hosts?.find(h => h.service === 'lldap' && h.created);
-  const base = proxied ? `https://${proxied.domain}` : config.lldap?.url;
+  const lldapUrl = config.lldap?.url;
+  let lldapPort: number | null = null;
+  if (lldapUrl) {
+    try {
+      const parsedPort = Number(new URL(lldapUrl).port);
+      if (Number.isFinite(parsedPort) && parsedPort > 0) lldapPort = parsedPort;
+    } catch {
+      // malformed URL — ignore, fall through to service-name match
+    }
+  }
+  const hosts = config.reverseProxy?.hosts ?? [];
+  const proxied = hosts.find(h =>
+    h.created && (
+      (lldapPort !== null && h.forwardPort === lldapPort)
+      || h.service === 'lldap'
+    ),
+  );
+  let base: string | undefined;
+  if (proxied) {
+    const isPureLanDomain = /\.(home\.arpa|local)$/i.test(proxied.domain);
+    base = `${isPureLanDomain ? 'http' : 'https'}://${proxied.domain}`;
+  } else {
+    base = lldapUrl;
+  }
   if (!base) return null;
   return `${base.replace(/\/$/, '')}/user/${encodeURIComponent(userId)}`;
 }
