@@ -46,6 +46,51 @@ The pod must satisfy one of:
 …otherwise the deploy is silently unreachable. The consistency test
 enforces this.
 
+#### Conditional sections
+
+Mustache sections work — the renderer is the npm `mustache` package
+and the consistency suite's regex recognises `{{#VAR}}`, `{{/VAR}}`,
+`{{^VAR}}` so section variables are still required to be declared
+in `variables.json` (and upper-case `[A-Z_][A-Z0-9_]*`). A section
+renders when its variable is truthy by mustache.js rules — any
+non-empty, non-`"false"`-equivalent string. The simplest pattern is
+a `type: "text"` variable defaulting to `""` (operator leaves blank
+for "off", types any non-blank value for "on"). The `ZWAVE_DEVICE`
+variable in `templates/home-assistant/` is the canonical worked
+example.
+
+#### GPU passthrough (CDI)
+
+Templates that benefit from a GPU (Ollama, Immich's ML, media
+transcoding) opt in via a Mustache-section-gated `resources` block:
+
+```yaml
+    image: docker.io/ollama/ollama:latest
+    {{#OLLAMA_GPU_PASSTHROUGH}}
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+    {{/OLLAMA_GPU_PASSTHROUGH}}
+```
+
+`variables.json` declares the gate as a blank-default text variable:
+
+```json
+"OLLAMA_GPU_PASSTHROUGH": {
+  "type": "text",
+  "description": "Leave blank for CPU-only. Set to any non-blank value (e.g. 'yes') to enable NVIDIA GPU passthrough via CDI. Requires a CDI-registered NVIDIA GPU on the host (set up with `nvidia-ctk cdi generate`).",
+  "default": ""
+}
+```
+
+The Quadlet generator passes `resources.limits.nvidia.com/gpu` through
+to podman, which matches it against the host's CDI device registry.
+Hosts without a registered NVIDIA GPU fail-fast at unit start time
+with a clear error — there is no silent fallback to CPU once the
+operator opts in.
+
+Worked reference: `templates/ollama/`.
+
 ### `variables.json`
 
 Map of variable name to metadata. Recognized fields:
@@ -342,6 +387,93 @@ template's migration. That way:
   been extracted; install `voice` for it" notice.
 
 `templates/voice/post-deploy.py` is the canonical example.
+
+## Health checks
+
+ServiceBay polls templates from the outside — templates **declare**
+what to probe, the platform runs the probes. Containers do **not**
+need to expose `/health` endpoints; Whisper, Piper, LLDAP, NPM, and
+the existing built-in templates don't, and the system works.
+
+### What you get for free
+
+Every template that lands as a managed pod automatically receives a
+`service`-type check (`Service: <pod-name>`, 60s interval) created
+by `ServiceManager.deployService`. That covers "systemd thinks the
+unit is up" — the baseline aliveness signal.
+
+For most templates that's enough. If your service is `service`-up
+but its HTTP API is broken, a richer check is warranted.
+
+### Adding richer checks from `post-deploy.py`
+
+POST to `/api/health/checks` with `X-SB-Internal-Token: $SB_API_TOKEN`.
+Pass an explicit `id` so re-runs of `post-deploy.py` are idempotent
+(the store does upsert-by-id).
+
+```python
+post_json(
+    f"{sb_api}/api/health/checks",
+    {
+        "id": "ollama-api",
+        "name": "Ollama API",
+        "type": "http",
+        "target": "http://127.0.0.1:11434/api/tags",
+        "interval": 60,
+        "enabled": True,
+        "httpConfig": {"expectedStatus": 200},
+    },
+)
+```
+
+Check `templates/auth/post-deploy.py` for the shared `post_json`
+helper that wires `SB_API_TOKEN` correctly.
+
+### Check types you can register from a template
+
+| Type | When to use | `target` |
+|---|---|---|
+| `http` | HTTP service has a readiness URL | `http(s)://…` |
+| `ping` | Reachability of an IP / host | hostname or IP |
+| `service` | A specific systemd unit name | unit name (e.g. `pod-ollama.service`) |
+| `systemd` | System-level (root) unit | unit name |
+| `podman` | Container present + running | container name |
+| `script` | Cross-cut probe ("data file exists and is non-empty") | shell script body |
+| `node` | Remote ServiceBay node reachable | node name |
+| `agent` | ServiceBay agent reachable on the node | node name |
+| `fritzbox` | FritzBox SSO probe (specialised) | endpoint |
+| `backup` | Backup job ran within its window | backup id |
+
+Six more types — `domain`, `letsdebug`, `lan_ip_drift`,
+`npm_auth`, `cert_expiry`, `cert_request_failure`, `dns_routing` —
+are platform-managed singletons created by the apex/NPM provisioner
+and the diagnose rework (#484). Templates don't register these.
+
+### How the data surfaces
+
+- **Diagnose panel.** The `diagnose` MCP / API aggregator joins
+  the latest result for every check into a single view.
+- **SSE.** Every scheduler tick broadcasts `health:update` over
+  the system events stream. The diagnose UI listens and refreshes
+  in place.
+- **MCP tools.** `get_health_checks`, `run_check_now`,
+  `delete_health_check` give external clients (OSCAR's
+  `oscar-status` skill, third-party dashboards) read + trigger
+  access. Use those instead of inline probe code on the consumer
+  side.
+
+### Don't
+
+- Don't embed an HTTP `/health` endpoint inside your container just
+  for ServiceBay's sake. ServiceBay polls from outside; if your
+  service has a natural readiness URL (`/api/tags`, `/`, `/login`),
+  point an `http` check at that. If it doesn't, the auto-created
+  `service` check is fine.
+- Don't `setInterval`-style poll inside your container and report
+  results back. The scheduler already does that.
+- Don't hard-fail post-deploy.py if `/api/health/checks` returns
+  non-200 — log a warning and continue. Health-check registration
+  is best-effort; the auto-created `service` check is the safety net.
 
 ## What stays in core
 

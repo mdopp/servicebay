@@ -1,0 +1,22 @@
+{
+  "OLLAMA_PORT": {
+    "type": "text",
+    "description": "Host port Ollama binds on. Default-bound to 127.0.0.1 (see template.yml — OLLAMA_HOST). For LAN/public access put NPM + Authelia in front, do not change this to 0.0.0.0.",
+    "default": "11434"
+  },
+  "OLLAMA_DEFAULT_MODEL": {
+    "type": "text",
+    "description": "Model pulled on first start. Use any tag from the Ollama library (https://ollama.com/library). Small CPU-friendly default; bump to a larger model once you have GPU passthrough working. The pull runs once per fresh install — subsequent starts find the model already cached and skip the download.",
+    "default": "gemma3:4b"
+  },
+  "OLLAMA_GPU_PASSTHROUGH": {
+    "type": "text",
+    "description": "Leave blank for CPU-only inference (works everywhere, slower for larger models). Set to any non-blank value (e.g. 'yes') to enable NVIDIA GPU passthrough via CDI — requires a CDI-registered NVIDIA GPU on the host (set up with `nvidia-ctk cdi generate`). When non-blank, the rendered pod manifest gets `resources.limits.nvidia.com/gpu: \"1\"`; podman matches that against the CDI device registry at start time.",
+    "default": ""
+  },
+  "OLLAMA_READINESS_TIMEOUT_SECONDS": {
+    "type": "text",
+    "description": "How long post-deploy waits for the first model pull to finish. Multi-GB models on a slow connection can take 10+ minutes; the default leaves slack. Tune down for tiny models on fast links if you want faster install feedback.",
+    "default": "600"
+  }
+}

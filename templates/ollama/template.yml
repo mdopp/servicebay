@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ollama
+  labels:
+    app: ollama
+  annotations:
+    servicebay.label: "Ollama (Local LLM Server)"
+    servicebay.schema-version: "1"
+    servicebay.ports: "{{OLLAMA_PORT}}/tcp"
+    # No `servicebay.tier` — Ollama is opt-in AI infrastructure, not a
+    # platform foundation. Bind it to 127.0.0.1 by default (see
+    # OLLAMA_HOST below) because Ollama ships no auth; LAN-wide
+    # exposure would be a regression on a household install. Remote
+    # access goes through NPM forward-auth → Authelia using the
+    # `__authelia_forward_auth__` sentinel from
+    # src/lib/stackInstall/forwardAuth.ts.
+spec:
+  # hostNetwork so other ServiceBay templates (hermes, oscar-household)
+  # can reach Ollama at 127.0.0.1:{{OLLAMA_PORT}} via the host netns.
+  # Two hostNetwork pods share the host's network namespace, which is
+  # what makes the localhost-cross-pod story work without DNS or
+  # bridge networking.
+  hostNetwork: true
+  containers:
+  - name: ollama
+    image: docker.io/ollama/ollama:latest
+    env:
+    # Default-bind to loopback. Operators who want LAN access put the
+    # service behind NPM + Authelia (forward-auth pattern, see #495 /
+    # #508 for the existing AdGuard + Syncthing wiring).
+    - name: OLLAMA_HOST
+      value: "127.0.0.1:{{OLLAMA_PORT}}"
+    # GPU passthrough (CDI). Set OLLAMA_GPU_PASSTHROUGH=yes in the
+    # wizard to render the resources block below. Requires a
+    # CDI-registered NVIDIA GPU on the host — the Quadlet generator
+    # passes nvidia.com/gpu through to podman, which then matches it
+    # against the registered CDI device. Falls back to CPU silently
+    # if the host has no GPU.
+    ports:
+    - containerPort: {{OLLAMA_PORT}}
+    {{#OLLAMA_GPU_PASSTHROUGH}}
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+    {{/OLLAMA_GPU_PASSTHROUGH}}
+    volumeMounts:
+    - mountPath: /root/.ollama
+      name: ollama-data
+  volumes:
+  - name: ollama-data
+    hostPath:
+      path: {{DATA_DIR}}/ollama
+      type: DirectoryOrCreate

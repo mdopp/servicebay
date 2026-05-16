@@ -1,0 +1,26 @@
+{
+  "HERMES_API_PORT": {
+    "type": "text",
+    "description": "Host port for Hermes' HTTP API. Default 8642. Bound to 127.0.0.1 (API_SERVER_HOST in template.yml). Other ServiceBay pods on this host reach it via host loopback; remote callers go through NPM + Authelia.",
+    "default": "8642"
+  },
+  "HERMES_API_KEY": {
+    "type": "secret",
+    "description": "Bearer token clients send as `Authorization: Bearer <key>` on requests to Hermes' API. Auto-generated; the wizard surfaces it as a credential so operators can paste it into OSCAR's `oscar-household` config (or any other client). Regenerate from the wizard if it leaks."
+  },
+  "HERMES_LLM_PROVIDER_URL": {
+    "type": "text",
+    "description": "OpenAI-compatible LLM endpoint Hermes calls. Default points at the `ollama` template on the same host (127.0.0.1:11434 is reachable because both pods are hostNetwork). Override to point at a remote vLLM, a different Ollama, or a cloud provider — the post-deploy script writes this into Hermes' config.yaml.",
+    "default": "http://127.0.0.1:11434/v1"
+  },
+  "HERMES_LLM_MODEL": {
+    "type": "text",
+    "description": "Model name Hermes passes to the LLM provider. For Ollama, this is the tag used with `ollama pull` (e.g. gemma3:4b, qwen2.5:14b). Make sure the `ollama` template's OLLAMA_DEFAULT_MODEL matches — the post-deploy.py pull happens before Hermes' first request.",
+    "default": "gemma3:4b"
+  },
+  "HERMES_DASHBOARD_PORT": {
+    "type": "text",
+    "description": "Optional: host port for Hermes' web dashboard. Leave blank to skip the dashboard entirely (Phase-0 chat-via-Signal doesn't need it). Set to a port (e.g. 9119) to enable; bound to 127.0.0.1 only — remote access goes through NPM + Authelia forward-auth, see README. The dashboard is opt-in because it's a debugging surface, not an operator portal.",
+    "default": ""
+  }
+}

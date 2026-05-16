@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hermes
+  labels:
+    app: hermes
+  annotations:
+    servicebay.label: "Hermes Agent"
+    servicebay.schema-version: "1"
+    servicebay.ports: "{{HERMES_API_PORT}}/tcp"
+    # Hermes' default LLM_PROVIDER_URL points at the `ollama` template's
+    # default port. The wizard topo-sorts based on this annotation so
+    # ollama lands first and the http://127.0.0.1:11434 target resolves
+    # on first Hermes start.
+    servicebay.dependencies: "ollama"
+spec:
+  # hostNetwork so:
+  #   1. Hermes can reach Ollama at 127.0.0.1:11434 — two hostNetwork
+  #      pods share the host's network namespace, which is what makes
+  #      that loopback-cross-pod call work.
+  #   2. OSCAR's `oscar-household` pod (also hostNetwork) can reach
+  #      Hermes' API at 127.0.0.1:{{HERMES_API_PORT}}.
+  #   3. NPM (also hostNetwork) can proxy the optional dashboard from
+  #      the same host loopback, behind Authelia forward-auth.
+  hostNetwork: true
+  containers:
+  - name: hermes
+    image: docker.io/nousresearch/hermes-agent:latest
+    command:
+    - gateway
+    - run
+    env:
+    # API server config (per upstream Docker docs at
+    # https://hermes-agent.nousresearch.com/docs/user-guide/docker).
+    # Each value is wired non-interactively — `hermes setup` is NOT
+    # invoked. UX_PHILOSOPHY.md § 2 bans operator-facing `podman exec`
+    # instructions; everything Hermes needs at first boot lives here
+    # or in DATA_DIR/hermes/config.yaml (written by post-deploy.py).
+    - name: API_SERVER_ENABLED
+      value: "true"
+    - name: API_SERVER_HOST
+      value: "127.0.0.1"
+    - name: API_SERVER_PORT
+      value: "{{HERMES_API_PORT}}"
+    - name: API_SERVER_KEY
+      value: "{{HERMES_API_KEY}}"
+    - name: API_SERVER_CORS_ORIGINS
+      value: "*"
+    # Dashboard — opt-in. Empty HERMES_DASHBOARD_PORT keeps the
+    # dashboard off entirely; setting it (e.g. to 9119) renders the
+    # block below and Hermes' entrypoint launches the dashboard on
+    # 127.0.0.1:<port>. Remote access goes through NPM forward-auth
+    # → Authelia (see README — there is no LAN-exposed dashboard
+    # path on purpose).
+    {{#HERMES_DASHBOARD_PORT}}
+    - name: HERMES_DASHBOARD
+      value: "1"
+    - name: HERMES_DASHBOARD_HOST
+      value: "127.0.0.1"
+    - name: HERMES_DASHBOARD_PORT
+      value: "{{HERMES_DASHBOARD_PORT}}"
+    {{/HERMES_DASHBOARD_PORT}}
+    ports:
+    - containerPort: {{HERMES_API_PORT}}
+    {{#HERMES_DASHBOARD_PORT}}
+    - containerPort: {{HERMES_DASHBOARD_PORT}}
+    {{/HERMES_DASHBOARD_PORT}}
+    volumeMounts:
+    - mountPath: /opt/data
+      name: hermes-data
+  volumes:
+  - name: hermes-data
+    hostPath:
+      path: {{DATA_DIR}}/hermes
+      type: DirectoryOrCreate
