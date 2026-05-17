@@ -1,5 +1,43 @@
 # Architecture (Target V4.1 - Reactive Digital Twin)
 
+## Audit (2026-05-17)
+
+A modular / KISS / DRY / SoT review of the codebase plus a security pass. Open findings are tracked as GitHub issues; this section captures the verdict so it doesn't get re-investigated next quarter.
+
+### What's working
+
+- **Single Digital Twin store.** `src/lib/store/twin.ts:90-126` enforces a `DigitalTwinStore.getInstance()` singleton via `global.__DIGITAL_TWIN__`. No parallel state caches found.
+- **One mutation path per operation.** Every deploy / delete / start / stop / restart / update-yaml call — whether from the UI, the install runner, or MCP — funnels through `ServiceManager` (`src/lib/services/ServiceManager.ts`). Add/remove proxy route both write `config.reverseProxy.hosts` via `updateConfig`. No bypasses.
+- **One definition per type.** `EnrichedContainer`, `ServiceUnit`, `PortMapping`, `NetworkNode` are each declared once and imported everywhere. No frontend/backend redeclaration.
+- **One renderer.** All Mustache rendering passes through `src/lib/install/runner.ts`. One health-check runner (`src/lib/health/runner.ts:CheckRunner.run`) dispatches by type internally — no parallel implementations.
+- **Core stays out of template internals.** `tests/backend/template_consistency.test.ts:564-614` allows exactly one template-name branch in the install engine (`isSelected('nginx')` in `src/lib/stackInstall/postInstall.ts:366`, for the NPM-credentials tri-state UI prompt that can't live in a template script). Every other deploy path is template-agnostic.
+- **Login rate limiting** is SQLite-backed sliding window, survives restarts (`src/lib/auth/rateLimit.ts`).
+- **MCP scope enforcement** is real — every tool is mapped to `read|lifecycle|mutate|destroy` and bearer tokens are checked server-side (`src/lib/mcp/server.ts:74-98`).
+
+### Coupling leaks (architecture issues)
+
+| Issue | Summary |
+|---|---|
+| [#582 ARCH-01](https://github.com/mdopp/servicebay/issues/582) | `OnboardingWizard.tsx:963` hardcodes `'full-stack'` with no fallback (sibling call at :1288 *does* have one — inconsistency). |
+| [#583 ARCH-02](https://github.com/mdopp/servicebay/issues/583) | "Plugin architecture" (§ Plugin Architecture below) is documented as a registry but is actually a static array in `Sidebar.tsx:10-17`. Either rename the doc or build a real registry. |
+| [#584 ARCH-03](https://github.com/mdopp/servicebay/issues/584) | Bundled templates' `post-deploy.py` scripts POST to internal endpoints (`/api/system/lldap/credentials`, `/api/system/authelia/oidc-clients`) with no versioned contract or test. Biggest real coupling leak. |
+| [#585 ARCH-04](https://github.com/mdopp/servicebay/issues/585) | Template structure rules are spread across `registry.ts`, `templateTier.ts`, the test suite, `TEMPLATE_AUTHORING.md`, and `templates/CLAUDE.md`. Consolidate into one TypeScript interface that both runtime loaders and tests use. |
+
+### Security findings (security issues)
+
+| Issue | Severity | Summary |
+|---|---|---|
+| [#577 SEC-01](https://github.com/mdopp/servicebay/issues/577) | medium | OIDC `issuer` URL is not SSRF-checked before fetch (`callback/route.ts:40,60`). |
+| [#578 SEC-02](https://github.com/mdopp/servicebay/issues/578) | low | FritzBox `host` config not validated against private/loopback addresses. |
+| [#579 SEC-03](https://github.com/mdopp/servicebay/issues/579) | medium | `exec_command` regex denylist in `mcp/safety.ts:71-84` is trivially bypassable. Either label as advisory or replace with allowlist. |
+| [#580 SEC-04](https://github.com/mdopp/servicebay/issues/580) | medium | Backup restore (`systemBackup.ts:415-440`) extracts tar without `--no-overwrite-dir` / symlink validation. |
+| [#581 SEC-05](https://github.com/mdopp/servicebay/issues/581) | low | MCP log redaction misses backtick-quoted, multi-line YAML, and URL-query secrets. |
+
+### Investigated but ruled out
+
+- **`get_container_logs` / `get_service_logs` command injection.** Zod regex `/^[a-zA-Z0-9_.-]+$/` admits no shell metacharacters; `lines`/`tail`/`since` are typed integers. Not exploitable.
+- **MCP `update_config` prototype pollution.** Zod `.strict()` rejects unknown keys; `templateSettings` values are string-typed; `deepMerge` only recurses when both sides are objects, so a string `__proto__` assignment is a no-op.
+
 ## Overview
 
 ServiceBay is a Next.js application designed to manage containerized services using Podman. It provides a web interface for creating, monitoring, and managing services defined as Kubernetes Pod YAMLs (Quadlet style).
