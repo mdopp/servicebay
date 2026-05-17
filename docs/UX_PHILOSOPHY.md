@@ -76,6 +76,44 @@ server. Destructive actions show a confirm-on-destructive guard.
   admin credentials below." → Should be a probe with both options
   (reset volume vs. enter existing creds), each with consequences.
 
+#### 2a. Pattern-aware probes — name the topology, classify the failure
+
+Probes that can have **more than one legitimate "good" state** (e.g.
+the router can route DNS via Pattern A *or* Pattern B; LE cert failures
+can be port-80 / DNS / CAA / rate-limit / DNSSEC) should:
+
+1. **Detect which valid topology is active** and say so in the OK
+   message. *"Router DNS: AdGuard-as-DHCP-DNS (Pattern A)"* beats
+   *"OK"*. The operator confirms the configuration they actually
+   chose, not just "trust me".
+2. **Show actual + desired state in warn/fail.** *"Public DNS → 1.2.3.4
+   but your gateway IP is 5.6.7.8"* beats *"DNS misconfigured"*. The
+   operator sees both numbers and can act without re-reading the docs.
+3. **Categorise the failure with a stable label.** *"Port 80
+   unreachable — ACME http-01 challenge: …"* beats *"ACME error: …"*.
+   The label points at one fix-path (router port-forward, registrar
+   CAA, …) instead of forcing the operator to pattern-match certbot's
+   prose every time.
+4. **Offer one fix action per legitimate path**, not a single
+   "Retry" that doesn't know which path to push the operator down.
+   The action picker is the operator's intent capture.
+
+Worked examples in this repo:
+- `router_dns_not_pointing` recognises Pattern A *and* Pattern B
+  (FritzBox → AdGuard → public-fallback) as OK, picks each in its OK
+  message, and offers one `configure_fritzbox` action plus one
+  `configure_adguard_dhcp` action.
+- `cert_request_failure` classifies certbot detail text into
+  `port-80 | dns | caa | dnssec | rate-limit | tls-sni | other`. The
+  per-row label tells the operator which fix-path to pursue; the
+  hint text shifts to a category-specific next-step ("add `0 issue
+  letsencrypt.org`" vs. "open port 80") when all rows fall into one
+  category.
+- `domain_external_reachability` names the layer ("DNS layer OK —
+  issue is in the cert / ACME / port-80 layer") when DNS resolves
+  correctly but letsdebug.net reports problems. The operator stops
+  running `dig` on rows that already have working DNS.
+
 ### 3. Hide expert-only knobs
 
 If less than 5% of users would meaningfully change a setting, give it

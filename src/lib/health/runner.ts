@@ -10,7 +10,7 @@ import { ContainerId, ServiceName, HostString } from '../api/schemas';
 import { runLetsdebugForDomain } from '../letsdebug/client';
 import { detectLanIp, recentChanges } from '../lanIp';
 import { findNpmAdminUrl, getNpmToken } from './probes/npmAdmin';
-import { parseLetsencryptTail } from './probes/letsencryptLogParser';
+import { parseLetsencryptTail, categoryLabel, type FailureCategory } from './probes/letsencryptLogParser';
 import { logger } from '../logger';
 
 /**
@@ -735,32 +735,68 @@ export class CheckRunner {
         }
       }
 
-      const byDomain = new Map<string, { domain: string; type: string; detail: string }>();
+      const byDomain = new Map<string, typeof parsed.failures[number]>();
       for (const f of parsed.failures) byDomain.set(f.domain, f);
       const items: CrfItem[] = [];
+      const categories = new Set<FailureCategory>();
       for (const [domain, f] of byDomain) {
         const detail = f.detail.length > 140 ? `${f.detail.slice(0, 140)}…` : f.detail;
+        categories.add(f.category);
         items.push({
           id: domain,
           label: domain,
-          detail: `ACME ${f.type} challenge failed: ${detail}`,
+          // Prefix the row with a category label so the operator
+          // immediately knows which fix-path to pursue (port-80 firewall,
+          // CAA record at registrar, DNS A-record fix, rate-limit wait)
+          // without re-reading certbot's prose every time.
+          detail: `${categoryLabel(f.category)} — ${f.type} challenge: ${detail}`,
           status: 'fail',
           actionIds: ['show_log_tail', 'retry_request'],
         });
       }
       if (parsed.rateLimited && items.length === 0) {
+        categories.add('rate-limit');
         items.push({
           id: 'rate-limited',
           label: 'Let\'s Encrypt rate limit',
-          detail: 'Hit the ACME rate limit (5 failed validations / host / hour). Wait ~1h and fix the root cause before retrying.',
+          detail: `${categoryLabel('rate-limit')} — 5 failed validations / host / hour. Wait ~1h and fix the root cause before retrying.`,
           status: 'fail',
           actionIds: ['show_log_tail'],
         });
       }
+
+      // Pattern-aware hint: surface a different next-step depending
+      // on the failure pattern(s) we just classified. When everything
+      // is one category, point straight at that fix; mixed batches
+      // get the generic ladder. Keeps the operator from chasing
+      // "port 80 unreachable" when their actual problem is CAA.
+      const hint = ((): string => {
+        if (categories.size === 1) {
+          const [only] = Array.from(categories);
+          switch (only) {
+            case 'rate-limit':
+              return 'Let\'s Encrypt blocks repeated identical requests. Wait the window out (1h for failed-auth, 168h for duplicate-certs) before retrying — and fix the underlying cause first.';
+            case 'port-80':
+              return 'ACME HTTP-01 needs port 80 reachable from the public internet. Check router port-forwarding to this LAN IP and any upstream ISP block.';
+            case 'dns':
+              return 'The domain must resolve from public DNS to your gateway IP. Check the A record at your registrar — `domain_external_reachability` shows what public resolvers see today.';
+            case 'caa':
+              return 'A CAA record at your domain forbids Let\'s Encrypt from issuing. Add `0 issue "letsencrypt.org"` at your registrar (or remove the restrictive CAA record entirely).';
+            case 'dnssec':
+              return 'DNSSEC chain is broken — the validator can\'t verify your A record. Fix DS / DNSKEY at your registrar, or disable DNSSEC for this zone until you can.';
+            case 'tls-sni':
+              return 'Legacy TLS-SNI challenge type — NPM should be using HTTP-01 by default. Re-create the certificate entry in NPM to force HTTP-01.';
+            case 'other':
+              return 'Read the detail line — certbot\'s wording usually names the exact cause. Run letsdebug.net for an external view of what the ACME server sees.';
+          }
+        }
+        return 'Multiple failure types in the log — see each row for its category. Run letsdebug.net for an external view of what the ACME server sees, then click Retry once the underlying cause is fixed.';
+      })();
+
       return encode({
         status: 'fail',
-        detail: `${items.length} domain${items.length === 1 ? '' : 's'} with recent ACME failure${items.length === 1 ? '' : 's'} in NPM\'s letsencrypt.log.`,
-        hint: 'Most common cause is public port 80 not reachable from the internet. Run letsdebug.net for an external view of what the ACME server sees, then click Retry once the underlying cause is fixed.',
+        detail: `${items.length} domain${items.length === 1 ? '' : 's'} with recent ACME failure${items.length === 1 ? '' : 's'} (${Array.from(categories).map(categoryLabel).join(', ')}).`,
+        hint,
         items,
       });
     } catch (e) {
