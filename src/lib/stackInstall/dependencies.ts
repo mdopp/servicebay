@@ -23,26 +23,16 @@
  *   but defensive: a cycle would otherwise loop the install.
  */
 
-/** Single regex per yaml — matches `servicebay.dependencies: "..."`,
- *  `'...'`, or unquoted, anywhere in the file. Indentation isn't
- *  validated because the templates already pass yaml-syntax tests
- *  (template_consistency.test.ts); this regex just needs the value. */
-const DEPS_ANNOTATION_RE =
-  /^\s+servicebay\.dependencies:\s*(?:"([^"]*)"|'([^']*)'|([^\n#]+?))\s*$/m;
+import { readManifestAnnotations } from '../template/contract';
 
 /** Parse `servicebay.dependencies` from a rendered template.yml.
- *  Returns the list of dep template names, lowercase-trimmed, or
- *  an empty array when the annotation is missing/blank. */
+ *  Returns the list of dep template names, trimmed, or an empty array
+ *  when the annotation is missing/blank. Thin wrapper over the unified
+ *  parser in `template/contract.ts` (#585) — callers that need strict
+ *  error reporting should call `parseTemplateManifest` directly. */
 export function parseTemplateDependencies(yaml: string | undefined): string[] {
   if (!yaml) return [];
-  const m = DEPS_ANNOTATION_RE.exec(yaml);
-  if (!m) return [];
-  const raw = (m[1] ?? m[2] ?? m[3] ?? '').trim();
-  if (!raw) return [];
-  return raw
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+  return readManifestAnnotations(yaml).dependencies ?? [];
 }
 
 export interface DependencyAwareItem {

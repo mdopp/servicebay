@@ -27,14 +27,21 @@ A standard `kind: Pod` manifest with `{{MUSTACHE}}` placeholders that
 the wizard substitutes at deploy time. Use these annotations under
 `metadata.annotations`:
 
+<!-- AUTOGEN:TEMPLATE_FIELDS_START -->
+<!-- This table is generated from src/lib/template/contract.ts:TEMPLATE_FIELDS by
+     scripts/gen-template-docs.ts. Run `npm run gen-template-docs` after editing
+     the field-spec table; do not hand-edit between these markers. -->
+
 | Annotation | Required | Purpose |
 |---|---|---|
 | `servicebay.label` | yes | Friendly UI label shown in the wizard's configure step (e.g. `"Vaultwarden (Passwords)"`). Without it the section header falls back to the raw template name. |
-| `servicebay.ports` | recommended | Comma-separated `port/proto` list. Drives gateway probes + the network graph. |
-| `servicebay.config-mount` | required if any `*.mustache` files | Container mountPath that companion config files should land in. Avoids the `/config`-suffix heuristic picking the wrong volume in multi-container pods. |
-| `servicebay.schema-version` | recommended (default `"1"`) | Bump when the pod structure or variable shape changes in a way operators need to be aware of (containers extracted, variables renamed, data paths moved). Plain image-tag bumps don't need this — Quadlet's `AutoUpdate=registry` handles those silently. Each bump should ship a `CHANGELOG.md` section + (if data needs to move) a `migrations/v{N-1}-to-v{N}.py` script. See #352. |
-| `servicebay.tier` | optional | `"infrastructure"` for platform templates that the wizard auto-includes (DNS / proxy / SSO) and pins checked; everything else defaults to `"feature"` and starts unchecked. Stacks don't carry this annotation. |
-| `servicebay.dependencies` | optional | Comma-separated list of template names that must install before this one. Drives three things in the wizard: (1) the red **`requires X`** badge under the template name; (2) auto-checking those templates when the operator checks this one; (3) the uncheck-guard that prompts before removing a template another selected template needs. The install loop in `useStackInstall` then topo-sorts the deploy order so deps land first. Example: `servicebay.dependencies: "nginx,auth"` for any template whose post-deploy registers an OIDC client in Authelia or whose subdomain is served via NPM. |
+| `servicebay.ports` | optional | Comma-separated `port/proto` list (e.g. `"8080/tcp,8443/tcp"`). Drives gateway probes + the network graph. |
+| `servicebay.config-mount` | required if any `*.mustache` files | Container mountPath that companion `*.mustache` files should land in. Avoids the `/config`-suffix heuristic picking the wrong volume in multi-container pods. |
+| `servicebay.schema-version` | optional (default `1`) | Bump when the pod structure or variable shape changes in a way operators need to be aware of (containers extracted, variables renamed, data paths moved). Plain image-tag bumps don't need this — Quadlet's `AutoUpdate=registry` handles those silently. Each bump should ship a `CHANGELOG.md` section + (if data needs to move) a `migrations/v{N-1}-to-v{N}.py` script. See #352. |
+| `servicebay.tier` | optional (default `"feature"`) | `"infrastructure"` for platform templates that the wizard auto-includes (DNS / proxy / SSO) and pins checked; everything else defaults to `"feature"` and starts unchecked. Stacks don't carry this annotation. |
+| `servicebay.dependencies` | optional (default `[]`) | Comma-separated list of template names that must install before this one. Drives three things in the wizard: (1) the red **`requires X`** badge under the template name; (2) auto-checking those templates when the operator checks this one; (3) the uncheck-guard that prompts before removing a template another selected template needs. The install loop then topo-sorts the deploy order so deps land first. Example: `servicebay.dependencies: "nginx,auth"`. |
+
+<!-- AUTOGEN:TEMPLATE_FIELDS_END -->
 
 Use `metadata.labels` for `servicebay.role` (`dns`, `reverse-proxy`,
 `media`, …) — those steer health-check defaults.

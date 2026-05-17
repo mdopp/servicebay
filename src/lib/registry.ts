@@ -4,6 +4,7 @@ import path from 'path';
 import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import { getConfig, RegistryConfig } from './config';
+import { readManifestAnnotations } from './template/contract';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -77,43 +78,33 @@ export async function getTemplateSettingsSchema(): Promise<Record<string, Templa
 }
 
 /**
- * Extract `servicebay.tier` from a template.yml. Returns 'feature' on
- * any failure mode (missing file, unparseable YAML, missing
- * annotation) — that matches the wizard's default-to-feature rule.
- * Stacks have no tier.
+ * Read `tier` + `dependencies` from a template.yml in one shot. Returns
+ * empty/default values on any failure (missing file, unparseable YAML,
+ * missing annotation) — matches the wizard's default-to-feature rule
+ * and keeps a malformed template visible-but-warned rather than
+ * mysteriously absent. Stacks have no manifest annotations.
+ *
+ * Delegates to the unified parser in `src/lib/template/contract.ts`
+ * (#585). Loose-mode (`readManifestAnnotations`) is the right path here:
+ * we want to surface whatever annotations the template provides without
+ * blocking the entire registry sync on a missing `servicebay.label`.
+ * The build-time consistency suite calls the strict parser to catch
+ * bundled-template defects loudly.
  */
-async function readTemplateTier(itemDir: string, type: 'template' | 'stack'): Promise<'infrastructure' | 'feature' | undefined> {
-  if (type === 'stack') return undefined;
+async function readTemplateMeta(
+  itemDir: string,
+  type: 'template' | 'stack',
+): Promise<{ tier?: 'infrastructure' | 'feature'; dependencies: string[] }> {
+  if (type === 'stack') return { tier: undefined, dependencies: [] };
   try {
     const yaml = await fs.readFile(path.join(itemDir, 'template.yml'), 'utf-8');
-    // Same regex as parseTemplateTier in src/lib/templateTier.ts —
-    // duplicated here because that module is client-safe (no fs) and
-    // we don't want to import from server code into it.
-    const m = /^\s+servicebay\.tier:\s*(?:"([^"]*)"|'([^']*)'|([^\n#]+?))\s*$/m.exec(yaml);
-    const raw = (m ? (m[1] ?? m[2] ?? m[3] ?? '') : '').trim();
-    if (raw === 'infrastructure') return 'infrastructure';
-    return 'feature';
+    const annotations = readManifestAnnotations(yaml);
+    return {
+      tier: annotations.tier ?? 'feature',
+      dependencies: annotations.dependencies ?? [],
+    };
   } catch {
-    return 'feature';
-  }
-}
-
-/** Read `servicebay.dependencies` from a template.yml. Same comma-
- *  separated parsing as `parseTemplateDependencies` in
- *  `src/lib/stackInstall/dependencies.ts` — duplicated server-side so
- *  the registry layer can populate Template.dependencies at fetch
- *  time without making the client import server-only fs helpers. */
-async function readTemplateDependencies(itemDir: string, type: 'template' | 'stack'): Promise<string[]> {
-  if (type === 'stack') return [];
-  try {
-    const yaml = await fs.readFile(path.join(itemDir, 'template.yml'), 'utf-8');
-    const m = /^\s+servicebay\.dependencies:\s*(?:"([^"]*)"|'([^']*)'|([^\n#]+?))\s*$/m.exec(yaml);
-    if (!m) return [];
-    const raw = (m[1] ?? m[2] ?? m[3] ?? '').trim();
-    if (!raw) return [];
-    return raw.split(',').map(s => s.trim()).filter(Boolean);
-  } catch {
-    return [];
+    return { tier: 'feature', dependencies: [] };
   }
 }
 
@@ -131,10 +122,7 @@ async function fetchDir(dirPath: string, type: 'template' | 'stack', source: str
 
     return await Promise.all(directories.map(async item => {
         const itemPath = path.join(dirPath, item.name);
-        const [tier, dependencies] = await Promise.all([
-            readTemplateTier(itemPath, type),
-            readTemplateDependencies(itemPath, type),
-        ]);
+        const { tier, dependencies } = await readTemplateMeta(itemPath, type);
         return {
             name: item.name,
             path: itemPath,

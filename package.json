@@ -12,6 +12,7 @@
     "lint": "eslint",
     "knip": "knip",
     "test": "vitest run",
+    "gen-template-docs": "tsx scripts/gen-template-docs.ts",
     "prepare": "husky || true"
   },
   "lint-staged": {

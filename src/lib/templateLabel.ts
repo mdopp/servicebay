@@ -1,25 +1,19 @@
 /**
  * Extract `metadata.annotations['servicebay.label']` from a template's
- * raw YAML content. Pure function with no Node dependencies — safe to
- * import from client components.
+ * raw YAML content. Thin wrapper over the unified parser in
+ * `src/lib/template/contract.ts` (#585) — kept as a named export so the
+ * existing call sites (wizard, installer modal, portal) don't all need
+ * to change.
  *
- * Why a regex instead of a YAML parser: this runs in the wizard /
- * installer modal at variable-collection time, before the YAML is
- * known to be parseable (the user's variables haven't been substituted
- * yet, and our YAMLs contain `{{MUSTACHE}}` placeholders that valid
- * YAML happens to accept as bare strings — but we don't want to
- * couple to that). The annotation value itself is always a literal
- * string in our templates (the consistency test enforces it), so a
- * targeted regex is sufficient and avoids pulling js-yaml into the
- * earliest render path.
+ * Returns `undefined` when the annotation is missing or the manifest is
+ * otherwise invalid; callers fall back to the raw template name in that
+ * case. The strict parser surfaces the precise error message via
+ * `parseTemplateManifest` directly — use that path in code that should
+ * fail loudly (registry sync, consistency tests).
  */
+
+import { readManifestAnnotations } from './template/contract';
+
 export function parseTemplateLabel(yamlText: string): string | undefined {
-  // Match `servicebay.label: "..."`, `servicebay.label: '...'`,
-  // or `servicebay.label: bare value` (until end of line). Anchored to
-  // an annotation-style indented line (any leading whitespace) so we
-  // don't match references inside multi-line strings or comments.
-  const re = /^\s+servicebay\.label:\s*(?:"([^"]*)"|'([^']*)'|([^\n#]+?))\s*$/m;
-  const m = re.exec(yamlText);
-  if (!m) return undefined;
-  return (m[1] ?? m[2] ?? m[3] ?? '').trim() || undefined;
+  return readManifestAnnotations(yamlText).label;
 }

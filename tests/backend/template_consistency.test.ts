@@ -188,25 +188,27 @@ describe('Template ↔ source-name consistency', () => {
     expect(offenders, `Stale SERVICE_DEPS entries:\n  ${offenders.join('\n  ')}`).toEqual([]);
   });
 
-  it('every template.yml declares a servicebay.label annotation', async () => {
-    // Friendly template labels live in the template itself
-    // (metadata.annotations['servicebay.label']), so a new template
-    // doesn't need to touch core code to get a non-default UI label.
-    // The wizard / installer modal extracts the label at variable-
-    // collection time via parseTemplateLabel(); the test exercises the
-    // same parser to guarantee consistency.
-    const { parseTemplateLabel } = await import('../../src/lib/templateLabel');
+  it('every template.yml has a strictly-valid manifest (#585)', async () => {
+    // Drives every annotation rule through the single source of truth
+    // in src/lib/template/contract.ts. Catches missing labels, invalid
+    // tiers, malformed schema-versions, and the config-mount-required-
+    // when-mustache-configs-present rule in one pass. Specific shape
+    // violations get their own dedicated tests below.
+    const { parseTemplateManifest } = await import('../../src/lib/template/contract');
     const offenders: string[] = [];
     for (const t of templates) {
-      const label = parseTemplateLabel(t.yamlContent);
-      if (!label) {
-        offenders.push(`${t.name}: parseTemplateLabel returned no label`);
+      const result = parseTemplateManifest(t.yamlContent, {
+        hasMustacheConfigs: Object.keys(t.configs).length > 0,
+      });
+      if (!result.ok) {
+        for (const err of result.errors) {
+          offenders.push(`${t.name}: ${err}`);
+        }
       }
     }
     expect(
       offenders,
-      `Templates missing the servicebay.label annotation:\n  ${offenders.join('\n  ')}\n\n` +
-      `Add \`servicebay.label: "<friendly name>"\` under metadata.annotations in template.yml.`,
+      `Templates with invalid manifests:\n  ${offenders.join('\n  ')}`,
     ).toEqual([]);
   });
 });
@@ -398,17 +400,16 @@ describe('Stack README service lists', () => {
 });
 
 // ─── 7. Templates that ship mustache configs declare a config-mount target ─
-describe('Mustache configs have a resolvable target mount', () => {
-  // Every *.mustache file in a template directory gets rendered + written to
-  // a host bind path during deploy. The wizard's resolver picks the target
-  // path from `servicebay.config-mount: <mountPath>` annotation, falling back
-  // to a `/config` / `/conf`-like heuristic. The fallback is fragile in
-  // multi-mount pods: the *first* matching mount wins, so a template with
-  // two `/config`-suffix mounts can route the file to the wrong volume.
-  // Make the annotation a hard requirement when mustache files are present.
+describe('Mustache configs resolve to a real container mountPath', () => {
+  // The presence of the `servicebay.config-mount` annotation when a template
+  // ships *.mustache files is enforced by the strict manifest parser (#585) —
+  // see the manifest-validation test above. This test handles the cross-
+  // cutting piece the parser can't: the annotation value must match a real
+  // mountPath somewhere in the rendered pod, otherwise the resolver has
+  // nothing to write into.
   for (const t of templates) {
     if (Object.keys(t.configs).length === 0) continue;
-    it(`${t.name}: has a servicebay.config-mount annotation that resolves to a real mountPath`, () => {
+    it(`${t.name}: servicebay.config-mount resolves to a real mountPath`, () => {
       // Render the YAML with a stub view so we can parse it. Strip
       // mustache section delimiters first ({{#FOO}}, {{/FOO}}, {{^FOO}})
       // so optional blocks survive parsing — the remaining variable
@@ -426,12 +427,10 @@ describe('Mustache configs have a resolvable target mount', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pod = docs.find((d: any) => d?.kind === 'Pod');
       const annot: string | undefined = pod?.metadata?.annotations?.['servicebay.config-mount'];
-      expect(
-        annot,
-        `${t.name} ships ${Object.keys(t.configs).join(', ')} but has no \`servicebay.config-mount: <mountPath>\` annotation. ` +
-        `Without it the resolver falls back to a /config-suffix heuristic, which silently picks the wrong mount in multi-volume pods. ` +
-        `Add the annotation pointing at the container's config mountPath.`,
-      ).toBeTruthy();
+      // Annotation presence is enforced by the strict-manifest test above;
+      // if it's missing here the other test will have already failed with
+      // a better message, so just skip.
+      if (!annot) return;
 
       // The annotation value must match a real mountPath somewhere in the pod.
       const mountPaths = new Set<string>();

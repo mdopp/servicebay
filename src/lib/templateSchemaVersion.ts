@@ -1,6 +1,7 @@
 /**
  * Extract `metadata.annotations['servicebay.schema-version']` from a
- * template's raw YAML content. Mirrors `parseTemplateTier` in shape.
+ * template's raw YAML content. Thin wrapper over the unified parser in
+ * `src/lib/template/contract.ts` (#585).
  *
  * The schema version bumps when a template's pod structure or variable
  * shape changes in a way that needs operator awareness (containers
@@ -8,22 +9,18 @@
  * updates DO NOT need a schema bump — those are handled by Quadlet's
  * AutoUpdate=registry transparently.
  *
- * Default is `1` when the annotation is missing — covers existing
- * templates whose authors haven't started versioning yet. The
- * comparison logic in the update flow treats "from missing/v1 to vN"
- * the same as "from v1 to vN".
- *
- * Intentionally regex-based: runs before mustache substitution, so we
- * don't want to require the YAML to be parseable as-is.
+ * Default is `1` when the annotation is missing OR the manifest doesn't
+ * parse — covers existing templates whose authors haven't started
+ * versioning yet, and keeps a malformed template usable rather than
+ * crashing the upgrade flow. The strict parser surfaces the precise
+ * error message via `parseTemplateManifest` directly; use that path in
+ * code that should fail loudly (registry sync, consistency tests).
  *
  * See #353 / #352 (template upgrade system, phase 1).
  */
+
+import { readManifestAnnotations } from './template/contract';
+
 export function parseTemplateSchemaVersion(yamlText: string): number {
-  const re = /^\s+servicebay\.schema-version:\s*(?:"([^"]*)"|'([^']*)'|([^\n#]+?))\s*$/m;
-  const m = re.exec(yamlText);
-  const raw = (m ? (m[1] ?? m[2] ?? m[3] ?? '') : '').trim();
-  if (!raw) return 1;
-  const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1) return 1;
-  return n;
+  return readManifestAnnotations(yamlText).schemaVersion ?? 1;
 }

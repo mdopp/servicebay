@@ -1,45 +1,28 @@
 /**
  * Extract `metadata.annotations['servicebay.tier']` from a template's
- * raw YAML content. Mirrors `parseTemplateLabel` in shape so it can be
- * imported from client components without dragging Node deps.
+ * raw YAML content. Thin wrapper over the unified parser in
+ * `src/lib/template/contract.ts` (#585).
  *
  * Two tiers, per the design conversation in #249:
- *
- *   - **`infrastructure`** — auto-included by the install wizard,
- *     locked-checked. The platform layer every install carries
- *     (currently `adguard`, `nginx`, `auth`).
- *   - **`feature`** — user-pickable in the wizard's checkbox grid.
- *     Default when the annotation is missing or unrecognized.
+ *   - `infrastructure` — auto-included by the install wizard,
+ *     locked-checked (`adguard`, `nginx`, `auth`).
+ *   - `feature` — user-pickable in the wizard's checkbox grid.
+ *     Default when the annotation is missing OR the manifest doesn't
+ *     parse — so a malformed template still shows up as user-pickable
+ *     instead of mysteriously vanishing from the wizard.
  *
  * Note: a separate, pre-existing `servicebay.role` label on each
  * template (`reverse-proxy`, `system`, `dns`, ...) is **distinct**
  * from this tier classification — the label is consumed by service-
- * detection code paths (network/service.ts, ServicesPlugin) for
- * visual grouping, not by the install wizard.
+ * detection code paths for visual grouping, not by the install wizard.
  */
 
-/** Recognized template tiers. `feature` is the implicit default. */
-export type TemplateTier = 'infrastructure' | 'feature';
+import { readManifestAnnotations, type TemplateTier } from './template/contract';
 
-const KNOWN_TIERS: ReadonlySet<string> = new Set(['infrastructure', 'feature']);
+export type { TemplateTier };
 
-/**
- * Pull the tier annotation from a template.yml string. Returns
- * `'feature'` when the annotation is missing or unrecognized — that
- * way new templates default to user-pickable without ceremony.
- *
- * Intentionally regex-based for the same reason as parseTemplateLabel:
- * runs in client code before mustache substitution, so we don't want
- * to require the YAML to be parseable as-is.
- */
 export function parseTemplateTier(yamlText: string): TemplateTier {
-  const re = /^\s+servicebay\.tier:\s*(?:"([^"]*)"|'([^']*)'|([^\n#]+?))\s*$/m;
-  const m = re.exec(yamlText);
-  const raw = (m ? (m[1] ?? m[2] ?? m[3] ?? '') : '').trim();
-  if (raw && KNOWN_TIERS.has(raw)) {
-    return raw as TemplateTier;
-  }
-  return 'feature';
+  return readManifestAnnotations(yamlText).tier ?? 'feature';
 }
 
 /** True iff the tier marks the template as platform-tier (always installed). */
