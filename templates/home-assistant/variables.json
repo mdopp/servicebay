@@ -15,14 +15,15 @@
   },
   "ZWAVE_JS_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for the Z-Wave JS UI. LAN-only — Z-Wave management doesn't need to be exposed to the public internet.",
+    "description": "Subdomain for the Z-Wave JS UI. Internal exposure — gets a real LE cert (Authelia forward-auth needs https) but NPM binds the LAN-only access list, so it's not reachable from outside the LAN.",
     "default": "zwave",
-    "exposure": "lan",
+    "exposure": "internal",
     "proxyPort": "8091",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
       "block_exploits": true,
-      "ssl_forced": false
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
     }
   },
   "HA_OIDC_SECRET": {

@@ -14,16 +14,32 @@ interface ProxyHostRequest {
     /** Template name this proxy host belongs to (e.g. "vaultwarden") */
     service?: string;
     /**
-     * Exposure profile for the host. `public` triggers an auto Let's
-     * Encrypt cert request on this endpoint right after the proxy host
-     * is created (best-effort — the install does not fail if the ACME
-     * challenge fails; the `cert_request_failure` diagnose probe surfaces
-     * the underlying reason). `lan` (or unset) creates the proxy host
-     * without a cert. Templates declare a sensible default per
-     * subdomain variable in `variables.json`; the wizard's configure
-     * step lets the operator override per service.
+     * Exposure profile for the host. Three tiers:
+     *
+     * - `public` — auto LE cert + open access. Reachable from anywhere
+     *   on the internet. Use for end-user-facing services (Authelia
+     *   portal, Vaultwarden, files, photos, …).
+     * - `internal` — auto LE cert + NPM IP-allowlist to LAN-CIDR. The
+     *   domain has a public DNS record so LE HTTP-01 can validate (the
+     *   ACME-challenge location bypasses the allowlist inside NPM by
+     *   design), but every other path is denied from non-LAN IPs.
+     *   Use for admin consoles that need real HTTPS (so Authelia
+     *   forward-auth works) but should never be hit from outside
+     *   — ldap, dns, sync, zwave.
+     * - `lan` (or unset) — no cert, NPM IP-allowlist binding only.
+     *   The host serves plain HTTP. Authelia forward-auth gating
+     *   does NOT work here (Authelia rejects http scheme on
+     *   /api/authz/auth-request — see forwardAuth.ts).
+     *
+     * Cert request is best-effort for both `public` and `internal`:
+     * install does not fail on ACME hiccups; `cert_request_failure`
+     * diagnose probe surfaces the reason.
+     *
+     * Templates declare a sensible default per subdomain variable in
+     * `variables.json`; the wizard's configure step lets the operator
+     * override per service.
      */
-    exposure?: 'public' | 'lan';
+    exposure?: 'public' | 'internal' | 'lan';
     /** Service-specific NPM proxy host settings */
     proxyConfig?: {
         allow_websocket_upgrade?: boolean;
@@ -552,7 +568,11 @@ export async function POST(request: Request) {
         // to the previous open behaviour for that subset of hosts so the
         // install doesn't fail just because the access-list creation
         // hiccupped — the diagnose UI is the recovery path.
-        const needsLanList = hosts.some(h => h.exposure === 'lan');
+        //
+        // `lan` AND `internal` both bind the LAN access list; `internal`
+        // additionally requests a public LE cert (the ACME challenge
+        // location bypasses the allowlist by design inside NPM).
+        const needsLanList = hosts.some(h => h.exposure === 'lan' || h.exposure === 'internal');
         const lanAccessListId = needsLanList
             ? await ensureLanAccessList(npm.apiUrl, token, npm.nodeIp)
             : null;
@@ -565,7 +585,8 @@ export async function POST(request: Request) {
             if (!host.forwardHost) {
                 host.forwardHost = npm.nodeIp;
             }
-            const accessListId = host.exposure === 'lan' && lanAccessListId !== null ? lanAccessListId : 0;
+            const wantsLanList = host.exposure === 'lan' || host.exposure === 'internal';
+            const accessListId = wantsLanList && lanAccessListId !== null ? lanAccessListId : 0;
             let createdHost: { id?: number } | null = null;
             try {
                 createdHost = await createProxyHost(npm.apiUrl, token, host, accessListId);
@@ -578,10 +599,12 @@ export async function POST(request: Request) {
                 continue;
             }
 
-            // Auto-cert for public-exposure hosts. Best-effort: install
-            // continues regardless of ACME outcome — the diagnose probe
-            // (`cert_request_failure`) is the recovery path.
-            if (host.exposure === 'public') {
+            // Auto-cert for public AND internal hosts. Best-effort:
+            // install continues regardless of ACME outcome — the
+            // diagnose probe (`cert_request_failure`) is the recovery
+            // path. Internal hosts get a real cert too so Authelia
+            // forward-auth (which requires https scheme) works.
+            if (host.exposure === 'public' || host.exposure === 'internal') {
                 if (!leEmail) {
                     const reason = 'No ACME registration email configured (set reverseProxy.npm.email in Settings → Integrations); skipped cert request.';
                     results[results.length - 1].certError = reason;

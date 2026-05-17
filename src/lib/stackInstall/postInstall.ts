@@ -131,10 +131,13 @@ function renderProxyConfig(
  * `tests/backend/buildProxyHosts.test.ts`).
  *
  * Hosts are split by their declared `exposure`:
- *   - `public` → `<sub>.<PUBLIC_DOMAIN>` (Let's Encrypt cert,
+ *   - `public`   → `<sub>.<PUBLIC_DOMAIN>` (Let's Encrypt cert,
  *     externally reachable once DNS points here).
- *   - `lan`    → `<sub>.<PUBLIC_DOMAIN>` too. Split-horizon is
- *     enforced by AdGuard's `*.<PUBLIC_DOMAIN> → <lanIp>` wildcard
+ *   - `internal` → `<sub>.<PUBLIC_DOMAIN>` (LE cert too, so Authelia
+ *     forward-auth works) but the proxy host binds the NPM LAN-only
+ *     access list. ACME-challenge bypasses the allowlist by design.
+ *   - `lan`      → `<sub>.<PUBLIC_DOMAIN>` too, no cert. Split-horizon
+ *     is enforced by AdGuard's `*.<PUBLIC_DOMAIN> → <lanIp>` wildcard
  *     plus the absence of a public DNS record for LAN-only names.
  *
  * Pure LAN-only installs (no `PUBLIC_DOMAIN` set) get `<sub>.home.arpa`
@@ -146,8 +149,8 @@ export function buildProxyHosts(variables: StackVariable[]): {
     domain: string;
     forwardPort: number;
     service: string;
-    /** 'public' triggers auto-cert request server-side; 'lan' skips. */
-    exposure: 'public' | 'lan';
+    /** 'public' and 'internal' trigger auto-cert; 'lan' skips. */
+    exposure: 'public' | 'internal' | 'lan';
     proxyConfig?: VariableMeta['proxyConfig'];
   }[];
 } {
@@ -160,10 +163,14 @@ export function buildProxyHosts(variables: StackVariable[]): {
   const subdomainVars = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
   const hosts = subdomainVars.flatMap(sv => {
     // Conservative default: missing/unknown → 'lan'. Templates declare
-    // `"exposure": "public"` explicitly for services that should get a
-    // Let's Encrypt cert at install time.
-    const exposure: 'public' | 'lan' = sv.meta?.exposure === 'public' ? 'public' : 'lan';
-    const hostDomain = exposure === 'public' ? domain : lanDomain;
+    // `"exposure": "public"` or `"internal"` explicitly when they want
+    // a cert at install time.
+    const raw = sv.meta?.exposure;
+    const exposure: 'public' | 'internal' | 'lan' =
+      raw === 'public' ? 'public'
+      : raw === 'internal' ? 'internal'
+      : 'lan';
+    const hostDomain = (exposure === 'public' || exposure === 'internal') ? domain : lanDomain;
     if (!hostDomain) return [];
     let port = sv.meta?.proxyPort || '';
     const portVar = variables.find(v => v.name === port);

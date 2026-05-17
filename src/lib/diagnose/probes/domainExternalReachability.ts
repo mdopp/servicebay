@@ -48,7 +48,11 @@ export interface DomainExternalReachabilityResult {
   items?: ProbeItem[];
 }
 
-function isPublicEntry(entry: { domain: string; exposure?: 'public' | 'lan' }): boolean {
+function isPublicEntry(entry: { domain: string; exposure?: 'public' | 'internal' | 'lan' }): boolean {
+  // Only `public` should be probed for external reachability — `internal`
+  // hosts have a public DNS record (so LE can validate) but are firewalled
+  // to the LAN by NPM, so probing from a public DNS-over-HTTPS resolver
+  // returns false-positives ("LAN IP, looks broken").
   if (entry.exposure) return entry.exposure === 'public';
   if (!entry.domain) return false;
   return !entry.domain.endsWith('.home.arpa') && !entry.domain.endsWith('.local');

@@ -26,7 +26,7 @@
     "type": "subdomain",
     "description": "Subdomain for LLDAP Web UI",
     "default": "ldap",
-    "exposure": "lan",
+    "exposure": "internal",
     "proxyPort": "LLDAP_PORT",
     "proxyConfig": {
       "block_exploits": true,
