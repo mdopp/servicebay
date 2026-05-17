@@ -23,6 +23,8 @@
  * safe to import from React components.
  */
 
+import { type TemplateApiVersions, type TemplateApiName, SUPPORTED_API_VERSIONS } from './apiVersions';
+
 /** Recognized template tiers. `feature` is the implicit default. */
 export type TemplateTier = 'infrastructure' | 'feature';
 const KNOWN_TIERS: ReadonlySet<TemplateTier> = new Set(['infrastructure', 'feature']);
@@ -60,6 +62,14 @@ export interface TemplateManifest {
    * "is a string" today.
    */
   ports?: string;
+  /**
+   * `metadata.annotations['servicebay.requires-api.<name>']` (#588).
+   * Each declared key is the version of a ServiceBay-internal `/api/system/<name>/*`
+   * surface the template's `post-deploy.py` calls. Core refuses to invoke
+   * `post-deploy.py` if the template requests a version this core can't satisfy.
+   * Empty / missing = template makes no such calls.
+   */
+  requiresApi?: TemplateApiVersions;
 }
 
 /** Context the caller can pass to enable conditional rules. */
@@ -154,6 +164,16 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
       'those templates when the operator checks this one; (3) the uncheck-guard that prompts before ' +
       'removing a template another selected template needs. The install loop then topo-sorts the ' +
       'deploy order so deps land first. Example: `servicebay.dependencies: "nginx,auth"`.',
+  },
+  {
+    annotation: 'servicebay.requires-api.<name>',
+    field: 'requiresApi',
+    required: false,
+    description:
+      'Per-API version the template\'s `post-deploy.py` calls. Declare one annotation per API name (`lldap`, ' +
+      '`authelia`, `portal`), value is a positive integer. Core refuses to invoke `post-deploy.py` if any ' +
+      'requested version exceeds what this ServiceBay ships (see `src/lib/template/apiVersions.ts`). ' +
+      'Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588).',
   },
 ] as const;
 
@@ -252,6 +272,23 @@ export function parseTemplateManifest(
     }
   }
 
+  // requiresApi (#588): per-API annotations of shape
+  // `servicebay.requires-api.<name>: "<integer>"`. Returns undefined
+  // when no such annotation exists so downstream code can short-circuit.
+  let requiresApi: TemplateApiVersions | undefined;
+  for (const api of Object.keys(SUPPORTED_API_VERSIONS) as TemplateApiName[]) {
+    const raw = readAnnotation(yamlText, `servicebay.requires-api.${api}`);
+    if (raw === undefined) continue;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1 || !/^\d+$/.test(raw)) {
+      errors.push(
+        `Annotation \`servicebay.requires-api.${api}\` must be a positive integer; got "${raw}".`,
+      );
+      continue;
+    }
+    requiresApi = { ...(requiresApi ?? {}), [api]: n };
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors, warnings };
   }
@@ -265,6 +302,7 @@ export function parseTemplateManifest(
       dependencies,
       configMount,
       ports,
+      requiresApi,
     },
     warnings,
   };
@@ -323,6 +361,17 @@ export function readManifestAnnotations(yamlText: string): Partial<TemplateManif
   if (depsRaw !== undefined) {
     out.dependencies = depsRaw.split(',').map(s => s.trim()).filter(Boolean);
   }
+
+  let requiresApi: TemplateApiVersions | undefined;
+  for (const api of Object.keys(SUPPORTED_API_VERSIONS) as TemplateApiName[]) {
+    const raw = readAnnotation(yamlText, `servicebay.requires-api.${api}`);
+    if (raw === undefined) continue;
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1 && /^\d+$/.test(raw)) {
+      requiresApi = { ...(requiresApi ?? {}), [api]: n };
+    }
+  }
+  if (requiresApi) out.requiresApi = requiresApi;
 
   return out;
 }

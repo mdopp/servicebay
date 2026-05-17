@@ -1090,6 +1090,18 @@ export class ServiceManager {
         // `__SB_CREDENTIAL__ ` are the structured credential markers the
         // wizard parses for the SAVE-THESE-NOW banner.
         if (postDeployScript) {
+            // requiresApi gate (#588): if the template's manifest declares
+            // a `servicebay.requires-api.<name>` annotation that this core
+            // can't satisfy, refuse to invoke post-deploy.py instead of
+            // letting it silently break against a renamed endpoint. The
+            // unit is already running and stays running — only the script
+            // is skipped, with a clear error in the install log.
+            const { tryParseTemplateManifest } = await import('@/lib/template/contract');
+            const { assertApiCompat } = await import('@/lib/template/apiVersions');
+            const manifest = tryParseTemplateManifest(yamlContent);
+            if (manifest?.requiresApi) {
+                assertApiCompat(name, manifest.requiresApi);
+            }
             await this.runPostDeployScript(nodeName, name, postDeployScript, postDeployEnv ?? {}, onProgress);
         }
 

@@ -8,6 +8,11 @@ metadata:
     servicebay.label: "Auth (LLDAP + Authelia)"
     servicebay.schema-version: "1"
     servicebay.tier: "infrastructure"
+    # post-deploy.py calls /api/system/lldap/* and /api/system/authelia/*.
+    # Pin the API versions (#588) so core refuses to invoke this script if
+    # a future ServiceBay renames or restructures those endpoints.
+    servicebay.requires-api.lldap: "1"
+    servicebay.requires-api.authelia: "1"
     servicebay.ports: "{{LLDAP_PORT}}/tcp,{{LLDAP_LDAP_PORT}}/tcp,{{AUTHELIA_PORT}}/tcp"
     # Pin the configuration.yml.mustache target to authelia's /config mount —
     # without this the wizard's path resolver would also consider lldap's
