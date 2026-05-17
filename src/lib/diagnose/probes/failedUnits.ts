@@ -65,17 +65,39 @@ async function restartUnit({ node, itemId }: { node: string; itemId?: string }):
   const res = await agent.sendCommand('exec', {
     command: `systemctl --user reset-failed ${itemId} 2>/dev/null; systemctl --user restart ${itemId} 2>&1`,
   }, { timeoutMs: 30_000 }) as { code?: number; stdout?: string; stderr?: string };
-  if (res.code === 0) {
+  if (res.code !== 0) {
+    return {
+      ok: false,
+      message: `Restart failed: ${(res.stderr ?? res.stdout ?? '').trim().slice(0, 200) || 'unknown error'}.`,
+      refresh: false,
+    };
+  }
+  // Ground-truth check: `systemctl restart` returning 0 means "the
+  // start command was accepted", not "the unit is now running". For
+  // Type=service units that crash immediately after start the
+  // operator would see a false-positive "Restarted" without this
+  // follow-up. Give the live status so they don't have to navigate
+  // to the Services page to check.
+  const probe = await agent.sendCommand('exec', {
+    command: `systemctl --user is-active ${itemId} 2>&1 || true`,
+  }, { timeoutMs: 5_000 }) as { stdout?: string };
+  const liveState = (probe.stdout || '').trim();
+  const serviceName = itemId?.replace(/\.service$/, '') ?? itemId;
+  if (liveState === 'active') {
     return {
       ok: true,
-      message: `Restarted ${itemId}. Re-check in ~10 s; if it fails again the underlying cause is still present.`,
+      message: `Restarted ${itemId} — unit is now active. See Services → ${serviceName} for live logs and status.`,
       refresh: true,
     };
   }
   return {
-    ok: false,
-    message: `Restart failed: ${(res.stderr ?? res.stdout ?? '').trim().slice(0, 200) || 'unknown error'}.`,
-    refresh: false,
+    ok: liveState === 'activating',
+    message: `Restart command accepted but unit reports state: ${liveState || 'unknown'}. ${
+      liveState === 'activating'
+        ? 'Re-check in ~10 s — it may still be coming up.'
+        : 'The underlying cause is still present; check Services → ' + serviceName + ' for the crash log.'
+    }`,
+    refresh: true,
   };
 }
 

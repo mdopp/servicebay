@@ -151,13 +151,18 @@ async function renewCert({
       logger.warn('diagnose:cert_expiry', `Renew id=${itemId} returned HTTP ${res.status}: ${body.slice(0, 200)}`);
       return {
         ok: false,
-        message: `NPM returned HTTP ${res.status}. Check NPM admin → SSL Certificates for the underlying error (most common: DNS challenge regression or port-80 unreachable).`,
+        message: `NPM returned HTTP ${res.status}. The cert_request_failure probe shows the certbot log tail with the categorised cause (port-80 / DNS / CAA / rate-limit).`,
         refresh: false,
       };
     }
+    // Concrete next-step + visible timestamp: the operator should know
+    // exactly when the renewal was kicked off and where to look for
+    // the result. cert_expiry sweeps hourly; the Refresh-now action
+    // short-circuits the wait when needed.
+    const triggeredAt = new Date().toISOString().replace('T', ' ').replace(/\..+/, ' UTC');
     return {
       ok: true,
-      message: `Renewal triggered for cert ${itemId}. NPM may take 30-60 s to complete the ACME challenge.`,
+      message: `Renewal triggered for cert ${itemId} at ${triggeredAt}. ACME usually completes in 30-60 s — click "Refresh now" or wait for the next hourly cert_expiry sweep to see the new expiry date.`,
       refresh: true,
     };
   } catch (e) {

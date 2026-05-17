@@ -138,9 +138,10 @@ export async function retryCreate({
       signal: AbortSignal.timeout(15_000),
     });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     return {
       ok: false,
-      message: `Could not reach the proxy-hosts API: ${e instanceof Error ? e.message : String(e)}.`,
+      message: `Could not reach the proxy-hosts API: ${msg}. ${pointerForFetchError(msg)}`,
       refresh: false,
     };
   }
@@ -172,10 +173,44 @@ export async function retryCreate({
   return {
     ok: false,
     message: failure?.error
-      ? `NPM rejected the route: ${failure.error.slice(0, 200)}`
-      : `Retry returned HTTP ${res.status} without a domain-specific error.`,
+      ? `NPM rejected the route: ${failure.error.slice(0, 200)} ${pointerForNpmError(failure.error)}`.trimEnd()
+      : `Retry returned HTTP ${res.status} without a domain-specific error. See failed_units / pods_and_engine for NPM container health.`,
     refresh: false,
   };
+}
+
+/** Sibling-probe pointer based on the fetch-level error text. Lets
+ *  the operator skip a hop instead of guessing which probe to open
+ *  when retry fails — connection-refused points at the engine, DNS
+ *  errors at network. */
+function pointerForFetchError(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.includes('econnrefused') || m.includes('connection refused')) {
+    return 'NPM container is likely not running — check pods_and_engine + failed_units.';
+  }
+  if (m.includes('etimedout') || m.includes('timeout')) {
+    return 'NPM is unreachable in time — likely a heavy container restart or a sibling pod blocking the port. Check pods_and_engine.';
+  }
+  if (m.includes('enotfound') || m.includes('getaddrinfo')) {
+    return 'localhost name lookup failed — the install host is in an unusual DNS state.';
+  }
+  return '';
+}
+
+/** Sibling-probe pointer based on NPM's domain-level error text. Same
+ *  intent — short-cut the diagnosis tree by naming the right probe. */
+function pointerForNpmError(err: string): string {
+  const m = err.toLowerCase();
+  if (m.includes('401') || m.includes('unauthor') || m.includes('forbidden')) {
+    return '→ npm_data_stale: NPM credentials likely rejected.';
+  }
+  if (m.includes('certificate') || m.includes('cert')) {
+    return '→ cert_request_failure: the ACME side likely failed; see the categorised log tail.';
+  }
+  if (m.includes('forward_host') || m.includes('forward_port') || m.includes('upstream')) {
+    return '→ check that the target service is actually running (Services list).';
+  }
+  return '';
 }
 
 registerProbeAction(
