@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.43.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.42.1...servicebay-v3.43.0) (2026-05-17)
+
+
+### Features
+
+* **install:** granular preserve per group on Clean install ([#568](https://github.com/mdopp/servicebay/issues/568)) ([#571](https://github.com/mdopp/servicebay/issues/571)) ([01b8587](https://github.com/mdopp/servicebay/commit/01b85877985e19d1ecfcde5c9c42ca7a06ac3eab))
+
 ## [3.42.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.42.0...servicebay-v3.42.1) (2026-05-17)
 
 
