@@ -19,6 +19,7 @@ import next from 'next';
 import { Server } from 'socket.io';
 import { setUpdaterIO, scheduleUpdateNotifier } from './src/lib/updater';
 import { runWithTrace, newTraceId, currentTraceId } from './src/lib/util/traceContext';
+import { setTraceProvider } from './src/lib/logger';
 import crypto from 'crypto';
 // Monitoring init moved to Agent logic in V4
 import { HealthService } from './src/lib/health/service';
@@ -88,6 +89,11 @@ const ensureSessionId = () => {
 
 const sessionId = ensureSessionId();
 logger.info('Server', `Session ID: ${sessionId}`);
+
+// Wire the trace-ID provider so logger.* calls inside a request frame
+// persist the trace_id column (#597). Decoupled from logger.ts so that
+// module doesn't transitively pull node:async_hooks into client bundles.
+setTraceProvider(currentTraceId);
 
 
 // Terminal sessions and resource broadcast moved into dedicated modules

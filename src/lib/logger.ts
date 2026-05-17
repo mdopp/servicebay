@@ -26,6 +26,10 @@ interface LogEntry {
   tag: string;
   message: string;
   args?: unknown[];
+  /** Request-scoped trace ID (#597). Populated when a setTraceProvider
+   *  callback is registered (server.ts wires currentTraceId from
+   *  traceContext at boot). Undefined for background tasks. */
+  traceId?: string;
 }
 
 export interface LogFilter {
@@ -35,6 +39,8 @@ export interface LogFilter {
   date?: string; // YYYY-MM-DD or 'live'
   limit?: number;
   offset?: number;
+  /** Filter to lines emitted within a specific request trace (#597). */
+  traceId?: string;
 }
 
 class Logger {
@@ -86,6 +92,14 @@ class Logger {
                     CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
                     CREATE INDEX IF NOT EXISTS idx_logs_tag ON logs(tag);
                 `);
+
+                // Migration: add trace_id column for pre-existing DBs (#597).
+                // SQLite throws on duplicate column — catch and ignore so the
+                // migration is idempotent.
+                try {
+                    this.db!.exec('ALTER TABLE logs ADD COLUMN trace_id TEXT');
+                } catch { /* column already present */ }
+                this.db!.exec('CREATE INDEX IF NOT EXISTS idx_logs_trace ON logs(trace_id, timestamp)');
             } catch (e) {
                 console.error('Failed to initialize SQLite logger:', e);
             }
@@ -127,26 +141,34 @@ class Logger {
 
   private insertLog(level: LogLevel, tag: string, message: string, args: unknown[]): LogEntry {
       const timestamp = this.getTimestamp();
+      // Capture the request trace ID if a provider was registered (#597).
+      // No direct import of traceContext.ts — that module pulls
+      // node:async_hooks which webpack refuses to bundle for the client,
+      // and logger is imported from client dashboards. server.ts wires
+      // the provider via setTraceProvider() at boot.
+      const traceId = traceProvider?.();
       const entry: LogEntry = {
           timestamp,
           level,
           tag,
           message,
-          args: args.length > 0 ? args : undefined
+          args: args.length > 0 ? args : undefined,
+          traceId,
       };
-      
+
       if (isServer && this.db) {
           try {
-              const stmt = this.db.prepare('INSERT INTO logs (timestamp, level, tag, message, args) VALUES (?, ?, ?, ?, ?)');
+              const stmt = this.db.prepare('INSERT INTO logs (timestamp, level, tag, message, args, trace_id) VALUES (?, ?, ?, ?, ?, ?)');
               const info = stmt.run(
                   timestamp,
                   level,
                   tag,
                   message,
-                  args.length > 0 ? JSON.stringify(args) : null
+                  args.length > 0 ? JSON.stringify(args) : null,
+                  traceId ?? null,
               );
               entry.id = Number(info.lastInsertRowid);
-              
+
               // Emit event
               this.onLogCallbacks.forEach(cb => cb(entry));
           } catch (e) {
@@ -157,18 +179,24 @@ class Logger {
   }
 
   private format(level: LogLevel, tag: string, message: string, args: unknown[]): LogEntry {
+    // Always read the trace provider so the LogEntry carries the
+    // trace ID on both the server (where it'll be persisted by
+    // insertLog) and the browser path (where it's purely
+    // informational — the entry isn't persisted, but readers like
+    // onLog callbacks still see it). #597.
+    const traceId = traceProvider?.();
     if (!isServer) {
-       // Browser fallback
-       return { timestamp: this.getTimestamp(), level, tag, message, args };
+       // Browser fallback — no DB write, but keep the entry shape.
+       return { timestamp: this.getTimestamp(), level, tag, message, args, traceId };
     }
 
     // Persist to DB (without colors)
     if (this.shouldLog(level)) {
        return this.insertLog(level, tag, message, args);
     }
-    
+
     // Even if not persisted, return entry structure
-    return { timestamp: this.getTimestamp(), level, tag, message, args };
+    return { timestamp: this.getTimestamp(), level, tag, message, args, traceId };
   }
 
   private formatConsole(level: LogLevel, entry: LogEntry): unknown[] {
@@ -283,6 +311,11 @@ class Logger {
         const term = `%${filter.search}%`;
         params.push(term, term);
     }
+
+    if (filter.traceId) {
+        query += ' AND trace_id = ?';
+        params.push(filter.traceId);
+    }
     
     // Order: Newest on top
     query += ' ORDER BY timestamp DESC';
@@ -306,7 +339,8 @@ class Logger {
             level: row.level as LogLevel,
             tag: row.tag,
             message: row.message,
-            args: row.args ? JSON.parse(row.args) : undefined
+            args: row.args ? JSON.parse(row.args) : undefined,
+            traceId: row.trace_id ?? undefined,
         }));
     } catch (e) {
         console.error('Failed to query logs:', e);
@@ -336,3 +370,19 @@ class Logger {
 }
 
 export const logger = new Logger();
+
+/**
+ * Optional callback invoked on every insertLog to read the current
+ * request's trace ID (#597). Decoupled from `traceContext.ts` so the
+ * logger doesn't transitively pull `node:async_hooks` into client
+ * bundles (logger is imported from client dashboards via
+ * `useToast` / `ActionProgressModal`).
+ *
+ * Server bootstrap wires it via:
+ *   import { currentTraceId } from './util/traceContext';
+ *   setTraceProvider(currentTraceId);
+ */
+let traceProvider: (() => string | undefined) | null = null;
+export function setTraceProvider(fn: () => string | undefined): void {
+  traceProvider = fn;
+}
