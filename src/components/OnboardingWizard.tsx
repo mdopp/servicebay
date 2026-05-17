@@ -960,10 +960,13 @@ export default function OnboardingWizard() {
   // log streaming + done-state handling continues in the existing
   // stacks-step render below.
   const handleExpressInstall = async () => {
+    // Fall through to whichever stack is available — `full-stack` is the
+    // bundled default but a downstream / external registry can legitimately
+    // ship a different set. Only fail when there are zero stacks at all.
     const fullStack = availableStacks.find(s => s.name === 'full-stack')
         ?? availableStacks[0];
     if (!fullStack) {
-      addToast('error', 'No stack available', 'Could not find the full-stack template. Try Edit to pick a stack manually.');
+      addToast('error', 'No stacks available', 'No installable stacks were found in the registry. Open Settings → Integrations → Template Registries to add one.');
       return;
     }
 
