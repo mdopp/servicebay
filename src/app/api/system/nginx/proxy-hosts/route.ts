@@ -362,13 +362,76 @@ async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRe
  * host MUST exist before issuance — without a server_name match, NPM's
  * default-server rejects the ACME request and certbot times out.
  */
+/**
+ * Look for an existing, still-valid Let's Encrypt cert that already
+ * covers `domain`. Returns its id when found so the caller can bind
+ * the proxy host without going to ACME — critical for re-installs
+ * where the cert files survived in `letsencrypt/` (via #534's
+ * auto-restore) and NPM's DB has the cert rows after replay, but the
+ * install runner used to ALWAYS request fresh certs anyway and burn
+ * through Let's Encrypt's "5 identical certs / week" rate limit
+ * within minutes of a re-install. See #566.
+ *
+ * Returns `null` when no usable cert exists, falling back to the
+ * legacy "request a fresh one" path. A cert that expires in less than
+ * `EXPIRY_MIN_DAYS` is treated as no-match so NPM's nightly renew
+ * doesn't race the install — we'd rather request fresh now than
+ * inherit something about to flip red on the operator.
+ */
+const EXPIRY_MIN_DAYS = 14;
+async function findReusableCert(
+    baseUrl: string,
+    token: string,
+    domain: string,
+): Promise<number | null> {
+    try {
+        const res = await fetch(`${baseUrl}/api/nginx/certificates?expand=owner`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return null;
+        const certs = await res.json() as Array<{
+            id: number;
+            provider: string;
+            domain_names: string[];
+            expires_on: string | null;
+        }>;
+        if (!Array.isArray(certs)) return null;
+        const cutoff = Date.now() + EXPIRY_MIN_DAYS * 24 * 60 * 60 * 1000;
+        // Newest-first so multiple matches pick the freshest cert (NPM
+        // doesn't dedupe by domain on its side; an operator who hit
+        // the rate limit and ran an old install too could have two
+        // certificate rows for the same domain. We want the one with
+        // the latest valid expires_on).
+        const candidates = certs
+            .filter(c => c.provider === 'letsencrypt')
+            .filter(c => Array.isArray(c.domain_names) && c.domain_names.includes(domain))
+            .filter(c => c.expires_on && Date.parse(c.expires_on) > cutoff)
+            .sort((a, b) => Date.parse(b.expires_on!) - Date.parse(a.expires_on!));
+        return candidates[0]?.id ?? null;
+    } catch {
+        return null;
+    }
+}
+
 async function requestPublicCert(
     baseUrl: string,
     token: string,
     proxyHostId: number,
     domain: string,
     leEmail: string,
-): Promise<{ ok: true; certId: number } | { ok: false; reason: string }> {
+): Promise<{ ok: true; certId: number; reused?: boolean } | { ok: false; reason: string }> {
+    // 0) Reuse path (#566). If NPM already has a valid LE cert covering
+    //    `domain`, bind that instead of asking ACME for a new one — the
+    //    LE "5 identical / week" rate limit otherwise breaks every
+    //    re-install where the cert files were restored by #534.
+    const reusable = await findReusableCert(baseUrl, token, domain);
+    let certId: number;
+    if (reusable !== null) {
+        logger.info('ProxyHosts', `Reusing existing NPM cert #${reusable} for ${domain} (avoids LE rate-limit churn on re-installs)`);
+        certId = reusable;
+    } else {
     // 1) Create the LE cert in NPM. NPM blocks until the ACME exchange
     //    completes (success or failure), so the timeout here is generous.
     //
@@ -383,7 +446,6 @@ async function requestPublicCert(
     // cert issuance when it isn't set, because "no admin email" means
     // NPM can't register with Let's Encrypt regardless of payload.
     void leEmail;
-    let certId: number;
     try {
         const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
             method: 'POST',
@@ -409,6 +471,7 @@ async function requestPublicCert(
         certId = data.id;
     } catch (e) {
         return { ok: false, reason: `Cert request failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
     }
 
     // 2) Bind the cert to the proxy host so HTTPS becomes the canonical
@@ -438,7 +501,7 @@ async function requestPublicCert(
     } catch (e) {
         return { ok: false, reason: `Cert ${certId} issued but the bind PUT failed: ${e instanceof Error ? e.message : String(e)}` };
     }
-    return { ok: true, certId };
+    return { ok: true, certId, reused: reusable !== null };
 }
 
 /**
@@ -535,7 +598,11 @@ export async function POST(request: Request) {
                     );
                     if (certResult.ok) {
                         results[results.length - 1].certIssued = true;
-                        logger.info('ProxyHosts', `Issued + bound LE cert ${certResult.certId} for ${host.domain}`);
+                        if (certResult.reused) {
+                            logger.info('ProxyHosts', `Reused existing LE cert ${certResult.certId} for ${host.domain} (re-install survived #534 cert-archive — no ACME call needed)`);
+                        } else {
+                            logger.info('ProxyHosts', `Issued + bound LE cert ${certResult.certId} for ${host.domain}`);
+                        }
                     } else {
                         results[results.length - 1].certError = certResult.reason;
                         logger.warn('ProxyHosts', `Cert request failed for ${host.domain}: ${certResult.reason}`);
