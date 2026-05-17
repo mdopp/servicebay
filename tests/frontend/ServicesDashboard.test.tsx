@@ -1,7 +1,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import ServicesPlugin from '../../src/plugins/ServicesPlugin';
+import ServicesDashboard from '../../src/dashboards/ServicesDashboard';
 
 // 1. Define a mutable mock object
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,7 +70,7 @@ vi.mock('@/providers/ToastProvider', () => ({
   useToast: () => ({ addToast: vi.fn(), updateToast: vi.fn() })
 }));
 
-describe('ServicesPlugin', () => {
+describe('ServicesDashboard', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         // Reset data before each test
@@ -78,7 +78,7 @@ describe('ServicesPlugin', () => {
     });
 
     it('displays services with ports', async () => {
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         // Find Redis card by test id
         await waitFor(() => screen.getByTestId('service-name-redis'));
@@ -88,7 +88,7 @@ describe('ServicesPlugin', () => {
     });
 
     it('displays verified domains', async () => {
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         // Find Nginx card (It is renamed to Reverse Proxy (Nginx) because of proxy provider mock)
         await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
@@ -98,7 +98,7 @@ describe('ServicesPlugin', () => {
     });
 
     it('shows Internet Gateway as a service card', async () => {
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         // Should find "FritzBox Gateway" or "Internet Gateway" (based on mock data provider=fritzbox)
         await waitFor(() => screen.getByText('FritzBox Gateway'));
@@ -110,12 +110,12 @@ describe('ServicesPlugin', () => {
 
     it('identifies ServiceBay special services', async () => {
         // Nginx is the proxy provider in mock, so 'nginx.service' should be identified as Reverse Proxy
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
         
         // Check for "Reverse Proxy" badge
-        // Note: The logic in ServicesPlugin replaces the name "nginx" with "Reverse Proxy (Nginx)"
+        // Note: The logic in ServicesDashboard replaces the name "nginx" with "Reverse Proxy (Nginx)"
         // And adds a "Reverse Proxy" badge.
         
         // We look for the badge specifically
@@ -147,7 +147,7 @@ describe('ServicesPlugin', () => {
             }
         };
 
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         // Expect to see it
         await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
@@ -175,7 +175,7 @@ describe('ServicesPlugin', () => {
           gateway: { upstreamStatus: 'up' }
         };
 
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         // Should show up even if unmanaged
         await waitFor(() => screen.getByText('ServiceBay System'));
@@ -211,7 +211,7 @@ describe('ServicesPlugin', () => {
           gateway: { upstreamStatus: 'up' }
         };
 
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
         // Should show ports (rendered as :PORT)
@@ -253,7 +253,7 @@ spec:
           gateway: { upstreamStatus: 'up' }
         };
 
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
         
@@ -278,7 +278,7 @@ spec:
           gateway: { upstreamStatus: 'up' }
         };
 
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
         
@@ -300,7 +300,7 @@ spec:
           }
         };
 
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         await waitFor(() => screen.getByText('FritzBox Gateway'));
         // Expect format :8080 or 80/tcp etc.
         // Our updated code maps it to { host: '8080', container: '80' }

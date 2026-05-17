@@ -4,10 +4,10 @@ import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink, Sparkles, Home, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
-import PluginHelp from './PluginHelp';
+import SectionHelp from './SectionHelp';
 import pkg from '../../package.json';
 
-export const plugins = [
+export const dashboards = [
     { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },
     { id: 'containers', name: 'Container Engine', shortLabel: 'Containers', icon: LayoutDashboard, path: '/containers' },
     { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
@@ -146,7 +146,7 @@ export default function Sidebar() {
                     </button>
                 );
             })()}
-            {plugins.map(p => {
+            {dashboards.map(p => {
                 const Icon = p.icon;
                 const isActive = pathname?.startsWith(p.path) ?? false;
                 return (
@@ -204,11 +204,11 @@ export default function Sidebar() {
         </div>
 
         <div className="p-2 space-y-1">
-            {/* "What's new" — opens the same modal PluginHelp uses, but loads
-              CHANGELOG.md instead of a per-plugin help file. Available
+            {/* "What's new" — opens the same modal SectionHelp uses, but loads
+              CHANGELOG.md instead of a per-dashboard help file. Available
               independent of "is there an update pending?". */}
             <div className={isCollapsed ? 'flex justify-center' : ''}>
-                <PluginHelp
+                <SectionHelp
                     helpId="changelog"
                     title="What's new in ServiceBay"
                     icon={Sparkles}

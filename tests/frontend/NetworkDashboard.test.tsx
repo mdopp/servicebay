@@ -21,7 +21,7 @@ vi.mock('@/providers/ToastProvider', () => ({
     })
 }));
 
-// 2. Mock 'react-highlight-words' used by something imported (RegistryPlugin?) or just in case
+// 2. Mock 'react-highlight-words' used by something imported (RegistryDashboard?) or just in case
 vi.mock('react-highlight-words', () => ({
     default: ({ textToHighlight }: any) => <>{textToHighlight}</>
 }));
@@ -84,11 +84,11 @@ Object.defineProperty(global, 'EventSource', {
 });
 
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import NetworkPlugin from '../../src/plugins/NetworkPlugin';
+import NetworkDashboard from '../../src/dashboards/NetworkDashboard';
 
 const originalFetch = global.fetch;
 
-describe('NetworkPlugin (Graph)', () => {
+describe('NetworkDashboard (Graph)', () => {
     
     beforeEach(() => {
         vi.clearAllMocks();
@@ -116,15 +116,15 @@ describe('NetworkPlugin (Graph)', () => {
     });
 
     it('renders the graph container', async () => {
-        render(<NetworkPlugin />);
+        render(<NetworkDashboard />);
         expect(screen.getByTestId('react-flow-mock')).toBeDefined();
     });
 
     it('renders global infrastructure nodes (Internet, Gateway)', async () => {
-        // The Plugin constructs these using `useNetworkGraph` hook logic internally?
-        // Wait, `NetworkPlugin` imports `getGraph` from API probably? 
+        // The Dashboard constructs these using `useNetworkGraph` hook logic internally?
+        // Wait, `NetworkDashboard` imports `getGraph` from API probably? 
         // Checking source... 
-        // Actually, `NetworkPlugin` fetches data via `fetch('/api/network/graph')` or `useNetworkGraph` hook.
+        // Actually, `NetworkDashboard` fetches data via `fetch('/api/network/graph')` or `useNetworkGraph` hook.
         // Let's check imports in the file provided...
         // `import { useDigitalTwin } from '@/hooks/useDigitalTwin';`
         // It seems it MIGHT use `useDigitalTwin` OR fetch API.
@@ -134,7 +134,7 @@ describe('NetworkPlugin (Graph)', () => {
         // Wait, previous file content shows:
         // `const { data: twin } = useDigitalTwin();` but deeper down likely logic to build nodes.
         
-        // Actually the provided file `NetworkPlugin.tsx` uses `fetch('/api/network/graph?node=' + targetNode)` inside a useEffect.
+        // Actually the provided file `NetworkDashboard.tsx` uses `fetch('/api/network/graph?node=' + targetNode)` inside a useEffect.
         // We need to mock `global.fetch`.
         
         const mockGraph = {
@@ -152,7 +152,7 @@ describe('NetworkPlugin (Graph)', () => {
             json: async () => mockGraph
         });
 
-        render(<NetworkPlugin />);
+        render(<NetworkDashboard />);
         
         await waitFor(() => {
             expect(screen.getByTestId('node-internet')).toBeDefined();
@@ -166,7 +166,7 @@ describe('NetworkPlugin (Graph)', () => {
             json: async () => ({ nodes: [], edges: [] })
         });
 
-        render(<NetworkPlugin />);
+        render(<NetworkDashboard />);
         
         await waitFor(() => {
             expect(screen.getByTestId('flow-nodes-count').textContent).toBe('0');

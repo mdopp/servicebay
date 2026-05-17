@@ -1,7 +1,7 @@
 'use client';
 
-import ServicesPlugin from '@/plugins/ServicesPlugin';
+import ServicesDashboard from '@/dashboards/ServicesDashboard';
 
 export default function ServicesPage() {
-  return <ServicesPlugin />;
+  return <ServicesDashboard />;
 }

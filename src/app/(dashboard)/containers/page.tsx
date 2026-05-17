@@ -1,7 +1,7 @@
 'use client';
 
-import ContainersPlugin from '@/plugins/ContainersPlugin';
+import ContainersDashboard from '@/dashboards/ContainersDashboard';
 
 export default function ContainersPage() {
-  return <ContainersPlugin />;
+  return <ContainersDashboard />;
 }

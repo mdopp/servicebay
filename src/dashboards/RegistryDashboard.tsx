@@ -7,11 +7,11 @@ import RegistryBrowser from '@/components/RegistryBrowser';
 import { Loader2, RefreshCw, DownloadCloud } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 
-interface RegistryPluginProps {
+interface RegistryDashboardProps {
     variant?: 'page' | 'embedded';
 }
 
-export default function RegistryPlugin({ variant = 'page' }: RegistryPluginProps) {
+export default function RegistryDashboard({ variant = 'page' }: RegistryDashboardProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);

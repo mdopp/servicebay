@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Github, Settings, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
-import { plugins } from './Sidebar';
+import { dashboards } from './Sidebar';
 import { useToast } from '@/providers/ToastProvider';
 import pkg from '../../package.json';
 
@@ -109,11 +109,11 @@ export function MobileBottomBar() {
   const node = searchParams?.get('node');
 
   // Exclude settings as it is in the top bar
-  const bottomPlugins = plugins.filter(p => p.id !== 'settings');
+  const bottomDashboards = dashboards.filter(p => p.id !== 'settings');
 
   return (
     <div className="h-[72px] bg-gray-100 dark:bg-black border-t border-gray-200 dark:border-gray-800 flex items-center justify-around px-2 shrink-0 md:hidden z-20 pb-2">
-       {bottomPlugins.map(p => {
+       {bottomDashboards.map(p => {
           const Icon = p.icon;
           const isActive = pathname?.startsWith(p.path);
           return (

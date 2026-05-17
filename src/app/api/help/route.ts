@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   const normalizedId = HELP_ALIASES[safeId] ?? safeId;
 
   // Special-case: CHANGELOG.md lives at the project root (release-please owns
-  // it). Serve it through this endpoint so the existing PluginHelp modal can
+  // it). Serve it through this endpoint so the existing SectionHelp modal can
   // render it without a separate API surface.
   const filePath = normalizedId === 'changelog'
     ? path.join(process.cwd(), 'CHANGELOG.md')

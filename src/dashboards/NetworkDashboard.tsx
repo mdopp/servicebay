@@ -748,7 +748,7 @@ function NetworkLegend() {
     );
 }
 
-export default function NetworkPlugin() {
+export default function NetworkDashboard() {
     const router = useRouter();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -1103,7 +1103,7 @@ export default function NetworkPlugin() {
       overlays: serviceActionOverlays,
   } = useServiceActions({ onRefresh: fetchGraph });
 
-  // Kick off the first render as soon as the plugin mounts so the toast shows immediately
+  // Kick off the first render as soon as the dashboard mounts so the toast shows immediately
   useEffect(() => {
       fetchGraph();
   }, [fetchGraph]);

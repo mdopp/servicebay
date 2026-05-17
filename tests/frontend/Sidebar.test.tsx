@@ -117,7 +117,7 @@ describe('Sidebar', () => {
     });
 
     it('does not include Users & Groups as a static nav item', () => {
-        // The old code had it as a static plugin entry — verify it's gone
+        // The old code had it as a static dashboard entry — verify it's gone
         render(<Sidebar />);
 
         const buttons = screen.getAllByRole('button');

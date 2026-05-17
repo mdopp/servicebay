@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { render, screen } from '@testing-library/react';
-import ContainersPlugin from '../../src/plugins/ContainersPlugin';
+import ContainersDashboard from '../../src/dashboards/ContainersDashboard';
 import { vi, describe, it, expect } from 'vitest';
 import { DigitalTwinSnapshot } from '../../src/providers/DigitalTwinProvider';
 
@@ -23,13 +23,13 @@ vi.mock('../../src/hooks/useDigitalTwin', () => ({
 }));
 
 // Mock Components
-vi.mock('../../src/components/PluginLoading', () => ({ default: () => <div>Loading...</div> }));
+vi.mock('../../src/components/SectionLoading', () => ({ default: () => <div>Loading...</div> }));
 vi.mock('../../src/components/PageHeader', () => ({ 
     default: ({ title, children }: any) => <div><h1>{title}</h1>{children}</div> 
 }));
 vi.mock('../../src/components/ConfirmModal', () => ({ default: () => null }));
 
-describe('ContainersPlugin Port Rendering', () => {
+describe('ContainersDashboard Port Rendering', () => {
 
     it('should render merged ports for Host Network containers correctly', async () => {
         // 1. Data Structure matching what Agent V4 sends (and what DigitalTwinStore should hold)
@@ -80,7 +80,7 @@ describe('ContainersPlugin Port Rendering', () => {
         });
 
         // 2. Render
-        render(<ContainersPlugin />);
+        render(<ContainersDashboard />);
 
         // 3. Find Container
         expect(await screen.findByText('debug-http')).toBeDefined();
@@ -93,7 +93,7 @@ describe('ContainersPlugin Port Rendering', () => {
 
     it('should handle missing PublicPort gracefully (Legacy format vs New format)', async () => {
          // Some older agents or Podman versions might send different keys.
-         // ContainersPlugin maps keys:
+         // ContainersDashboard maps keys:
          // host_port: p.hostPort (undefined)
          // And render logic checks PublicPort || host_port
          
@@ -115,8 +115,8 @@ describe('ContainersPlugin Port Rendering', () => {
                         labels: {},
                         networks: [],
                         // Simulate what might go wrong?
-                        // If Agent V4 sends `host_port` but Plugin maps `hostPort`?
-                        // Let's check Plugin code again:
+                        // If Agent V4 sends `host_port` but Dashboard maps `hostPort`?
+                        // Let's check Dashboard code again:
                         // list.push({ Ports: (ec.ports || []).map(p => ({ host_port: p.hostPort ... })) })
                         // WAIT! ec.ports has `host_port` (snake_case) from Agent.
                         // But the map implementation does `host_port: p.hostPort`.
@@ -147,7 +147,7 @@ describe('ContainersPlugin Port Rendering', () => {
             isNodeSynced: () => true
         });
 
-        render(<ContainersPlugin />);
+        render(<ContainersDashboard />);
 
         expect(await screen.findByText('legacy-container')).toBeDefined();
         

@@ -19,7 +19,7 @@ This directory contains screenshots for the main README.md. Follow these instruc
 
 ### 2. Network Map (`network-map.png`)
 **URL**: `http://localhost:3000/`  
-**Plugin**: Click "Network" in the sidebar
+*Dashboard*: Click "Network" in the sidebar
 **What to capture**: Graph visualization showing:
 - Internet gateway node
 - Services interconnected with lines
@@ -31,9 +31,9 @@ This directory contains screenshots for the main README.md. Follow these instruc
 
 ---
 
-### 3. Services Plugin (`services-plugin.png`)
+### 3. Services Dashboard (`services-dashboard.png`)
 **URL**: `http://localhost:3000/`  
-**Plugin**: Click "Services" in the sidebar
+*Dashboard*: Click "Services" in the sidebar
 **What to capture**: Services list showing:
 - Multiple services with their cards
 - Status badges (Active, Inactive)
@@ -47,7 +47,7 @@ This directory contains screenshots for the main README.md. Follow these instruc
 
 ### 4. Health Dashboard (`monitoring.png`)
 **URL**: `http://localhost:3000/`  
-**Plugin**: Click "Health" in the sidebar
+*Dashboard*: Click "Health" in the sidebar
 **What to capture**: Health checks panel showing:
 - Health check configuration cards
 - Status indicators (checkmarks, X marks)
@@ -61,7 +61,7 @@ This directory contains screenshots for the main README.md. Follow these instruc
 
 ### 5. Settings Panel (`settings.png`)
 **URL**: `http://localhost:3000/`  
-**Plugin**: Click "Settings" in the sidebar
+*Dashboard*: Click "Settings" in the sidebar
 **What to capture**: Settings page showing:
 - Node management section with SSH nodes listed
 - Connection status indicators
@@ -124,7 +124,7 @@ const { chromium } = require('playwright');
   // Services
   await page.click('text=Services');
   await page.waitForTimeout(2000);
-  await page.screenshot({ path: 'docs/screenshots/services-plugin.png' });
+  await page.screenshot({ path: 'docs/screenshots/services-dashboard.png' });
 
   // Health
   await page.click('text=Health');
@@ -196,7 +196,7 @@ If screenshots aren't available yet, use this SVG placeholder:
 
 - [ ] dashboard.png
 - [ ] network-map.png
-- [ ] services-plugin.png
+- [ ] services-dashboard.png
 - [ ] monitoring.png
 - [ ] settings.png
 

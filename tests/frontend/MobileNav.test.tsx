@@ -38,7 +38,7 @@ describe('MobileNav', () => {
         expect(mockPush).toHaveBeenCalledWith('/settings?node=edge-1');
     });
 
-    it('MobileBottomBar renders plugins except Settings using shortLabel', () => {
+    it('MobileBottomBar renders dashboards except Settings using shortLabel', () => {
         renderWithToast(<MobileBottomBar />);
         expect(screen.getByTitle('Container Engine')).toBeDefined();
         expect(screen.getByTitle('Network Map')).toBeDefined();

@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import PluginLoading from '@/components/PluginLoading';
+import SectionLoading from '@/components/SectionLoading';
 import { Box, Terminal as TerminalIcon, MoreVertical, X, Activity, Search, RefreshCw, Eraser } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -40,7 +40,7 @@ interface Container {
     };
 }
 
-export default function ContainersPlugin() {
+export default function ContainersDashboard() {
   const { data: twin, isConnected, isNodeSynced } = useDigitalTwin();
 
     // filteredContainers derived via useMemo below
@@ -262,9 +262,9 @@ export default function ContainersPlugin() {
 
             <div className="flex-1 overflow-y-auto p-4">
                 {loading ? (
-                        <PluginLoading message="Connecting to Agent..." />
+                        <SectionLoading message="Connecting to Agent..." />
                     ) : waitingForSync ? (
-                        <PluginLoading message="Synchronizing state..." />
+                        <SectionLoading message="Synchronizing state..." />
                     ) : filteredContainers.length === 0 ? (
                         <div className="text-center text-gray-500 dark:text-gray-400 mt-10">
                             {containers.length > 0 ? 'No containers match your filters.' : 'No active containers found.'}

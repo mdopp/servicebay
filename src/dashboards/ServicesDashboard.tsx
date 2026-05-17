@@ -6,16 +6,16 @@ import { useSearchParams } from 'next/navigation';
 import { logger } from '@/lib/logger';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import PluginLoading from '@/components/PluginLoading';
+import SectionLoading from '@/components/SectionLoading';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import TemplateUpgradesPendingBanner from '@/components/TemplateUpgradesPendingBanner';
 import { DomainHealthDot } from '@/components/DomainHealthDot';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
-import PluginHelp from '@/components/PluginHelp';
+import SectionHelp from '@/components/SectionHelp';
 import FileViewerOverlay from '@/components/FileViewerOverlay';
-import RegistryPlugin from '@/plugins/RegistryPlugin';
+import RegistryDashboard from '@/dashboards/RegistryDashboard';
 import { ServiceActionBar } from '@/components/ServiceActionBar';
 import { AttachedContainerList } from '@/components/AttachedContainerList';
 import { useServiceActions } from '@/hooks/useServiceActions';
@@ -129,7 +129,7 @@ type RawLinkVolume = {
     container?: string;
 };
 
-export default function ServicesPlugin() {
+export default function ServicesDashboard() {
     const { data: twin, isConnected, lastUpdate } = useDigitalTwin();
     const { addToast, updateToast } = useToast();
 
@@ -288,7 +288,7 @@ export default function ServicesPlugin() {
 
             setExternalLinks(parsed);
         } catch (error) {
-            logger.error('ServicesPlugin', 'Failed to load external links', error);
+            logger.error('ServicesDashboard', 'Failed to load external links', error);
         }
     }, []);
 
@@ -493,7 +493,7 @@ export default function ServicesPlugin() {
             const bundles = collectBundlesFromTwin();
             setServiceBundles(bundles);
         } catch (error) {
-            logger.error('ServicesPlugin', 'Failed to discover services', error);
+            logger.error('ServicesDashboard', 'Failed to discover services', error);
             setServiceBundles([]);
         } finally {
             setDiscoveryLoading(false);
@@ -1009,7 +1009,7 @@ export default function ServicesPlugin() {
     const renderServiceContent = () => {
         if (loading) {
             return (
-                <PluginLoading message="Loading services..." subMessage="Waiting for agent synchronization..." />
+                <SectionLoading message="Loading services..." subMessage="Waiting for agent synchronization..." />
             );
         }
 
@@ -1552,7 +1552,7 @@ export default function ServicesPlugin() {
                                 </p>
                             </div>
                             <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                                <PluginHelp helpId={MERGE_HELP_ID} label="Merge Workflow guide" />
+                                <SectionHelp helpId={MERGE_HELP_ID} label="Merge Workflow guide" />
                                 <span className="text-xs">Opens the full checklist if you need a refresher mid-migration.</span>
                             </div>
                         </div>
@@ -1989,7 +1989,7 @@ export default function ServicesPlugin() {
                     </button>
                 </div>
                 <div className="flex-1 min-h-0">
-                    <RegistryPlugin variant="embedded" />
+                    <RegistryDashboard variant="embedded" />
                 </div>
             </div>
         </div>

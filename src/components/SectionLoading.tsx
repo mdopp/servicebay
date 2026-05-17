@@ -1,11 +1,11 @@
 import { RefreshCw } from 'lucide-react';
 
-interface PluginLoadingProps {
+interface SectionLoadingProps {
   message?: string;
   subMessage?: string;
 }
 
-export default function PluginLoading({ message = "Waiting for data...", subMessage }: PluginLoadingProps) {
+export default function SectionLoading({ message = "Waiting for data...", subMessage }: SectionLoadingProps) {
     return (
         <div className="flex-1 flex flex-col items-center justify-center text-gray-500 h-full min-h-[300px]">
             <div className="text-center">

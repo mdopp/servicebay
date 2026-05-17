@@ -7,7 +7,7 @@ import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info,
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useSocket } from '@/hooks/useSocket';
-import PluginLoading from '@/components/PluginLoading';
+import SectionLoading from '@/components/SectionLoading';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 import { Select, SelectOption } from '@/components/Select';
@@ -33,7 +33,7 @@ interface NetworkAddr {
 /**
  * SystemInfoContent
  * Core system info display (CPU, RAM, Disk, Network, Updates).
- * Used as a tab inside HealthPlugin.
+ * Used as a tab inside HealthDashboard.
  */
 export function SystemInfoContent() {
   const [copied, setCopied] = useState(false);
@@ -51,7 +51,7 @@ export function SystemInfoContent() {
   useEffect(() => {
         getNodes()
             .then(setNodes)
-            .catch(e => logger.error('SystemInfoPlugin', 'Failed to fetch nodes', e));
+            .catch(e => logger.error('SystemInfoDashboard', 'Failed to fetch nodes', e));
     }, []);
 
   // High Frequency Monitoring Subscription
@@ -75,7 +75,7 @@ export function SystemInfoContent() {
             const up = await getSystemUpdates(selectedNode);
             if (mounted) setUpdates(up);
           } catch (e) {
-              logger.error('SystemInfoPlugin', 'Failed to check updates', e);
+              logger.error('SystemInfoDashboard', 'Failed to check updates', e);
           } finally {
               if (mounted) setCheckingUpdates(false);
           }
@@ -123,7 +123,7 @@ export function SystemInfoContent() {
   if (!resources || !resources.os) {
       return (
         <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-            <PluginLoading
+            <SectionLoading
                 message="Waiting for agent report..."
                 subMessage={selectedNode !== 'Local' ? `Waiting for data from ${selectedNode}` : undefined}
             />

@@ -15,7 +15,7 @@ const Terminal = dynamic(() => import('@/components/Terminal'), {
   loading: () => <div className="h-full w-full bg-black animate-pulse" />
 });
 
-export default function TerminalPlugin() {
+export default function TerminalDashboard() {
   const terminalRef = useRef<TerminalRef>(null);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
     const [selectedNode, setSelectedNode] = useState<string>('Local');

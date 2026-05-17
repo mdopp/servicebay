@@ -2,7 +2,7 @@
 
 import { ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import PluginHelp from './PluginHelp';
+import SectionHelp from './SectionHelp';
 import ConnectionIndicator from './ConnectionIndicator';
 import ModeBadge from './ModeBadge';
 
@@ -39,7 +39,7 @@ export default function PageHeader({ title, children, actions, showBack = false,
           </button>
         )}
         <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
-        {helpId && <PluginHelp helpId={helpId} />}
+        {helpId && <SectionHelp helpId={helpId} />}
       </div>
 
       {children && (

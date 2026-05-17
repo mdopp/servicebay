@@ -4,17 +4,17 @@ import { useState } from 'react';
 import { CircleHelp, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-interface PluginHelpProps {
+interface SectionHelpProps {
   helpId: string;
   label?: string;
   className?: string;
-  /** Modal title. Defaults to "Plugin Help". */
+  /** Modal title. Defaults to "Section Help". */
   title?: string;
   /** Optional icon override for the trigger button. */
   icon?: React.ComponentType<{ size?: number; className?: string }>;
 }
 
-export default function PluginHelp({ helpId, label, className, title = 'Plugin Help', icon: Icon = CircleHelp }: PluginHelpProps) {
+export default function SectionHelp({ helpId, label, className, title = 'Section Help', icon: Icon = CircleHelp }: SectionHelpProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

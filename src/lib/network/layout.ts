@@ -164,7 +164,7 @@ function calculateNodeHeight(node: Node): number | undefined {
     if (data.subLabel) height += 28;
     
     // Details Grid
-    // We need to replicate the logic from NetworkPlugin.tsx to count rows
+    // We need to replicate the logic from NetworkDashboard.tsx to count rows
     let detailRows = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raw = (data.rawData as any) || {};

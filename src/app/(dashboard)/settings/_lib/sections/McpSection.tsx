@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Bot, Check, Copy, ShieldAlert, History, RefreshCw, Key, Plus, Trash2 } from 'lucide-react';
-import PluginHelp from '@/components/PluginHelp';
+import SectionHelp from '@/components/SectionHelp';
 
 interface AuditEntry {
   ts: string;
@@ -245,7 +245,7 @@ export default function McpSection() {
             </p>
           </div>
         </div>
-        <PluginHelp
+        <SectionHelp
           helpId="mcp"
           title="Connecting an LLM via MCP"
           label="How to connect"

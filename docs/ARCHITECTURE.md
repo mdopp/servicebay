@@ -19,7 +19,7 @@ A modular / KISS / DRY / SoT review of the codebase plus a security pass. Open f
 | Issue | Summary |
 |---|---|
 | [#582 ARCH-01](https://github.com/mdopp/servicebay/issues/582) | `OnboardingWizard.tsx:963` hardcodes `'full-stack'` with no fallback (sibling call at :1288 *does* have one — inconsistency). |
-| [#583 ARCH-02](https://github.com/mdopp/servicebay/issues/583) | "Plugin architecture" (§ Plugin Architecture below) is documented as a registry but is actually a static array in `Sidebar.tsx:10-17`. Either rename the doc or build a real registry. |
+| [#583 ARCH-02](https://github.com/mdopp/servicebay/issues/583) | The "plugin architecture" docs oversold the modularity. Resolved by renaming `src/plugins/` → `src/dashboards/` everywhere (component files, helpers, tests, CSS, modal copy) and rewriting § Dashboard surfaces below to match the static-array reality. |
 | [#584 ARCH-03](https://github.com/mdopp/servicebay/issues/584) | Bundled templates' `post-deploy.py` scripts POST to internal endpoints (`/api/system/lldap/credentials`, `/api/system/authelia/oidc-clients`) with no versioned contract or test. Biggest real coupling leak. |
 | [#585 ARCH-04](https://github.com/mdopp/servicebay/issues/585) | Template structure rules are spread across `registry.ts`, `templateTier.ts`, the test suite, `TEMPLATE_AUTHORING.md`, and `templates/CLAUDE.md`. Consolidate into one TypeScript interface that both runtime loaders and tests use. |
 
@@ -432,18 +432,21 @@ sequenceDiagram
 
 > The backup system is intentionally decoupled from application data volumes. Operators should combine these archives with their existing storage backups for a complete disaster-recovery story.
 
-## Plugin Architecture
+## Dashboard surfaces
 
-The dashboard (`/`) is built using a modular plugin architecture. This allows for easy extension of the dashboard with new features without cluttering the main page logic.
+The sidebar's top-level navigation entries are called **dashboards** — each is a React component under `src/dashboards/*Dashboard.tsx`, mounted by a route page at `src/app/(dashboard)/<id>/page.tsx`, and listed in a hand-edited array in `src/components/Sidebar.tsx`.
 
-### Core Concepts
+This is NOT a pluggable registry. There is no runtime registration API, no dynamic loading, and no extension point — external templates cannot ship dashboards. Adding one is a three-file change (component + route + sidebar entry). The previous version of this section described a "plugin architecture" that overstated the modularity; see #583.
 
-- **Plugin Components**: Each dashboard surface lives in `src/plugins/*.tsx` and can be imported independently by the route pages.
-- **Navigation Registry**: `src/components/Sidebar.tsx` exports the plugin metadata array that is also shared with the mobile navigation.
+### Adding a dashboard
 
-### Current Plugins
+1. Create `src/dashboards/<Name>Dashboard.tsx` exporting a default React component.
+2. Create `src/app/(dashboard)/<id>/page.tsx` that imports and renders it.
+3. Add a `{ id, name, shortLabel, icon, path }` entry to `dashboards` in `src/components/Sidebar.tsx`. The mobile bottom-bar (`MobileNav.tsx`) reads from the same array.
 
-1.  **Services**: Manages the core "containered services" (systemd units).
+### Current dashboards
+
+1.  **Services**: Manages the core "containerized services" (systemd units).
 2.  **Containers**: Lists all active Podman containers.
 3.  **Monitoring**: Real-time health checks, history, and notifications.
 4.  **Network Map**: Visualizes service relationships.
@@ -486,8 +489,8 @@ The project employs a robust testing strategy ensuring reliability across the Ag
     *   **Mocking**: `vi.mock()` is used primarily to bypass the `useDigitalTwin` hook, injecting fixture data (Nodes, Containers, Gateway) directly into components.
 *   **Philosophy**: "Integration over Implementation". Tests focus on what the user sees (rendering) and does (clicks/inputs), rather than internal state implementation.
 *   **Key Test Scenarios**:
-    *   **Core Visualization**: Verifies `ContainerList`, `ServicesPlugin` (Ports, Domains, Badges), and `NetworkPlugin` render correctly with mocked store data.
-    *   **Logic & Mapping**: ensures complex logic in `ServicesPlugin` (like mapping Proxy Routes to Service Cards or identifying the Gateway) works as expected.
+    *   **Core Visualization**: Verifies `ContainerList`, `ServicesDashboard` (Ports, Domains, Badges), and `NetworkDashboard` render correctly with mocked store data.
+    *   **Logic & Mapping**: ensures complex logic in `ServicesDashboard` (like mapping Proxy Routes to Service Cards or identifying the Gateway) works as expected.
     *   **Interactive Forms**: Validates form inputs and submission payloads (e.g., `ServiceForm`).
     *   **Layout**: checks responsiveness (`MobileNav`, `Sidebar`).
 

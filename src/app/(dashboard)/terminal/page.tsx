@@ -1,7 +1,7 @@
 'use client';
 
-import TerminalPlugin from '@/plugins/TerminalPlugin';
+import TerminalDashboard from '@/dashboards/TerminalDashboard';
 
 export default function TerminalPage() {
-  return <TerminalPlugin />;
+  return <TerminalDashboard />;
 }

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { render, screen } from '@testing-library/react';
-import ServicesPlugin from '../../src/plugins/ServicesPlugin';
+import ServicesDashboard from '../../src/dashboards/ServicesDashboard';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { DigitalTwinSnapshot } from '../../src/providers/DigitalTwinProvider';
 
@@ -23,13 +23,13 @@ vi.mock('../../src/hooks/useDigitalTwin', () => ({
 }));
 
 // Components Mocks to focus on Data Logic
-vi.mock('../../src/components/PluginLoading', () => ({ default: () => <div>Loading...</div> }));
+vi.mock('../../src/components/SectionLoading', () => ({ default: () => <div>Loading...</div> }));
 vi.mock('../../src/components/PageHeader', () => ({ default: ({ title }: any) => <div>{title}</div> }));
 vi.mock('../../src/components/ExternalLinkModal', () => ({ default: () => <div>LinkModal</div> }));
 vi.mock('../../src/components/ActionProgressModal', () => ({ default: () => <div>ActionModal</div> }));
 vi.mock('../../src/components/ConfirmModal', () => ({ default: () => <div>ConfirmModal</div> }));
 
-describe('ServicesPlugin E2E Data Rendering', () => {
+describe('ServicesDashboard E2E Data Rendering', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -93,14 +93,14 @@ describe('ServicesPlugin E2E Data Rendering', () => {
             lastUpdate: Date.now()
         });
 
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
 
         // 2. Assert Service Card Rendering
         // Check for Service Name
         expect(await screen.findByText('Reverse Proxy (Nginx)')).toBeDefined();
 
         // 3. Assert Port Existence (This proves Frontend receives and renders the fix)
-        // ServicesPlugin renders ports in the "Ports" column or chip.
+        // ServicesDashboard renders ports in the "Ports" column or chip.
         // Usually formatted as "8080:80/tcp" or similar.
         // Let's look for "8080".
         expect(await screen.findByText(/8080/)).toBeDefined();
@@ -143,7 +143,7 @@ describe('ServicesPlugin E2E Data Rendering', () => {
             isConnected: true
         });
 
-        render(<ServicesPlugin />);
+        render(<ServicesDashboard />);
         
         expect(await screen.findByText('broken-service')).toBeDefined();
         // Should not crash, maybe show "-" or empty space

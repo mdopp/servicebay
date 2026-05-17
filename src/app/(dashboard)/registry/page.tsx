@@ -1,7 +1,7 @@
 'use client';
 
-import RegistryPlugin from '@/plugins/RegistryPlugin';
+import RegistryDashboard from '@/dashboards/RegistryDashboard';
 
 export default function RegistryPage() {
-  return <RegistryPlugin />;
+  return <RegistryDashboard />;
 }

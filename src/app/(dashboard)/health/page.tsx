@@ -1,5 +1,5 @@
-import HealthPlugin from '@/plugins/HealthPlugin';
+import HealthDashboard from '@/dashboards/HealthDashboard';
 
 export default function HealthPage() {
-  return <HealthPlugin />;
+  return <HealthDashboard />;
 }

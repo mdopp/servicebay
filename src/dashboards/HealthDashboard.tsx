@@ -14,7 +14,7 @@ import { CheckConfig, CheckType, Check } from '@/lib/health/types';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@/lib/nodes';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import { SystemInfoContent } from '@/plugins/SystemInfoPlugin';
+import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import SelfDiagnoseSection from '@/app/(dashboard)/settings/_lib/sections/SelfDiagnoseSection';
 
 interface Container {
@@ -32,7 +32,7 @@ interface HistoryItem {
 
 type HealthTab = 'checks' | 'diagnose' | 'logs' | 'system';
 
-export default function HealthPlugin() {
+export default function HealthDashboard() {
   const [checks, setChecks] = useState<Check[]>([]);
   const [containers, setContainers] = useState<Container[]>([]);
   const [systemServices, setSystemServices] = useState<string[]>([]);
