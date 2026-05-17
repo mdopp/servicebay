@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.42.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.41.1...servicebay-v3.42.0) (2026-05-17)
+
+
+### Features
+
+* ai-stack templates (ollama + hermes) + logging/health-check docs ([#544](https://github.com/mdopp/servicebay/issues/544)) ([4c71ec4](https://github.com/mdopp/servicebay/commit/4c71ec42572c26cff22c11d26f8d81bca20bf00b))
+* **diagnose:** inline fix actions on domain_unreachable items ([#551](https://github.com/mdopp/servicebay/issues/551)) ([0fcd1fa](https://github.com/mdopp/servicebay/commit/0fcd1fa6b262f92c4d80328accc470a414c611a3))
+* **diagnose:** list specific rewrites in adguard_rewrites_missing OK message ([#553](https://github.com/mdopp/servicebay/issues/553)) ([1884b9c](https://github.com/mdopp/servicebay/commit/1884b9c97cedc2e776ae58a0e6a1a96a3ad44229))
+* **diagnose:** reconcile + DHCP-reservation actions on lan_ip_changed ([#552](https://github.com/mdopp/servicebay/issues/552)) ([2898f3e](https://github.com/mdopp/servicebay/commit/2898f3e5c79e528af64e7fba8e2ee44f598c2d9a))
+* **diagnose:** router-DNS probe recognises FritzBox-as-upstream pattern ([#546](https://github.com/mdopp/servicebay/issues/546)) ([37c414c](https://github.com/mdopp/servicebay/commit/37c414c87f22f968b614f3b0a1fbc72c35662be3))
+
+
+### Bug Fixes
+
+* **home-assistant:** default OIDC group names to match LLDAP seed ([#563](https://github.com/mdopp/servicebay/issues/563)) ([3c3b49d](https://github.com/mdopp/servicebay/commit/3c3b49dd93e78004205c6d140d06e32ab9e0486a))
+* **lldap:** deep-link + sidebar URL find proxy host by port, not by service name ([#554](https://github.com/mdopp/servicebay/issues/554)) ([eadcabc](https://github.com/mdopp/servicebay/commit/eadcabc5cf74e71276e6272663f4797c390a16a3))
+* **sso+portal:** batch of fixes for [#558](https://github.com/mdopp/servicebay/issues/558) [#559](https://github.com/mdopp/servicebay/issues/559) [#560](https://github.com/mdopp/servicebay/issues/560) [#561](https://github.com/mdopp/servicebay/issues/561) [#562](https://github.com/mdopp/servicebay/issues/562) ([#564](https://github.com/mdopp/servicebay/issues/564)) ([f837d1c](https://github.com/mdopp/servicebay/commit/f837d1c6afd0e357742d5256f1f07df0f3b3344c))
+* **sso:** Authelia OIDC clients honour per-template token_endpoint_auth_method ([#555](https://github.com/mdopp/servicebay/issues/555)) ([2ad2404](https://github.com/mdopp/servicebay/commit/2ad2404f7da8048f1ae76f1a81a1f2d10576c859))
+
 ## [3.41.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.41.0...servicebay-v3.41.1) (2026-05-15)
 
 
