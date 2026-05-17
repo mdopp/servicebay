@@ -259,7 +259,7 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
         <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">NPM admin login required</p>
           <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">
-            We pre-filled the credentials this install generated, but Nginx Proxy Manager rejected them — usually because the data volume on this host carries an admin password from a previous install. Either click <span className="font-semibold">Authenticate &amp; Retry</span> with the values below, or paste the existing NPM admin password if you remember it. Skip to configure proxy routes manually later.
+            Nginx Proxy Manager rejected the password this install tried to set — usually because the data volume on this host carries an admin password from a previous install. The fields below are pre-filled with the credentials ServiceBay previously had stored (best guess for what NPM&apos;s database still accepts); the wizard&apos;s newly-generated password is <em>not</em> shown here because NPM already rejected it. Click <span className="font-semibold">Authenticate &amp; Retry</span> to try these values, replace them with whatever password you know NPM is actually using, or Skip to configure proxy routes manually later.
           </p>
           <div className="space-y-2">
             <input

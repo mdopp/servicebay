@@ -700,9 +700,21 @@ async function runJob(jobId: string): Promise<void> {
   // NPM credentials prompt (mid-flow user input). Pause here until the
   // operator submits or skips.
   if (proxyResult === 'needs_credentials') {
+    // Prefer the credentials already saved in config over the wizard's
+    // newly-generated ones. We're only in this branch because NPM
+    // rejected the wizard creds — pre-filling the prompt with the same
+    // rejected password just confuses the operator (they think it's a
+    // valid password and copy it into NPM, where it still fails). The
+    // saved creds were what worked the last time NPM accepted anything,
+    // so they're the most plausible guess for what NPM's DB still holds.
+    const savedNpm = (await getConfig()).reverseProxy?.npm;
     const fallback = {
-      email: variables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value ?? '',
-      password: variables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value ?? '',
+      email: savedNpm?.email
+        || variables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value
+        || '',
+      password: savedNpm?.password
+        || variables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value
+        || '',
     };
     const creds = await waitForCredentials(jobId, fallback);
     if (abortFlags.get(jobId)) {

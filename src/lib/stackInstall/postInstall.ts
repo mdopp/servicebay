@@ -29,6 +29,7 @@ import type { VariableMeta } from '@/lib/registry';
 import { buildCredentialsManifest, formatCredentialsBanner, type Credential } from './credentialsManifest';
 import { expandForwardAuthSentinel } from './forwardAuth';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
+import { getConfig } from '@/lib/config';
 
 /** Loopback fetch helper. The post-install pipeline runs server-side
  *  inside the install runner; this file is no longer pulled into the
@@ -315,6 +316,25 @@ async function bootstrapNpmAdmin(opts: {
     }
     if (res.ok && data.ok && data.reason === 'already_using_target') {
       opts.onLog('✅ NPM admin already on the wizard credentials — nothing to do.');
+      return 'ok';
+    }
+    if (res.ok && data.ok && data.reason === 'using_saved') {
+      // The wizard's new password was rejected, but the credentials we
+      // already had stored still work. Override the in-memory wizard
+      // variables so subsequent proxy-host calls authenticate with the
+      // password NPM actually accepts — otherwise we'd be back to 401s
+      // immediately after this success log.
+      const cfg = await getConfig();
+      const saved = cfg.reverseProxy?.npm;
+      if (saved?.email && saved?.password) {
+        for (const v of opts.variables) {
+          if (v.name === 'NGINX_ADMIN_EMAIL') v.value = saved.email;
+          if (v.name === 'NGINX_ADMIN_PASSWORD') v.value = saved.password;
+        }
+        opts.onLog(`✅ Reusing existing NPM admin (${saved.email}) — the wizard's new password was not applied.`);
+      } else {
+        opts.onLog('✅ NPM already has admin credentials — keeping them.');
+      }
       return 'ok';
     }
     if (res.ok && data.ok && data.reason === 'defaults_rejected') {

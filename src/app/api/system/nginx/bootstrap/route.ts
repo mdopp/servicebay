@@ -49,6 +49,14 @@ export const dynamic = 'force-dynamic';
  *   { ok: true,  bootstrapped: true }                     – defaults applied
  *   { ok: true,  bootstrapped: false, reason: 'already_using_target' }
  *                                                          – idempotent retry
+ *   { ok: true,  bootstrapped: false, reason: 'using_saved' }
+ *                                                          – wizard creds
+ *                                                            rejected, but
+ *                                                            config.reverseProxy.
+ *                                                            npm still matches
+ *                                                            NPM's DB (preserved
+ *                                                            across reinstall) –
+ *                                                            silently keep them
  *   { ok: true,  bootstrapped: false, reason: 'defaults_rejected' }
  *                                                          – NPM is locked to
  *                                                            something else
@@ -198,6 +206,29 @@ export async function POST(request: Request) {
     // the env vars in the new pod manifest don't match the existing user.
     const defaultsToken = await npmLogin(npm.apiUrl, NPM_DEFAULT_EMAIL, NPM_DEFAULT_PASSWORD);
     if (!defaultsToken) {
+      // Last resort before surfacing a prompt: try the credentials we
+      // already have persisted in config.reverseProxy.npm. On a reinstall
+      // where the NPM data volume was preserved (default for the `certs`
+      // group), NPM's bcrypt hash still matches the *previous* install's
+      // password — which is exactly what's in config because
+      // updateConfig() ran the last time NPM bootstrapped. Reusing them
+      // silently here avoids dragging the operator through a credentials
+      // prompt that pre-fills with a password (the new wizard one) that
+      // NPM has already rejected and never will accept.
+      const savedNpm = (await getConfig()).reverseProxy?.npm;
+      if (savedNpm?.email && savedNpm?.password &&
+          (savedNpm.email !== email || savedNpm.password !== password)) {
+        const savedToken = await npmLogin(npm.apiUrl, savedNpm.email, savedNpm.password);
+        if (savedToken) {
+          await markInstallNginxDone(npm.nodeName);
+          return NextResponse.json({
+            ok: true,
+            bootstrapped: false,
+            reason: 'using_saved',
+            detail: `NPM rejected the wizard's new credentials but still accepts the previously-saved ones (${savedNpm.email}) — keeping them. The wizard's new password was not applied.`,
+          });
+        }
+      }
       return NextResponse.json({
         ok: true,
         bootstrapped: false,
