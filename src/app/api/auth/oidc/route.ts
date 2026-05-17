@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/config';
 import { getOidcCallbackUrl } from '@/lib/config';
 import { isRequestSecure } from '@/lib/auth/requestSecurity';
+import { assertValidOidcIssuer } from '@/lib/auth/oidcIssuer';
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
@@ -14,6 +15,16 @@ export async function GET(request: NextRequest) {
     }
 
     const { issuer, clientId } = config.oidc;
+
+    // SSRF / scheme guard (#577). The browser is about to be redirected
+    // here too — refuse loopback / link-local / non-https before we
+    // hand the user-agent a misconfigured destination.
+    try {
+      assertValidOidcIssuer(issuer);
+    } catch (e) {
+      logger.error('api:auth:oidc', 'OIDC issuer rejected:', e instanceof Error ? e.message : String(e));
+      return NextResponse.json({ error: 'OIDC issuer misconfigured' }, { status: 500 });
+    }
 
     // Generate state parameter for CSRF protection
     const state = crypto.randomBytes(32).toString('hex');

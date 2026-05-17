@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig, getOidcCallbackUrl } from '@/lib/config';
 import { login } from '@/lib/auth';
 import { isRequestSecure } from '@/lib/auth/requestSecurity';
+import { assertValidOidcIssuer } from '@/lib/auth/oidcIssuer';
 import { logger } from '@/lib/logger';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
@@ -14,6 +15,15 @@ export async function GET(request: NextRequest) {
     }
 
     const { issuer, clientId, clientSecret, allowedGroups } = config.oidc;
+    // SSRF / scheme guard (#577). Refuse to fetch from loopback /
+    // link-local / non-https issuers — never legitimate, sometimes
+    // attacker-controlled if config write access is compromised.
+    try {
+      assertValidOidcIssuer(issuer);
+    } catch (e) {
+      logger.error('api:auth:oidc:callback', 'OIDC issuer rejected:', e instanceof Error ? e.message : String(e));
+      return NextResponse.redirect(new URL('/login?error=oidc_config', request.url));
+    }
     const { searchParams } = new URL(request.url);
 
     const code = searchParams.get('code');
@@ -50,7 +60,12 @@ export async function GET(request: NextRequest) {
     });
 
     if (!tokenResponse.ok) {
-      logger.error('api:auth:oidc:callback', 'OIDC token exchange failed', await tokenResponse.text());
+      // Log only the status code, NOT the response body — the body
+      // could contain attacker-controlled content if the issuer URL
+      // has been tampered with, turning the log surface into an SSRF
+      // exfiltration channel (#577). Operators debugging real OIDC
+      // failures can read the upstream IdP's logs directly.
+      logger.error('api:auth:oidc:callback', `OIDC token exchange failed: HTTP ${tokenResponse.status}`);
       return NextResponse.redirect(new URL('/login?error=oidc_token', request.url));
     }
 
