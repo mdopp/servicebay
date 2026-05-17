@@ -1,5 +1,24 @@
 # Architecture (Target V4.1 - Reactive Digital Twin)
 
+## Self-enforcing rubric
+
+The invariants below are no longer enforced by quarterly review — they're mechanically checked on every PR. See [`ARCHITECTURE_INVARIANTS.md`](ARCHITECTURE_INVARIANTS.md) for the rubric, current thresholds, ratchet targets, and how to change a threshold deliberately.
+
+Four tools, each in its own lane:
+
+| Tool | Catches | Run locally |
+|---|---|---|
+| `scripts/check-invariants.ts` | Aggregate metrics — file size, security `as any` budget, `executor.exec` template-literal count, `withApiHandler` adoption ratio, twin singleton fan-in | `npm run check:invariants` |
+| `.dependency-cruiser.cjs` | Module boundary rules — `lib → app` forbidden, one mutation path through `ServiceManager`, one Mustache renderer, no new circular deps | `npm run check:deps` |
+| `.semgrep.yml` | Security & coupling patterns — tar bypass of `safeTarExtract`, `eval` / `new Function`, SSRF-prone fetches, `child_process.exec` non-literal | `podman run --rm -v "$PWD:/src:Z" docker.io/returntocorp/semgrep semgrep --config /src/.semgrep.yml /src` |
+| `eslint.config.mjs` `sb/*` rules | IDE-time feedback — `sb/no-exec-template-literal`, `sb/api-route-needs-handler` | `npm run lint` |
+
+CI: `.github/workflows/architecture.yml` runs the first three on every push and PR. The existing `ci.yml` lint step picks up the `sb/*` ESLint rules.
+
+**Practical consequence.** "All green" is a valid outcome of an architecture review. Future review prompts should run `npm run check:arch && npm run lint` first and only flag what crosses a defined threshold — see the rubric for what does and does not get enforced this way. Anything not mechanically detectable (data-model fit, security-boundary logic, abstraction match) is the remaining LLM-review surface.
+
+The audit section below is a point-in-time snapshot from when the rubric was first calibrated. Each "What's working" bullet that survived audit is also a depcruise rule today; each open coupling/security finding has a corresponding rubric entry (or a tracked exemption with a ratchet TODO).
+
 ## Audit (2026-05-17)
 
 A modular / KISS / DRY / SoT review of the codebase plus a security pass. Open findings are tracked as GitHub issues; this section captures the verdict so it doesn't get re-investigated next quarter.
