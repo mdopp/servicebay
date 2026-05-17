@@ -1,17 +1,25 @@
 /**
  * MCP safety layer.
  *
- * Wraps every mutating MCP tool with three guards:
+ * Real security boundaries on every mutating MCP tool:
  *
  *   1. Read-only mode  — config.mcp.allowMutations must be true (or absent
  *                        on pre-existing installs, for back-compat).
- *   2. Exec denylist   — exec_command refuses obviously-destructive shell
- *                        patterns (rm -rf /, mkfs, dd of=/dev/sd*, …)
- *                        unless the operator opts in via
- *                        config.mcp.allowDangerousExec.
+ *   2. Per-tool scope  — bearer tokens carry a subset of
+ *                        read/lifecycle/mutate/destroy and refuse tools
+ *                        outside their scope (see TOOL_SCOPES in server.ts).
  *   3. Pre-mutation    — destructive tools trigger a labelled
  *      snapshot         createSystemBackup() so the operator always has a
  *                        one-click rewind point.
+ *   4. Audit log       — every tool call is recorded with caller, args
+ *                        (redacted), and outcome.
+ *
+ * Plus one *advisory tripwire*, not a boundary: `exec_command` runs the
+ * supplied command against a regex denylist of cliché-class destructive
+ * shell patterns (`rm -rf /`, `mkfs`, `dd of=/dev/sd*`, …) and refuses
+ * matches unless the operator opts in via `config.mcp.allowDangerousExec`.
+ * The denylist is bypassable with trivial quoting / encoding (#579) —
+ * its job is to catch typo-class mistakes, not adversarial input.
  *
  * No tool gets to mutate state without going through this module.
  */
@@ -61,14 +69,29 @@ export async function guardMutation(toolName: string): Promise<ToolErrorResult |
 }
 
 /**
- * Default-deny patterns for exec_command. Each entry is a regex tested
- * against the raw command string. Tuned for the FCoS / rootless-podman
- * deployment shape — these target the host's data and OS surface.
+ * Tripwire patterns for the most obviously-destructive shell commands.
  *
- * Operators who genuinely need these can set
- * `config.mcp.allowDangerousExec = true`. We log + reject by default.
+ * IMPORTANT: this is NOT a security boundary (#579). A regex denylist
+ * over arbitrary POSIX shell is fundamentally leaky — quoting,
+ * variable expansion, command substitution, here-strings, and `sh -c`
+ * indirection all bypass naive matching. The real boundaries between
+ * an MCP caller and the host are:
+ *
+ *   1. `config.mcp.allowMutations` gates the tool entirely.
+ *   2. The per-tool scope check (`exec_command` requires `destroy`).
+ *   3. `snapshotBeforeMutation` takes a config snapshot pre-exec.
+ *   4. The audit log records every call.
+ *
+ * What this list catches: typo-class mistakes (LLM autocompletes the
+ * literal `rm -rf /`), and the most cliché commands a confused
+ * assistant might emit. Operators with a real reason set
+ * `config.mcp.allowDangerousExec = true` to bypass.
+ *
+ * Anything that determined-adversarial input could obviously bypass
+ * (quoting, escapes, encoded forms) is acceptable — the boundary
+ * isn't this regex.
  */
-const DANGEROUS_EXEC_PATTERNS: { pattern: RegExp; reason: string }[] = [
+const OBVIOUSLY_DESTRUCTIVE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\brm\s+(-[rRfF]+\w*\s+)*\/(?:\s|$)/, reason: '`rm -rf /` would wipe the rootfs' },
   { pattern: /\brm\s+(-[rRfF]+\w*\s+)*\/(mnt|var|home|etc|usr|boot)(\s|\/)/, reason: 'recursive rm of a system path' },
   { pattern: /\bmkfs(\.\w+)?\b/, reason: 'mkfs reformats a filesystem' },
@@ -83,16 +106,23 @@ const DANGEROUS_EXEC_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\bsystemctl\s+poweroff\b|\bshutdown\s+(now|-h)/, reason: 'shuts the host down' },
 ];
 
-/** Inspect an exec command. Returns null if allowed; error otherwise. */
+/** Inspect an exec command. Returns null if allowed; error otherwise.
+ *  See OBVIOUSLY_DESTRUCTIVE_PATTERNS above — this is an advisory
+ *  tripwire for cliché-class destructive commands, not a security
+ *  boundary. The real boundaries are scope + allowMutations + audit. */
 export async function guardExec(command: string): Promise<ToolErrorResult | null> {
   const config = await getConfig().catch(() => null);
   if (config?.mcp?.allowDangerousExec === true) return null;
 
-  for (const { pattern, reason } of DANGEROUS_EXEC_PATTERNS) {
+  for (const { pattern, reason } of OBVIOUSLY_DESTRUCTIVE_PATTERNS) {
     if (pattern.test(command)) {
       logger.warn('mcp:safety', `Refused exec_command — ${reason}: ${command.slice(0, 200)}`);
       return errorResult(
-        `exec_command refused: ${reason}. If you genuinely need this, set config.mcp.allowDangerousExec=true and retry. The denied pattern was: ${pattern.source}`
+        `exec_command refused as obviously destructive: ${reason}. ` +
+        `This is an advisory tripwire that catches cliché-class commands — ` +
+        `it's not a security boundary (quoting / encoding bypass it trivially). ` +
+        `If you genuinely need to run this, set config.mcp.allowDangerousExec=true and retry. ` +
+        `Matched pattern: ${pattern.source}`
       );
     }
   }

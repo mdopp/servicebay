@@ -333,7 +333,7 @@ export default function McpSection() {
               Allow dangerous <span className="font-mono">exec_command</span> patterns
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              By default <span className="font-mono">exec_command</span> refuses obvious foot-guns: <span className="font-mono">rm -rf /</span>, <span className="font-mono">mkfs</span>, <span className="font-mono">dd of=/dev/sd*</span>, partition editors, redirects to block devices, fork bombs. Lift this only if you genuinely need them through MCP.
+              Advisory tripwire — <span className="font-mono">exec_command</span> refuses cliché-class foot-guns (<span className="font-mono">rm -rf /</span>, <span className="font-mono">mkfs</span>, <span className="font-mono">dd of=/dev/sd*</span>, fork bombs, …) to catch typo-class mistakes. Not a security boundary; trivial quoting bypasses it. The real boundaries are the mutations switch above, per-tool token scopes, the pre-exec snapshot, and the audit log.
             </p>
           </div>
           <button
