@@ -415,8 +415,11 @@ export interface VariableMeta {
    * operator can override per-service in the wizard's configure step.
    * Missing/undefined treated the same as `lan` (the conservative
    * default — never auto-request a cert without explicit opt-in).
+   * `internal` requests a cert (so Authelia forward-auth works) but
+   * binds an NPM LAN-only access list so the host isn't reachable
+   * from outside the LAN.
    */
-  exposure?: 'public' | 'lan';
+  exposure?: 'public' | 'internal' | 'lan';
   /** OIDC client to register with Authelia when this service is deployed */
   oidcClient?: OidcClientConfig;
   /** For bcrypt type: name of another variable whose plaintext gets bcrypt-hashed */

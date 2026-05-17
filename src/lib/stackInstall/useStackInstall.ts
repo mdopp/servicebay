@@ -116,7 +116,7 @@ export interface UseStackInstallReturn {
    * proxy-hosts POST sees the operator's choice. Only meaningful for
    * subdomain variables — no-op on others.
    */
-  setVariableExposure: (name: string, exposure: 'public' | 'lan') => void;
+  setVariableExposure: (name: string, exposure: 'public' | 'internal' | 'lan') => void;
 
   /** Fetch yamls + variable metadata + configFiles for every checked
    *  item, resolve placeholders, transition to 'configure'. `prefilled`
@@ -440,7 +440,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     });
   }, []);
 
-  const setVariableExposure = useCallback((name: string, exposure: 'public' | 'lan') => {
+  const setVariableExposure = useCallback((name: string, exposure: 'public' | 'internal' | 'lan') => {
     setVariables(prev => {
       const i = prev.findIndex(x => x.name === name);
       if (i === -1) return prev;

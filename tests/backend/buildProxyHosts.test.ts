@@ -21,7 +21,7 @@ const v = (
 ): StackVariable => ({ name, value, meta });
 
 const subdomain = (
-  exposure: 'public' | 'lan' | undefined,
+  exposure: 'public' | 'internal' | 'lan' | undefined,
   port: string,
   extras: Partial<NonNullable<StackVariable['meta']>> = {},
 ): StackVariable['meta'] => ({
@@ -144,6 +144,34 @@ describe('buildProxyHosts', () => {
       v('SET_SUBDOMAIN', 'real', subdomain('public', '8001')),
     ]);
     expect(hosts.map(h => h.domain)).toEqual(['real.example.com']);
+  });
+
+  it('routes internal-exposure subdomains onto PUBLIC_DOMAIN with internal flag', () => {
+    // `internal` is `public` for routing (needs a real DNS A-record so LE
+    // HTTP-01 can validate) but the install runner binds the LAN-only
+    // access list. ACME-challenge bypasses that list inside NPM by design.
+    const { hosts } = buildProxyHosts([
+      v('PUBLIC_DOMAIN', 'example.com'),
+      v('ZWAVE_JS_SUBDOMAIN', 'zwave', subdomain('internal', '8091')),
+    ]);
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toMatchObject({
+      domain: 'zwave.example.com',
+      forwardPort: 8091,
+      exposure: 'internal',
+    });
+  });
+
+  it('skips internal-exposure hosts when PUBLIC_DOMAIN is empty (no domain to graft onto)', () => {
+    // Internal requires a real cert which requires a real domain.
+    // Without PUBLIC_DOMAIN the host is dropped — `home.arpa` can't
+    // hold a public LE cert, so falling back would create a broken
+    // (cert-less) host. Surface this loudly via the dropped entry
+    // and let the wizard's PUBLIC_DOMAIN validation catch it.
+    const { hosts } = buildProxyHosts([
+      v('ZWAVE_JS_SUBDOMAIN', 'zwave', subdomain('internal', '8091')),
+    ]);
+    expect(hosts).toEqual([]);
   });
 
   it('uses templateName from meta when present, else derives from var name', () => {

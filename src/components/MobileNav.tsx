@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Github, Settings } from 'lucide-react';
+import { Github, Settings, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import { plugins } from './Sidebar';
 import { useToast } from '@/providers/ToastProvider';
@@ -12,10 +12,15 @@ const FIRST_VISIT_KEY = 'sb.mobileHintShown.v1';
 
 export function MobileTopBar() {
   const router = useRouter();
+  const pathname = usePathname() || '';
   const searchParams = useSearchParams();
   const node = searchParams?.get('node');
   const { addToast } = useToast();
   const hintFired = useRef(false);
+  // Mirror of the desktop Sidebar's hasActiveInstall pill — mobile
+  // users who pressed "Minimize" on the wizard would otherwise have
+  // no way back to /setup since the Sidebar is hidden < md.
+  const [hasActiveInstall, setHasActiveInstall] = useState(false);
 
   useEffect(() => {
     if (hintFired.current) return;
@@ -32,6 +37,27 @@ export function MobileTopBar() {
     );
   }, [addToast]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch('/api/install/status', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as {
+          jobIsActive?: boolean;
+          stackSetupPending?: boolean;
+        };
+        if (cancelled) return;
+        setHasActiveInstall(Boolean(data.jobIsActive) || Boolean(data.stackSetupPending));
+      } catch { /* offline / mid-redeploy — keep the previous value */ }
+    };
+    void tick();
+    const handle = setInterval(tick, 5000);
+    return () => { cancelled = true; clearInterval(handle); };
+  }, []);
+
+  const setupActive = pathname.startsWith('/setup');
+
   return (
     <div className="h-14 bg-gray-100 dark:bg-black border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 shrink-0 md:hidden z-20">
        {/* Left: Logo + Text */}
@@ -46,6 +72,21 @@ export function MobileTopBar() {
        </div>
        {/* Right: Icons */}
        <div className="flex items-center gap-4">
+          {hasActiveInstall && (
+            <button
+              onClick={() => router.push('/setup')}
+              className={`relative transition-colors ${
+                setupActive
+                  ? 'text-blue-600 dark:text-blue-400'
+                  : 'text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300'
+              }`}
+              aria-label="Resume setup"
+              title="Resume setup"
+            >
+              <Wrench size={20} />
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            </button>
+          )}
           <button
             onClick={() => router.push(`/settings${node ? `?node=${node}` : ''}`)}
             className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"

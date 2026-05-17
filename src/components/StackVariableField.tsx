@@ -45,7 +45,7 @@ interface StackVariableFieldProps {
    * only the template default as a static badge. The wizard owns
    * the state mutation via useStackInstall.setVariableExposure.
    */
-  onExposureChange?: (exposure: 'public' | 'lan') => void;
+  onExposureChange?: (exposure: 'public' | 'internal' | 'lan') => void;
   /** Tailwind class shape. Pre-extraction the two consumers used
    *  slightly different paddings/border-radii; defaulting to the
    *  InstallerModal shape and letting OnboardingWizard pass its own
@@ -131,13 +131,23 @@ export default function StackVariableField({
   }
 
   // Subdomain field (shows .domain suffix). When `onExposureChange` is
-  // provided, an inline Public/LAN segmented toggle hangs to the right
-  // — operators override the per-template default; the choice drives
-  // whether the install auto-requests a Let's Encrypt cert. Without
+  // provided, an inline Public/Internal/LAN segmented toggle hangs to
+  // the right — operators override the per-template default; the choice
+  // drives whether the install auto-requests a Let's Encrypt cert and
+  // whether NPM binds the LAN-only access list. Without
   // `onExposureChange` (e.g. read-only contexts) we fall back to a
   // small static badge so the operator still sees what's planned.
   if (v.meta?.type === 'subdomain') {
-    const exposure: 'public' | 'lan' = v.meta.exposure === 'public' ? 'public' : 'lan';
+    const exposure: 'public' | 'internal' | 'lan' =
+      v.meta.exposure === 'public' ? 'public'
+      : v.meta.exposure === 'internal' ? 'internal'
+      : 'lan';
+    const badgeClass = exposure === 'public'
+      ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100'
+      : exposure === 'internal'
+        ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100'
+        : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
+    const badgeLabel = exposure === 'public' ? 'Public' : exposure === 'internal' ? 'Internal' : 'LAN';
     return (
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-0 flex-1 min-w-[12rem]">
@@ -164,17 +174,23 @@ export default function StackVariableField({
             </button>
             <button
               type="button"
+              onClick={() => onExposureChange('internal')}
+              className={`px-2.5 py-1.5 border-l border-gray-300 dark:border-gray-700 ${exposure === 'internal' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+              title="LAN-only access but with a real Let's Encrypt cert. Authelia forward-auth works (needs HTTPS); NPM blocks non-LAN IPs. ACME challenge bypasses the allowlist so LE can validate."
+            >
+              Internal
+            </button>
+            <button
+              type="button"
               onClick={() => onExposureChange('lan')}
               className={`px-2.5 py-1.5 border-l border-gray-300 dark:border-gray-700 ${exposure === 'lan' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-              title="LAN-only — no public exposure, no TLS cert provisioned."
+              title="LAN-only, plain HTTP — no cert provisioned. Authelia forward-auth does NOT work here (rejects http scheme)."
             >
               LAN
             </button>
           </div>
         ) : (
-          <span className={`px-2 py-0.5 rounded text-xs ${exposure === 'public' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100' : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'}`}>
-            {exposure === 'public' ? 'Public' : 'LAN'}
-          </span>
+          <span className={`px-2 py-0.5 rounded text-xs ${badgeClass}`}>{badgeLabel}</span>
         )}
       </div>
     );

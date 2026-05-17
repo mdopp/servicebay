@@ -23,24 +23,35 @@ export const AUTHELIA_FORWARD_AUTH_SENTINEL = '__authelia_forward_auth__';
  * `{{AUTHELIA_PORT}}` so it survives the Mustache pass that turns
  * cross-template placeholders into concrete values at install time.
  *
- * **Authelia 4.38+ endpoint:** `/api/authz/forward-auth`. The legacy
- * `/api/verify` was deprecated in v4.38 — Authelia 4.39 refuses to
- * read the (Secure) session cookie when /api/verify is called over
- * `http://` (logs: *"Target URL 'http://127.0.0.1:9091/api/verify'
- * has an insecure scheme 'http', only the 'https' and 'wss' schemes
- * are supported so session cookies can be transmitted securely"*).
- * Operators saw FileBrowser bounce them to its local login form with
- * an empty `Remote-User` header even with a valid Authelia session;
- * root cause traced via container logs (Authelia kept logging the
- * verify request as `user=<anonymous>`). The new endpoint takes the
- * forwarded URL via `X-Forwarded-*` headers and is transport-aware,
- * so the cookie is read correctly even when nginx proxies to it
- * over http on the loopback.
+ * **Endpoint:** `/api/authz/auth-request`, NOT `/api/authz/forward-auth`.
+ * Authelia 4.38+ exposes two distinct endpoints for proxy integration:
+ * - `forward-auth` returns a 302 with a `Location` header (for Traefik,
+ *   Caddy — proxies that follow redirects themselves).
+ * - `auth-request` returns 401 plus the Location in a response header
+ *   (for nginx `ngx_http_auth_request_module`, which only accepts
+ *   2xx/401 from the subrequest and silently treats 3xx as 5xx).
  *
- * Also drops the explicit `error_page 401 =302` redirect — the new
- * endpoint returns a 302 with the correct `Location: auth.<domain>`
- * header on its own when the user isn't authenticated, so we don't
- * need to rewrite the status code on the nginx side.
+ * Using `forward-auth` from an nginx `auth_request` directive surfaces
+ * as `"auth request unexpected status: 302"` in `error.log` and the
+ * client gets 500. Live-fixed 2026-05-17 after a v3.42.0 install left
+ * every gated subdomain returning 500.
+ *
+ * The auth-request endpoint also keeps Authelia's legacy header API:
+ * `X-Original-URL` + `X-Original-Method` carry the request, NOT the
+ * `X-Forwarded-*` set that the forward-auth endpoint expects.
+ *
+ * Authelia validates the scheme in `X-Original-URL` — anything other
+ * than `https://` triggers *"Target URL has an insecure scheme 'http',
+ * only the 'https' and 'wss' schemes are supported so session cookies
+ * can be transmitted securely"* and a 400. So this snippet is only
+ * useful on hosts that actually serve traffic over HTTPS (= have a
+ * cert bound). For cert-less LAN-only hosts, gate auth differently
+ * (or don't gate at all).
+ *
+ * `error_page 401 =302 $redirect` converts the 401 back to a 302 the
+ * browser can follow; `$redirect` is captured from
+ * `$upstream_http_location` which Authelia populates with the correct
+ * `auth.<domain>/?rd=<original>` URL.
  */
 export const AUTHELIA_FORWARD_AUTH_SNIPPET = [
   'auth_request /authelia;',
@@ -54,22 +65,15 @@ export const AUTHELIA_FORWARD_AUTH_SNIPPET = [
   'proxy_set_header Remote-Groups $groups;',
   'proxy_set_header Remote-Name $name;',
   'proxy_set_header Remote-Email $email;',
-  // Authelia's forward-auth endpoint already returns a Location header
-  // pointing at the auth portal with the correct rd= param; honour it
-  // verbatim. Fall back to the bare portal URL if no Location came back
-  // (e.g. transient Authelia error) so the operator at least lands
-  // somewhere they can re-authenticate.
   'error_page 401 =302 $redirect;',
   '',
   'location = /authelia {',
   '    internal;',
-  '    proxy_pass http://127.0.0.1:{{AUTHELIA_PORT}}/api/authz/forward-auth;',
+  '    proxy_pass http://127.0.0.1:{{AUTHELIA_PORT}}/api/authz/auth-request;',
   '    proxy_pass_request_body off;',
   '    proxy_set_header Content-Length "";',
-  '    proxy_set_header X-Forwarded-Method $request_method;',
-  '    proxy_set_header X-Forwarded-Proto $scheme;',
-  '    proxy_set_header X-Forwarded-Host $http_host;',
-  '    proxy_set_header X-Forwarded-Uri $request_uri;',
+  '    proxy_set_header X-Original-URL $scheme://$http_host$request_uri;',
+  '    proxy_set_header X-Original-Method $request_method;',
   '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
   '    proxy_set_header X-Real-IP $remote_addr;',
   '}',

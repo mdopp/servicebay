@@ -127,6 +127,23 @@ storage:
           ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{DEVTYPE}=="partition", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-mount@%k.service"
           ACTION=="remove", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{DEVTYPE}=="partition", RUN+="/usr/local/bin/usb-mount.sh remove %k"
 
+    # Z-Wave / serial USB passthrough to rootless containers.
+    # /dev/ttyACM* defaults to crw-rw---- root:dialout, which leaves a
+    # rootless podman container's "nobody" user with no read access
+    # (logs as "permission denied opening serial port"). MODE=0666
+    # opens it to everyone — fine on a single-user homelab, and the
+    # only practical option without rebuilding the rootless uid
+    # mapping. The SYMLINK= rule pins the Sigma Designs / Aeotec
+    # Z-Wave stick at /dev/zwave so the home-assistant template can
+    # mount a stable path regardless of which /dev/ttyACM<N> the
+    # kernel assigns this boot.
+    - path: /etc/udev/rules.d/99-zwave.rules
+      mode: 0644
+      contents:
+        inline: |
+          SUBSYSTEM=="tty", KERNEL=="ttyACM*", MODE="0666"
+          SUBSYSTEM=="tty", ATTRS{idVendor}=="0658", ATTRS{idProduct}=="0200", SYMLINK+="zwave"
+
     # USB automount: mount/unmount script
     - path: /usr/local/bin/usb-mount.sh
       mode: 0755
@@ -435,7 +452,17 @@ storage:
     - path: /var/lib/systemd/linger/${HOST_USER}
       mode: 0644
 
-    # ServiceBay Quadlet (rootless)
+    # ServiceBay Quadlet (rootless).
+    #
+    # AUTH_SECRET is loaded from an EnvironmentFile on the persistent
+    # data volume (${DATA_ROOT}/servicebay/.auth-secret.env) so it
+    # survives OS reinstalls. Without this, every reinstall would
+    # regenerate AUTH_SECRET → all encrypted values in config.json
+    # (FritzBox password, NPM password, anything else sealed via the
+    # secrets helper) decrypt to garbage. The companion oneshot
+    # `servicebay-auth-secret-init.service` (declared below in
+    # `systemd.units`) writes that file on first boot if missing.
+    # See issue #565.
     - path: /var/home/${HOST_USER}/.config/containers/systemd/servicebay.container
       mode: 0644
       user:
@@ -446,7 +473,8 @@ storage:
         inline: |
           [Unit]
           Description=ServiceBay Rootless Management Interface
-          After=network-online.target
+          After=network-online.target servicebay-auth-secret-init.service
+          Requires=servicebay-auth-secret-init.service
 
           [Container]
           Image=ghcr.io/mdopp/servicebay:${SERVICEBAY_VERSION}
@@ -459,7 +487,7 @@ storage:
           Environment=PORT=${SERVICEBAY_PORT}
           Environment=NODE_ENV=production
           Environment=HOST_USER=${HOST_USER}
-          Environment=AUTH_SECRET=${AUTH_SECRET}
+          EnvironmentFile=${DATA_ROOT}/servicebay/.auth-secret.env
           Environment=SERVICEBAY_USERNAME=${SERVICEBAY_ADMIN_USER}
           Environment=SERVICEBAY_PASSWORD=${SERVICEBAY_ADMIN_PASSWORD}
           SecurityLabelDisable=true
@@ -686,6 +714,42 @@ ${SERVICEBAY_SSH_PRIV}
           if __name__ == "__main__":
               sys.exit(main())
 
+    # AUTH_SECRET init — generates a fresh secret on first boot if no
+    # persistent one exists yet. Re-installs find the existing file and
+    # leave it alone so encrypted values in config.json keep decrypting.
+    # See #565.
+    - path: /etc/systemd/system/servicebay-auth-secret-init.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Initialise persistent AUTH_SECRET for ServiceBay (#565)
+          DefaultDependencies=no
+          After=var-mnt-data.mount local-fs.target
+          RequiresMountsFor=/var/mnt/data
+          Before=user@1000.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          # mkdir is idempotent; the conditional generation lives in the
+          # shell script so an existing .auth-secret.env survives intact
+          # even when this oneshot re-runs (e.g. after `systemctl daemon-reload`).
+          ExecStart=/usr/bin/sh -c '\
+            install -d -m 0755 -o ${HOST_USER} -g ${HOST_USER} /var/mnt/data/servicebay; \
+            if [ ! -s /var/mnt/data/servicebay/.auth-secret.env ]; then \
+              SECRET=$$(/usr/bin/openssl rand -hex 32); \
+              umask 0177; \
+              printf "AUTH_SECRET=%s\\n" "$$SECRET" > /var/mnt/data/servicebay/.auth-secret.env; \
+              chown ${HOST_USER}:${HOST_USER} /var/mnt/data/servicebay/.auth-secret.env; \
+              echo "AUTH_SECRET written (fresh install or first migration)"; \
+            else \
+              echo "AUTH_SECRET preserved from previous install"; \
+            fi'
+
+          [Install]
+          WantedBy=multi-user.target
+
     # Systemd unit for the config-merge — runs once after install-python
     # so python3 is guaranteed available, before servicebay.service.
     - path: /etc/systemd/system/setup-config-merge.service
@@ -695,7 +759,7 @@ ${SERVICEBAY_SSH_PRIV}
           [Unit]
           Description=Merge re-install ISO config into existing config.json (#331)
           ConditionPathExists=/var/mnt/data/servicebay/config.iso.json
-          After=install-python.service var-mnt-data.mount
+          After=install-python.service var-mnt-data.mount servicebay-auth-secret-init.service
           Requires=install-python.service var-mnt-data.mount
           # No `Before=servicebay.service` — that unit is in the user
           # systemd instance (Quadlet under ~/.config/containers/systemd)
@@ -926,6 +990,14 @@ ${SERVICEBAY_SSH_PRIV}
     # Enable Python3 install on first boot
     - path: /etc/systemd/system/multi-user.target.wants/install-python.service
       target: /etc/systemd/system/install-python.service
+
+    # Enable AUTH_SECRET init on first boot (#565). The `[Install]
+    # WantedBy=` block in the unit file isn't enough on its own because
+    # Ignition writes the file but doesn't `systemctl enable` it — the
+    # symlink has to be present in the wants/ directory at ignition
+    # time, matching how every other system-level oneshot here is wired.
+    - path: /etc/systemd/system/multi-user.target.wants/servicebay-auth-secret-init.service
+      target: /etc/systemd/system/servicebay-auth-secret-init.service
 
     # Enable setup-config-merge on first boot (#331). Without this
     # symlink, Ignition drops the unit file at /etc/systemd/system/

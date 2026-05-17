@@ -68,9 +68,10 @@ export interface ProxyHostEntry {
    *   - whether to bother letsdebug.net with this domain (skipped
    *     entirely for `lan` since it'll never have a public record).
    * Missing on entries that pre-date this field; treat as `lan` so
-   * the conservative default applies.
+   * the conservative default applies. See VariableMeta.exposure for
+   * the three-tier semantics.
    */
-  exposure?: 'public' | 'lan';
+  exposure?: 'public' | 'internal' | 'lan';
 }
 
 export interface ReverseProxyConfig {

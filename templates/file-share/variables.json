@@ -12,7 +12,7 @@
     "type": "subdomain",
     "description": "Subdomain for Syncthing Web UI — gated by Authelia forward-auth. The Syncthing mobile/desktop apps use API keys, not the GUI session, so device sync keeps working.",
     "default": "sync",
-    "exposure": "lan",
+    "exposure": "internal",
     "proxyPort": "8384",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
