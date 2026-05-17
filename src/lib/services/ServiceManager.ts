@@ -5,6 +5,8 @@ import { logger } from '../logger';
 import { getConfig, updateConfig } from '../config';
 import { saveSnapshot } from '../history';
 import { injectServiceDirectives } from './quadletDirectives';
+import { buildExpectedContainerNames, pickContainerForService, type PodLikeDoc } from './containerNameMatcher';
+import { parseQuadletYaml } from './yamlExtractor';
 
 const SYSTEMD_DIR = '.config/containers/systemd';
 
@@ -38,8 +40,8 @@ export interface ServiceInfo {
 }
 
 export class ServiceManager {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private static fileParseCache = new Map<string, { hash: string, parsed: any[] }>();
+     
+    // Quadlet YAML parse cache lives in `yamlExtractor.ts` now (#589).
 
     static async listServices(nodeName: string): Promise<ServiceInfo[]> {
         // V4: Use DigitalTwinStore
@@ -64,105 +66,34 @@ export class ServiceManager {
             // Relaxed matching for service unit (strip .service to compare with baseName)
             const serviceUnit = twin.services.find(s => s.name === unitName || s.name === baseName);
             
-            // STRICT MATCHING Strategy (RFC-Compliant):
-            // 1. Service Name is the Single Source of Truth.
-            // 2. Containers MUST adhere to systemd-generated naming conventions:
-            //    - "systemd-<serviceName>" (e.g., systemd-adguard)
-            //    - "<serviceName>-<serviceName>" (e.g., adguard-adguard, typical for Pods)
-            //    - Exact match (legacy/simple)
-            
-            // NEW STRATEGY: Parse YAML first if available to get explicit container names
-            const expectedNames = [
-                baseName,                   // simple
-                `systemd-${baseName}`,      // quadlet root
-                `${baseName}-${baseName}`   // pod member
-            ];
-            
-            // Attempt to read YAML *before* container matching to extract explicit names
+            // Container-name matching lifted into containerNameMatcher.ts +
+            // yamlExtractor.ts (#589). The matcher generates every plausible
+            // candidate name (simple / systemd-prefixed / pod-prefixed /
+            // YAML-derived) and the extractor handles the parse cache.
             let yamlContent: string | null = null;
             let yamlPath: string | null = null;
             let yamlFile: string | null = null;
+            let podDocs: PodLikeDoc[] = [];
 
             if (type === 'kube' && file.content) {
-                 const match = file.content.match(/^Yaml=(.+)$/m);
-                 if (match) {
-                     yamlFile = match[1].trim();
-                     yamlPath = path.join(path.dirname(filePath), yamlFile);
-                     
-                     // Find YAML content
-                     yamlContent = twin.files[yamlPath]?.content;
-                     if (!yamlContent) {
-                         const foundPath = Object.keys(twin.files).find(p => p.endsWith(yamlFile!));
-                         if (foundPath) yamlContent = twin.files[foundPath].content;
-                     }
-
-                     if (yamlContent) {
-                         try {
-                             // Use Cache if content matches
-                             const cacheKey = `${nodeName}:${yamlPath}`;
-                             const cached = ServiceManager.fileParseCache.get(cacheKey);
-                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                             let docs: any[] = [];
-
-                             if (cached && cached.hash === yamlContent) {
-                                 // Cache Hit
-                                 docs = cached.parsed;
-                             } else {
-                                 // Cache Miss or Stale
-                                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                 docs = yaml.loadAll(yamlContent) as any[];
-                                 ServiceManager.fileParseCache.set(cacheKey, { hash: yamlContent, parsed: docs });
-                             }
-
-                             docs.forEach(doc => {
-                                 // Add PodName explicitly if defined
-                                 if (doc?.metadata?.name) {
-                                     expectedNames.push(`${doc.metadata.name}`); // Entire Pod might share name? 
-                                 }
-                                 
-                                 if (doc?.spec?.containers) {
-                                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                     doc.spec.containers.forEach((c: any) => {
-                                         if (c.name) {
-                                             // Podman usually namespaces usage: PodName-ContainerName
-                                             // or ServiceName-ContainerName
-                                             
-                                             // Add raw container name (unlikely alone in a pod, but possible)
-                                             expectedNames.push(c.name);
-                                             
-                                             // Add ServiceName-ContainerName
-                                             expectedNames.push(`${baseName}-${c.name}`);
-                                             
-                                             // Add PodName-ContainerName (if pod name known)
-                                             if (doc.metadata?.name) {
-                                                  expectedNames.push(`${doc.metadata.name}-${c.name}`);
-                                             }
-                                         }
-                                     });
-                                 }
-                             });
-                         } catch { /* ignore parse error here, handled below */ }
-                     }
-                 }
+                const match = file.content.match(/^Yaml=(.+)$/m);
+                if (match) {
+                    yamlFile = match[1].trim();
+                    yamlPath = path.join(path.dirname(filePath), yamlFile);
+                    yamlContent = twin.files[yamlPath]?.content ?? null;
+                    if (!yamlContent) {
+                        const foundPath = Object.keys(twin.files).find(p => p.endsWith(yamlFile!));
+                        if (foundPath) yamlContent = twin.files[foundPath].content;
+                    }
+                    if (yamlContent) {
+                        podDocs = parseQuadletYaml(yamlContent, `${nodeName}:${yamlPath}`);
+                    }
+                }
             }
-            
-            // Deduplicate names
-            const uniqueExpected = Array.from(new Set(expectedNames));
 
-            const candidates = twin.containers.filter(c => {
-                 if (!c.names) return false;
-                 return c.names.some(n => {
-                     const cleanName = n.replace(/^\//, ''); // Strip leading slash
-                     return uniqueExpected.includes(cleanName);
-                 });
-            });
-
-            // Prioritize containers with ports if multiple matches (though improbable with infra gone)
-            let container = candidates.find(c => c.ports && c.ports.length > 0);
-            
-            if (!container && candidates.length > 0) {
-                 container = candidates[0];
-            }
+            const uniqueExpected = buildExpectedContainerNames(baseName, podDocs);
+            const container = pickContainerForService(twin.containers, uniqueExpected);
+            const candidates = container ? [container] : [];
 
             if (baseName === 'adguard' || baseName.includes('adguard') || baseName.includes('immich')) {
                 logger.debug('ServiceManager', `Processing ${baseName}`);
@@ -212,17 +143,13 @@ export class ServiceManager {
             }
 
             // Parse File Content for metadata like Yaml path
-            // (We re-use yamlContent from above if parsed)
+            // (We re-use yamlContent from above if parsed). The earlier
+            // matcher block already populated podDocs via parseQuadletYaml
+            // — re-use it instead of re-parsing.
             if (type === 'kube' && yamlContent) {
-                 // Already parsed above broadly, now strictly for metadata
                      if (yamlContent) {
                          try {
-                              // Use Cache (guaranteed populated from above block if yamlContent exists)
-                              const cacheKey = `${nodeName}:${yamlPath}`;
-                              const cached = ServiceManager.fileParseCache.get(cacheKey);
-                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                              const docs = (cached && cached.hash === yamlContent) ? cached.parsed : (yaml.loadAll(yamlContent) as any[]);
-
+                              const docs = podDocs;
                              for (const doc of docs) {
                                  if (!doc) continue;
                                  
@@ -252,35 +179,41 @@ export class ServiceManager {
 
                                  // Spec
                                  if (doc.spec) {
+                                     // Pin `spec` to a local so TS narrows it through the
+                                     // forEach callbacks below — without this the typed
+                                     // PodLikeDoc shape (introduced in #589) trips a
+                                     // "possibly undefined" check the older `any` cast
+                                     // suppressed.
+                                     const spec = doc.spec;
                                      // Host Network
-                                     if (doc.spec.hostNetwork) info.hostNetwork = true;
-                                     
+                                     if (spec.hostNetwork) info.hostNetwork = true;
+
                                      // Ports (Fallback if container not providing them)
-                                     if (doc.spec.containers && info.ports.length === 0) {
+                                     if (spec.containers && info.ports.length === 0) {
                                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                         doc.spec.containers.forEach((c: any) => {
+                                         spec.containers.forEach((c: any) => {
                                              if (c.ports) {
                                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                                                  c.ports.forEach((p: any) => {
                                                      let host = p.hostPort ? String(p.hostPort) : undefined;
                                                      const container = String(p.containerPort);
-                                                     
+
                                                      // If Host Network, container port IS host port
-                                                     if (!host && (info.hostNetwork || doc.spec.hostNetwork)) {
+                                                     if (!host && (info.hostNetwork || spec.hostNetwork)) {
                                                          host = container;
                                                      }
-                                                     
+
                                                      info.ports.push({ host, container });
                                                  });
                                              }
 
                                              // Volumes (Kube)
-                                             if (c.volumeMounts && doc.spec.volumes) {
+                                             if (c.volumeMounts && spec.volumes) {
                                                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                                                 c.volumeMounts.forEach((m: any) => {
                                                     // Find matching volume definition to get host path or claim
                                                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                                    const volDef = doc.spec.volumes.find((v: any) => v.name === m.name);
+                                                    const volDef = spec.volumes!.find((v: any) => v.name === m.name);
                                                     let host = '';
                                                     if (volDef) {
                                                         if (volDef.hostPath) host = volDef.hostPath.path;
