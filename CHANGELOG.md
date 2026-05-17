@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.44.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.43.0...servicebay-v3.44.0) (2026-05-17)
+
+
+### Features
+
+* **diagnose:** pattern-aware audit on cert_request_failure + domain_external_reachability ([#547](https://github.com/mdopp/servicebay/issues/547)) ([#573](https://github.com/mdopp/servicebay/issues/573)) ([b52916d](https://github.com/mdopp/servicebay/commit/b52916d75efffa2d5af95dea50b0cabaf9413f9a))
+
 ## [3.43.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.42.1...servicebay-v3.43.0) (2026-05-17)
 
 
