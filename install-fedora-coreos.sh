@@ -473,8 +473,14 @@ storage:
         inline: |
           [Unit]
           Description=ServiceBay Rootless Management Interface
-          After=network-online.target servicebay-auth-secret-init.service
-          Requires=servicebay-auth-secret-init.service
+          After=network-online.target
+          # Deliberately NO Requires=/After=servicebay-auth-secret-init.service.
+          # That unit is in the system instance and is invisible to user
+          # systemd here (a user unit referencing it by name fails to start
+          # with "Unit not found", #586). The ordering is already guaranteed
+          # by the init unit's `Before=user@1000.service` (see below) — by
+          # the time user systemd activates this Quadlet via linger, the
+          # EnvironmentFile is already on disk.
 
           [Container]
           Image=ghcr.io/mdopp/servicebay:${SERVICEBAY_VERSION}
