@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import Mustache from 'mustache';
+import { renderTemplate } from '@/lib/template/render';
 import { getConfig } from '@/lib/config';
 import { getTemplateYaml, getTemplateVariables } from '@/lib/registry';
 import { logger } from '@/lib/logger';
@@ -82,20 +82,15 @@ export async function GET(
     );
   }
 
-  const savedEscape = Mustache.escape;
-  Mustache.escape = (text: string) => text;
   let rendered: string;
   try {
-    rendered = Mustache.render(yamlSource, view);
+    rendered = renderTemplate(yamlSource, view);
   } catch (e) {
     logger.warn('services:reconfigure-preview', `Render failed for ${serviceName}: ${e instanceof Error ? e.message : String(e)}`);
-    Mustache.escape = savedEscape;
     return NextResponse.json(
       { error: `Template render failed: ${e instanceof Error ? e.message : String(e)}` },
       { status: 500 },
     );
-  } finally {
-    Mustache.escape = savedEscape;
   }
 
   return NextResponse.json({ yamlContent: rendered });

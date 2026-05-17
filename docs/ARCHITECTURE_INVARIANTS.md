@@ -67,7 +67,7 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 | `lib → components` imports | 0 | 0 | `.dependency-cruiser.cjs:lib-no-import-components` |
 | `lib → dashboards` imports | 0 | 0 | `.dependency-cruiser.cjs:lib-no-import-dashboards` |
 | Circular dependency cycles | 6 known | 0 new | `.dependency-cruiser.cjs:no-circular` |
-| Forks of the Mustache renderer | 1 known | 0 new | `.dependency-cruiser.cjs:one-renderer` |
+| Forks of the Mustache renderer | 0 | 0 | `.dependency-cruiser.cjs:one-renderer` (#599) |
 | Bypasses of `ServiceManager` facade | 0 | 0 | `.dependency-cruiser.cjs:service-manager-single-mutation-path` |
 
 **Twin singleton fan-in.** 35 modules call `DigitalTwinStore.getInstance()` directly. Architecture audit flags this as a coupling smell. Ratchet target: 5 (server.ts + reader module + tests) once a reader API is introduced.
@@ -102,7 +102,7 @@ Enforced by `.semgrep.yml`. ERROR severity = build-blocking; WARNING = reported 
 These are enforced as depcruise rules:
 
 - **One mutation path per operation** — every deploy/delete/start/stop/restart/update goes through `ServiceManager`. Direct imports of `serviceLifecycle`/`serviceListing` from outside `src/lib/services` are forbidden.
-- **One renderer** — all Mustache rendering goes through `src/lib/install/runner.ts`. Direct `mustache` imports elsewhere are forbidden.
+- **One renderer** — all Mustache rendering goes through `src/lib/template/render.ts` (post-#599). `install/runner.ts` and the `stackInstall/` family still import `mustache` directly and are exempt for the moment; the next ratchet step migrates them to the shared helper too.
 - **One Digital Twin store** — singleton via `DigitalTwinStore.getInstance()`. Fan-in cap enforced by `check-invariants.ts`.
 
 ---

@@ -122,15 +122,16 @@ module.exports = {
             name: 'one-renderer',
             severity: 'error',
             comment:
-                'ARCH audit: all Mustache rendering must pass through src/lib/install/runner.ts. ' +
-                'Direct mustache imports anywhere else fork the renderer. Ratchet TODO: route ' +
-                'reconfigure-preview through runner.ts or expose a render() helper from it.',
+                'ARCH audit: all Mustache rendering must pass through src/lib/template/render.ts ' +
+                '(#599). The two install-time consumers below stay exempt because they still ' +
+                'import mustache directly for the moment — `install/runner.ts` and the ' +
+                'stackInstall family will migrate to renderTemplate() in a follow-up.',
             from: {
                 pathNot: [
+                    '^src/lib/template/render\\.ts$',
                     '^src/lib/install/runner\\.ts$',
                     '^src/lib/install/jobStore\\.ts$',
                     '^src/lib/stackInstall/',
-                    '^src/app/api/services/\\[name\\]/reconfigure-preview/route\\.ts$',
                 ],
             },
             to: { path: '^node_modules/mustache(/|$)' },
