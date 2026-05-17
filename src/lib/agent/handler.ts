@@ -5,6 +5,7 @@ import path from 'path';
 import { ClientChannel } from 'ssh2';
 import { logger } from '@/lib/logger';
 import { getConfig } from '@/lib/config';
+import { AgentTimeoutError } from '@/lib/util/domainError';
 
 type AgentLogLevel = 'info' | 'warn' | 'error' | 'debug';
 
@@ -525,7 +526,7 @@ export class AgentHandler extends EventEmitter {
                 this.bumpErrorCount();
                 this.health.lastError = `Command timeout: ${action}`;
                 this.log(this.nodeName, 'warn', `Command timeout for '${action}' after ${timeoutMs}ms (id: ${id})`);
-                reject(new Error(`Agent request timeout (${action} after ${timeoutMs}ms)`));
+                reject(new AgentTimeoutError({ action, timeoutMs }));
             }
         }, timeoutMs);
 

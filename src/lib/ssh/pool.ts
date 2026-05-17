@@ -2,6 +2,7 @@ import { Client } from 'ssh2';
 import { readFileSync } from 'fs';
 import { PodmanConnection, listNodes } from '../nodes';
 import { logger } from '@/lib/logger';
+import { SSHError } from '@/lib/util/domainError';
 
 export interface SSHClientWrapper {
   client: Client;
@@ -108,23 +109,31 @@ export class SSHConnectionPool {
           resolved = true;
           logger.error('SSH', `✗ Connection error for ${nodeName} (${node.URI}):`, err.message || err);
           this.removeConnection(nodeName);
-          
-          // Enhance common errors for better UI feedback
+
+          // Classify the underlying cause into a typed reason (#598)
+          // so humanizeError can pick the UX hint via switch instead
+          // of re-matching the message text. The string itself stays
+          // human-readable for log + fallback paths.
+          let reason: SSHError['reason'] = 'other';
           let errorMsg = `SSH connection failed for ${nodeName}`;
           if (err.message) {
             if (err.message.includes('All configured authentication methods failed')) {
+              reason = 'auth';
               errorMsg = `Authentication failed for ${nodeName}. Check your SSH key or credentials.`;
             } else if (err.message.includes('ENOTFOUND') || err.message.includes('getaddrinfo')) {
+              reason = 'dns';
               errorMsg = `Cannot resolve hostname for ${nodeName}. Check the URI in nodes.json.`;
             } else if (err.message.includes('ECONNREFUSED')) {
+              reason = 'refused';
               errorMsg = `Connection refused by ${nodeName}. Check if SSH server is running.`;
             } else if (err.message.includes('ETIMEDOUT')) {
+              reason = 'timeout';
               errorMsg = `Connection timeout for ${nodeName}. Check network connectivity.`;
             } else {
               errorMsg = `${errorMsg}: ${err.message}`;
             }
           }
-          reject(new Error(errorMsg));
+          reject(new SSHError({ nodeName, reason, message: errorMsg, cause: err }));
         }
       });
 
