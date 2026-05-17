@@ -489,17 +489,37 @@ async function runJob(jobId: string): Promise<void> {
 
   // Optional clean-install reset.
   if (input.cleanInstall && input.cleanInstallConfirm === 'RESET') {
-    await log(jobId, '🧹 Clean install — wiping existing service data...');
+    // Per-group preserve flags (#568): operator's checkbox state from
+    // the wizard. Omitted entirely → endpoint applies the conservative
+    // default (keep secrets + certs + identity, wipe service-data).
+    const preserve = input.preserve;
+    const previewLabel = preserve === undefined
+      ? 'default (keep secrets/certs/identity, wipe service-data)'
+      : preserve.length === 0
+        ? 'FACTORY RESET — wipe everything'
+        : `keep ${preserve.join(' + ')}`;
+    await log(jobId, `🧹 Clean install — ${previewLabel}…`);
     try {
       const res = await apiFetch('/api/system/stacks/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: 'RESET', node: input.node || undefined }),
+        body: JSON.stringify({
+          confirm: 'RESET',
+          node: input.node || undefined,
+          ...(preserve !== undefined ? { preserve } : {}),
+        }),
       });
       const data = await res.json();
       if (res.ok) {
         const removed = data.deleted?.length ?? 0;
-        await log(jobId, `✅ Reset done — removed ${removed} service${removed === 1 ? '' : 's'}, wiped ${data.dataDir}.`);
+        const kept = data.preservedServices?.length ?? 0;
+        await log(jobId, `✅ Reset done — removed ${removed} service${removed === 1 ? '' : 's'}${kept ? `, kept ${kept} (${(data.preservedServices ?? []).join(', ')})` : ''}.`);
+        if (data.wipeStepsRun?.length) {
+          await log(jobId, `   Wiped: ${data.wipeStepsRun.join('; ')}.`);
+        }
+        if (data.certArchive) {
+          await log(jobId, `   Archived NPM data to ${data.certArchive} — cert-reuse will pull from it on next install.`);
+        }
         if (data.failed?.length) {
           await log(jobId, `⚠️ Some services could not be cleanly removed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`);
         }

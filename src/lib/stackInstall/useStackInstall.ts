@@ -104,6 +104,12 @@ export interface UseStackInstallReturn {
   cleanInstallConfirm: string;
   setCleanInstall: (b: boolean) => void;
   setCleanInstallConfirm: (s: string) => void;
+  /** Per-group preserve flags for the clean-install wipe (#568). Each
+   *  entry left in the array means "keep this group". `undefined` =
+   *  defer to API default (keep secrets+certs+identity, wipe service-data).
+   *  Explicit `[]` = factory reset (wipe everything). */
+  preserve: string[] | undefined;
+  setPreserve: (p: string[] | undefined) => void;
 
   /** Toggle an item's checked state (used by select-step UIs in caller). */
   setItemChecked: (name: string, checked: boolean) => void;
@@ -274,6 +280,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const [error, setError] = useState<string | null>(null);
   const [cleanInstall, setCleanInstall] = useState(false);
   const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
+  const [preserve, setPreserve] = useState<string[] | undefined>(undefined);
   const [jobId, setJobId] = useState<string | null>(null);
 
   /** Latest node value. Cached in a ref so async runInstall sees fresh
@@ -648,6 +655,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         node: node || undefined,
         cleanInstall,
         cleanInstallConfirm,
+        preserve,
         templateSource,
         host,
       },
@@ -687,7 +695,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       setError(`Could not start install: ${msg}`);
       setPhase("error");
     }
-  }, [items, variables, cleanInstall, cleanInstallConfirm, templateSource, source, attachToJob]);
+  }, [items, variables, cleanInstall, cleanInstallConfirm, preserve, templateSource, source, attachToJob]);
 
   const retryNpmCredentials = useCallback(async (email: string, password: string): Promise<void> => {
     if (!email || !password) return;
@@ -733,6 +741,8 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     cleanInstallConfirm,
     setCleanInstall,
     setCleanInstallConfirm,
+    preserve,
+    setPreserve,
     setItemChecked,
     setItems,
     setVariableValue,
