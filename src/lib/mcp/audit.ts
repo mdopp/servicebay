@@ -17,6 +17,7 @@ import fsp from 'fs/promises';
 import path from 'path';
 import { DATA_DIR } from '@/lib/dirs';
 import { logger } from '@/lib/logger';
+import { currentTraceId } from '@/lib/util/traceContext';
 
 const AUDIT_FILE = path.join(DATA_DIR, 'mcp-audit.log');
 const AUDIT_BACKUP_FILE = path.join(DATA_DIR, 'mcp-audit.1.log');
@@ -32,6 +33,11 @@ export interface AuditEntry {
   durationMs: number;
   args?: Record<string, unknown>;  // redacted
   errorMessage?: string;           // present iff outcome === 'error' or 'blocked'
+  /** Request-scoped trace ID (#594). Auto-populated by recordAudit
+   *  when the call originates from a tracked HTTP request. Lets the
+   *  operator grep the same id across MCP audit, server logs, and
+   *  agent SSH command lines (`SB_TRACE=…`). */
+  traceId?: string;
 }
 
 /** Args fields that get masked. Full-redact rather than truncate so the
@@ -88,6 +94,9 @@ export async function recordAudit(entry: AuditEntry): Promise<void> {
     await rotateIfNeeded();
     const line = JSON.stringify({
       ...entry,
+      // Auto-attach the request trace ID if available and the caller
+      // didn't already supply one (#594). Pure additive.
+      traceId: entry.traceId ?? currentTraceId(),
       args: redactArgs(entry.args),
     }) + '\n';
     // Append-with-flush: O_APPEND on Linux is atomic for writes < PIPE_BUF

@@ -4,6 +4,7 @@ import { AgentManager } from './manager';
 import { Readable } from 'stream';
 import { logger } from '@/lib/logger';
 import { shellQuoteAll } from '../util/shellQuote';
+import { currentTraceId } from '../util/traceContext';
 
 export class AgentExecutor implements Executor {
   private agent: AgentHandler;
@@ -18,10 +19,16 @@ export class AgentExecutor implements Executor {
 
   async exec(command: string, options: { timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
     await this.ensureConnected();
-    const truncatedCmd = command.length > 100 ? command.substring(0, 100) + '...' : command;
+    // Prefix with a trace-ID shell comment when the call originates
+    // from a tracked HTTP request (#594). `: # …` is a shell noop, so
+    // the agent runs the same command — but `ps -ef` on the host and
+    // the agent's exec log carry the trace ID for end-to-end grep.
+    const traceId = currentTraceId();
+    const taggedCommand = traceId ? `: # SB_TRACE=${traceId}; ${command}` : command;
+    const truncatedCmd = taggedCommand.length > 100 ? taggedCommand.substring(0, 100) + '...' : taggedCommand;
     logger.info(`Executor:${this.agent.nodeName}`, `Executing: ${truncatedCmd}`);
-    
-    const res = await this.agent.sendCommand('exec', { command }, { timeoutMs: options.timeoutMs });
+
+    const res = await this.agent.sendCommand('exec', { command: taggedCommand }, { timeoutMs: options.timeoutMs });
     // Agent returns { code, stdout, stderr }
     if (res.code !== 0) {
         // Mimic child_process.exec error

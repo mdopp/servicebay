@@ -18,6 +18,7 @@ import { parse } from 'url';
 import next from 'next';
 import { Server } from 'socket.io';
 import { setUpdaterIO, scheduleUpdateNotifier } from './src/lib/updater';
+import { runWithTrace, newTraceId, currentTraceId } from './src/lib/util/traceContext';
 import crypto from 'crypto';
 // Monitoring init moved to Agent logic in V4
 import { HealthService } from './src/lib/health/service';
@@ -174,7 +175,11 @@ const scheduleAgentRestart = async () => {
 };
 
 app.prepare().then(() => {
-  const server = createServer(async (req, res) => {
+  const server = createServer((req, res) => runWithTrace(async () => {
+    // Surface the trace ID to the client so error toasts can include it
+    // (#594). Cheap: a single response header, set once per request.
+    const traceId = currentTraceId();
+    if (traceId && !res.headersSent) res.setHeader('X-Trace-Id', traceId);
     try {
       const parsedUrl = parse(req.url!, true);
 
@@ -253,7 +258,7 @@ app.prepare().then(() => {
       res.statusCode = 500;
       res.end('internal server error');
     }
-  });
+  }, newTraceId()));
 
   const io = new Server(server);
 
