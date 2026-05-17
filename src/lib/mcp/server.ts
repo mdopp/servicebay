@@ -68,10 +68,12 @@ const MUTATING_TOOLS = new Set([
  *
  *   read       lookups + diagnose + log readers
  *   lifecycle  start/stop/restart + run_check_now + refresh + run_backup
- *   mutate     create/update/add — additive changes
- *   destroy    delete/exec/restore/purge — irreversible
+ *   mutate     create/update/add + config writes — additive changes
+ *   destroy    delete/restore/purge — irreversible state edits
+ *   exec       exec_command — split off from `destroy` (#591) so a token
+ *              can grant config writes without shell access
  */
-const TOOL_SCOPES: Record<string, ApiScope> = {
+export const TOOL_SCOPES: Record<string, ApiScope> = {
   // read
   list_nodes: 'read', list_services: 'read', list_containers: 'read',
   get_service_logs: 'read', get_container_logs: 'read', get_service_files: 'read',
@@ -90,12 +92,30 @@ const TOOL_SCOPES: Record<string, ApiScope> = {
   deploy_service: 'mutate', update_service_yaml: 'mutate', rename_service: 'mutate',
   add_proxy_route: 'mutate', create_health_check: 'mutate',
   restore_trashed_service: 'mutate',
+  // mutate (config writes, allow-listed to safe keys — see update_config tool)
+  update_config: 'mutate',
   // destroy
   delete_service: 'destroy', delete_health_check: 'destroy',
   remove_proxy_route: 'destroy', restore_backup: 'destroy',
-  purge_trashed_service: 'destroy', update_config: 'destroy',
-  exec_command: 'destroy',
+  purge_trashed_service: 'destroy',
+  // exec (shell — own scope so tokens can grant config writes without it)
+  exec_command: 'exec',
 };
+
+/**
+ * Decide whether a token with `tokenScopes` may call a tool that
+ * requires `required`. Encapsulates the back-compat rule (#591) that
+ * tokens issued before the split — when `exec_command` was tagged as
+ * `destroy` — still get exec via their `destroy` grant.
+ *
+ * Exported pure helper so the scope semantics are testable without
+ * spinning up the whole MCP server.
+ */
+export function tokenHasScope(tokenScopes: readonly ApiScope[], required: ApiScope): boolean {
+  if (tokenScopes.includes(required)) return true;
+  if (required === 'exec' && tokenScopes.includes('destroy')) return true;
+  return false;
+}
 
 /**
  * Subset of MUTATING_TOOLS that can lose data or change config in
@@ -141,7 +161,7 @@ function safeHandler(
     try {
       // Scope check (token auth only — cookie has all scopes by design).
       const required = TOOL_SCOPES[toolName] ?? 'read';
-      if (auth && !auth.scopes.includes(required)) {
+      if (auth && !tokenHasScope(auth.scopes, required)) {
         outcome = 'blocked';
         errorMessage = `Token scope '${required}' required for ${toolName}; this token has [${auth.scopes.join(',')}]`;
         return { content: [{ type: 'text' as const, text: errorMessage }], isError: true as const };

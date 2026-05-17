@@ -27,8 +27,15 @@ import { DATA_DIR } from '@/lib/dirs';
 import { atomicWriteFile } from '@/lib/util/atomicWrite';
 import { logger } from '@/lib/logger';
 
-export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'destroy';
-export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'destroy'];
+// Scope grain — each tool is mapped to exactly one (`TOOL_SCOPES` in
+// server.ts). `exec` was split out of `destroy` (#591): the original
+// model gave `exec_command` and `update_config` the same blast-radius
+// label, but `update_config` is allow-listed to safe keys and never
+// reaches the shell. Tokens issued today as `destroy` continue to work
+// for everything they previously could — we additively add `exec`
+// without removing `destroy`'s grants. See also CHANGELOG.
+export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'destroy' | 'exec';
+export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'destroy', 'exec'];
 
 export interface ApiToken {
   id: string;            // 8-hex public id

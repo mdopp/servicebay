@@ -13,8 +13,8 @@ interface AuditEntry {
   errorMessage?: string;
 }
 
-type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'destroy';
-const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'destroy'];
+type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'destroy' | 'exec';
+const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'destroy', 'exec'];
 
 /**
  * Copy text to clipboard with HTTP fallback.
@@ -432,6 +432,7 @@ export default function McpSection() {
                         {t.scopes.map(s => (
                           <span key={s} className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
                             s === 'destroy' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' :
+                            s === 'exec' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' :
                             s === 'mutate' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300' :
                             s === 'lifecycle' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' :
                             'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
@@ -485,7 +486,7 @@ export default function McpSection() {
                       </label>
                     ))}
                   </div>
-                  <p className="text-[10px] text-gray-400 mt-1">read = list/get only. lifecycle = start/stop/restart. mutate = create/update. destroy = delete/exec/restore.</p>
+                  <p className="text-[10px] text-gray-400 mt-1">read = list/get only. lifecycle = start/stop/restart. mutate = create/update/config-edit. destroy = delete/restore/purge. exec = exec_command (shell). Tokens with destroy also implicitly grant exec for back-compat (#591).</p>
                 </div>
                 {createError && <p className="text-xs text-red-600">{createError}</p>}
                 <div className="flex gap-2">
