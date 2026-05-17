@@ -111,7 +111,7 @@ async function getAllContainersInspect(connection?: PodmanConnection) {
     const { stdout: ids } = await executor.exec('podman ps -a -q');
     if (!ids.trim()) return [];
 
-    const { stdout } = await executor.exec(`podman inspect ${ids.split('\n').join(' ')}`);
+    const { stdout } = await executor.execArgv(['podman', 'inspect', ...ids.split('\n').filter(Boolean)]);
     return JSON.parse(stdout);
   } catch (e) {
     console.error('Error inspecting all containers:', e);

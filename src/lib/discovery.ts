@@ -21,7 +21,7 @@ function getBackupDir() {
 
 async function inspectItem(executor: Executor, id: string, type: 'container' | 'pod' = 'container') {
     try {
-        const { stdout } = await executor.exec(`podman inspect ${type === 'pod' ? '--type pod' : '--type container'} ${id}`);
+        const { stdout } = await executor.execArgv(['podman', 'inspect', ...(type === 'pod' ? ['--type', 'pod'] : ['--type', 'container']), id]);
         const data = JSON.parse(stdout);
         return Array.isArray(data) ? data[0] : data;
     } catch (e) {
@@ -271,7 +271,7 @@ async function runDryRunValidation(
         let lastError: string | undefined;
         for (const cmd of dryRunCommands) {
             try {
-                await executor.exec(`${cmd} "${tempYamlPath}"`);
+                await executor.execArgv([...cmd.split(' '), tempYamlPath]);
                 validations.push({
                     level: 'info',
                     message: `${cmd} succeeded`,
@@ -352,7 +352,7 @@ async function createBackupArchive(
     await executor.writeFile(listPath, filesForArchive.join('\n'));
 
     try {
-        await executor.exec(`tar -czf "${archivePath}" -T "${listPath}"`);
+        await executor.execArgv(['tar', '-czf', archivePath, '-T', listPath]);
     } finally {
         try {
             await executor.rm(listPath);
@@ -408,8 +408,8 @@ export async function deleteBundleResources(bundle: ServiceBundle, connection?: 
 
     for (const unit of serviceUnits) {
         try {
-            await executor.exec(`systemctl --user disable --now ${unit}`);
-            await executor.exec(`systemctl --user reset-failed ${unit}`);
+            await executor.execArgv(['systemctl', '--user', 'disable', '--now', unit]);
+            await executor.execArgv(['systemctl', '--user', 'reset-failed', unit]);
             stoppedUnits.push(unit);
         } catch (error) {
             console.warn(`Failed to disable unmanaged unit ${unit}`, error);
@@ -482,7 +482,7 @@ async function waitForServiceHealthy(executor: Executor, unitName: string) {
     const start = Date.now();
     while (Date.now() - start < SERVICE_HEALTH_TIMEOUT) {
         try {
-            const { stdout } = await executor.exec(`systemctl --user show ${unitName} --property=ActiveState --value`);
+            const { stdout } = await executor.execArgv(['systemctl', '--user', 'show', unitName, '--property=ActiveState', '--value']);
             if (stdout.trim() === 'active') {
                 return;
             }
@@ -501,7 +501,7 @@ async function stopLegacyServices(executor: Executor, services: DiscoveredServic
         if (!unitName || stopped.includes(unitName)) continue;
         try {
             console.log(`Stopping old service ${unitName}...`);
-            await executor.exec(`systemctl --user disable --now ${unitName}`);
+            await executor.execArgv(['systemctl', '--user', 'disable', '--now', unitName]);
             stopped.push(unitName);
         } catch (error) {
             console.warn(`Failed to stop service ${unitName}`, error);
@@ -514,7 +514,7 @@ async function rollbackManagedService({ executor, targetUnit, archivePath, stopp
     let success = true;
 
     try {
-        await executor.exec(`systemctl --user disable --now ${targetUnit}`);
+        await executor.execArgv(['systemctl', '--user', 'disable', '--now', targetUnit]);
     } catch (error) {
         console.warn(`Failed to stop ${targetUnit} during rollback`, error);
         success = false;
@@ -522,7 +522,7 @@ async function rollbackManagedService({ executor, targetUnit, archivePath, stopp
 
     if (archivePath) {
         try {
-            await executor.exec(`tar -xzf "${archivePath}" -P`);
+            await executor.execArgv(['tar', '-xzf', archivePath, '-P']);
         } catch (error) {
             console.warn('Failed to restore backup archive', error);
             success = false;
@@ -538,7 +538,7 @@ async function rollbackManagedService({ executor, targetUnit, archivePath, stopp
 
     for (const legacyUnit of stoppedServices) {
         try {
-            await executor.exec(`systemctl --user enable --now ${legacyUnit}`);
+            await executor.execArgv(['systemctl', '--user', 'enable', '--now', legacyUnit]);
         } catch (error) {
             console.warn(`Failed to re-enable ${legacyUnit} during rollback`, error);
             success = false;
@@ -698,7 +698,7 @@ async function buildStackPreviewForService(
         addMapping(describeRuntimeSource(service), 'migrate', targetPaths.yaml);
         try {
             const targetIds = service.podId ? service.podId : service.containerIds.join(' ');
-            const { stdout } = await executor.exec(`podman generate kube ${targetIds}`);
+            const { stdout } = await executor.execArgv(['podman', 'generate', 'kube', ...targetIds.split(' ').filter(Boolean)]);
             const parsed = sanitizeYamlDocument(yaml.load(stdout), cleanName) || {};
             const { hostNetwork, privilegedContainers } = await analyzeRuntimeContext(service, executor);
 
@@ -783,7 +783,7 @@ async function collectGeneratedPodSpecs(services: DiscoveredService[], executor:
             }
             processedPodIds.add(service.podId);
             try {
-                const { stdout } = await executor.exec(`podman generate kube ${service.podId}`);
+                const { stdout } = await executor.execArgv(['podman', 'generate', 'kube', service.podId!]);
                 podYamls.push(yaml.load(stdout));
             } catch (error) {
                 console.warn(`Failed to generate kube for pod ${service.podId}`, error);
@@ -796,7 +796,7 @@ async function collectGeneratedPodSpecs(services: DiscoveredService[], executor:
 
     if (standaloneContainerIds.length > 0) {
         try {
-            const { stdout } = await executor.exec(`podman generate kube ${standaloneContainerIds.join(' ')}`);
+            const { stdout } = await executor.execArgv(['podman', 'generate', 'kube', ...standaloneContainerIds]);
             podYamls.push(yaml.load(stdout));
         } catch (error) {
             console.warn('Failed to generate kube for standalone containers', error);
@@ -1049,7 +1049,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
             if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
                 try {
                     console.log(`Stopping old service ${service.serviceName}...`);
-                    await executor.exec(`systemctl --user disable --now ${service.serviceName}`);
+                    await executor.execArgv(['systemctl', '--user', 'disable', '--now', service.serviceName]);
                 } catch (e) {
                     console.warn(`Failed to stop old service ${service.serviceName}`, e);
                 }
@@ -1063,7 +1063,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
             if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
                 try {
                     console.log(`Stopping old service ${service.serviceName}...`);
-                    await executor.exec(`systemctl --user disable --now ${service.serviceName}`);
+                    await executor.execArgv(['systemctl', '--user', 'disable', '--now', service.serviceName]);
                 } catch (e) {
                     console.warn(`Failed to stop old service ${service.serviceName}`, e);
                 }
@@ -1073,7 +1073,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
     } else if (service.podId || service.containerIds.length > 0) {
         // Case 2: Generate from running Pod or Containers
         const targetIds = service.podId ? service.podId : service.containerIds.join(' ');
-        const { stdout } = await executor.exec(`podman generate kube ${targetIds}`);
+        const { stdout } = await executor.execArgv(['podman', 'generate', 'kube', ...targetIds.split(' ').filter(Boolean)]);
         
         // Inspect to check for runtime flags that might be missed (HostNetwork, Privileged)
         let hostNetwork = false;
@@ -1167,7 +1167,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
         if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
             try {
                 console.log(`Stopping old service ${service.serviceName}...`);
-                await executor.exec(`systemctl --user disable --now ${service.serviceName}`);
+                await executor.execArgv(['systemctl', '--user', 'disable', '--now', service.serviceName]);
             } catch (e) {
                 console.warn(`Failed to stop old service ${service.serviceName}`, e);
             }
@@ -1286,7 +1286,7 @@ WantedBy=default.target
 
     try {
         await executor.exec('systemctl --user daemon-reload');
-        await executor.exec(`systemctl --user enable --now ${targetUnit}`);
+        await executor.execArgv(['systemctl', '--user', 'enable', '--now', targetUnit]);
         await waitForServiceHealthy(executor, targetUnit);
         recordMigrationHistory({
             status: 'success',

@@ -91,8 +91,8 @@ async function writeRoot(executor: Executor, tmpPath: string, finalPath: string,
   // The intermediate file is harmless (regenerated each save).
   await executor.writeFile(tmpPath, content);
   const dir = finalPath.slice(0, finalPath.lastIndexOf('/'));
-  await executor.exec(`sudo mkdir -p ${dir}`);
-  await executor.exec(`sudo install -m 0644 -o root -g root ${tmpPath} ${finalPath}`);
+  await executor.execArgv(['sudo', 'mkdir', '-p', dir]);
+  await executor.execArgv(['sudo', 'install', '-m', '0644', '-o', 'root', '-g', 'root', tmpPath, finalPath]);
 }
 
 async function writeZincatiWindow(executor: Executor, window: Window): Promise<void> {

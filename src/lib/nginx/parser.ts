@@ -113,7 +113,7 @@ export class NginxParser {
     try {
       if (this.executor) {
         if (this.containerId) {
-            const { stdout } = await this.executor.exec(`podman exec ${this.containerId} cat ${filePath}`);
+            const { stdout } = await this.executor.execArgv(['podman', 'exec', this.containerId, 'cat', filePath]);
             content = stdout;
         } else {
             content = await this.executor.readFile(filePath);
@@ -186,7 +186,14 @@ export class NginxParser {
                     if (this.containerId) {
                         // Use ls -1 to ensure single column output and suppress stderr, force success
                         try {
-                            const { stdout } = await this.executor.exec(`podman exec ${this.containerId} sh -c "ls -1 ${dir} 2>/dev/null || true"`);
+                            // `sh -c` takes a single command string. Quote `dir`
+                            // for the inner shell since it can contain spaces in
+                            // host paths. The outer execArgv keeps the
+                            // container-id + sh path quoted; only the inner
+                            // command string needs explicit single-quoting.
+                            const { shellQuoteAll } = await import('@/lib/util/shellQuote');
+                            const innerCmd = `ls -1 ${shellQuoteAll([dir])} 2>/dev/null || true`;
+                            const { stdout } = await this.executor.execArgv(['podman', 'exec', this.containerId, 'sh', '-c', innerCmd]);
                             files = stdout.split('\n').map(f => f.trim()).filter(f => f);
                         } catch (e) {
                             console.warn(`[NginxParser] Failed to list files in ${dir} inside container ${this.containerId}`, e);

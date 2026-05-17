@@ -162,22 +162,9 @@ const eslintConfig = defineConfig([
       "sb/api-route-needs-handler": "warn",
     },
   },
-  // Per-file ratchet exemptions for known debt. New violations in
-  // unlisted files fail CI; clearing a file moves it off this list.
-  // Aggregate count is tracked by scripts/check-invariants.ts.
-  {
-    files: [
-      "src/lib/discovery.ts",
-      "src/lib/manager.ts",
-      "src/lib/updateWindow.ts",
-      "src/lib/nginx/parser.ts",
-      // Brackets in [name] are glob char-class; match via wildcard.
-      "src/app/api/services/**/action-stream/route.ts",
-    ],
-    rules: {
-      "sb/no-exec-template-literal": "warn",
-    },
-  },
+  // All 5 ratchet-exempted files swept clean in #602 — the rule is now
+  // fully tight ("error" everywhere). Any new executor.exec(`…${x}…`)
+  // call fails CI without further config changes.
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

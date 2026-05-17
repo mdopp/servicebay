@@ -81,7 +81,7 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 | `executor.exec(\`…${x}…\`)` call sites | 26 | 26 | `check-invariants.ts:EXEC_TEMPLATE_LITERAL_MAX` + `sb/no-exec-template-literal` |
 | `withApiHandler` adoption (route.ts files) | 1 of 96 | ≥ 1% | `check-invariants.ts:MIN_WITH_API_HANDLER_RATIO` + `sb/api-route-needs-handler` |
 
-**executor.exec template literals.** The safe path is `executor.execArgv([...])` via `shellQuoteAll`. ESLint rule `sb/no-exec-template-literal` is `error` everywhere except the 5 files on the ratchet exemption list (discovery, manager, updateWindow, nginx/parser, action-stream/route). The aggregate count must not increase. Ratchet target: 0.
+**executor.exec template literals.** Ratcheted to 0 in #602. ESLint rule `sb/no-exec-template-literal` is `error` everywhere — every previous offender was converted to `execArgv`. `EXEC_TEMPLATE_LITERAL_MAX = 0` in `check-invariants.ts` blocks any regression.
 
 **withApiHandler adoption.** `src/lib/api/handler.ts` provides shared Zod validation + error envelope + ApiError short-circuiting. Currently 1 of 96 routes use it. The ratio must monotonically increase; new routes must use it (ESLint warning + semgrep INFO). Ratchet target: ≥ 90% adoption.
 

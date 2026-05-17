@@ -121,10 +121,10 @@ async function checkSecurityAnyBudget() {
 //
 // The safe path is `executor.execArgv([...])` via shellQuoteAll. Template
 // literals with ${...} are the shell-injection foot-gun documented in the
-// audit. Pinned at 26 (current), should ratchet down to 0 — there's no
-// case where `execArgv` doesn't apply.
+// audit. Ratcheted to 0 in #602 — every previous offender swept; the
+// ESLint rule is now `error` everywhere.
 // ---------------------------------------------------------------------------
-const EXEC_TEMPLATE_LITERAL_MAX = 26;
+const EXEC_TEMPLATE_LITERAL_MAX = 0;
 
 async function checkExecTemplateLiterals() {
     const files = await walk(SRC, isTs);

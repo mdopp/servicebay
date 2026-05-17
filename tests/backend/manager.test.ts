@@ -25,6 +25,10 @@ describe('ServiceManager', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (getExecutor as any).mockReturnValue({
       exec: mockExec,
+      // Post-#602 manager.ts uses execArgv for `podman inspect`. Adapter
+      // joins the argv into a string so the existing mockExec(cmd.includes)
+      // pattern keeps working.
+      execArgv: (argv: string[]) => mockExec(argv.join(' ')),
       exists: mockExists,
       mkdir: mockMkdir,
     });

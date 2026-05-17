@@ -124,15 +124,15 @@ export async function POST(
           }
 
           await write('Starting service...');
-          await executor.exec(`systemctl --user start ${name}.service`);
+          await executor.execArgv(['systemctl', '--user', 'start', `${name}.service`]);
           await write('✓ Service started successfully.');
       } else if (action === 'stop') {
           await write(`Stopping service ${name}...`);
-          await executor.exec(`systemctl --user stop ${name}.service`);
+          await executor.execArgv(['systemctl', '--user', 'stop', `${name}.service`]);
           await write('✓ Service stopped.');
       } else if (action === 'restart') {
           await write(`Restarting service ${name}...`);
-          await executor.exec(`systemctl --user restart ${name}.service`);
+          await executor.execArgv(['systemctl', '--user', 'restart', `${name}.service`]);
           await write('✓ Service restarted.');
       }
 
