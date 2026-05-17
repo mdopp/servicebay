@@ -33,6 +33,27 @@ A modular / KISS / DRY / SoT review of the codebase plus a security pass. Open f
 | [#580 SEC-04](https://github.com/mdopp/servicebay/issues/580) | medium | Resolved — every restore path routes through `safeTarExtract` with pre-pass entry validation, hardening flags, and a post-extract symlink-escape walk. SSH restores apply the equivalent inline. See § System Backup Pipeline #7. |
 | [#581 SEC-05](https://github.com/mdopp/servicebay/issues/581) | low | MCP log redaction misses backtick-quoted, multi-line YAML, and URL-query secrets. |
 
+### Follow-up audit (2026-05-17, implementation batch)
+
+A deeper structural pass surfaced seven additional issues beyond the original audit. None require architectural rewrites; they're tracked as the next implementation batch.
+
+#### Coupling / extensibility
+
+| Issue | Summary |
+|---|---|
+| [#588 ARCH-05](https://github.com/mdopp/servicebay/issues/588) | Templates have no `requiresApi` version field — follow-up to #584. A template authored against today's `/api/system/*` shape silently breaks on a future core. Manifest gains `requiresApi: { lldap?, authelia?, portal? }`; `postInstall.ts` refuses on mismatch. |
+| [#589 ARCH-06](https://github.com/mdopp/servicebay/issues/589) | `ServiceManager.ts` is 2,016 lines with 41 `any`-disables and three concurrent container-name strategies inline. Split into `containerNameMatcher`, `yamlExtractor`, `serviceListing`, `serviceLifecycle`; public surface unchanged. |
+| [#592 ARCH-07](https://github.com/mdopp/servicebay/issues/592) | `CheckRunner.run` is a 15-arm `switch (check.type)` — violates OCP. Extract a `Probe` interface + registry; each existing arm moves to its own file under `health/probes/`. |
+| [#593 ARCH-08](https://github.com/mdopp/servicebay/issues/593) | `DigitalTwinStore.proxy` (provider + global view) and `NodeTwin.proxy` (per-node route list) share a name with different shapes. Pure rename to `proxyState` / `proxyRoutes`. |
+| [#594 ARCH-09](https://github.com/mdopp/servicebay/issues/594) | No request-scoped trace ID spans UI → API → ServiceManager → Agent. Add `AsyncLocalStorage` trace context; MCP audit + agent SSH commands carry the ID. |
+
+#### Security
+
+| Issue | Severity | Summary |
+|---|---|---|
+| [#590 SEC-06](https://github.com/mdopp/servicebay/issues/590) | medium | Remote tar restore (`systemBackup.ts:546-575`) waives the post-extract symlink walk applied by `safeTarExtract` locally. Ship a Python `safe_extract` helper alongside the agent, or refuse archives containing symlinks at the pre-check. |
+| [#591 SEC-07](https://github.com/mdopp/servicebay/issues/591) | low | MCP `update_config` is mis-scoped as `destroy` despite being allow-listed to safe keys. Re-grade to `mutate`; split `exec_command` into a new `exec` scope so token issuance can grant config writes without shell access. |
+
 ### Investigated but ruled out
 
 - **`get_container_logs` / `get_service_logs` command injection.** Zod regex `/^[a-zA-Z0-9_.-]+$/` admits no shell metacharacters; `lines`/`tail`/`since` are typed integers. Not exploitable.
