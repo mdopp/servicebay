@@ -6,7 +6,7 @@ import { DigitalTwinStore } from '@/lib/store/twin';
 import { logger } from '@/lib/logger';
 import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
-import { RESET_GROUPS, DEFAULT_PRESERVE, type ResetGroup } from '@/lib/install/resetGroups';
+import { RESET_GROUPS, DEFAULT_PRESERVE, isAlwaysWipe, type ResetGroup } from '@/lib/install/resetGroups';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,8 +32,9 @@ const PROTECTED = new Set(['servicebay']);
  *   - archives NPM data to /mnt/data/servicebay/cert-archive/ (so a
  *     full wipe still leaves the cert-reuse helper a fallback)
  *   - deletes paths under `<DATA_DIR>` according to the preserve map
- *   - removes /mnt/data/servicebay/quadlet-backup so an OS reinstall
- *     does not restore now-deleted services from setup-raid.sh
+ *   - purges every `alwaysWipe` group (currently just `quadlet-backup`)
+ *     unconditionally — setup-raid.sh would otherwise replay stale
+ *     units and resurrect deleted services after an OS reinstall.
  *
  * ServiceBay itself is intentionally not touched (Quadlet definition).
  */
@@ -60,10 +61,14 @@ export async function POST(request: NextRequest) {
     // so a forward-compatible caller (newer ServiceBay client talking
     // to an older backend) doesn't break — unknown groups just have
     // no effect. Default to system-critical preservation when omitted.
+    // alwaysWipe groups (quadlet-backup) are dropped from preserve
+    // even if requested — leaving stale Quadlet units behind would
+    // resurrect deleted services after an OS reinstall.
     const validGroups = Object.keys(RESET_GROUPS) as ResetGroup[];
-    const preserve: ResetGroup[] = Array.isArray(rawPreserve)
+    const preserve: ResetGroup[] = (Array.isArray(rawPreserve)
       ? (rawPreserve.filter((g): g is ResetGroup => validGroups.includes(g as ResetGroup)))
-      : DEFAULT_PRESERVE.slice();
+      : DEFAULT_PRESERVE.slice()
+    ).filter(g => !isAlwaysWipe(g));
 
     const twin = DigitalTwinStore.getInstance();
     const nodeName = requestedNode || Object.keys(twin.nodes)[0];
@@ -169,24 +174,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // secrets: wipe /var/mnt/data/servicebay/ (except quadlet-backup
-    // which we always wipe — handled below).
+    // secrets: wipe contents of /var/mnt/data/servicebay/.
+    // Clear contents rather than removing the dir itself so the systemd
+    // mount unit + setup-raid don't trip on a missing path.
     if (!preserve.includes('secrets')) {
-      // Refuse to wipe the path itself; clear its contents instead so
-      // the systemd mount unit + setup-raid don't trip on a missing
-      // dir.
       await agent.sendCommand('exec', {
         command: 'find /var/mnt/data/servicebay -mindepth 1 -maxdepth 1 -exec rm -rf {} +',
       });
       wipeStepsRun.push('secrets (ServiceBay state)');
     }
 
-    // Quadlet backup: always wipe so an OS reinstall does not restore
-    // stale units from setup-raid.sh. setup-raid re-creates the dir
-    // on next boot.
-    await agent.sendCommand('exec', {
-      command: 'rm -rf /var/mnt/data/servicebay/quadlet-backup',
-    });
+    // alwaysWipe groups (quadlet-backup): always purged, even when
+    // their parent group is preserved. Quadlet snapshots specifically
+    // would resurrect deleted services after an OS reinstall because
+    // setup-raid.sh replays them. setup-raid recreates the dir on
+    // next boot, so removing the path itself is safe.
+    for (const id of Object.keys(RESET_GROUPS) as ResetGroup[]) {
+      if (!isAlwaysWipe(id)) continue;
+      for (const p of RESET_GROUPS[id].paths) {
+        await agent.sendCommand('exec', { command: `rm -rf ${JSON.stringify(p)}` });
+      }
+      wipeStepsRun.push(`${id} (always-wipe)`);
+    }
 
     return NextResponse.json({
       ok: true,
