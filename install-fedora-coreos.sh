@@ -127,6 +127,23 @@ storage:
           ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{DEVTYPE}=="partition", TAG+="systemd", ENV{SYSTEMD_WANTS}="usb-mount@%k.service"
           ACTION=="remove", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{DEVTYPE}=="partition", RUN+="/usr/local/bin/usb-mount.sh remove %k"
 
+    # Z-Wave / serial USB passthrough to rootless containers.
+    # /dev/ttyACM* defaults to crw-rw---- root:dialout, which leaves a
+    # rootless podman container's "nobody" user with no read access
+    # (logs as "permission denied opening serial port"). MODE=0666
+    # opens it to everyone — fine on a single-user homelab, and the
+    # only practical option without rebuilding the rootless uid
+    # mapping. The SYMLINK= rule pins the Sigma Designs / Aeotec
+    # Z-Wave stick at /dev/zwave so the home-assistant template can
+    # mount a stable path regardless of which /dev/ttyACM<N> the
+    # kernel assigns this boot.
+    - path: /etc/udev/rules.d/99-zwave.rules
+      mode: 0644
+      contents:
+        inline: |
+          SUBSYSTEM=="tty", KERNEL=="ttyACM*", MODE="0666"
+          SUBSYSTEM=="tty", ATTRS{idVendor}=="0658", ATTRS{idProduct}=="0200", SYMLINK+="zwave"
+
     # USB automount: mount/unmount script
     - path: /usr/local/bin/usb-mount.sh
       mode: 0755

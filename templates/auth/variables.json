@@ -46,7 +46,6 @@
     "proxyPort": "AUTHELIA_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
-      "block_exploits": true,
       "ssl_forced": true
     }
   },
