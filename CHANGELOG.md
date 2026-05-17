@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.42.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.42.0...servicebay-v3.42.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* **install:** pre-reinstall batch — AUTH_SECRET, cert reuse, Authelia auth-request, exposure: internal, Z-Wave udev, mobile Setup icon ([#567](https://github.com/mdopp/servicebay/issues/567)) ([1a7c44b](https://github.com/mdopp/servicebay/commit/1a7c44b0cde3e047e9a8cdb3d41ce8815270e9cf))
+
 ## [3.42.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.41.1...servicebay-v3.42.0) (2026-05-17)
 
 
