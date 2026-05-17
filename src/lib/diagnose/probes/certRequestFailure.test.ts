@@ -107,6 +107,45 @@ acme.errors.Error: urn:ietf:params:acme:error:rateLimited :: Error creating new 
     const out = parseLetsencryptTail(tail);
     expect(out.failures.map(f => f.domain)).toEqual(['new.dopp.cloud']);
   });
+
+  /**
+   * #547 pattern-aware audit — `category` is the labelled fix-path
+   * (port-80 firewall / CAA / DNS / rate-limit / …). Locking it in a
+   * test means a future regex tweak that drops one of these patterns
+   * fails loudly instead of silently downgrading the operator's row
+   * to the generic "ACME error" fallback.
+   */
+  it('classifies the connection-refused detail as port-80', () => {
+    const tail = `2026-05-12 00:27:14,200:ERROR:certbot:Some challenges have failed.
+  Domain: vault.dopp.cloud
+  Type:   connection
+  Detail: 1.2.3.4: Fetching http://vault.dopp.cloud/.well-known/acme-challenge/abc: Connection refused`;
+    expect(parseLetsencryptTail(tail).failures[0].category).toBe('port-80');
+  });
+
+  it('classifies an NXDOMAIN detail as dns', () => {
+    const tail = `2026-05-12 00:30:00,000:ERROR:certbot:Some challenges have failed.
+  Domain: vault.dopp.cloud
+  Type:   http-01
+  Detail: DNS problem: NXDOMAIN looking up A for vault.dopp.cloud`;
+    expect(parseLetsencryptTail(tail).failures[0].category).toBe('dns');
+  });
+
+  it('classifies a CAA detail as caa', () => {
+    const tail = `2026-05-12 00:30:00,000:ERROR:certbot:Some challenges have failed.
+  Domain: vault.dopp.cloud
+  Type:   dns
+  Detail: CAA record for dopp.cloud prevents issuance`;
+    expect(parseLetsencryptTail(tail).failures[0].category).toBe('caa');
+  });
+
+  it('classifies unknown detail text as `other` (catch-all keeps the row visible)', () => {
+    const tail = `2026-05-12 00:30:00,000:ERROR:certbot:Some challenges have failed.
+  Domain: vault.dopp.cloud
+  Type:   http-01
+  Detail: Some new error message we have not pattern-matched yet`;
+    expect(parseLetsencryptTail(tail).failures[0].category).toBe('other');
+  });
 });
 
 // ─── Reader (Phase 3b: thin HealthStore reader) ─────────────────────────

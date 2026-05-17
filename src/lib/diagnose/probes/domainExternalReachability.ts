@@ -199,15 +199,24 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
     }
 
     // Append letsdebug summary line when the operator has run one.
+    // Naming which layer is broken matters here: if DNS resolves
+    // correctly but letsdebug reports a problem, the cert / ACME /
+    // port-80 path is the culprit — not DNS. Operators were running
+    // `dig` again on a 'fail' row that already had DNS working;
+    // making the layer explicit cuts the diagnostic step.
     if (letsdebugResult) {
       const ldAge = formatRelativeAge(Date.parse(letsdebugResult.timestamp));
       const ldPayload = decodeLetsdebug(letsdebugResult.message);
+      const dnsOkBeforeLd = rowStatus === 'ok';
       if (ldPayload) {
         if (ldPayload.problems.length === 0) {
           rowDetail += `\nLetsdebug (${ldAge}): no problems`;
         } else {
           const top = ldPayload.problems[0];
-          rowDetail += `\nLetsdebug (${ldAge}): ${top.name || 'problem'} — ${(top.explanation || '').slice(0, 160)}`;
+          const layerHint = dnsOkBeforeLd
+            ? 'DNS layer OK — issue is in the cert / ACME / port-80 layer.'
+            : 'DNS and cert layers both have findings — start with the DNS fix above.';
+          rowDetail += `\n${layerHint} Letsdebug (${ldAge}): ${top.name || 'problem'} — ${(top.explanation || '').slice(0, 160)}`;
           if (ldPayload.submissionUrl) rowDetail += ` · ${ldPayload.submissionUrl}`;
           // Letsdebug result escalates row status if DNS said ok.
           const ldStatus: 'warn' | 'fail' = ldPayload.problems.some(p => (p.severity || '').toLowerCase() === 'fatal') ? 'fail' : 'warn';

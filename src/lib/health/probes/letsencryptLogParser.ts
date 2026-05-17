@@ -13,10 +13,26 @@
  * test.
  */
 
+/** Coarse category of an ACME failure — derived from the detail text
+ *  by `classifyFailure`. The diagnose probe surfaces this as a label
+ *  ("Port 80 unreachable", "CAA blocked", …) so the operator knows
+ *  which fix-path to pursue without having to read certbot prose
+ *  every time. `other` is the catch-all when the detail doesn't
+ *  match any known pattern — the row still shows the raw text. */
+export type FailureCategory =
+  | 'rate-limit'
+  | 'port-80'
+  | 'dns'
+  | 'caa'
+  | 'dnssec'
+  | 'tls-sni'
+  | 'other';
+
 export interface ParsedFailure {
   domain: string;
   type: string;
   detail: string;
+  category: FailureCategory;
 }
 
 export interface ParsedFailureBlock {
@@ -24,6 +40,35 @@ export interface ParsedFailureBlock {
   rateLimited: boolean;
   /** Newest timestamp anywhere in the tail (epoch ms, UTC-interpreted). */
   ts?: number;
+}
+
+/** Map certbot's free-form `detail` to a coarse failure category.
+ *  Patterns lifted from the ACME error taxonomy + observed messages.
+ *  Order matters: more specific patterns first, generic last.
+ *  Internal — tested indirectly via `parseLetsencryptTail`. */
+function classifyFailure(detail: string): FailureCategory {
+  const d = detail.toLowerCase();
+  if (/ratelimited|too many (failed authorizations|certificates)/.test(d)) return 'rate-limit';
+  if (/caa record|caa for/.test(d)) return 'caa';
+  if (/dnssec|dnskey|rrsig/.test(d)) return 'dnssec';
+  if (/timeout during connect|connection refused|no route to host|connection reset|fetching .+?:80/.test(d)) return 'port-80';
+  if (/dns problem|nxdomain|no a record|no aaaa record|servfail/.test(d)) return 'dns';
+  if (/tls-sni|tls-alpn/.test(d)) return 'tls-sni';
+  return 'other';
+}
+
+/** Human label for the category, shown as a prefix on the per-row
+ *  detail. Keeps the surface a single phrase so the row stays scannable. */
+export function categoryLabel(c: FailureCategory): string {
+  switch (c) {
+    case 'rate-limit': return 'LE rate-limited';
+    case 'port-80':    return 'Port 80 unreachable';
+    case 'dns':        return 'DNS problem';
+    case 'caa':        return 'CAA record blocks issuance';
+    case 'dnssec':     return 'DNSSEC misconfiguration';
+    case 'tls-sni':    return 'Legacy TLS-SNI challenge';
+    case 'other':      return 'ACME error';
+  }
 }
 
 const STRUCTURED_FAILURE_RE = /Domain:\s*(\S+)\s*\n\s*Type:\s*(\S+)\s*\n\s*Detail:\s*([^\n]+)/g;
@@ -49,12 +94,14 @@ export function parseLetsencryptTail(tail: string): ParsedFailureBlock {
   STRUCTURED_FAILURE_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = STRUCTURED_FAILURE_RE.exec(slice)) !== null) {
-    failures.push({ domain: m[1].trim(), type: m[2].trim(), detail: m[3].trim() });
+    const detail = m[3].trim();
+    failures.push({ domain: m[1].trim(), type: m[2].trim(), detail, category: classifyFailure(detail) });
   }
   if (failures.length === 0) {
     INLINE_FAILURE_RE.lastIndex = 0;
     while ((m = INLINE_FAILURE_RE.exec(slice)) !== null) {
-      failures.push({ domain: m[1].trim(), type: m[2].trim(), detail: m[3].trim() });
+      const detail = m[3].trim();
+      failures.push({ domain: m[1].trim(), type: m[2].trim(), detail, category: classifyFailure(detail) });
     }
   }
 
