@@ -74,6 +74,11 @@ export interface JobInput {
   node?: string;
   cleanInstall: boolean;
   cleanInstallConfirm: string;
+  /** Per-group preserve flags for the clean-install wipe (#568). Each
+   *  entry the operator left checked means "keep this group". Maps to
+   *  `ResetGroup` from `@/lib/install/resetGroups`. Omitted = use the
+   *  API default (keep system-critical: secrets + certs + identity). */
+  preserve?: string[];
   templateSource: string;
   /** `window.location.hostname` captured client-side so the credentials
    *  banner can render reachable URLs without the server having to guess. */

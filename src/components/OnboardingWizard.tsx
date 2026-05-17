@@ -25,6 +25,7 @@ import { useStackInstall } from '@/lib/stackInstall/useStackInstall';
 import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home, Minimize2 } from 'lucide-react';
 import StackVariableField from './StackVariableField';
 import { StackInstallProgress, StackInstallSummary } from './StackInstallFlow';
+import CleanInstallPanel from './CleanInstallPanel';
 import DiagnoseProbeList, { type DiagnoseProbe } from './DiagnoseProbeList';
 import { DoneStepDnsCheck } from './DoneStepDnsCheck';
 import { useToast } from '@/providers/ToastProvider';
@@ -327,6 +328,8 @@ export default function OnboardingWizard() {
   const cleanInstallConfirm = installFlow.cleanInstallConfirm;
   const setCleanInstall = installFlow.setCleanInstall;
   const setCleanInstallConfirm = installFlow.setCleanInstallConfirm;
+  const preserve = installFlow.preserve;
+  const setPreserve = installFlow.setPreserve;
   const stackVariables = installFlow.variables;
   const stackLogs = installFlow.logs;
   const installingNow = installFlow.installingNow;
@@ -1417,49 +1420,16 @@ export default function OnboardingWizard() {
                             </p>
                         </div>
 
-                        {/* Existing data — explicit choice, no default */}
-                        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-300 dark:border-amber-700 space-y-2">
-                            <span className="flex items-center gap-2 text-sm font-medium text-amber-900 dark:text-amber-100">
-                                Existing service data
-                            </span>
-                            <div className="flex flex-col gap-1">
-                                <label className="flex items-start gap-2 cursor-pointer text-xs text-amber-900 dark:text-amber-100">
-                                    <input
-                                        type="radio"
-                                        name="data-policy"
-                                        checked={!cleanInstall}
-                                        onChange={() => { setCleanInstall(false); setCleanInstallConfirm(''); }}
-                                        className="mt-0.5"
-                                    />
-                                    <span><strong>Preserve data</strong> — keep anything already in <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. Failed installs of the same service will reuse old volumes.</span>
-                                </label>
-                                <label className="flex items-start gap-2 cursor-pointer text-xs text-amber-900 dark:text-amber-100">
-                                    <input
-                                        type="radio"
-                                        name="data-policy"
-                                        checked={cleanInstall}
-                                        onChange={() => setCleanInstall(true)}
-                                        className="mt-0.5"
-                                    />
-                                    <span><strong>Clean install</strong> — wipe <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code> first. Use for true fresh-installs or re-testing from scratch.</span>
-                                </label>
-                            </div>
-                            {cleanInstall && (
-                                <div className="pt-2">
-                                    <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
-                                        Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={cleanInstallConfirm}
-                                        onChange={(e) => setCleanInstallConfirm(e.target.value)}
-                                        className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
-                                        placeholder="RESET"
-                                        autoComplete="off"
-                                    />
-                                </div>
-                            )}
-                        </div>
+                        {/* Existing data — granular preserve/wipe per group (#568) */}
+                        <CleanInstallPanel
+                            cleanInstall={cleanInstall}
+                            setCleanInstall={setCleanInstall}
+                            cleanInstallConfirm={cleanInstallConfirm}
+                            setCleanInstallConfirm={setCleanInstallConfirm}
+                            preserve={preserve}
+                            setPreserve={setPreserve}
+                            node={stackSelectedNode || undefined}
+                        />
                     </div>
                 );
             })()}
@@ -1645,38 +1615,16 @@ export default function OnboardingWizard() {
                         </div>
                     )}
 
-                    {/* Clean install / reset */}
-                    <div className="border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3">
-                        <label className="flex items-start gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={cleanInstall}
-                                onChange={(e) => { setCleanInstall(e.target.checked); if (!e.target.checked) setCleanInstallConfirm(''); }}
-                                className="mt-0.5"
-                            />
-                            <div className="text-sm text-amber-900 dark:text-amber-100">
-                                <strong>Clean install</strong> — wipe existing service data first.
-                                <p className="text-xs text-amber-800 dark:text-amber-200/80 mt-1">
-                                    Stops every stack service, deletes their Quadlet definitions and the contents of <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/mnt/data/stacks/*</code>. ServiceBay itself is not affected. Use for true fresh-installs or when re-testing from scratch.
-                                </p>
-                            </div>
-                        </label>
-                        {cleanInstall && (
-                            <div className="mt-3 pt-3 border-t border-amber-300 dark:border-amber-700">
-                                <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
-                                    Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
-                                </label>
-                                <input
-                                    type="text"
-                                    value={cleanInstallConfirm}
-                                    onChange={(e) => setCleanInstallConfirm(e.target.value)}
-                                    className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
-                                    placeholder="RESET"
-                                    autoComplete="off"
-                                />
-                            </div>
-                        )}
-                    </div>
+                    {/* Clean install — granular preserve/wipe per group (#568) */}
+                    <CleanInstallPanel
+                        cleanInstall={cleanInstall}
+                        setCleanInstall={setCleanInstall}
+                        cleanInstallConfirm={cleanInstallConfirm}
+                        setCleanInstallConfirm={setCleanInstallConfirm}
+                        preserve={preserve}
+                        setPreserve={setPreserve}
+                        node={stackSelectedNode || undefined}
+                    />
                 </div>
             )}
 
