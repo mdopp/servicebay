@@ -9,7 +9,7 @@ export interface DigitalTwinSnapshot {
   serverName?: string | null;
   nodes: Record<string, NodeTwin>;
   gateway: GatewayState;
-  proxy: ProxyState;
+  proxyState: ProxyState;
 }
 
 interface DigitalTwinContextType {

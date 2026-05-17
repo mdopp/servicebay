@@ -693,7 +693,7 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
 
             // Parse hostPath volumes from reverse-proxy YAML files in twin.files
             const proxyMounts: { source: string; label: string }[] = [];
-            const proxyState = twinStore.proxy;
+            const proxyState = twinStore.proxyState;
 
             for (const [filePath, file] of Object.entries(twin.files || {})) {
                 if (!filePath.endsWith('.yml') && !filePath.endsWith('.yaml')) continue;

@@ -395,7 +395,7 @@ export default function ServicesDashboard() {
                     unit,
                     nodeName,
                     nodeState,
-                    proxyRoutes: twin.proxy?.routes
+                    proxyRoutes: twin.proxyState?.routes
                 });
                 if (viewModel) {
                     servicesList.push(viewModel);

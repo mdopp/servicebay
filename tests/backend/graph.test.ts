@@ -37,11 +37,11 @@ vi.mock('../../src/lib/store/twin', () => {
                     }
                 },
                 volumes: [],
-                proxy: []
+                proxyRoutes: []
             }
         },
         gateway: { upstreamStatus: 'up', publicIp: '1.2.3.4', internalIp: '192.168.1.1', portMappings: [] },
-        getSnapshot: () => ({ nodes: {}, gateway: {}, proxy: { routes: [] } })
+        getSnapshot: () => ({ nodes: {}, gateway: {}, proxyState: { routes: [] } })
     };
 
     return {
@@ -94,7 +94,7 @@ describe('Network Graph Generation', () => {
         localNode.initialSyncComplete = true;
         localNode.services = [];
         localNode.containers = [];
-        localNode.proxy = [];
+        localNode.proxyRoutes = [];
         localNode.resources = {
             network: {
                 eth0: [{ address: '192.168.178.99', family: 'IPv4', internal: false }]
@@ -220,7 +220,7 @@ describe('Network Graph Generation', () => {
         const twinStore = DigitalTwinStore.getInstance() as any;
         const localNode = twinStore.nodes['Local'];
 
-        localNode.proxy = [{
+        localNode.proxyRoutes = [{
             host: 'app.korgraph.io',
             targetService: '192.168.178.99',
             targetPort: 2001,
@@ -279,7 +279,7 @@ describe('Network Graph Generation', () => {
         const twinStore = DigitalTwinStore.getInstance() as any;
         const localNode = twinStore.nodes['Local'];
 
-        localNode.proxy = [{
+        localNode.proxyRoutes = [{
             host: 'vault.dopp.cloud',
             targetService: '192.168.178.99',
             targetPort: 8080,
@@ -365,7 +365,7 @@ describe('Network Graph Generation', () => {
         const twinStore = DigitalTwinStore.getInstance() as any;
         const localNode = twinStore.nodes['Local'];
 
-        localNode.proxy = [{
+        localNode.proxyRoutes = [{
             host: 'home.dopp.cloud',
             targetService: '192.168.178.98',
             targetPort: 8123,
@@ -423,7 +423,7 @@ describe('Network Graph Generation', () => {
         const twinStore = DigitalTwinStore.getInstance() as any;
         const localNode = twinStore.nodes['Local'];
 
-        localNode.proxy = [];
+        localNode.proxyRoutes = [];
         localNode.services = [
             {
                 name: 'nginx-web',

@@ -63,7 +63,11 @@ export interface NodeTwin {
   services: ServiceUnit[];
   volumes: Volume[];
   files: Record<string, WatchedFile>;
-  proxy?: ProxyRoute[];
+  // Per-node reverse-proxy route list. Distinct from
+  // `DigitalTwinStore.proxyState` (provider + aggregated global view);
+  // the two used to share the name `proxy` which made readers confusing
+  // (#593).
+  proxyRoutes?: ProxyRoute[];
   health?: AgentHealth;
   nodeIPs: string[];
   unmanagedBundles: ServiceBundle[];
@@ -100,7 +104,11 @@ export class DigitalTwinStore {
     lastUpdated: 0
   };
 
-  public proxy: ProxyState = {
+  // Aggregated reverse-proxy state across all nodes (provider +
+  // unioned route list). Distinct from each `NodeTwin.proxyRoutes`
+  // (per-node raw list — these are inputs to the aggregation below).
+  // See #593.
+  public proxyState: ProxyState = {
     provider: 'nginx',
     routes: []
   };
@@ -138,8 +146,8 @@ export class DigitalTwinStore {
         services: [],
         volumes: [],
         files: {},
-            proxy: [],
-                    nodeIPs: [],
+        proxyRoutes: [],
+        nodeIPs: [],
                     unmanagedBundles: [],
                                         dismissedBundles: [],
         history: []
@@ -336,8 +344,8 @@ export class DigitalTwinStore {
 
       // Aggregate routes from all connected nodes
       Object.values(this.nodes).forEach(node => {
-          if (node.connected && node.proxy && node.proxy.length > 0) {
-              node.proxy.forEach(route => {
+          if (node.connected && node.proxyRoutes && node.proxyRoutes.length > 0) {
+              node.proxyRoutes.forEach(route => {
                   // Unique key based on host
                   const key = route.host;
                   if (!seen.has(key)) {
@@ -348,7 +356,7 @@ export class DigitalTwinStore {
           }
       });
 
-      this.proxy.routes = allRoutes;
+      this.proxyState.routes = allRoutes;
       
       // REVERSE MAPPING: Enrich Services/Containers with Verified Domains
       this.mapDomainsToServices();
@@ -359,7 +367,7 @@ export class DigitalTwinStore {
       // Target (IP:Port or ServiceName:Port) -> Domain[]
       const targetMap = new Map<string, string[]>();
       
-      this.proxy.routes.forEach(r => {
+      this.proxyState.routes.forEach(r => {
           // Normalize Target
           // r.targetService can be: "192.168.1.100:8080", "nginx:80", "http://container:3000"
           let target = r.targetService.replace(/^https?:\/\//, '');
@@ -588,11 +596,11 @@ export class DigitalTwinStore {
           svc.effectiveHostNetwork = isContainerHostNetwork; // Note: Service unit file might not say it, but runtime does.
 
           // C. Proxy-Specific Enrichment (Source of Truth for Nginx Ports)
-          if (svc.isPrimaryProxy && node.proxy && node.proxy.length > 0) {
+          if (svc.isPrimaryProxy && node.proxyRoutes && node.proxyRoutes.length > 0) {
               const standardPorts = new Set<number>();
               
               // 1. Gather configured routes
-              node.proxy.forEach(r => {
+              node.proxyRoutes.forEach(r => {
                   standardPorts.add(80); // Always listen on 80
                   if (r.ssl) standardPorts.add(443);
               });
@@ -615,9 +623,9 @@ export class DigitalTwinStore {
               });
               
               // Enrich with Proxy Configuration (Nginx Routes)
-              if (node.proxy) {
+              if (node.proxyRoutes) {
                   svc.proxyConfiguration = {
-                      servers: node.proxy.map((r) => {
+                      servers: node.proxyRoutes.map((r) => {
                            let targetService = typeof r.targetService === 'string' && r.targetService.startsWith('http') 
                             ? r.targetService 
                             : `http://${r.targetService}`;
@@ -960,7 +968,7 @@ export class DigitalTwinStore {
           serverName: this.serverName,
           nodes: this.nodes,
           gateway: this.gateway,
-          proxy: this.proxy
+          proxyState: this.proxyState
       }
   }
 }

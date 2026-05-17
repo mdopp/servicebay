@@ -1692,7 +1692,7 @@ class Agent:
             'volumes': [],
             'files': {},
             'resources': None,
-            'proxy': []
+            'proxyRoutes': []
         }
         self.lock = threading.RLock() # Reentrant lock to allow nested calls if needed, also strictly serializes state access
         self.io_lock = threading.Lock() # Strict Output Serialization Lock
@@ -2074,9 +2074,9 @@ class Agent:
         
         # Check Proxy
         new_proxy = fetch_proxy_routes()
-        if new_proxy != self.state.get('proxy'):
-            self.state['proxy'] = new_proxy
-            self.push_state('SYNC_PARTIAL', {'proxy': self.state['proxy']})
+        if new_proxy != self.state.get('proxyRoutes'):
+            self.state['proxyRoutes'] = new_proxy
+            self.push_state('SYNC_PARTIAL', {'proxyRoutes': self.state['proxyRoutes']})
             log_debug("File change triggered proxy update")
 
     def refresh_all(self):
@@ -2098,7 +2098,7 @@ class Agent:
             self.state['volumes'] = volumes
             self.state['files'] = files
             self.state['resources'] = resources
-            self.state['proxy'] = proxy
+            self.state['proxyRoutes'] = proxy
             
             # 2. Push Granular Updates (SYNC_PARTIAL)
             # This avoids huge 32KB+ payloads that might choke the channel
@@ -2106,7 +2106,7 @@ class Agent:
             self.push_state('SYNC_PARTIAL', {'services': self.state['services']})
             self.push_state('SYNC_PARTIAL', {'volumes': self.state['volumes']})
             self.push_state('SYNC_PARTIAL', {'files': self.state['files']})
-            self.push_state('SYNC_PARTIAL', {'proxy': self.state['proxy']})
+            self.push_state('SYNC_PARTIAL', {'proxyRoutes': self.state['proxyRoutes']})
             self.push_state('SYNC_PARTIAL', {'resources': self.state['resources']})
             
             # 3. Signal Complete (sets initialSyncComplete on receiver)
@@ -2206,8 +2206,8 @@ class Agent:
                 self.state['services'] = new_services
                 updates['services'] = new_services
                 
-            if new_proxy != self.state['proxy']:
-                self.state['proxy'] = new_proxy
+            if new_proxy != self.state['proxyRoutes']:
+                self.state['proxyRoutes'] = new_proxy
                 updates['proxy'] = new_proxy
             
             if updates:

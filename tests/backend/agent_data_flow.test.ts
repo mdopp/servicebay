@@ -208,7 +208,7 @@ describe('DigitalTwinStore Data Flow', () => {
           connected: true,
           services: [nginxService],
           containers: [], 
-          proxy: proxyRoutes
+          proxyRoutes: proxyRoutes
       });
 
       // 3. Verify Enrichment
@@ -243,8 +243,8 @@ describe('DigitalTwinStore Data Flow', () => {
 
       // D. Check Global Proxy Aggregation (TwinStore Property)
       // This powers Verified Domains usage in frontend
-      expect(store.proxy.routes).toHaveLength(2);
-      expect(store.proxy.routes.find(r => r.host === 'app.example.com')).toBeDefined();
+      expect(store.proxyState.routes).toHaveLength(2);
+      expect(store.proxyState.routes.find(r => r.host === 'app.example.com')).toBeDefined();
   });
 
       it('should classify ServiceBay services inside the Digital Twin', () => {
@@ -313,7 +313,7 @@ describe('DigitalTwinStore Data Flow', () => {
       ];
       store.updateNode('ProxyNode', {
            connected: true,
-           proxy: proxyRoutes,
+           proxyRoutes: proxyRoutes,
            services: [], containers: []
       });
 

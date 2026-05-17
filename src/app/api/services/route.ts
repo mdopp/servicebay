@@ -153,7 +153,7 @@ export async function GET(request: Request) {
         // Add Best Candidate as Reverse Proxy with Enhanced Gateway Structure
         const targetNode = (!nodeName || nodeName === 'Local') ? 'Local' : nodeName;
         const nodeTwin = DigitalTwinStore.getInstance().nodes[targetNode];
-        const proxyRoutes = nodeTwin?.proxy || [];
+        const proxyRoutes = nodeTwin?.proxyRoutes || [];
 
         // Transform routes to "Nginx Server"-like structure (Compatibility Mode for UI)
         const formattedServers = proxyRoutes.map(route => ({

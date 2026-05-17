@@ -702,7 +702,7 @@ export class NetworkService {
 
     // V4.1: Prioritize Twin Data Enrichment (Single Source of Truth)
     // The DigitalTwinStore now constructs the 'proxyConfiguration' directly on the service object.
-    const agentProxyRoutes = twinNode.proxy; // Keep for legacy check
+    const agentProxyRoutes = twinNode.proxyRoutes; // Keep for legacy check
     
     // Check if we have an authoritative proxy service with Enriched Config
     if (proxyService && proxyService.proxyConfiguration) {

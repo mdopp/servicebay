@@ -45,7 +45,7 @@ export class ServiceManager {
         // V4: Use DigitalTwinStore
         const { DigitalTwinStore } = await import('../store/twin');
         const twin = DigitalTwinStore.getInstance().nodes[nodeName];
-        const proxyState = DigitalTwinStore.getInstance().proxy; // Access Global Proxy State
+        const proxyState = DigitalTwinStore.getInstance().proxyState; // Access Global Proxy State
 
         if (!twin) return [];
 

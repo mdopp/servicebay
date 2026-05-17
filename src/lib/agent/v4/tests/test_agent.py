@@ -94,7 +94,7 @@ class TestAgent(unittest.TestCase):
         a = agent.Agent()
         a.state['containers'] = [{'id': '1'}]
         a.state['services'] = [{'name': 'svc1'}]
-        a.state['proxy'] = []
+        a.state['proxyRoutes'] = []
         a.state['volumes'] = []
         
         # Mocks return SAME data
@@ -157,7 +157,7 @@ class TestAgent(unittest.TestCase):
         
         # Initial State
         initial_proxy = [{"host": "example.com", "targetService": "127.0.0.1:80"}]
-        a.state['proxy'] = initial_proxy
+        a.state['proxyRoutes'] = initial_proxy
         a.state['services'] = []
         # (Files state isn't checked inside _process_file_changes, only updated)
         
@@ -177,7 +177,7 @@ class TestAgent(unittest.TestCase):
         proxy_pushes = 0
         for call in a.push_state.call_args_list:
             args, _ = call
-            if args[0] == 'SYNC_PARTIAL' and 'proxy' in args[1]:
+            if args[0] == 'SYNC_PARTIAL' and 'proxyRoutes' in args[1]:
                 proxy_pushes += 1
         
         # To "find the bug", we assert that it should confirm deduplication works (0 pushes).

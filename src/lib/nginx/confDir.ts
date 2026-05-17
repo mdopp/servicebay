@@ -124,7 +124,7 @@ function resolveFromTwinFiles(
         return result;
     }
 
-    const proxyState = twinStore.proxy;
+    const proxyState = twinStore.proxyState;
     const fileKeys = Object.keys(twin.files);
     const yamlFiles = fileKeys.filter(f => f.endsWith('.yml') || f.endsWith('.yaml'));
     const kubeFiles = fileKeys.filter(f => f.endsWith('.kube'));

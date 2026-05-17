@@ -38,7 +38,7 @@ describe('DigitalTwinStore.updateNode validated entry point', () => {
     const store = DigitalTwinStore.getInstance();
     store.registerNode('TestNode');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    store.updateNode('TestNode', { containers: [], services: [], proxy: [], history: [] } as any);
+    store.updateNode('TestNode', { containers: [], services: [], proxyRoutes: [], history: [] } as any);
     const node = store.nodes['TestNode'];
     expect(node.containers).toEqual([]);
     expect(node.services).toEqual([]);

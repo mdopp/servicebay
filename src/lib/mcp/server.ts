@@ -627,7 +627,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   server.tool('get_proxy_routes', 'Get reverse proxy routes configuration', {}, async () => {
     const twin = DigitalTwinStore.getInstance();
     const snapshot = twin.getSnapshot();
-    return textResult(snapshot.proxy);
+    return textResult(snapshot.proxyState);
   });
 
   // --- Exec Command ---

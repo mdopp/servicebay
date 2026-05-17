@@ -37,7 +37,7 @@ const defaultTwinData = {
       }
     }
   },
-  proxy: {
+  proxyState: {
       provider: 'nginx',
       routes: [
           { host: 'app.example.com', targetService: 'nginx' }
@@ -171,7 +171,7 @@ describe('ServicesDashboard', () => {
               files: {} // No .kube files
             }
           },
-          proxy: { provider: 'none' },
+          proxyState: { provider: 'none' },
           gateway: { upstreamStatus: 'up' }
         };
 
@@ -207,7 +207,7 @@ describe('ServicesDashboard', () => {
               files: {} // Unmanaged
             }
           },
-          proxy: { provider: 'nginx' },
+          proxyState: { provider: 'nginx' },
           gateway: { upstreamStatus: 'up' }
         };
 
@@ -249,7 +249,7 @@ spec:
               }
             }
           },
-          proxy: { provider: 'nginx' },
+          proxyState: { provider: 'nginx' },
           gateway: { upstreamStatus: 'up' }
         };
 
@@ -274,7 +274,7 @@ spec:
               files: { '/etc/containers/systemd/nginx.kube': { content: 'Yaml=nginx.yml' } }
             }
           },
-          proxy: { provider: 'nginx' },
+          proxyState: { provider: 'nginx' },
           gateway: { upstreamStatus: 'up' }
         };
 
@@ -290,7 +290,7 @@ spec:
     it('shows Fritzbox Gateway ports', async () => {
          currentMockData = {
           nodes: {},
-          proxy: { provider: 'nginx' },
+          proxyState: { provider: 'nginx' },
           gateway: { 
              upstreamStatus: 'up', 
              provider: 'fritzbox',

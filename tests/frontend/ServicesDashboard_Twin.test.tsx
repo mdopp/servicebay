@@ -76,7 +76,7 @@ describe('ServicesDashboard E2E Data Rendering', () => {
                     }],
                     volumes: [],
                     files: {},
-                    proxy: [],
+                    proxyRoutes: [],
                     nodeIPs: [],
                     unmanagedBundles: [],
                     dismissedBundles: [],
@@ -84,7 +84,7 @@ describe('ServicesDashboard E2E Data Rendering', () => {
                 }
             },
             gateway: { provider: 'mock', status: 'down', uptime: 0 } as any,
-            proxy: { provider: 'nginx', routes: [] }
+            proxyState: { provider: 'nginx', routes: [] }
         };
 
         mockUseDigitalTwin.mockReturnValue({
@@ -127,7 +127,7 @@ describe('ServicesDashboard E2E Data Rendering', () => {
                     containers: [],
                     volumes: [],
                     files: {},
-                    proxy: [],
+                    proxyRoutes: [],
                     nodeIPs: [],
                     unmanagedBundles: [],
                     dismissedBundles: [],
@@ -135,7 +135,7 @@ describe('ServicesDashboard E2E Data Rendering', () => {
                 }
             },
             gateway: { provider: 'mock' } as any,
-            proxy: { provider: 'nginx', routes: [] }
+            proxyState: { provider: 'nginx', routes: [] }
         };
 
         mockUseDigitalTwin.mockReturnValue({
