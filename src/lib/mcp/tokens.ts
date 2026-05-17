@@ -27,15 +27,18 @@ import { DATA_DIR } from '@/lib/dirs';
 import { atomicWriteFile } from '@/lib/util/atomicWrite';
 import { logger } from '@/lib/logger';
 
+// Scope grain lives in `./scope.ts` (#601 cycle-break) — re-exported
+// here so existing consumers don't need to change imports.
+//
 // Scope grain — each tool is mapped to exactly one (`TOOL_SCOPES` in
 // server.ts). `exec` was split out of `destroy` (#591): the original
 // model gave `exec_command` and `update_config` the same blast-radius
 // label, but `update_config` is allow-listed to safe keys and never
 // reaches the shell. Tokens issued today as `destroy` continue to work
 // for everything they previously could — we additively add `exec`
-// without removing `destroy`'s grants. See also CHANGELOG.
-export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'destroy' | 'exec';
-export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'destroy', 'exec'];
+// without removing `destroy`'s grants.
+export { type ApiScope, ALL_SCOPES } from './scope';
+import { ALL_SCOPES, type ApiScope } from './scope';
 
 export interface ApiToken {
   id: string;            // 8-hex public id
@@ -131,16 +134,12 @@ export async function createToken(input: {
   await saveFile(data);
   logger.info('mcp:tokens', `Created MCP token ${id} ("${token.name}") scopes=[${token.scopes.join(',')}] by ${input.createdBy}`);
 
-  // First user-minted MCP token closes the bootstrap-token bridge
-  // (#322). The operator now has a real, scoped credential — keep
-  // the bootstrap entry around any longer is just attack surface.
-  // Best-effort: a failure here doesn't unwind the token-create.
-  try {
-    const { revokeBootstrapToken } = await import('./bootstrapToken');
-    await revokeBootstrapToken();
-  } catch (e) {
-    logger.warn('mcp:tokens', `Could not auto-revoke bootstrap token after first mint: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  // The "first user-minted MCP token revokes the bootstrap" rule
+  // (#322) used to live here as a dynamic `await import('./bootstrapToken')`
+  // — that formed a mcp/tokens ↔ mcp/bootstrapToken cycle that
+  // depcruise flagged. Moved to the calling route
+  // (src/app/api/system/mcp-tokens/route.ts) so this module no
+  // longer reaches into bootstrapToken (#601).
 
   // The clear-text token is `sb_<id>_<secret>` — returned exactly once.
   return { token: publicView(token), secret: `sb_${id}_${secret}` };

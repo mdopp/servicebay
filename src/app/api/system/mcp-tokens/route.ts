@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { listTokens, createToken, revokeToken, ALL_SCOPES, type ApiScope } from '@/lib/mcp/tokens';
+import { revokeBootstrapToken } from '@/lib/mcp/bootstrapToken';
 import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +32,18 @@ export async function POST(request: Request) {
       expiresAt: body.expiresAt,
       createdBy: auth.user,
     });
+
+    // First user-minted MCP token closes the bootstrap-token bridge
+    // (#322). The operator now has a real, scoped credential —
+    // keeping the bootstrap entry around any longer is just attack
+    // surface. Moved out of `createToken` itself in #601 so the
+    // mcp/tokens ↔ mcp/bootstrapToken cycle is gone.
+    try {
+      await revokeBootstrapToken();
+    } catch (e) {
+      logger.warn('api:system:mcp-tokens:post', `Could not auto-revoke bootstrap token after first mint: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     // The clear-text secret is returned ONCE, here. The client must show
     // it to the operator and let them copy it before it's gone.
     return NextResponse.json({ token: result.token, secret: result.secret });

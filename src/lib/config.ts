@@ -8,7 +8,7 @@ import { PortMapping as GraphPortMapping } from './network/types';
 import { normalizeExternalTargets } from './network/externalLinks';
 import { ConfigTransformer } from './config/transformer';
 import type { BackupConfig } from './backup/types';
-import type { MigrationAuditEntry } from './stackInstall/migrations';
+import type { MigrationAuditEntry } from './stackInstall/auditTypes';
 
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 

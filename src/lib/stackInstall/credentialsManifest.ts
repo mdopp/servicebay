@@ -14,7 +14,7 @@
  * variable-driven (no per-template knowledge) so it stays here.
  */
 
-import type { StackVariable } from './postInstall';
+import type { StackVariable } from './types';
 
 export interface Credential {
   /** User-facing service name, e.g. "LLDAP" or "Audiobookshelf". */

@@ -22,12 +22,10 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export interface PodmanConnection {
-  Name: string;
-  URI: string;
-  Identity: string;
-  Default: boolean;
-}
+// PodmanConnection lives in `./nodes/types.ts` (#601 cycle-break) —
+// re-exported so existing consumers don't change imports.
+export { type PodmanConnection } from './nodes/types';
+import type { PodmanConnection } from './nodes/types';
 
 async function ensureDataDir() {
   try {

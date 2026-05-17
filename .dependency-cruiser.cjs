@@ -36,13 +36,6 @@ module.exports = {
                 pathNot: [
                     '^src/lib/executor\\.ts$',
                     '^src/lib/nodes\\.ts$',
-                    '^src/lib/config\\.ts$',
-                    '^src/lib/registry\\.ts$',
-                    '^src/lib/stackInstall/migrations\\.ts$',
-                    '^src/lib/stackInstall/credentialsManifest\\.ts$',
-                    '^src/lib/stackInstall/postInstall\\.ts$',
-                    '^src/lib/mcp/bootstrapToken\\.ts$',
-                    '^src/lib/mcp/tokens\\.ts$',
                     '^src/lib/agent/executor\\.ts$',
                     '^src/lib/agent/manager\\.ts$',
                     '^src/lib/agent/handler\\.ts$',

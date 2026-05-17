@@ -45,12 +45,10 @@ function apiFetch(p: string, init?: RequestInit): Promise<Response> {
 }
 
 /** Variable shape shared between wizard and modal. */
-export interface StackVariable {
-  name: string;
-  value: string;
-  global?: boolean;
-  meta?: VariableMeta;
-}
+// StackVariable lives in `./types.ts` (#601 cycle-break) — re-exported
+// so existing consumers don't need to change imports.
+export { type StackVariable } from './types';
+import type { StackVariable } from './types';
 
 /** Selected stack item shape (subset, only what post-install needs). */
 interface StackItem {

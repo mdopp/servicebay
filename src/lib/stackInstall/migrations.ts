@@ -100,13 +100,5 @@ export function selectMigrationChain(
  * diagnose page surfaces failed entries so the operator can act on
  * them without trawling install logs.
  */
-export interface MigrationAuditEntry {
-  /** ISO timestamp of when the script finished. */
-  ranAt: string;
-  fromVersion: number;
-  toVersion: number;
-  /** 0 = success; non-zero aborted the deploy. */
-  exitCode: number;
-  /** Last ~1KB of stdout for "what happened" diagnosis. */
-  stdoutTail?: string;
-}
+// MigrationAuditEntry lives in `./auditTypes.ts` (#601 cycle-break).
+// Consumers import from auditTypes.ts directly; no re-export here.

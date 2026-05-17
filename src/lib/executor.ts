@@ -1,4 +1,4 @@
-import { PodmanConnection } from './nodes';
+import { PodmanConnection } from './nodes/types';
 import { AgentExecutor } from './agent/executor';
 import { Executor } from './interfaces';
 
