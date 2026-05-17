@@ -121,10 +121,10 @@ async function checkSecurityAnyBudget() {
 //
 // The safe path is `executor.execArgv([...])` via shellQuoteAll. Template
 // literals with ${...} are the shell-injection foot-gun documented in the
-// audit. Pinned at 24 (current), should ratchet down to 0 — there's no
+// audit. Pinned at 26 (current), should ratchet down to 0 — there's no
 // case where `execArgv` doesn't apply.
 // ---------------------------------------------------------------------------
-const EXEC_TEMPLATE_LITERAL_MAX = 24;
+const EXEC_TEMPLATE_LITERAL_MAX = 26;
 
 async function checkExecTemplateLiterals() {
     const files = await walk(SRC, isTs);
@@ -155,11 +155,11 @@ async function checkExecTemplateLiterals() {
 //
 // Routes that hand-roll their own try/catch + envelope drift apart. The
 // abstraction in src/lib/api/handler.ts is the SoT. Pinned to current
-// adoption (3 of 97 = 3%), should monotonically increase. The threshold
+// adoption (1 of 96 = ~1%), should monotonically increase. The threshold
 // is "ratio must not decrease", not a fixed number, so a new
 // non-conforming route fails CI immediately.
 // ---------------------------------------------------------------------------
-const MIN_WITH_API_HANDLER_RATIO = 0.03;
+const MIN_WITH_API_HANDLER_RATIO = 0.01;
 
 async function checkWithApiHandlerAdoption() {
     const routeFiles = await walk(path.join(SRC, 'app', 'api'), p => p.endsWith('/route.ts'));

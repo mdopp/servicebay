@@ -13,6 +13,9 @@
     "knip": "knip",
     "test": "vitest run",
     "gen-template-docs": "tsx scripts/gen-template-docs.ts",
+    "check:invariants": "tsx scripts/check-invariants.ts",
+    "check:deps": "depcruise --config .dependency-cruiser.cjs src server.ts",
+    "check:arch": "npm run check:invariants && npm run check:deps",
     "prepare": "husky || true"
   },
   "lint-staged": {
@@ -71,6 +74,7 @@
     "@types/semver": "^7.7.1",
     "@types/ssh2": "^1.15.5",
     "@vitejs/plugin-react": "^5.1.2",
+    "dependency-cruiser": "^17.4.0",
     "esbuild": "^0.27.7",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",

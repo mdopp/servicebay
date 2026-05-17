@@ -1,0 +1,167 @@
+# Custom Semgrep rules — ServiceBay-specific security & coupling boundaries.
+#
+# Run locally:
+#   docker run --rm -v "$PWD:/src" returntocorp/semgrep semgrep --config /src/.semgrep.yml /src
+#
+# Run in CI: see .github/workflows/architecture.yml (uses the official
+# returntocorp/semgrep-action).
+#
+# These rules complement, not duplicate, the registry rulesets (which CI
+# also runs: `p/typescript`, `p/security-audit`). Keep entries here narrow
+# and ServiceBay-specific — generic OWASP patterns belong in the registry.
+rules:
+    # -----------------------------------------------------------------------
+    # 1. Shell-injection foot-gun: executor.exec with template-literal
+    #    interpolation. The safe path is executor.execArgv([...]) via
+    #    shellQuoteAll. Documented in audit & docs/ARCHITECTURE_INVARIANTS.md.
+    # -----------------------------------------------------------------------
+    - id: executor-exec-template-literal
+      patterns:
+          - pattern-either:
+                - pattern: $E.exec(`...${...}...`)
+                - pattern: $E.exec(`...${...}...`, ...)
+      message: >-
+          `executor.exec(\`…${x}…\`)` interpolates into a shell command and is
+          a shell-injection foot-gun. Use `executor.execArgv([...])`, which
+          quotes every argument via shellQuoteAll. See
+          docs/ARCHITECTURE_INVARIANTS.md § exec-template-literal.
+      languages: [typescript]
+      # WARNING (not ERROR) on purpose: the aggregate count is the single
+      # source of truth, enforced by scripts/check-invariants.ts. ESLint
+      # rule `sb/no-exec-template-literal` is ERROR for new files and
+      # WARN for the 5 ratchet-exempted ones, so per-file enforcement is
+      # already covered. This rule's job here is the cross-file roll-up
+      # in CI logs / IDE.
+      severity: WARNING
+      paths:
+          exclude:
+              - '*.test.ts'
+              - '*.test.tsx'
+              - 'tests/'
+
+    # -----------------------------------------------------------------------
+    # 2. tar extraction must go through safeTarExtract (#580, #590).
+    #    Direct `tar -xzf` / `tar -xf` invocations bypass the pre-pass
+    #    symlink check and the post-extract realpath walk.
+    # -----------------------------------------------------------------------
+    - id: tar-extract-without-safe-wrapper
+      patterns:
+          - pattern-either:
+                - pattern: |
+                      $E.exec(`...tar -x...`)
+                - pattern: |
+                      $E.exec(`...tar -x...`, ...)
+                - pattern: |
+                      $E.execArgv(['tar', '-x...', ...])
+                - pattern: |
+                      $E.execArgv(["tar", "-x...", ...])
+      message: >-
+          Direct tar extraction bypasses safeTarExtract (#580, #590), which
+          pre-passes `tar -tvzf` to reject symlinks/hardlinks/absolute paths
+          and walks the extracted tree for realpath escapes. Route through
+          safeTarExtract instead.
+      languages: [typescript]
+      severity: ERROR
+      paths:
+          exclude:
+              - 'src/lib/util/safeTarExtract*'
+              - 'src/lib/systemBackup.ts'
+              - '*.test.ts'
+
+    # -----------------------------------------------------------------------
+    # 3. child_process exec / execSync with a non-literal command string.
+    #    Same shell-injection class as executor.exec, but for the host
+    #    process (not the agent SSH path).
+    # -----------------------------------------------------------------------
+    - id: child-process-exec-non-literal
+      patterns:
+          - pattern-either:
+                - pattern: exec(`...${...}...`, ...)
+                - pattern: execSync(`...${...}...`, ...)
+                - pattern: exec($X, ...)
+                - pattern: execSync($X, ...)
+          - pattern-not: exec("...", ...)
+          - pattern-not: execSync("...", ...)
+          - pattern-not: exec('...', ...)
+          - pattern-not: execSync('...', ...)
+      message: >-
+          `child_process.exec` / `execSync` with a non-literal command string
+          is shell-injection-prone. Use `execFile` / `execFileSync` (no shell)
+          or, if you must shell, build the command via the shellQuote helper.
+      languages: [typescript]
+      severity: WARNING
+      paths:
+          include:
+              - 'src/'
+              - 'server.ts'
+          exclude:
+              - '*.test.ts'
+              - 'tests/'
+              - 'scripts/'
+
+    # -----------------------------------------------------------------------
+    # 4. Generic JavaScript-eval class — eval, Function constructor,
+    #    string-form setTimeout/setInterval.
+    # -----------------------------------------------------------------------
+    - id: dynamic-code-eval
+      patterns:
+          - pattern-either:
+                - pattern: eval(...)
+                - pattern: new Function(...)
+                - pattern: setTimeout("...", ...)
+                - pattern: setInterval("...", ...)
+      message: >-
+          Dynamic code execution (`eval` / `new Function` / string-form
+          timers) is almost never the right answer and is an injection
+          vector if any input reaches it. Refactor.
+      languages: [typescript, javascript]
+      severity: ERROR
+      paths:
+          exclude:
+              - 'node_modules/'
+
+    # -----------------------------------------------------------------------
+    # 5. Direct fetch to URLs sourced from config without SSRF guard.
+    #    Tightly scoped: OIDC issuer / FritzBox host paths are the ones
+    #    flagged in SEC-01 / SEC-02.
+    # -----------------------------------------------------------------------
+    - id: fetch-config-url-without-ssrf-guard
+      patterns:
+          - pattern-either:
+                - pattern: fetch($CFG.issuer + ...)
+                - pattern: fetch(`${$CFG.issuer}...`)
+                - pattern: fetch($CFG.host + ...)
+                - pattern: fetch(`${$CFG.host}...`)
+      message: >-
+          Fetch against a config-sourced URL needs an SSRF guard
+          (`assertNotPrivateAddress` / `ssrfGuard`). Operators can point
+          these at 169.254.169.254 / 127.x / fd00::/8 otherwise (SEC-01,
+          SEC-02).
+      languages: [typescript]
+      severity: WARNING
+
+    # -----------------------------------------------------------------------
+    # 6. New API route without withApiHandler — soft warning to nudge
+    #    new code toward the shared abstraction. (Hard enforcement of
+    #    the adoption ratio lives in scripts/check-invariants.ts.)
+    # -----------------------------------------------------------------------
+    - id: api-route-without-with-api-handler
+      patterns:
+          - pattern-either:
+                - pattern: export async function GET(...) { ... }
+                - pattern: export async function POST(...) { ... }
+                - pattern: export async function PUT(...) { ... }
+                - pattern: export async function DELETE(...) { ... }
+                - pattern: export async function PATCH(...) { ... }
+          - pattern-not-inside: |
+                import { withApiHandler } from "@/lib/api/handler";
+                ...
+      message: >-
+          New API route handlers should use `withApiHandler` from
+          `@/lib/api/handler` — gives shared Zod validation, error envelope,
+          and ApiError short-circuiting. See docs/ARCHITECTURE_INVARIANTS.md.
+      languages: [typescript]
+      severity: INFO
+      paths:
+          include:
+              - 'src/app/api/**/route.ts'

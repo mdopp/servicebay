@@ -1,0 +1,67 @@
+name: Architecture
+
+# Self-enforcing architecture rubric. The companion to docs/ARCHITECTURE_INVARIANTS.md.
+# Each job catches a different class of regression; together they replace the manual
+# "is this still good?" architect review for everything that's mechanically detectable.
+#
+# Jobs:
+#   invariants — aggregate metrics (file size, security `as any` budget, exec-template-
+#                literal count, withApiHandler adoption ratio, twin singleton fan-in).
+#   depcruise  — module boundary rules (no lib→app imports, one mutation path,
+#                one renderer, no circular deps outside the known set).
+#   semgrep    — security & coupling patterns (executor.exec template literals,
+#                tar extraction bypass, eval/Function, SSRF-prone fetches,
+#                missing withApiHandler) + the registry's typescript + security-audit
+#                rulesets.
+#
+# CI configuration intent: ANY failure here blocks merge. Adoption-ratio floors and
+# per-file ratchets in the config files mean today's debt passes — new regressions
+# do not.
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    invariants:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+                  cache: 'npm'
+            - run: npm ci
+            - name: Architecture invariants (file size, budgets, ratios)
+              run: npm run check:invariants
+
+    depcruise:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+                  cache: 'npm'
+            - run: npm ci
+            - name: Module boundary rules
+              run: npm run check:deps
+
+    semgrep:
+        runs-on: ubuntu-latest
+        container:
+            image: returntocorp/semgrep
+        steps:
+            - uses: actions/checkout@v4
+            # ServiceBay-specific patterns only at first. Each rule in
+            # .semgrep.yml has a severity assigned; --severity=ERROR makes
+            # only ERROR-tagged findings fail the build (WARNING/INFO are
+            # reported but non-blocking). Registry rulesets (p/typescript,
+            # p/security-audit) can be enabled additively once the custom
+            # baseline is clean — see docs/ARCHITECTURE_INVARIANTS.md.
+            - name: Custom ServiceBay rules
+              run: semgrep --config .semgrep.yml --severity=ERROR --metrics=off --error .
+            - name: Custom rules (informational warnings)
+              run: semgrep --config .semgrep.yml --metrics=off . || true
