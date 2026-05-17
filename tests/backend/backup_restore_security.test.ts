@@ -121,12 +121,14 @@ tf.close()
     expect(fs.readFileSync(sentinelFile, 'utf8')).toBe('ORIGINAL_CONTENTS');
   });
 
-  maybeIt('refuses an archive whose symlink targets outside the destination', async () => {
+  maybeIt('refuses any archive containing a symlink (#590 Option B)', async () => {
+    // Backup payloads are control-plane Quadlets + config only —
+    // symlinks have no legitimate purpose. Refusing them at the
+    // pre-check means the local AND remote restore paths get the
+    // same protection. This test used to assert refusal in the
+    // post-extract walk; after #590 it asserts refusal at the
+    // earlier pre-check stage with a clearer message.
     const src = mktmpDir('symlink-src');
-    // Create a symlink in src/ pointing at the sentinel outside our
-    // extraction destination. Archive includes only the link, not the
-    // target — so the pre-pass passes (the entry is a relative name)
-    // and the post-extraction walk catches the escape.
     const linkPath = path.join(src, 'bad-link');
     fs.symlinkSync(sentinelFile, linkPath);
     const archive = makeArchive({
@@ -136,18 +138,15 @@ tf.close()
     });
 
     const dest = mktmpDir('dest-symlink');
-    await expect(safeTarExtract(archive, dest)).rejects.toThrow(/escapes the extraction directory/);
-    // The post-extract symlink walk failed → safeTarExtract cleaned
-    // up the staging dir.
-    expect(fs.existsSync(dest)).toBe(false);
+    await expect(safeTarExtract(archive, dest)).rejects.toThrow(/symlink/i);
+    // Pre-check failed — destination is empty / doesn't exist (the
+    // safe wrapper only mkdir's after the pre-check passes).
+    expect(fs.existsSync(dest) ? fs.readdirSync(dest) : []).toEqual([]);
     expect(fs.readFileSync(sentinelFile, 'utf8')).toBe('ORIGINAL_CONTENTS');
   });
 
-  maybeIt('refuses a relative symlink that resolves outside (../../sentinel)', async () => {
+  maybeIt('refuses a relative symlink at pre-check (#590)', async () => {
     const src = mktmpDir('relsym-src');
-    // A relative symlink whose target traverses out of the destination
-    // when resolved post-extraction. Different shape from the absolute
-    // symlink above — the link target itself is relative.
     const upPath = path.relative(src, sentinelFile);
     fs.symlinkSync(upPath, path.join(src, 'rel-link'));
     const archive = makeArchive({
@@ -157,7 +156,24 @@ tf.close()
     });
 
     const dest = mktmpDir('dest-relsym');
-    await expect(safeTarExtract(archive, dest)).rejects.toThrow();
+    await expect(safeTarExtract(archive, dest)).rejects.toThrow(/symlink/i);
     expect(fs.readFileSync(sentinelFile, 'utf8')).toBe('ORIGINAL_CONTENTS');
+  });
+
+  maybeIt('refuses an archive containing a hardlink (#590)', async () => {
+    // Hardlinks would let an attacker create extra references to
+    // already-extracted files. Same blanket refusal as symlinks.
+    const src = mktmpDir('hardlink-src');
+    const target = path.join(src, 'target.txt');
+    fs.writeFileSync(target, 'content');
+    fs.linkSync(target, path.join(src, 'hard-link'));
+    const archive = makeArchive({
+      prefix: 'hardlink',
+      workingDir: src,
+      entries: ['target.txt', 'hard-link'],
+    });
+
+    const dest = mktmpDir('dest-hardlink');
+    await expect(safeTarExtract(archive, dest)).rejects.toThrow(/(hardlink|link)/i);
   });
 });

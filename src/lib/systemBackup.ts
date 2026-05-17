@@ -194,19 +194,24 @@ async function runTar(args: string[]) {
 }
 
 /**
- * Refuse tar entries that would escape the extraction directory (#580).
- * Parses `tar -tzf` output and rejects:
+ * Refuse tar entries that would escape the extraction directory
+ * (#580, #590). Parses `tar -tvzf` output (verbose, includes the
+ * Unix-style type+permissions column) and rejects:
  *   - absolute paths       (`/etc/shadow`)
  *   - traversal segments   (`../something`, `foo/../../bar`)
- *   - empty / weird names  (defensive)
+ *   - symlinks / hardlinks (#590 Option B — backup payloads are
+ *     control-plane Quadlets + config + sealed JSON; symlinks have
+ *     no legitimate purpose there, and refusing them at the pre-check
+ *     means the local AND remote restore paths get the same
+ *     protection without needing to ship a TypeScript-side walker
+ *     across SSH)
  *
- * This is the cheap pre-pass — symlinks pointing outside the
- * destination are caught after extraction by `assertNoSymlinkEscape`.
+ * `assertNoSymlinkEscape` (local path only) stays as defense in depth.
  */
 async function assertSafeArchiveEntries(archivePath: string): Promise<void> {
     let stdout: string;
     try {
-        const result = await execFileAsync('tar', ['-tzf', archivePath]);
+        const result = await execFileAsync('tar', ['-tvzf', archivePath]);
         // Default to empty string for the mocked-test path where
         // execFileAsync is stubbed to return no stdout. Production
         // tar always emits the listing on stdout.
@@ -214,13 +219,37 @@ async function assertSafeArchiveEntries(archivePath: string): Promise<void> {
     } catch (error) {
         throw new Error(`Failed to inspect ${path.basename(archivePath)}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    const entries = stdout.split('\n').map(s => s.trim()).filter(Boolean);
-    for (const entry of entries) {
+    const lines = stdout.split('\n').map(s => s.trim()).filter(Boolean);
+    for (const line of lines) {
+        // GNU tar verbose format: `<type><perms> owner/group size date time name [-> linkname]`.
+        // First char is the type: -, d, l (symlink), h (hardlink), c, b, p, s.
+        const typeChar = line[0];
+        // Extract the entry name — the name field starts after the
+        // date/time. Splitting on whitespace and skipping the leading
+        // fixed columns is robust enough for both GNU + BSD tar.
+        const tokens = line.split(/\s+/);
+        // Format columns: 0=type+perms, 1=owner/group, 2=size, 3=date,
+        // 4=time, 5+=name (possibly containing spaces + `-> linkname`).
+        const nameField = tokens.slice(5).join(' ');
+        if (!nameField) continue;
+        if (typeChar === 'l' || typeChar === 'h') {
+            // For l-type the format is `name -> target`; show both so
+            // the operator sees what was attempted.
+            throw new Error(
+                `Refused archive ${path.basename(archivePath)}: contains ` +
+                `${typeChar === 'l' ? 'symlink' : 'hardlink'} "${nameField}". ` +
+                `Backup payloads are control-plane configs only — links have ` +
+                `no legitimate purpose and would let a crafted archive escape ` +
+                `the extraction directory.`,
+            );
+        }
+        // The bare entry name is the first token of the name field
+        // (everything before ` -> ` for links, which we already
+        // rejected above — but defensive split).
+        const entry = nameField.split(' -> ')[0];
         if (entry.startsWith('/')) {
             throw new Error(`Refused archive ${path.basename(archivePath)}: contains absolute path "${entry}"`);
         }
-        // posix.normalize collapses `foo/../bar` → `bar` and `foo/..` → `.`.
-        // Anything that normalizes to start with `..` is traversal.
         const normalized = path.posix.normalize(entry);
         if (normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
             throw new Error(`Refused archive ${path.basename(archivePath)}: contains traversal segment "${entry}"`);
@@ -546,23 +575,19 @@ async function restoreRemoteSystemd(node: PodmanConnection, sourceDir: string) {
     await uploadRemoteFile(conn, localArchive, remoteTemp);
     await fs.rm(localArchive, { force: true });
 
-    // SSH-side equivalent of safeTarExtract (#580). Refuse archive
-    // entries that are absolute / contain traversal *before* extracting,
-    // then extract with hardening flags. We can't easily run the
-    // post-extract symlink walk remotely; the entry pre-check + the
-    // `--no-absolute-names` / `--no-overwrite-dir` flags cover the bulk
-    // of the threat. Operators who restore a backup from an untrusted
-    // source on a remote node should still inspect the result.
+    // SSH-side equivalent of safeTarExtract (#580, #590). Refuse
+    // archive entries that are absolute / contain traversal / are
+    // symlinks-or-hardlinks *before* extracting, then extract with
+    // hardening flags. `tar -tvzf` emits the type indicator in the
+    // first column (l = symlink, h = hardlink) so the awk guard
+    // mirrors the local `assertSafeArchiveEntries` pre-check.
     const extractScript = [
         'set -e',
         `target=${REMOTE_SYSTEMD_DIR}`,
         `tmp="${remoteTemp}"`,
-        // Pre-pass: refuse abs paths or traversal segments.
-        'if tar -tzf "$tmp" | grep -qE \'^/|(^|/)\\.\\.($|/)\'; then',
-        '  echo "Refused archive: contains absolute or traversal entry" >&2',
-        '  rm -f "$tmp"',
-        '  exit 1',
-        'fi',
+        // Pre-pass: refuse symlinks/hardlinks (#590) or abs/traversal entries (#580).
+        // awk exits non-zero on the first offender so set -e aborts.
+        `tar -tvzf "$tmp" | awk '/^[lh]/ { print "Refused archive: contains link entry: " $NF > "/dev/stderr"; exit 2 } { for (i=6; i<=NF; i++) name = (i==6 ? $i : name " " $i); if (name ~ /^\\// || name ~ /(^|\\/)\\.\\.($|\\/)/) { print "Refused archive: contains abs/traversal entry: " name > "/dev/stderr"; exit 2 } }'`,
         'mkdir -p "$target"',
         `tar -xzf "$tmp" -C "$target" --no-same-owner --no-overwrite-dir --no-same-permissions`,
         `rm -f "$tmp"`,
@@ -1188,15 +1213,13 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                         // same-owner. Service-data restores are the
                         // highest-risk extract path because they unpack into
                         // operator-controlled `remotePath` mounts.
+                        // Same SSH-side guard as restoreRemoteSystemd
+                        // (#580 + #590): refuse links, abs paths, traversal.
                         const remoteSvcScript = [
                             'set -e',
                             `tmp="${remoteTmp}"`,
                             `target="${remotePath}"`,
-                            'if tar -tzf "$tmp" | grep -qE \'^/|(^|/)\\.\\.($|/)\'; then',
-                            '  echo "Refused archive: contains absolute or traversal entry" >&2',
-                            '  rm -f "$tmp"',
-                            '  exit 1',
-                            'fi',
+                            `tar -tvzf "$tmp" | awk '/^[lh]/ { print "Refused archive: contains link entry: " $NF > "/dev/stderr"; exit 2 } { for (i=6; i<=NF; i++) name = (i==6 ? $i : name " " $i); if (name ~ /^\\// || name ~ /(^|\\/)\\.\\.($|\\/)/) { print "Refused archive: contains abs/traversal entry: " name > "/dev/stderr"; exit 2 } }'`,
                             'mkdir -p "$target"',
                             'tar -xzf "$tmp" -C "$target" --no-same-owner --no-overwrite-dir --no-same-permissions',
                             'rm -f "$tmp"',
