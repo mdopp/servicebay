@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.45.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.44.0...servicebay-v3.45.0) (2026-05-17)
+
+
+### Features
+
+* **diagnose:** low-priority polish on the remaining 4 probes ([#547](https://github.com/mdopp/servicebay/issues/547)) ([#575](https://github.com/mdopp/servicebay/issues/575)) ([05a7666](https://github.com/mdopp/servicebay/commit/05a7666bfd3173be2c546f083615530e949612e1))
+
 ## [3.44.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.43.0...servicebay-v3.44.0) (2026-05-17)
 
 
