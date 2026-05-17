@@ -48,13 +48,24 @@ export async function checkPostDeployFailed(): Promise<PostDeployFailedResult> {
       detail: `${Object.keys(records).length} post-deploy run(s) recorded, all exited 0.`,
     };
   }
-  const items: ProbeItem[] = failed.map(([name, r]) => ({
-    id: name,
-    label: name,
-    detail: `exit ${r.exitCode} at ${new Date(r.lastRunAt).toLocaleString()}`,
-    status: 'warn',
-    actionIds: ['rerun_post_deploy', 'dismiss_post_deploy'],
-  }));
+  const items: ProbeItem[] = failed.map(([name, r]) => {
+    // Surface the last few lines of stdout when persisted (recorded
+    // by ServiceManager.runPostDeployScript). Without this the row
+    // says "exit 1" and the operator has to open the service detail
+    // to find the actual error — usually 2-3 lines that name the
+    // missing env var / failed API call / etc. directly.
+    const tail = (r.stdoutTail ?? '').trim();
+    const tailExcerpt = tail
+      ? '\n' + tail.split('\n').slice(-3).join('\n').slice(-240)
+      : '';
+    return {
+      id: name,
+      label: name,
+      detail: `exit ${r.exitCode} at ${new Date(r.lastRunAt).toLocaleString()}${tailExcerpt}`,
+      status: 'warn',
+      actionIds: ['rerun_post_deploy', 'dismiss_post_deploy'],
+    };
+  });
   return {
     status: 'warn',
     detail: `${failed.length} service${failed.length === 1 ? '' : 's'} ended its last post-deploy with a non-zero exit. Seeds (admin users, default proxy hosts, etc.) likely didn\'t complete.`,
