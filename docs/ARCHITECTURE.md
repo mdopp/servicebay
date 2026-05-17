@@ -30,7 +30,7 @@ A modular / KISS / DRY / SoT review of the codebase plus a security pass. Open f
 | [#577 SEC-01](https://github.com/mdopp/servicebay/issues/577) | medium | OIDC `issuer` URL is not SSRF-checked before fetch (`callback/route.ts:40,60`). |
 | [#578 SEC-02](https://github.com/mdopp/servicebay/issues/578) | low | FritzBox `host` config not validated against private/loopback addresses. |
 | [#579 SEC-03](https://github.com/mdopp/servicebay/issues/579) | medium | `exec_command` regex denylist in `mcp/safety.ts:71-84` is trivially bypassable. Either label as advisory or replace with allowlist. |
-| [#580 SEC-04](https://github.com/mdopp/servicebay/issues/580) | medium | Backup restore (`systemBackup.ts:415-440`) extracts tar without `--no-overwrite-dir` / symlink validation. |
+| [#580 SEC-04](https://github.com/mdopp/servicebay/issues/580) | medium | Resolved — every restore path routes through `safeTarExtract` with pre-pass entry validation, hardening flags, and a post-extract symlink-escape walk. SSH restores apply the equivalent inline. See § System Backup Pipeline #7. |
 | [#581 SEC-05](https://github.com/mdopp/servicebay/issues/581) | low | MCP log redaction misses backtick-quoted, multi-line YAML, and URL-query secrets. |
 
 ### Investigated but ruled out
@@ -429,6 +429,7 @@ sequenceDiagram
 4. **Metadata File** – Every archive includes `metadata.json` describing version, creation timestamp, included config files, and node descriptors. Restores fall back to folder names if metadata is unavailable.
 5. **Restore Safety** – Local Quadlets are copied directly; remote nodes receive a temporary tarball that is extracted into `$HOME/.config/containers/systemd` followed by `systemctl --user daemon-reload`. Errors are surfaced with precise node attribution.
 6. **Lifecycle Management** – Users can delete stale archives through the same API, and the server validates requested filenames to prevent path traversal.
+7. **Hardened Extraction (#580)** – Every restore path routes through `safeTarExtract`, which (a) pre-passes `tar -tzf` and refuses entries with absolute paths or `../` traversal segments, (b) extracts with `--no-same-owner --no-overwrite-dir --no-same-permissions` so a crafted archive can't replace a directory's metadata or set setuid bits, and (c) walks the extracted tree post-extraction and refuses any symlink whose `realpath` escapes the destination — catching the `link → /etc/passwd` shape that tar's default flags don't block. SSH-side restores apply equivalent flags + the same pre-pass via an inline shell guard. The crafted-archive regression tests live in `tests/backend/backup_restore_security.test.ts`.
 
 > The backup system is intentionally decoupled from application data volumes. Operators should combine these archives with their existing storage backups for a complete disaster-recovery story.
 

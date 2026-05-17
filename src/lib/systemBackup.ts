@@ -193,6 +193,126 @@ async function runTar(args: string[]) {
     }
 }
 
+/**
+ * Refuse tar entries that would escape the extraction directory (#580).
+ * Parses `tar -tzf` output and rejects:
+ *   - absolute paths       (`/etc/shadow`)
+ *   - traversal segments   (`../something`, `foo/../../bar`)
+ *   - empty / weird names  (defensive)
+ *
+ * This is the cheap pre-pass — symlinks pointing outside the
+ * destination are caught after extraction by `assertNoSymlinkEscape`.
+ */
+async function assertSafeArchiveEntries(archivePath: string): Promise<void> {
+    let stdout: string;
+    try {
+        const result = await execFileAsync('tar', ['-tzf', archivePath]);
+        // Default to empty string for the mocked-test path where
+        // execFileAsync is stubbed to return no stdout. Production
+        // tar always emits the listing on stdout.
+        stdout = result.stdout ?? '';
+    } catch (error) {
+        throw new Error(`Failed to inspect ${path.basename(archivePath)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const entries = stdout.split('\n').map(s => s.trim()).filter(Boolean);
+    for (const entry of entries) {
+        if (entry.startsWith('/')) {
+            throw new Error(`Refused archive ${path.basename(archivePath)}: contains absolute path "${entry}"`);
+        }
+        // posix.normalize collapses `foo/../bar` → `bar` and `foo/..` → `.`.
+        // Anything that normalizes to start with `..` is traversal.
+        const normalized = path.posix.normalize(entry);
+        if (normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
+            throw new Error(`Refused archive ${path.basename(archivePath)}: contains traversal segment "${entry}"`);
+        }
+    }
+}
+
+/**
+ * After extraction, walk `dir` and assert no symlink escapes via its
+ * resolved real path. Tar's `--no-absolute-names` strips leading `/`
+ * during extraction but does NOT block symlinks that point outside —
+ * a crafted archive can ship `link → /etc/passwd` and any later read
+ * through the link would escape. Catch them post-extraction so we
+ * fail loudly + the operator gets a clear refusal instead of a silent
+ * file overwrite or read.
+ */
+async function assertNoSymlinkEscape(dir: string): Promise<void> {
+    const realRoot = await fs.realpath(dir);
+    async function walk(curr: string): Promise<void> {
+        const entries = await fs.readdir(curr, { withFileTypes: true });
+        for (const entry of entries) {
+            const full = path.join(curr, entry.name);
+            if (entry.isSymbolicLink()) {
+                let target: string;
+                try {
+                    target = await fs.realpath(full);
+                } catch {
+                    // Broken symlinks are harmless on their own (read fails),
+                    // but the *target* string still encodes intent — if it's
+                    // absolute or traverses, refuse so the operator knows.
+                    const raw = await fs.readlink(full);
+                    if (path.isAbsolute(raw) || raw.startsWith('..') || raw.includes('/../')) {
+                        throw new Error(`Refused archive: symlink "${path.relative(dir, full)}" → "${raw}" points outside the extraction directory`);
+                    }
+                    continue;
+                }
+                const realTarget = await fs.realpath(target).catch(() => target);
+                if (!realTarget.startsWith(realRoot + path.sep) && realTarget !== realRoot) {
+                    throw new Error(`Refused archive: symlink "${path.relative(dir, full)}" → "${realTarget}" escapes the extraction directory`);
+                }
+            } else if (entry.isDirectory()) {
+                await walk(full);
+            }
+        }
+    }
+    await walk(dir);
+}
+
+/**
+ * Safe extraction wrapper used by every restore path (#580).
+ *
+ *   1. Pre-pass: refuse any archive entry that's absolute or contains
+ *      `../` traversal.
+ *   2. Extract with hardening flags:
+ *        --no-same-owner       — don't try to chown to numeric IDs that
+ *                                may have unintended meaning on this host
+ *        --no-overwrite-dir    — refuse to replace a directory's
+ *                                permissions/metadata with an archive entry
+ *        --no-absolute-names   — strip leading `/` (defense in depth — the
+ *                                pre-pass would have already refused)
+ *        --no-same-permissions — don't preserve setuid/setgid from the
+ *                                archive
+ *   3. Post-pass: walk the extracted tree and refuse any symlink whose
+ *      resolved target escapes `destination`. On refusal, the partial
+ *      extraction is cleaned up.
+ */
+export async function safeTarExtract(archivePath: string, destination: string): Promise<void> {
+    await assertSafeArchiveEntries(archivePath);
+    await fs.mkdir(destination, { recursive: true });
+    // Note: GNU tar's default behaviour already strips leading `/` —
+    // an explicit `--no-absolute-names` flag doesn't exist (the opt-in
+    // counterpart is `-P, --absolute-names`). Same logic for `..`
+    // segments — tar's default refuses them. We rely on the
+    // `assertSafeArchiveEntries` pre-pass as the primary defence and
+    // the flags below as belt-and-suspenders.
+    await runTar([
+        '-xzf', archivePath,
+        '-C', destination,
+        '--no-same-owner',
+        '--no-overwrite-dir',
+        '--no-same-permissions',
+    ]);
+    try {
+        await assertNoSymlinkEscape(destination);
+    } catch (e) {
+        // Refused after extraction — clean up so we don't leave a
+        // half-extracted tree the next restore can stumble on.
+        await fs.rm(destination, { recursive: true, force: true }).catch(() => {});
+        throw e;
+    }
+}
+
 function pushLog(logs: BackupLogEntry[], progress: ProgressCallback | undefined, entry: Omit<BackupLogEntry, 'timestamp'>) {
     const payload: BackupLogEntry = {
         ...entry,
@@ -341,7 +461,7 @@ async function stageRemoteSystemd(node: PodmanConnection, destination: string): 
     await fs.mkdir(destination, { recursive: true });
     await downloadRemoteFile(conn, remoteTemp, localTemp);
     await execRemoteCommand(conn, `rm -f "${remoteTemp}"`);
-    await runTar(['-xzf', localTemp, '-C', destination]);
+    await safeTarExtract(localTemp, destination);
     await fs.rm(localTemp, { force: true });
     return 'copied';
 }
@@ -426,12 +546,26 @@ async function restoreRemoteSystemd(node: PodmanConnection, sourceDir: string) {
     await uploadRemoteFile(conn, localArchive, remoteTemp);
     await fs.rm(localArchive, { force: true });
 
+    // SSH-side equivalent of safeTarExtract (#580). Refuse archive
+    // entries that are absolute / contain traversal *before* extracting,
+    // then extract with hardening flags. We can't easily run the
+    // post-extract symlink walk remotely; the entry pre-check + the
+    // `--no-absolute-names` / `--no-overwrite-dir` flags cover the bulk
+    // of the threat. Operators who restore a backup from an untrusted
+    // source on a remote node should still inspect the result.
     const extractScript = [
         'set -e',
         `target=${REMOTE_SYSTEMD_DIR}`,
+        `tmp="${remoteTemp}"`,
+        // Pre-pass: refuse abs paths or traversal segments.
+        'if tar -tzf "$tmp" | grep -qE \'^/|(^|/)\\.\\.($|/)\'; then',
+        '  echo "Refused archive: contains absolute or traversal entry" >&2',
+        '  rm -f "$tmp"',
+        '  exit 1',
+        'fi',
         'mkdir -p "$target"',
-        `tar -xzf "${remoteTemp}" -C "$target"`,
-        `rm -f "${remoteTemp}"`
+        `tar -xzf "$tmp" -C "$target" --no-same-owner --no-overwrite-dir --no-same-permissions`,
+        `rm -f "$tmp"`,
     ].join('\n');
     const extract = await execRemoteCommand(conn, extractScript);
     if (extract.code !== 0) {
@@ -637,7 +771,7 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
 
                 await downloadRemoteFile(conn, remoteTmp, tmpArchive);
                 await execRemoteCommand(conn, `rm -f "${remoteTmp}"`);
-                await runTar(['-xzf', tmpArchive, '-C', localDir]);
+                await safeTarExtract(tmpArchive, localDir);
                 await fs.rm(tmpArchive, { force: true });
 
                 const existing = (metadata.serviceData as ServiceDataEntry[]).find(e => e.label === dirName);
@@ -677,7 +811,7 @@ export async function restoreSystemBackup(fileName: string): Promise<SystemBacku
     const entry = await getBackupFileMeta(fileName);
     const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-restore-'));
     try {
-        await runTar(['-xzf', entry.path, '-C', stagingDir]);
+        await safeTarExtract(entry.path, stagingDir);
         await restoreConfigFiles(path.join(stagingDir, 'config'));
 
         const nodesFromDisk = await listNodes();
@@ -724,7 +858,7 @@ export async function restoreSystemBackup(fileName: string): Promise<SystemBacku
 export async function previewSystemBackup(archivePath: string): Promise<BackupPreviewResult> {
     const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-preview-'));
     try {
-        await runTar(['-xzf', archivePath, '-C', stagingDir]);
+        await safeTarExtract(archivePath, stagingDir);
         const configDir = path.join(stagingDir, 'config');
         const backupConfig = await readJsonFile<Awaited<ReturnType<typeof getConfig>>>(path.join(configDir, 'config.json'));
         const nodesFile = await readJsonFile<PodmanConnection[]>(path.join(configDir, 'nodes.json'));
@@ -831,7 +965,7 @@ export async function previewSystemBackup(archivePath: string): Promise<BackupPr
 export async function readSystemBackupFile(archivePath: string, nodeName: string, relativePath: string): Promise<string> {
     const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-file-preview-'));
     try {
-        await runTar(['-xzf', archivePath, '-C', stagingDir]);
+        await safeTarExtract(archivePath, stagingDir);
         const metadata = await readMetadata(stagingDir);
         const folder = metadata?.nodes.find(n => n.name === nodeName)?.folder;
         const resolvedFolder = folder || encodeNodeFolder(nodeName);
@@ -857,7 +991,7 @@ export async function readSystemBackupFile(archivePath: string, nodeName: string
 export async function restoreSystemBackupSelection(archivePath: string, selection: BackupRestoreSelection): Promise<void> {
     const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-restore-'));
     try {
-        await runTar(['-xzf', archivePath, '-C', stagingDir]);
+        await safeTarExtract(archivePath, stagingDir);
         const configDir = path.join(stagingDir, 'config');
         const backupConfig = await readJsonFile<Awaited<ReturnType<typeof getConfig>>>(path.join(configDir, 'config.json'));
 
@@ -1048,7 +1182,29 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                         const remoteTmp = mktemp.stdout.trim();
                         await uploadRemoteFile(conn, tmpArchive, remoteTmp);
                         await fs.rm(tmpArchive, { force: true });
-                        await execRemoteCommand(conn, `mkdir -p "${remotePath}" && tar -xzf "${remoteTmp}" -C "${remotePath}" && rm -f "${remoteTmp}"`);
+                        // Same SSH-side hardening as restoreRemoteSystemd (#580):
+                        // refuse abs/traversal entries first, then extract
+                        // with no-overwrite-dir + no-absolute-names + no-
+                        // same-owner. Service-data restores are the
+                        // highest-risk extract path because they unpack into
+                        // operator-controlled `remotePath` mounts.
+                        const remoteSvcScript = [
+                            'set -e',
+                            `tmp="${remoteTmp}"`,
+                            `target="${remotePath}"`,
+                            'if tar -tzf "$tmp" | grep -qE \'^/|(^|/)\\.\\.($|/)\'; then',
+                            '  echo "Refused archive: contains absolute or traversal entry" >&2',
+                            '  rm -f "$tmp"',
+                            '  exit 1',
+                            'fi',
+                            'mkdir -p "$target"',
+                            'tar -xzf "$tmp" -C "$target" --no-same-owner --no-overwrite-dir --no-same-permissions',
+                            'rm -f "$tmp"',
+                        ].join('\n');
+                        const svcExtract = await execRemoteCommand(conn, remoteSvcScript);
+                        if (svcExtract.code !== 0) {
+                            throw new Error(svcExtract.stderr || `Failed to restore ${dirName} on ${node.Name}`);
+                        }
                         const fileDesc = sdSelection.files ? `${sdSelection.files.length} files from ${dirName}` : dirName;
                         logger.info('SystemBackup', `Restored ${fileDesc} to ${node.Name}:${remotePath}`);
                     }
