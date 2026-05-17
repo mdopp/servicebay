@@ -3,6 +3,7 @@ import { createJob, getCurrentJob, type JobInput } from '@/lib/install/jobStore'
 import { startJob } from '@/lib/install/runner';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -16,6 +17,10 @@ export const dynamic = 'force-dynamic';
  * via the `installInProgress` banner + reattach flow.
  */
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = (await request.json()) as { source?: string; input?: JobInput };
     const input = body.input;

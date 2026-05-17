@@ -7,6 +7,7 @@ import { decrypt } from '@/lib/auth';
 import { apiError } from '@/lib/api/errors';
 import { logger } from '@/lib/logger';
 
+import { requireSession } from '@/lib/api/requireSession';
 async function resolveActor(request: Request): Promise<string> {
   const forwarded = request.headers.get('x-forwarded-user') || request.headers.get('remote-user');
   if (forwarded) {
@@ -30,6 +31,10 @@ async function resolveActor(request: Request): Promise<string> {
 }
 
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const { searchParams } = new URL(request.url);
     const nodeName = searchParams.get('node');

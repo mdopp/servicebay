@@ -60,13 +60,28 @@ export interface ParsedRequest<B, Q> {
 /**
  * Wrap a Next.js API route handler with shared validation, error handling,
  * and error envelope. Throws ApiError to short-circuit with a typed status.
+ *
+ * Defense-in-depth requireSession gate (#596) — runs before any body/query
+ * parsing so an unauthenticated POST/PATCH/PUT/DELETE is rejected with a
+ * cheap 401 instead of triggering full validation. GET/HEAD/OPTIONS skip
+ * the gate (proxy.ts is still the primary gate for those; the wrapper's
+ * role here is the redundant per-route check the audit asked for).
  */
+const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 export function withApiHandler<B = undefined, Q = undefined>(
   options: ApiHandlerOptions<B, Q>,
   handler: (input: ParsedRequest<B, Q>) => Promise<Response | NextResponse | unknown>,
 ) {
   return async (request: NextRequest): Promise<Response> => {
     try {
+      if (MUTATING_METHODS.has(request.method)) {
+        // Lazy import to keep handler.ts free of the cookie-parse import
+        // chain when the module is loaded by middleware-adjacent code.
+        const { requireSession } = await import('./requireSession');
+        const auth = await requireSession(request);
+        if (auth instanceof NextResponse) return auth;
+      }
+
       const rawBody = options.body ? await readJsonBody(request) : undefined;
       const body = options.body ? options.body.parse(rawBody) : (undefined as B);
       const rawQuery = searchParamsToObject(request.nextUrl.searchParams);

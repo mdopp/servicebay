@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 const LLDAP_GRAPHQL_GROUPS = `
@@ -91,6 +92,10 @@ async function createGroup(baseUrl: string, token: string, groupName: string): P
 
 /** Seed LLDAP with default groups after installation. */
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const body = await request.json() as SeedRequest;
   const host = body.host || 'localhost';
   const port = body.port || 17170;

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getConfig, updateConfig } from '@/lib/config';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -24,6 +25,10 @@ export async function GET() {
  * and only persists the credentials if NPM accepted them.
  */
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = await request.json();
     const { email, password, adminUrl, test } = body as {
@@ -68,7 +73,11 @@ export async function POST(request: Request) {
 /**
  * Forget stored NPM credentials.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const config = await getConfig();
   const next = { ...config.reverseProxy };
   delete next.npm;

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createSystemBackup, deleteSystemBackup, listSystemBackups } from '@/lib/systemBackup';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
@@ -14,7 +15,11 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -46,6 +51,10 @@ export async function POST() {
 }
 
 export async function DELETE(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = await request.json().catch(() => ({}));
     const url = new URL(request.url);

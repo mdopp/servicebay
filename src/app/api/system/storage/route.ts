@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { agentManager } from '@/lib/agent/manager';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 interface RaidArray {
@@ -205,6 +206,10 @@ export async function GET(request: Request) {
 
 /** Mount a RAID array and create persistent systemd units. */
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node');
 

@@ -18,6 +18,7 @@ import { applyUpdateWindow } from '@/lib/updateWindow';
 import { apiError } from '@/lib/api/errors';
 import { logger } from '@/lib/logger';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 type Window = NonNullable<AppConfig['updateWindow']>;
@@ -81,6 +82,10 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = await request.json();
     const result = validate(body);

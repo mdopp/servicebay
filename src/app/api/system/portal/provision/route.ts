@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { provisionPortalRouting } from '@/lib/portal/provisioner';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -17,7 +18,11 @@ export const dynamic = 'force-dynamic';
  * Idempotent. Returns the structured result the provisioner produces
  * so the UI (or curl) can show what changed.
  */
-export async function POST() {
+export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const result = await provisionPortalRouting();
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });
 }

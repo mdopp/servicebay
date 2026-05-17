@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getConfig, saveConfig, type InstalledCredential, type InstallManifest } from '@/lib/config';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -48,6 +49,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   let parsed;
   try {
     parsed = ManifestBody.parse(await request.json());
@@ -66,7 +71,11 @@ export async function POST(request: Request) {
   return NextResponse.json({ ok: true, savedAt: manifest.savedAt, count: manifest.credentials.length });
 }
 
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const config = await getConfig();
   if (!config.installManifest) {
     return NextResponse.json({ ok: true, alreadyEmpty: true });

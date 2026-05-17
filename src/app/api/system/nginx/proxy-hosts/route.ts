@@ -4,6 +4,7 @@ import { DigitalTwinStore } from '@/lib/store/twin';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 interface ProxyHostRequest {
@@ -527,6 +528,10 @@ async function requestPublicCert(
  * If forwardHost is not set, it defaults to the node's LAN IP.
  */
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
     try {
         const { hosts, node, publicDomain, npmCredentials } = await request.json() as {
             hosts: ProxyHostRequest[];

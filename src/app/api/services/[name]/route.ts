@@ -7,6 +7,7 @@ import { ServiceName } from '@/lib/api/schemas';
 import { apiError } from '@/lib/api/errors';
 import crypto from 'crypto';
 
+import { requireSession } from '@/lib/api/requireSession';
 const parseIpTargets = (input: unknown, fallback: string[] = []) => {
   const parsed = normalizeExternalTargets(input);
   if (parsed.length > 0) {
@@ -54,6 +55,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ name: string }> }) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const decoded = await decodeName(params);
   if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
   const nodeName = getNodeName(request);
@@ -86,6 +91,10 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ name: string }> }) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const decoded = await decodeName(params);
   if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
   const name = decoded;

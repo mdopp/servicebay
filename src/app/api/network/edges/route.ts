@@ -3,7 +3,12 @@ import { NetworkStore } from '@/lib/network/store';
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
+import { requireSession } from '@/lib/api/requireSession';
 export async function POST(req: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(req);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = await req.json();
     const { source, target, port } = body;
@@ -30,6 +35,10 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(req);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');

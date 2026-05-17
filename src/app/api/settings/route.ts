@@ -5,6 +5,7 @@ import { DigitalTwinStore } from '@/lib/store/twin';
 import { logger } from '@/lib/logger';
 import { AppConfigPartialSchema, formatConfigErrors } from '@/lib/config/schema';
 
+import { requireSession } from '@/lib/api/requireSession';
 export async function GET() {
   const [config, templateSettingsSchema] = await Promise.all([
     getConfig(),
@@ -18,6 +19,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   let body: unknown;
   try {
     body = await request.json();

@@ -15,6 +15,7 @@ import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewrit
 import { checkDomainExternalReachability } from '@/lib/diagnose/probes/domainExternalReachability';
 import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
+import { requireSession } from '@/lib/api/requireSession';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -94,6 +95,10 @@ const trimOutput = (s: string | undefined, maxLines = 20): string => {
  * Body: `{ node?: string }` — defaults to "Local" if omitted.
  */
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   let nodeName = 'Local';
   try {
     const body = await request.json().catch(() => ({}));

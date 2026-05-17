@@ -8,6 +8,7 @@ import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 const parseIpTargets = (input: unknown, fallback: string[] = []) => {
@@ -241,6 +242,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const body = await request.json();
   const { searchParams } = new URL(request.url);
   const nodeName = searchParams.get('node');

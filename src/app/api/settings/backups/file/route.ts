@@ -4,9 +4,14 @@ import path from 'path';
 import { getBackupFileMeta, readSystemBackupFile } from '@/lib/systemBackup';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = await request.json().catch(() => ({}));
     const fileName = body.fileName as string | undefined;

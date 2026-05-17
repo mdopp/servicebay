@@ -6,11 +6,16 @@ import crypto from 'crypto';
 import { getBackupFileMeta, previewSystemBackup } from '@/lib/systemBackup';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 const createUploadPath = (token: string) => path.join(os.tmpdir(), `servicebay-upload-${token}.tar.gz`);
 
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const contentType = request.headers.get('content-type') || '';
     if (contentType.includes('multipart/form-data')) {

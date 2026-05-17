@@ -6,6 +6,7 @@ import { HealthStore } from '@/lib/health/store';
 import { apiError } from '@/lib/api/errors';
 import crypto from 'crypto';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 const BACKUP_CHECK_NAME = 'Backup Sync';
@@ -46,6 +47,10 @@ export async function GET() {
 
 // POST — Actions: save, run, test
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
     try {
         const body = await request.json();
         const action = body.action as string;

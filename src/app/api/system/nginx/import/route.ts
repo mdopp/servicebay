@@ -4,7 +4,12 @@ import { findNginxConfDir } from '@/lib/nginx/confDir';
 import { extractNginxConfFromBackup } from '@/lib/nginx/backupExtract';
 import { logger } from '@/lib/logger';
 
+import { requireSession } from '@/lib/api/requireSession';
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
     try {
         const { searchParams } = new URL(request.url);
         const nodeParam = searchParams.get('node');

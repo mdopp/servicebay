@@ -4,10 +4,15 @@ import { ServiceName } from '@/lib/api/schemas';
 import { parseRouteParam } from '@/lib/api/validate';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const parsed = await parseRouteParam(params, 'name', ServiceName);
   if (!parsed.ok) return parsed.response;
   const name = parsed.value;

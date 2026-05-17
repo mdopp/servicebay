@@ -4,6 +4,7 @@ import { getConfig } from '@/lib/config';
 import { FritzBoxClient } from '@/lib/fritzbox/client';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 interface DomainResult {
@@ -34,6 +35,10 @@ interface DomainResult {
  * reflects what we know. The endpoint never throws on partial info.
  */
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = (await request.json().catch(() => ({}))) as { domains?: unknown };
     const domains = Array.isArray(body.domains)

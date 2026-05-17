@@ -15,6 +15,12 @@ vi.mock('@/lib/email', () => ({
   sendEmailAlert: vi.fn(async () => {}),
 }));
 
+// requireSession bypass for tests (#596) — the PATCH/DELETE routes
+// carry the gate; tests don't carry a session cookie.
+vi.mock('@/lib/api/requireSession', () => ({
+  requireSession: vi.fn(async () => ({ user: 'test', expires: new Date(Date.now() + 60_000) })),
+}));
+
 import { POST, GET } from '@/app/api/system/access-requests/route';
 import { PATCH, DELETE } from '@/app/api/system/access-requests/[id]/route';
 

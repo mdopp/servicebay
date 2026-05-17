@@ -26,6 +26,14 @@ vi.mock('@/lib/logger', () => ({
     }
 }));
 
+// Mock requireSession (#596): the per-route gate now sits in front of
+// every mutating handler. These tests don't carry a session cookie —
+// stub the helper to grant access so they exercise the actual route
+// logic, not the auth gate (which has its own dedicated tests).
+vi.mock('@/lib/api/requireSession', () => ({
+    requireSession: vi.fn(async () => ({ user: 'test', expires: new Date(Date.now() + 60_000) })),
+}));
+
 // ----------------------------------------------------------------------
 // 2. Import the Handlers
 // ----------------------------------------------------------------------

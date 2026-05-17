@@ -89,6 +89,9 @@
     "ignoreBinaries": [
       "fuser",
       "python3"
+    ],
+    "ignore": [
+      "scripts/check-invariants.ts"
     ]
   },
   "overrides": {

@@ -6,7 +6,12 @@ import { listNodes } from '@/lib/nodes';
 import { getExecutor } from '@/lib/executor';
 import { logger } from '@/lib/logger';
 
-export async function POST() {
+import { requireSession } from '@/lib/api/requireSession';
+export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
     try {
         // 1. Get the template content
         const templateContent = await getTemplateYaml('nginx');

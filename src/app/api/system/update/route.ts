@@ -4,6 +4,7 @@ import { getConfig, saveConfig } from '@/lib/config';
 import { apiError } from '@/lib/api/errors';
 import { logger } from '@/lib/logger';
 
+import { requireSession } from '@/lib/api/requireSession';
 export async function GET() {
   try {
     const status = await checkForUpdates();
@@ -15,6 +16,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = await request.json();
     

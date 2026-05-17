@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { updateConfig } from '@/lib/config';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
@@ -21,6 +22,10 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(req);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = await req.json();
     const { logLevel } = body;

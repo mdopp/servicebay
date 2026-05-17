@@ -5,12 +5,17 @@ import { ContainerId } from '@/lib/api/schemas';
 import { parseRouteParam } from '@/lib/api/validate';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const parsed = await parseRouteParam(params, 'id', ContainerId);
   if (!parsed.ok) return parsed.response;
   const id = parsed.value;

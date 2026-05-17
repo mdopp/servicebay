@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getConfig, saveConfig, updateConfig } from '@/lib/config';
 import { apiError } from '@/lib/api/errors';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -24,6 +25,10 @@ export async function GET() {
  * can later retrieve the auto-generated admin password from Settings.
  */
 export async function POST(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
     const body = await request.json();
     const { url, username, password } = body as {
@@ -49,7 +54,11 @@ export async function POST(request: Request) {
  * Forget stored LLDAP credentials. Uses saveConfig directly because
  * updateConfig deep-merges and cannot delete keys.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const config = await getConfig();
   const next = { ...config };
   delete next.lldap;

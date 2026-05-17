@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getConfig, saveConfig } from '@/lib/config';
 
+import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -19,6 +20,10 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const { id } = await params;
   const config = await getConfig();
   const requests = [...(config.accessRequests ?? [])];
@@ -39,6 +44,10 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
+  const __auth = await requireSession(request);
+  if (__auth instanceof NextResponse) return __auth;
+
   const { id } = await params;
   const config = await getConfig();
   const requests = (config.accessRequests ?? []).filter(r => r.id !== id);
