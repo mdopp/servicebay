@@ -2,6 +2,7 @@ import { PortMapping, FritzBoxStatus } from './types';
 import * as dns from 'dns/promises';
 import { fetchWithDigest } from './digest';
 import crypto from 'crypto';
+import { isIP } from 'net';
 import { logger } from '@/lib/logger';
 
 export interface FritzBoxOptions {
@@ -9,6 +10,44 @@ export interface FritzBoxOptions {
   port?: number;
   username?: string;
   password?: string;
+}
+
+/**
+ * Validate a FritzBox host string. The gateway is always on the LAN,
+ * so reject the cases that are NEVER legitimate (#578):
+ *   - `localhost` and the `.localhost` reserved suffix
+ *   - 127.0.0.0/8 loopback
+ *   - 169.254.0.0/16 link-local (auto-config, not a router)
+ *   - IPv6 loopback / link-local
+ *
+ * RFC1918 + `fritz.box` mDNS are allowed: those are legitimate LAN
+ * router addresses. The threat model is an operator (or attacker with
+ * config write access) pointing the gateway client at a local service
+ * to probe it via the FritzBox client's HTTP fetches.
+ */
+export function assertValidFritzBoxHost(rawHost: string): void {
+  if (!rawHost || typeof rawHost !== 'string') {
+    throw new Error('FritzBox host must be a non-empty string');
+  }
+  // Strip IPv6 brackets for isIP() detection.
+  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) {
+    throw new Error(`FritzBox host must not be localhost (got "${rawHost}")`);
+  }
+  if (isIP(host) === 4) {
+    const parts = host.split('.').map(Number);
+    if (parts[0] === 127 || parts[0] === 0) {
+      throw new Error(`FritzBox host must not be loopback (got "${rawHost}")`);
+    }
+    if (parts[0] === 169 && parts[1] === 254) {
+      throw new Error(`FritzBox host must not be link-local (got "${rawHost}")`);
+    }
+  }
+  if (isIP(host) === 6) {
+    if (host === '::1' || host === '::' || host.startsWith('fe80')) {
+      throw new Error(`FritzBox host must not be loopback / link-local (got "${rawHost}")`);
+    }
+  }
 }
 
 export class FritzBoxClient {
@@ -20,7 +59,7 @@ export class FritzBoxClient {
   private password?: string;
   private serviceDetected = false;
   private services = new Map<string, string>();
-  
+
   // Default to UPnP IGD (Unauthenticated)
   private serviceType = 'urn:schemas-upnp-org:service:WANIPConnection:1';
   private controlUrl = '/igdupnp/control/WANIPConn1';
@@ -30,6 +69,11 @@ export class FritzBoxClient {
     this.port = options.port || 49000;
     this.username = options.username;
     this.password = options.password;
+
+    // SSRF guard (#578) — refuse loopback / link-local hosts. Throws
+    // synchronously so callers see a clear config error instead of a
+    // mysteriously-failing discovery later.
+    assertValidFritzBoxHost(this.host);
 
     if (this.username && this.password) {
         // Switch to TR-064 (Authenticated)
