@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.46.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.45.0...servicebay-v3.46.0) (2026-05-17)
+
+
+### Features
+
+* **errors:** typed DomainError hierarchy for SSH + AgentTimeout ([#598](https://github.com/mdopp/servicebay/issues/598)) ([c3bde25](https://github.com/mdopp/servicebay/commit/c3bde258c2500881a0d432a300513ad425cd4f56))
+* **logger:** persist trace_id alongside log lines ([#597](https://github.com/mdopp/servicebay/issues/597)) ([1254a87](https://github.com/mdopp/servicebay/commit/1254a87d3d5cd3c4adc671b76146884bc3315fa0))
+* **mcp:** split exec scope, downgrade update_config to mutate ([#591](https://github.com/mdopp/servicebay/issues/591)) ([f4d6304](https://github.com/mdopp/servicebay/commit/f4d63044ddfd1c0c23caacda7b15897f812d8b9f))
+* **observability:** request-scoped trace IDs via AsyncLocalStorage ([#594](https://github.com/mdopp/servicebay/issues/594)) ([297a1af](https://github.com/mdopp/servicebay/commit/297a1afd99f2f04bb7e771453257b6b423a56b25))
+* **security:** per-route requireSession() on every mutating handler ([#596](https://github.com/mdopp/servicebay/issues/596)) ([d328415](https://github.com/mdopp/servicebay/commit/d328415a5b670de85b0484943297dff41bcbb499))
+* **settings:** enforce AppConfigSchema (Zod) on POST ([#595](https://github.com/mdopp/servicebay/issues/595)) ([4c3b5c0](https://github.com/mdopp/servicebay/commit/4c3b5c08e3e09c432d0495dd2d42f8f75b448750))
+* **template:** add requiresApi version pinning for /api/system/* ([#588](https://github.com/mdopp/servicebay/issues/588)) ([13e41a3](https://github.com/mdopp/servicebay/commit/13e41a34b8ec79de5f777a495e343b07f7e720c5))
+
+
+### Bug Fixes
+
+* **auth:** validate OIDC issuer + stop logging response bodies ([#577](https://github.com/mdopp/servicebay/issues/577)) ([e101188](https://github.com/mdopp/servicebay/commit/e1011881c7618b35e5ae6fb7661b4d789589e5eb))
+* **backup:** refuse symlinks at restore pre-check ([#590](https://github.com/mdopp/servicebay/issues/590), Option B) ([33a20cf](https://github.com/mdopp/servicebay/commit/33a20cf172ea6003212d0d1f2d7c5c80f71b5890))
+* **backup:** safe tar extraction with traversal + symlink guards ([#580](https://github.com/mdopp/servicebay/issues/580)) ([d5de3ff](https://github.com/mdopp/servicebay/commit/d5de3fff68bec5638f50ebc9d034938dd498684f))
+* **fritzbox:** reject loopback / link-local hosts ([#578](https://github.com/mdopp/servicebay/issues/578)) ([e9884d0](https://github.com/mdopp/servicebay/commit/e9884d03ec980c5f2ca30521885c9c0b895dffc3))
+* **install:** drop cross-scope Requires= that blocked fresh boots ([#586](https://github.com/mdopp/servicebay/issues/586)) ([0d63622](https://github.com/mdopp/servicebay/commit/0d6362248822075dc18c67db449f3d2bc8b45a04))
+* **install:** reuse saved NPM creds instead of prompting with rejected pwd ([bf09e5d](https://github.com/mdopp/servicebay/commit/bf09e5d26656b8e83e6fd7b159fa6b784831f924))
+* **install:** show honest "kept" size + model quadlet-backup as own group ([d361c4a](https://github.com/mdopp/servicebay/commit/d361c4af03b5a2f5321b38885a628e8025bc4ca8))
+* **mcp:** redact backtick / multi-line YAML / URL-query secrets ([#581](https://github.com/mdopp/servicebay/issues/581)) ([c0ddee5](https://github.com/mdopp/servicebay/commit/c0ddee569be519bae46a069d2016d23d34486e69))
+* **wizard:** clearer error message + lint guard for stack lookups ([#582](https://github.com/mdopp/servicebay/issues/582)) ([fc13c5e](https://github.com/mdopp/servicebay/commit/fc13c5ef96f982e21c542bfcae55f3cfc26068d4))
+
 ## [3.45.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.44.0...servicebay-v3.45.0) (2026-05-17)
 
 
