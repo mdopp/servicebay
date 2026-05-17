@@ -22,13 +22,41 @@
 
 import type { EnrichedContainer } from '../agent/types';
 
+/** Kube container port mapping (subset we read from). */
+export interface PodLikeContainerPort {
+  containerPort?: number | string;
+  hostPort?: number | string;
+  protocol?: string;
+}
+
+/** Kube container env entry (subset). */
+export interface PodLikeEnvVar {
+  name?: string;
+  value?: string;
+}
+
+/** Kube volumeMount (subset). */
+export interface PodLikeVolumeMount {
+  name?: string;
+  mountPath?: string;
+  readOnly?: boolean;
+}
+
+/** Kube volume (subset — supports the two common backends ServiceBay
+ *  uses: hostPath bind mounts + PVC references). */
+export interface PodLikeVolume {
+  name?: string;
+  hostPath?: { path?: string };
+  persistentVolumeClaim?: { claimName?: string };
+}
+
 /** Pod / Deployment document shape used across the listServices path.
- *  The matcher only reads `metadata.name` and `spec.containers[].name`,
- *  but the downstream metadata-extraction block in
- *  `ServiceManager.listServices` also reads labels, annotations, and a
- *  few spec fields off the same parsed doc — so the interface is wider
- *  than the matcher strictly needs. Adding new readers here is fine;
- *  the parser swallows shape mismatches into an empty array. */
+ *  The matcher only reads `metadata.name` and `spec.containers[].name`;
+ *  the downstream metadata-extraction block in `ServiceListing.listServices`
+ *  reads labels, annotations, ports, volumes, etc. off the same parsed
+ *  doc. The shape is intentionally permissive — the parser swallows
+ *  unknown fields and bad input collapses to an empty array, so widening
+ *  this interface is safe. */
 export interface PodLikeDoc {
   metadata?: {
     name?: string;
@@ -40,15 +68,13 @@ export interface PodLikeDoc {
     containers?: Array<{
       name?: string;
       image?: string;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ports?: any[];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      env?: any[];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      volumeMounts?: any[];
+      ports?: PodLikeContainerPort[];
+      env?: PodLikeEnvVar[];
+      volumeMounts?: PodLikeVolumeMount[];
+      // Used by fixVolumeOwnership in serviceLifecycle.ts — read-only.
+      securityContext?: { runAsUser?: number; runAsGroup?: number };
     }>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    volumes?: any[];
+    volumes?: PodLikeVolume[];
   };
 }
 

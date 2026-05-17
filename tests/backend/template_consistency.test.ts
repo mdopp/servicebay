@@ -463,9 +463,11 @@ describe('ServiceManager.STACK_MIGRATIONS map shape', () => {
   // Catches typos + accidental "migrate from a template that still exists",
   // which would soft-delete the active unit on every deploy.
   it('keys reference real templates, predecessors are no-longer-existing names', () => {
-    const sm = fs.readFileSync(path.join(SRC_DIR, 'lib', 'services', 'ServiceManager.ts'), 'utf-8');
+    // STACK_MIGRATIONS lives in serviceLifecycle.ts since the #589
+    // split — ServiceManager.ts is now a facade that re-exports it.
+    const sm = fs.readFileSync(path.join(SRC_DIR, 'lib', 'services', 'serviceLifecycle.ts'), 'utf-8');
     const block = sm.match(/STACK_MIGRATIONS:\s*Record<string,\s*string\[\]>\s*=\s*\{([\s\S]*?)\n\s*\};/);
-    expect(block, 'STACK_MIGRATIONS block not found in ServiceManager.ts').toBeTruthy();
+    expect(block, 'STACK_MIGRATIONS block not found in serviceLifecycle.ts').toBeTruthy();
 
     const body = block![1];
     const entryRe = /^\s*['"]([\w-]+)['"]\s*:\s*\[([^\]]*)\]/gm;
