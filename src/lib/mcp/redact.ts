@@ -79,6 +79,11 @@ export function redactKubeYaml(text: string): string {
  *   "password=hunter2"            → "password=<redacted>"
  *   '"password": "hunter2"'       → '"password": "<redacted>"'
  *   "--password hunter2"          → "--password <redacted>"
+ *   "password: `hunter2`"         → "password: `<redacted>`"  (#581)
+ *   "?password=hunter2"           → "?password=<redacted>"    (#581)
+ *   "password: |"                 → "password: |"             (#581)
+ *   "  hunter2"                       "  <redacted>"
+ *   "  more-secret-line"              "  <redacted>"
  *
  * Same set of trigger keywords as the YAML pass, plus a few that are
  * exclusively log-shaped (not env-var names): `Bearer <token>`,
@@ -91,31 +96,53 @@ export function redactLogText(text: string): string {
 
   let out = text;
 
-  // Order matters: handle quoted-keyword forms (JSON-style) first,
+  // Multi-line YAML block scalar (#581):
+  //   password: |
+  //     line1
+  //     line2
+  // Run this first — operates line-by-line so it doesn't trip over the
+  // single-line patterns below. The continuation lines are any lines
+  // indented MORE than the key line; the block ends at the next line
+  // with same-or-less indent (or EOF).
+  out = redactYamlBlockScalars(out, KEYWORDS);
+
+  // URL query strings FIRST (#581): the generic `key=X` pattern below
+  // uses `\S+` which is too greedy in URL contexts (eats
+  // `&format=json` past the secret value). Running the URL pattern
+  // first lets each `[?&]key=value` segment be replaced in isolation,
+  // leaving non-sensitive query params intact.
+  //   https://example.com/api?password=hunter2&token=abc
+  out = out.replace(
+    new RegExp(`([?&]${KEYWORDS}=)([^&\\s"'\`]+)`, 'gi'),
+    (_m, prefix) => `${prefix}${REDACTED}`,
+  );
+
+  // Order matters: handle quoted-keyword forms (JSON-style) next,
   // since the unquoted patterns below would otherwise eat just the
   // keyword and miss the leading `"`.
 
   // `"password": "X"`  (JSON / quoted keys, with optional whitespace)
+  // Backtick alternative covers template-literal leaks from JS services.
   out = out.replace(
-    new RegExp(`("${KEYWORDS}"\\s*:\\s*)(?:"([^"]*)"|'([^']*)')`, 'gi'),
+    new RegExp(`("${KEYWORDS}"\\s*:\\s*)(?:"([^"]*)"|'([^']*)'|\`([^\`]*)\`)`, 'gi'),
     (_m, prefix) => `${prefix}${REDACTED}`,
   );
 
-  // `password=X`   `password="X"`
+  // `password=X`   `password="X"`   `password=\`X\``
   out = out.replace(
-    new RegExp(`(${KEYWORDS}\\s*=\\s*)(?:"([^"]*)"|'([^']*)'|(\\S+))`, 'gi'),
+    new RegExp(`(${KEYWORDS}\\s*=\\s*)(?:"([^"]*)"|'([^']*)'|\`([^\`]*)\`|([^\\s&]+))`, 'gi'),
     (_m, prefix) => `${prefix}${REDACTED}`,
   );
 
-  // `password: X`   (unquoted, log/YAML)
+  // `password: X`   (unquoted, log/YAML) — also backtick-quoted variant
   out = out.replace(
-    new RegExp(`(${KEYWORDS}\\s*:\\s*)(?:"([^"]*)"|'([^']*)'|(\\S+))`, 'gi'),
+    new RegExp(`(${KEYWORDS}\\s*:\\s*)(?:"([^"]*)"|'([^']*)'|\`([^\`]*)\`|([^\\s&]+))`, 'gi'),
     (_m, prefix) => `${prefix}${REDACTED}`,
   );
 
   // `--password X`
   out = out.replace(
-    new RegExp(`(--${KEYWORDS}\\s+)(?:"([^"]*)"|'([^']*)'|(\\S+))`, 'gi'),
+    new RegExp(`(--${KEYWORDS}\\s+)(?:"([^"]*)"|'([^']*)'|\`([^\`]*)\`|([^\\s&]+))`, 'gi'),
     (_m, prefix) => `${prefix}${REDACTED}`,
   );
 
@@ -126,6 +153,49 @@ export function redactLogText(text: string): string {
   );
 
   return out;
+}
+
+/**
+ * Walk `text` line by line and replace YAML block-scalar bodies whose
+ * key matches one of `keywordsAlternation` (anchored to a `|` or `>`
+ * scalar header). Stops the block at the next line with same-or-less
+ * indent than the key line. Conservative: only redacts the block body,
+ * never the structural lines around it.
+ */
+function redactYamlBlockScalars(text: string, keywordsAlternation: string): string {
+  const lines = text.split('\n');
+  const headerRe = new RegExp(`^(\\s*)(${keywordsAlternation})\\s*:\\s*[|>][+\\-]?\\s*$`, 'i');
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const m = line.match(headerRe);
+    if (!m) {
+      out.push(line);
+      i++;
+      continue;
+    }
+    out.push(line); // keep the header
+    const keyIndent = m[1].length;
+    i++;
+    // Consume continuation lines (indented MORE than the key). Replace
+    // each non-blank one with the same indent + <redacted>. Blank lines
+    // remain blank — they're part of the block but carry no content.
+    while (i < lines.length) {
+      const cont = lines[i];
+      const indentMatch = cont.match(/^(\s*)/);
+      const contIndent = indentMatch ? indentMatch[1].length : 0;
+      if (cont.trim() === '') {
+        out.push(cont);
+        i++;
+        continue;
+      }
+      if (contIndent <= keyIndent) break;
+      out.push(' '.repeat(contIndent) + REDACTED);
+      i++;
+    }
+  }
+  return out.join('\n');
 }
 
 /** Redact a `getServiceFiles` payload — touches yamlContent +

@@ -108,6 +108,74 @@ describe('redactLogText', () => {
   it('returns empty input unchanged', () => {
     expect(redactLogText('')).toBe('');
   });
+
+  // ── #581: edge cases the original patterns missed ─────────────────────
+
+  it('redacts backtick-quoted values (template-literal leak from JS services)', () => {
+    const input = 'Config loaded: password: `hunter2-template-literal`';
+    const out = redactLogText(input);
+    expect(out).not.toContain('hunter2-template-literal');
+    expect(out).toContain('<redacted>');
+  });
+
+  it('redacts backtick values in JSON-style and equals-style forms', () => {
+    expect(redactLogText('"token": `tok-here-123`')).not.toContain('tok-here-123');
+    expect(redactLogText('apikey=`secret-key-here`')).not.toContain('secret-key-here');
+  });
+
+  it('redacts URL query string secrets', () => {
+    const input = 'GET https://example.com/api?password=hunter2&format=json HTTP/1.1';
+    const out = redactLogText(input);
+    expect(out).not.toContain('hunter2');
+    expect(out).toContain('<redacted>');
+    // Non-sensitive query params left alone.
+    expect(out).toContain('format=json');
+  });
+
+  it('redacts multiple URL query secrets in the same line', () => {
+    const input = 'fetch https://x/y?token=abc&api_key=def&user=alice';
+    const out = redactLogText(input);
+    expect(out).not.toContain('abc');
+    expect(out).not.toContain('def');
+    expect(out).toContain('user=alice');
+  });
+
+  it('redacts multi-line YAML scalar bodies', () => {
+    const input = `
+metadata:
+  password: |
+    line1-of-the-secret
+    line2-also-secret
+  next-field: kept
+`;
+    const out = redactLogText(input);
+    expect(out).not.toContain('line1-of-the-secret');
+    expect(out).not.toContain('line2-also-secret');
+    expect(out).toContain('<redacted>');
+    expect(out).toContain('next-field: kept');
+  });
+
+  it('multi-line YAML redaction stops at the next less-indented key', () => {
+    const input = `
+secret: |
+  very-secret
+  more-secret
+unrelated_value: visible
+`;
+    const out = redactLogText(input);
+    expect(out).not.toContain('very-secret');
+    expect(out).not.toContain('more-secret');
+    expect(out).toContain('unrelated_value: visible');
+  });
+
+  it('handles YAML block-scalar chomping indicators (|+, |-, >, >-)', () => {
+    for (const indicator of ['|', '|+', '|-', '>', '>-']) {
+      const input = `token: ${indicator}\n  the-actual-secret-${indicator}\nnext: ok`;
+      const out = redactLogText(input);
+      expect(out, `indicator=${indicator}`).not.toContain('the-actual-secret');
+      expect(out, `indicator=${indicator}`).toContain('next: ok');
+    }
+  });
 });
 
 describe('redactServiceFiles', () => {
