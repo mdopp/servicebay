@@ -20,7 +20,7 @@ import { getNodes } from '@/app/actions/system';
 import { Template } from '@/lib/registry';
 import type { TemplateTier } from '@/lib/templateTier';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
-import { useStackInstall } from '@/lib/stackInstall/useStackInstall';
+import { useStackInstall } from '@/hooks/useStackInstall';
 
 import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home, Minimize2 } from 'lucide-react';
 import StackVariableField from './StackVariableField';
@@ -874,7 +874,7 @@ export default function OnboardingWizard() {
   // handleSelectStack isn't visible to the next call's stale closure.
   const handleStackFetchVars = async (
       itemsOverride?: StackItem[],
-  ): Promise<{ items: StackItem[]; variables: import('@/lib/stackInstall/useStackInstall').StackVariable[] }> => {
+  ): Promise<{ items: StackItem[]; variables: import('@/hooks/useStackInstall').StackVariable[] }> => {
     setWizardSubStep('flow');
     setStacksLoading(true);
     try {
@@ -930,7 +930,7 @@ export default function OnboardingWizard() {
   // the next call's stale closure.
   const handleStackInstall = async (
       itemsOverride?: StackItem[],
-      variablesOverride?: import('@/lib/stackInstall/useStackInstall').StackVariable[],
+      variablesOverride?: import('@/hooks/useStackInstall').StackVariable[],
   ) => {
     await installFlow.runInstall({
       items: itemsOverride

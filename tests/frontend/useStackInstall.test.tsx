@@ -41,7 +41,7 @@ import {
   fetchTemplateConfigFiles,
   fetchTemplatePostDeployScript,
 } from '@/app/actions';
-import { useStackInstall } from '@/lib/stackInstall/useStackInstall';
+import { useStackInstall } from '@/hooks/useStackInstall';
 
 /**
  * Build a `fetch` mock that resolves URL-prefixed handlers. Each

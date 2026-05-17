@@ -39,9 +39,9 @@ import {
   fetchStoredVariableValues,
 } from '@/app/actions';
 import { parseTemplateLabel } from '@/lib/templateLabel';
-import { type Credential } from './credentialsManifest';
-import { generateRandomSecret } from './randomSecret';
-import { parseTemplateDependencies } from './dependencies';
+import { type Credential } from '@/lib/stackInstall/credentialsManifest';
+import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
+import { parseTemplateDependencies } from '@/lib/stackInstall/dependencies';
 import type { JobState as RemoteJobState } from '@/lib/install/jobStore';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';

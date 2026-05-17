@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Template } from '@/lib/registry';
-import { useStackInstall } from '@/lib/stackInstall/useStackInstall';
+import { useStackInstall } from '@/hooks/useStackInstall';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@/lib/nodes';
 import { Layers, Folder, X } from 'lucide-react';

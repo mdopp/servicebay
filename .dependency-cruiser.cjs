@@ -79,16 +79,11 @@ module.exports = {
             severity: 'error',
             comment:
                 'src/lib is the reusable kernel. Importing from src/app inverts the layering and ' +
-                'breaks the "lib is depended-on, never depends-on UI" invariant. Ratchet TODO: ' +
-                'move the 3 current offenders\' shared surface into src/lib then drop the exemption.',
-            from: {
-                path: '^src/lib/',
-                pathNot: [
-                    '^src/lib/stackInstall/useStackInstall\\.ts$',
-                    '^src/lib/mcp/server\\.ts$',
-                    '^src/lib/install/runner\\.ts$',
-                ],
-            },
+                'breaks the "lib is depended-on, never depends-on UI" invariant. Fully tight ' +
+                'after #600 — runner.ts now imports getTemplate* directly from registry, ' +
+                'mcp/server.ts calls runDiagnose() in src/lib/diagnose/, and the client hook ' +
+                'useStackInstall moved out of src/lib to src/hooks/.',
+            from: { path: '^src/lib/' },
             to: { path: '^src/app/' },
         },
         {

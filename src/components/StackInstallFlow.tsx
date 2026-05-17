@@ -28,7 +28,7 @@ import { Loader2, RefreshCcw, XCircle } from 'lucide-react';
 import StackVariableField from './StackVariableField';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
-import type { UseStackInstallReturn } from '@/lib/stackInstall/useStackInstall';
+import type { UseStackInstallReturn } from '@/hooks/useStackInstall';
 
 interface DeviceContext {
   deviceOptions: Record<string, string[]>;

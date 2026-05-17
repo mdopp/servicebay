@@ -63,7 +63,7 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 | Invariant | Current | Threshold | Enforced by |
 |---|---:|---:|---|
 | `DigitalTwinStore.getInstance()` call sites | 35 | 40 | `check-invariants.ts:TWIN_GETINSTANCE_MAX` |
-| `lib → app` imports | 3 | 0 new | `.dependency-cruiser.cjs:lib-no-import-app` |
+| `lib → app` imports | 0 | 0 | `.dependency-cruiser.cjs:lib-no-import-app` (#600) |
 | `lib → components` imports | 0 | 0 | `.dependency-cruiser.cjs:lib-no-import-components` |
 | `lib → dashboards` imports | 0 | 0 | `.dependency-cruiser.cjs:lib-no-import-dashboards` |
 | Circular dependency cycles | 6 known | 0 new | `.dependency-cruiser.cjs:no-circular` |

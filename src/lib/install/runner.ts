@@ -24,10 +24,12 @@
  * `crashed` by `jobStore.markCrashedOnStartup()` (see server.ts).
  */
 import Mustache from 'mustache';
+// Direct lib imports (#600) — the actions.ts wrappers are RPC bridges
+// for client components, not appropriate for server-side lib code.
 import {
-  fetchTemplatePostDeployScript,
-  fetchTemplateMigrationScripts,
-} from '@/app/actions';
+  getTemplatePostDeployScript,
+  getTemplateMigrationScripts,
+} from '@/lib/registry';
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import { topoSortByDependencies } from '@/lib/stackInstall/dependencies';
 import { selectMigrationChain } from '@/lib/stackInstall/migrations';
@@ -306,7 +308,7 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // `__SB_CREDENTIAL__ {json}` markers.
   let postDeployScript: string | undefined;
   try {
-    const raw = await fetchTemplatePostDeployScript(item.name, input.templateSource);
+    const raw = await getTemplatePostDeployScript(item.name, input.templateSource);
     if (raw) postDeployScript = Mustache.render(raw, view);
   } catch { /* template ships no script — fine */ }
 
@@ -324,7 +326,7 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
       const preview = await previewRes.json();
       const installedVersion = typeof preview.installedVersion === 'number' ? preview.installedVersion : null;
       if (installedVersion !== null && installedVersion < targetVersion) {
-        const scripts = await fetchTemplateMigrationScripts(item.name, input.templateSource);
+        const scripts = await getTemplateMigrationScripts(item.name, input.templateSource);
         const result = selectMigrationChain(installedVersion, targetVersion, scripts);
         if (!result.ok) {
           Mustache.escape = savedEscape;

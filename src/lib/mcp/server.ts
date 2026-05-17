@@ -730,14 +730,11 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     async ({ node }) => {
       const nodeName = await resolveNode(node);
       try {
-        const { POST } = await import('@/app/api/system/diagnose/route');
-        const fakeRequest = new Request('http://localhost/api/system/diagnose', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ node: nodeName }),
-        });
-        const res = await POST(fakeRequest);
-        const data = await res.json();
+        // Direct call into the lib orchestrator (#600). Replaces the
+        // earlier faux-fetch through the route file that violated the
+        // lib-no-import-app invariant.
+        const { runDiagnose } = await import('@/lib/diagnose/runDiagnose');
+        const data = await runDiagnose(nodeName);
         return textResult(data);
       } catch (err) {
         return errorResult(`Error running diagnostics: ${err instanceof Error ? err.message : String(err)}`);

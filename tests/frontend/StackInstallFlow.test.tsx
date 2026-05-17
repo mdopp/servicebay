@@ -5,7 +5,7 @@ import StackInstallFlow, {
   StackInstallProgress,
   StackInstallSummary,
 } from '@/components/StackInstallFlow';
-import type { UseStackInstallReturn } from '@/lib/stackInstall/useStackInstall';
+import type { UseStackInstallReturn } from '@/hooks/useStackInstall';
 
 /** Build a minimal controller stub the components can render against. */
 function makeController(overrides: Partial<UseStackInstallReturn> = {}): UseStackInstallReturn {
