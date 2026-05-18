@@ -25,6 +25,7 @@ import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailur
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
 import { checkDomainExternalReachability } from '@/lib/diagnose/probes/domainExternalReachability';
 import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable';
+import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import '@/lib/diagnose/probes/register';
 
@@ -652,6 +653,31 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     probes.push({
       id: 'router_dns_not_pointing',
       label: 'Router DNS routing',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 14a) OIDC provider reachability (#623). Sister-probe to crash_loop
+  //     and domain_external_reachability — closes the gap between
+  //     "container up" and "SSO actually works". Authelia in #622
+  //     was up + DNS routing fine, but /.well-known/openid-configuration
+  //     was 502 because the preserved DB's encryption key drifted from
+  //     the post-reinstall config; every OIDC-gated service was
+  //     surfacing 502 to the operator while diagnose said all green.
+  try {
+    const oidc = await checkOidcProviderReachable();
+    probes.push({
+      id: 'oidc_provider_reachable',
+      label: 'OIDC provider (Authelia)',
+      status: oidc.status,
+      detail: oidc.detail,
+      hint: oidc.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'oidc_provider_reachable',
+      label: 'OIDC provider (Authelia)',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
