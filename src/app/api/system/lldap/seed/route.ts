@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       // holds the old admin password, so the new env LLDAP_LDAP_USER_PASS was
       // ignored. Surface that explicitly so the user knows to wipe the volume.
       return NextResponse.json({
-        error: 'LLDAP rejected the admin password. This usually means an existing LLDAP data volume from a previous install still holds the old password — LLDAP_LDAP_USER_PASS only takes effect on first DB initialization. Either wipe the LLDAP data dir (typically `<DATA_DIR>/lldap/data`, e.g. `/mnt/data/stacks/lldap/data` on the default Fedora CoreOS layout) and reinstall, or reset the admin password from inside the LLDAP UI.',
+        error: 'LLDAP rejected the admin password. This usually means an existing LLDAP data volume from a previous install still holds the old password — LLDAP_LDAP_USER_PASS only takes effect on first DB initialization. Fix on the default Fedora CoreOS layout:\n\n  ssh core@<server>\n  systemctl --user stop auth.service\n  # podman unshare is required because users.db is owned by LLDAP\'s\n  # in-container UID (~525287), so a plain `rm` fails with EPERM.\n  podman unshare rm -f /var/mnt/data/stacks/auth/lldap/users.db\n  # If Authelia also fails with "encryption key not valid":\n  podman unshare rm -f /var/mnt/data/stacks/auth/authelia-data/db.sqlite3\n  systemctl --user start auth.service\n\nThen re-add LLDAP users at http://<server>:17170 (admin password is the one ServiceBay generated this install — see Settings → Integrations → Saved credentials). Alternative if you remember the previous install\'s LLDAP admin password: set it on `config.auth.lldap.password` in Settings → Integrations → LLDAP, no wipe needed.',
         reason: 'auth_rejected',
       }, { status: 401 });
     }
