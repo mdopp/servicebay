@@ -12,18 +12,20 @@ metadata:
     servicebay.ports: "{{NGINX_PORT}}/tcp,{{NGINX_SSL_PORT}}/tcp,{{NGINX_ADMIN_PORT}}/tcp"
     # Readiness probe (#613). Every "behind NPM" template depends on
     # nginx and seeds a proxy host in its post-deploy — the admin API
-    # must be answering before that fires. NPM's `/api/tokens` rejects
-    # auth with 401 once the Node.js server is fully started and the
-    # sqlite DB seeded; earlier in startup it returns 502 / connection-
-    # refused. The retry loop in `src/lib/stackInstall/postInstall.ts`
-    # still handles the case where NPM rejects ServiceBay's wizard-
-    # generated credentials, but cold-start liveness is now declarative.
+    # must be answering before that fires. NPM's `/api/tokens` POST
+    # runs joi schema validation BEFORE auth, so it returns 400 when
+    # `identity` isn't a valid email format and 401 when the format
+    # validates but auth fails. Either response proves the API is live;
+    # earlier in startup the listener returns 502 / connection-refused
+    # / 5xx, which the probe keeps waiting on. The retry loop in
+    # `src/lib/stackInstall/postInstall.ts` still handles the case
+    # where NPM rejects ServiceBay's wizard-generated credentials.
     servicebay.readiness: |
       - kind: http
         url: http://localhost:{{NGINX_ADMIN_PORT}}/api/tokens
         method: POST
-        body: '{"identity":"x","secret":"x"}'
-        expect_status: 401
+        body: '{"identity":"probe@servicebay.local","secret":"x"}'
+        expect_status: [400, 401]
         timeout: 5m
 spec:
   hostNetwork: true
