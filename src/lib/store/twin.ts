@@ -1,6 +1,6 @@
 import path from 'path';
 import yaml from 'js-yaml';
-import { EnrichedContainer, ServiceUnit, SystemResources, Volume, WatchedFile, ProxyRoute, PortMapping } from '../agent/types';
+import { EnrichedContainer, ServiceUnit, ServiceHealth, SystemResources, Volume, WatchedFile, ProxyRoute, PortMapping } from '../agent/types';
 import { logger } from '../logger';
 import type { AgentHealth } from '../agent/handler';
 import type { ServiceBundle } from '../unmanaged/bundleShared';
@@ -115,6 +115,15 @@ export class DigitalTwinStore {
 
   private listeners: Array<() => void> = [];
   private staticPortsCache = new Map<string, { contentKey: string; ports: PortMapping[] }>();
+
+  /**
+   * Health-probe results keyed by `nodeId → serviceName → ServiceHealth`.
+   * Source of truth for `ServiceUnit.health` (#626). Held out-of-band
+   * because the agent periodically replaces `NodeTwin.services` wholesale;
+   * re-attaching from this side-map after each `updateNode` keeps the
+   * field stable across syncs without forcing the agent to know about it.
+   */
+  private serviceHealth: Record<string, Record<string, ServiceHealth>> = {};
 
   private constructor() {}
 
@@ -295,6 +304,11 @@ export class DigitalTwinStore {
         ...data,
         lastSync: Date.now()
     };
+
+    // Re-attach health from the side map. The agent's sync replaces
+    // `services` wholesale, so without this the health field gets
+    // wiped between probe runs. See `serviceHealth` definition.
+    this.applyServiceHealthToNode(nodeId);
 
     // ENRICHMENT: Calculate Derived Properties (Effective Ports, Host Network)
     // This makes the Twin the Single Source of Truth for "Service Properties"
@@ -942,6 +956,52 @@ export class DigitalTwinStore {
     if(!this.nodes[nodeId]) this.registerNode(nodeId);
     this.nodes[nodeId].connected = connected;
     this.notifyListeners();
+  }
+
+  /**
+   * Upsert a single service's health-probe result (#626). Stored in the
+   * side-map AND mirrored onto the current `services[].health` so
+   * readers don't have to know about the two-store split. `updateNode`
+   * re-attaches from the side-map on every agent sync so the field
+   * survives the periodic services-array replacement.
+   */
+  public setServiceHealth(nodeId: string, serviceName: string, health: ServiceHealth): void {
+    if (!this.serviceHealth[nodeId]) this.serviceHealth[nodeId] = {};
+    this.serviceHealth[nodeId][serviceName] = health;
+    const node = this.nodes[nodeId];
+    if (node) {
+      const svc = node.services?.find(s => s.name === serviceName);
+      if (svc) svc.health = health;
+    }
+    this.notifyListeners();
+  }
+
+  /** Drop a service's recorded health — used when the service is wiped
+   *  or its template loses the healthcheck annotation. */
+  public clearServiceHealth(nodeId: string, serviceName: string): void {
+    if (this.serviceHealth[nodeId]) {
+      delete this.serviceHealth[nodeId][serviceName];
+    }
+    const node = this.nodes[nodeId];
+    if (node) {
+      const svc = node.services?.find(s => s.name === serviceName);
+      if (svc) delete svc.health;
+    }
+    this.notifyListeners();
+  }
+
+  /** Internal: re-attach side-map health onto `services[].health` after
+   *  an agent sync replaces the services array. Called from `updateNode`
+   *  unconditionally — cheap when the side-map is empty. */
+  private applyServiceHealthToNode(nodeId: string): void {
+    const map = this.serviceHealth[nodeId];
+    if (!map) return;
+    const node = this.nodes[nodeId];
+    if (!node?.services) return;
+    for (const svc of node.services) {
+      const h = map[svc.name];
+      if (h) svc.health = h;
+    }
   }
 
   public subscribe(listener: () => void) {

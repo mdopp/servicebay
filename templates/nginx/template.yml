@@ -27,6 +27,14 @@ metadata:
         body: '{"identity":"probe@servicebay.local","secret":"x"}'
         expect_status: [400, 401]
         timeout: 5m
+    # Continuous health probe (#626). NPM's unauthenticated `/api/` root
+    # responds with the API metadata JSON — a cheap 200 that proves the
+    # admin listener is alive without needing creds.
+    servicebay.healthcheck: |
+      url: http://localhost:{{NGINX_ADMIN_PORT}}/api/
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   hostNetwork: true
   containers:
