@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.2.2...servicebay-v4.2.3) (2026-05-18)
+
+
+### Bug Fixes
+
+* **install:** self-heal Authelia storage when encryption key isn't reused ([#619](https://github.com/mdopp/servicebay/issues/619)) ([2a173fe](https://github.com/mdopp/servicebay/commit/2a173fe4d04349b596faa128f943d8a90104d65f))
+
 ## [4.2.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.2.1...servicebay-v4.2.2) (2026-05-18)
 
 
