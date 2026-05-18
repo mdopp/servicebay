@@ -542,13 +542,13 @@ export class ServiceLifecycle {
         if (migrations && migrations.length > 0) {
             onProgress?.(`Running ${migrations.length} migration step(s) for ${name}...`);
             for (const m of migrations) {
-                await this.runMigrationScript(nodeName, name, m, postDeployEnv ?? {}, onProgress);
+                await ServiceLifecycle.runMigrationScript(nodeName, name, m, postDeployEnv ?? {}, onProgress);
             }
         }
 
-        await this.writeFile(nodeName, yamlName, yamlContent);
-        await this.writeFile(nodeName, `${name}.kube`, kubeContent);
-        await this.ensurePodmanSocket(nodeName);
+        await ServiceLifecycle.writeFile(nodeName, yamlName, yamlContent);
+        await ServiceLifecycle.writeFile(nodeName, `${name}.kube`, kubeContent);
+        await ServiceLifecycle.ensurePodmanSocket(nodeName);
 
         // Defensive: if the template ships any *.mustache config files but the
         // caller (wizard / MCP / installer) didn't pass them through as
@@ -630,13 +630,13 @@ export class ServiceLifecycle {
 
         // Ensure unprivileged port binding if any port < 1024 is used
         if (ServiceListing.hasPrivilegedPorts(yamlContent)) {
-            await this.ensureUnprivilegedPorts(nodeName);
+            await ServiceLifecycle.ensureUnprivilegedPorts(nodeName);
         }
 
-        await this.reloadDaemon(nodeName);
+        await ServiceLifecycle.reloadDaemon(nodeName);
 
         // Pre-pull all images before starting to avoid systemd timeout
-        await this.prePullImages(nodeName, images, onProgress ? (image, idx, total, evt) => {
+        await ServiceLifecycle.prePullImages(nodeName, images, onProgress ? (image, idx, total, evt) => {
             if (evt.id && evt.status) {
                 if (evt.total && evt.current !== undefined) {
                     const pct = Math.round(evt.current / evt.total * 100);
@@ -650,14 +650,14 @@ export class ServiceLifecycle {
         } : undefined);
 
         // Fix volume ownership for containers running as non-root UIDs
-        await this.fixVolumeOwnership(nodeName, yamlContent);
+        await ServiceLifecycle.fixVolumeOwnership(nodeName, yamlContent);
 
         // Run pre-start hooks (e.g. initialize databases with known credentials)
-        await this.runPreStartHooks(nodeName, name, yamlContent);
+        await ServiceLifecycle.runPreStartHooks(nodeName, name, yamlContent);
 
         // Attempt start, but don't fail deployment if start fails (user can check logs)
         try {
-             await this.startService(nodeName, name);
+             await ServiceLifecycle.startService(nodeName, name);
         } catch(e) {
              logger.warn('ServiceManager', `Service ${name} deployed but start failed:`, e);
         }
@@ -682,7 +682,7 @@ export class ServiceLifecycle {
             if (manifest?.requiresApi) {
                 assertApiCompat(name, manifest.requiresApi);
             }
-            await this.runPostDeployScript(nodeName, name, postDeployScript, postDeployEnv ?? {}, onProgress);
+            await ServiceLifecycle.runPostDeployScript(nodeName, name, postDeployScript, postDeployEnv ?? {}, onProgress);
         }
 
         // Stamp the template's schema version so future re-deploys can
@@ -705,7 +705,7 @@ export class ServiceLifecycle {
             logger.warn('ServiceManager', `Could not stamp installedTemplates[${name}]:`, e);
         }
 
-        this.backupQuadlets(nodeName);
+        ServiceLifecycle.backupQuadlets(nodeName);
 
         // Create health check for the new service if one doesn't exist
         try {
@@ -990,9 +990,9 @@ export class ServiceLifecycle {
              throw new Error('Failed to write service file');
         }
 
-        await this.ensurePodmanSocket(nodeName);
-        await this.reloadDaemon(nodeName);
-        this.backupQuadlets(nodeName);
+        await ServiceLifecycle.ensurePodmanSocket(nodeName);
+        await ServiceLifecycle.reloadDaemon(nodeName);
+        ServiceLifecycle.backupQuadlets(nodeName);
     }
 
     static async removeService(nodeName: string, filename: string) {
@@ -1005,8 +1005,8 @@ export class ServiceLifecycle {
         const res = await agent.sendCommand('exec', { command: cmd });
          if (res.code !== 0) throw new Error(res.stderr);
 
-        await this.reloadDaemon(nodeName);
-        this.backupQuadlets(nodeName);
+        await ServiceLifecycle.reloadDaemon(nodeName);
+        ServiceLifecycle.backupQuadlets(nodeName);
     }
 
     /** Backup Quadlet files to data directory (survives OS reinstall).
@@ -1044,11 +1044,11 @@ export class ServiceLifecycle {
             if (existing.yamlContent) await saveSnapshot(yamlFileName, existing.yamlContent);
         } catch { /* ignore if new file */ }
 
-        await this.writeFile(nodeName, `${serviceName}.kube`, kubeContent);
-        await this.writeFile(nodeName, yamlFileName, yamlContent);
-        await this.reloadDaemon(nodeName);
-        await this.refreshAgent(nodeName);
-        this.backupQuadlets(nodeName);
+        await ServiceLifecycle.writeFile(nodeName, `${serviceName}.kube`, kubeContent);
+        await ServiceLifecycle.writeFile(nodeName, yamlFileName, yamlContent);
+        await ServiceLifecycle.reloadDaemon(nodeName);
+        await ServiceLifecycle.refreshAgent(nodeName);
+        ServiceLifecycle.backupQuadlets(nodeName);
     }
 
     /**
@@ -1104,15 +1104,15 @@ export class ServiceLifecycle {
             command: `printf '%s' ${JSON.stringify(manifest)} > '${trashDir}/.manifest.json'`,
         });
 
-        await this.reloadDaemon(nodeName);
+        await ServiceLifecycle.reloadDaemon(nodeName);
 
         // Clear failed state
         try {
             await agent.sendCommand('exec', { command: `systemctl --user reset-failed ${serviceName}.service` });
         } catch { /* unit may not be in failed state */ }
 
-        await this.refreshAgent(nodeName);
-        this.backupQuadlets(nodeName);
+        await ServiceLifecycle.refreshAgent(nodeName);
+        ServiceLifecycle.backupQuadlets(nodeName);
 
         logger.info('ServiceManager', `Soft-deleted ${serviceName} on ${nodeName} → ${trashDir}`);
     }
@@ -1160,9 +1160,9 @@ export class ServiceLifecycle {
         // Wipe the now-empty trash dir.
         await agent.sendCommand('exec', { command: `rm -rf '${trashDir}'` });
 
-        await this.reloadDaemon(nodeName);
-        await this.refreshAgent(nodeName);
-        this.backupQuadlets(nodeName);
+        await ServiceLifecycle.reloadDaemon(nodeName);
+        await ServiceLifecycle.refreshAgent(nodeName);
+        ServiceLifecycle.backupQuadlets(nodeName);
 
         logger.info('ServiceManager', `Restored ${manifest.service} from trash on ${nodeName}`);
         return { service: manifest.service };
@@ -1238,19 +1238,19 @@ export class ServiceLifecycle {
 
         // 3. Write new kube file with updated Yaml= reference, then remove old
         const newKubeContent = content.replace(/Yaml=.+/, `Yaml=${newYamlFile}`);
-        await this.writeFile(nodeName, `${newName}.kube`, newKubeContent);
+        await ServiceLifecycle.writeFile(nodeName, `${newName}.kube`, newKubeContent);
         await agent.sendCommand('exec', { command: `rm -f ${oldKubePath}` });
 
         // 4. Reload and start
-        await this.reloadDaemon(nodeName);
+        await ServiceLifecycle.reloadDaemon(nodeName);
         try {
             await agent.sendCommand('exec', { command: `systemctl --user enable --now ${newName}.service` });
         } catch (e) {
             throw new Error(`Failed to start new service: ${e}`);
         }
 
-        await this.refreshAgent(nodeName);
-        this.backupQuadlets(nodeName);
+        await ServiceLifecycle.refreshAgent(nodeName);
+        ServiceLifecycle.backupQuadlets(nodeName);
     }
 
      
@@ -1302,7 +1302,7 @@ export class ServiceLifecycle {
         }
 
         logs.push('Reloading systemd daemon...');
-        await this.reloadDaemon(nodeName);
+        await ServiceLifecycle.reloadDaemon(nodeName);
 
         const unit = serviceName.endsWith('.service') ? serviceName : `${serviceName}.service`;
         logs.push(`Stopping service ${unit}...`);
@@ -1351,8 +1351,8 @@ export class ServiceLifecycle {
             content = lines.join('\n');
         }
 
-        await this.writeFile(nodeName, `${serviceName}.kube`, content);
-        await this.reloadDaemon(nodeName);
+        await ServiceLifecycle.writeFile(nodeName, `${serviceName}.kube`, content);
+        await ServiceLifecycle.reloadDaemon(nodeName);
     }
 
 }

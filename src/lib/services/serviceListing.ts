@@ -435,9 +435,9 @@ export class ServiceListing {
         selfName: string,
         yamlContent: string,
     ): Promise<{ hostPort: number; serviceName: string }[]> {
-        const wanted = this.extractHostPorts(yamlContent);
+        const wanted = ServiceListing.extractHostPorts(yamlContent);
         if (wanted.length === 0) return [];
-        const services = await this.listServices(nodeName);
+        const services = await ServiceListing.listServices(nodeName);
         const collisions: { hostPort: number; serviceName: string }[] = [];
         for (const port of wanted) {
             for (const svc of services) {
