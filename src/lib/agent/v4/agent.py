@@ -294,17 +294,23 @@ class CommandExecutor:
             log_error("Agent will not function properly in container mode without SSH access")
             # Don't exit - let agent startup continue, but commands will fail
     
-    def execute(self, command: List[str], check: bool = True, timeout: Optional[float] = None) -> Tuple[str, str, int]:
+    def execute(self, command: List[str], check: bool = True, timeout: Optional[float] = None, stdin_data: Optional[str] = None) -> Tuple[str, str, int]:
         """Execute command locally or via SSH.
-        
+
+        `stdin_data` is written to the child's stdin then closed. Required
+        for commands like `smbpasswd -s` that read the new password from
+        stdin — without it the child hangs forever waiting on a fd that
+        will never close, and the TS-side 30 s request timeout surfaces
+        as "Agent request timeout" with no useful context.
+
         Returns: (stdout, stderr, returncode)
         """
         if IS_CONTAINERIZED:
-            return self._execute_ssh(command, check, timeout)
+            return self._execute_ssh(command, check, timeout, stdin_data)
         else:
-            return self._execute_local(command, check, timeout)
-    
-    def _execute_local(self, command: List[str], check: bool, timeout: Optional[float]) -> Tuple[str, str, int]:
+            return self._execute_local(command, check, timeout, stdin_data)
+
+    def _execute_local(self, command: List[str], check: bool, timeout: Optional[float], stdin_data: Optional[str] = None) -> Tuple[str, str, int]:
         """Direct local execution."""
         try:
             result = subprocess.run(
@@ -312,7 +318,8 @@ class CommandExecutor:
                 capture_output=True,
                 text=True,
                 check=check,
-                timeout=timeout
+                timeout=timeout,
+                input=stdin_data,
             )
             return result.stdout.strip(), result.stderr.strip(), result.returncode
         except subprocess.CalledProcessError as e:
@@ -327,31 +334,45 @@ class CommandExecutor:
         except Exception as e:
             log_error(f"Unexpected error running {command}: {e}")
             return "", str(e), 1
-    
-    def _execute_ssh(self, command: List[str], check: bool, timeout: Optional[float]) -> Tuple[str, str, int]:
+
+    def _execute_ssh(self, command: List[str], check: bool, timeout: Optional[float], stdin_data: Optional[str] = None) -> Tuple[str, str, int]:
         """Execute via SSH on host."""
         if not self.ssh_client:
             log_error("SSH client not available - cannot execute command")
             return "", "SSH not connected", 1
-        
+
         try:
             # Properly escape command arguments for shell
             from shlex import quote
             cmd_str = ' '.join(quote(arg) for arg in command)
-            
+
             log_debug(f"SSH exec: {cmd_str}")
             stdin, stdout, stderr = self.ssh_client.exec_command(cmd_str, timeout=timeout)
             if timeout:
                 stdout.channel.settimeout(timeout)
                 stderr.channel.settimeout(timeout)
-            
+
+            if stdin_data:
+                try:
+                    stdin.write(stdin_data)
+                    stdin.flush()
+                except Exception as e:
+                    log_warn(f"SSH stdin write failed: {e}")
+                finally:
+                    # The remote process will block on read() forever if we
+                    # don't close the channel — same hang as the local case.
+                    try:
+                        stdin.channel.shutdown_write()
+                    except Exception:
+                        pass
+
             stdout_data = stdout.read().decode('utf-8', errors='replace').strip()
             stderr_data = stderr.read().decode('utf-8', errors='replace').strip()
             exit_code = stdout.channel.recv_exit_status()
-            
+
             if check and exit_code != 0:
                 log_warn(f"SSH command failed (exit {exit_code}): {cmd_str}")
-            
+
             return stdout_data, stderr_data, exit_code
         except socket.timeout:
             log_error(f"SSH command timed out after {timeout}s: {cmd_str}")
@@ -1821,15 +1842,35 @@ class Agent:
                         self.last_resource_push = 0
                 reply(result='ok')
             elif cmd == 'exec':
-                command_str = msg.get('payload', {}).get('command')
+                payload_dict = msg.get('payload', {})
+                command_str = payload_dict.get('command')
                 if not command_str:
                     reply(error="Missing command")
                 else:
+                    # stdin + timeout were silently dropped before. Without
+                    # stdin, every TS call that piped data (e.g. samba's
+                    # `smbpasswd -s -a <user>` with "pw\npw\n" stdin)
+                    # would have the remote command block on read() until
+                    # the wire-level 30 s request timeout killed it and
+                    # surfaced as a 500 to the operator — see the
+                    # "Sync: Internal error" report in #614.
+                    stdin_data = payload_dict.get('stdin')
+                    raw_timeout = payload_dict.get('timeout')
+                    # The TS exec wrapper passes seconds (sambaSync uses
+                    # `timeout: 10`); coerce defensively against numeric
+                    # strings + nonsense. None falls back to the executor's
+                    # own default (no per-command cap), which matches the
+                    # historic behaviour for callers that don't set one.
+                    try:
+                        timeout_val: Optional[float] = float(raw_timeout) if raw_timeout is not None else None
+                    except (TypeError, ValueError):
+                        timeout_val = None
                     log_info(f"Executing shell command: {command_str}")
-                    # Execute via executor (supports SSH in container mode)
                     stdout, stderr, returncode = _executor.execute(
                         ['sh', '-c', command_str],
-                        check=False
+                        check=False,
+                        timeout=timeout_val,
+                        stdin_data=stdin_data,
                     )
                     reply(result={
                         "code": returncode,
