@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.2.0...servicebay-v4.2.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **install:** reuse saved secrets across clean installs that preserve identity ([#615](https://github.com/mdopp/servicebay/issues/615)) ([69d113d](https://github.com/mdopp/servicebay/commit/69d113d0b167e5eda05ba6b584e1790a1a1df1fe))
+
 ## [4.2.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.1.0...servicebay-v4.2.0) (2026-05-18)
 
 
