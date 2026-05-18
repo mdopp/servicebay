@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.0.0...servicebay-v4.0.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **diagnose:** crash_loop probe checks RestartCount, not just ps Status ([5723e57](https://github.com/mdopp/servicebay/commit/5723e57e41d9d92bdfab5bc179ab6a0985ff8841))
+* **media:** wait for Jellyfin's default user before /Startup/User ([c007162](https://github.com/mdopp/servicebay/commit/c007162fd9eb1f2edf8183cbb0f9cb7d30f82f7a))
+
 ## [4.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.47.0...servicebay-v4.0.0) (2026-05-18)
 
 
