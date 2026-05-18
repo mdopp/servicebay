@@ -608,8 +608,9 @@ export default function HealthDashboard() {
                                 </td>
                                 <td className="p-3">
                                     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                        h.status === 'ok' ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' :
-                                        'bg-emerald-900/10 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200'
+                                        h.status === 'ok'
+                                            ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                            : 'bg-rose-100 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300'
                                     }`}>
                                         {h.status.toUpperCase()}
                                     </span>
@@ -617,9 +618,22 @@ export default function HealthDashboard() {
                                     <td className="p-3 text-gray-600 dark:text-gray-300 font-mono">
                                     {h.latency}ms
                                 </td>
-                                    <td className="p-3 text-gray-500 dark:text-gray-400 truncate max-w-xs" title={h.message}>
-                                    {h.message || '-'}
-                                </td>
+                                    <td className="p-3 text-gray-500 dark:text-gray-400 align-top">
+                                        {h.message
+                                            ? (h.message.length > 140
+                                                ? (
+                                                    <details className="group">
+                                                        <summary className="cursor-pointer list-none break-words whitespace-pre-wrap">
+                                                            <span className="group-open:hidden">{h.message.slice(0, 140)}…</span>
+                                                            <span className="hidden group-open:inline whitespace-pre-wrap break-words">{h.message}</span>
+                                                            <span className="ml-1 text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 group-open:hidden">show more</span>
+                                                            <span className="ml-1 text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 hidden group-open:inline">show less</span>
+                                                        </summary>
+                                                    </details>
+                                                )
+                                                : <span className="whitespace-pre-wrap break-words">{h.message}</span>)
+                                            : '-'}
+                                    </td>
                             </tr>
                         ))}
                     </tbody>
