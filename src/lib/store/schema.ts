@@ -18,7 +18,7 @@ export const NodeTwinUpdateSchema = z.object({
   services: z.array(z.unknown()).optional(),
   volumes: z.array(z.unknown()).optional(),
   files: z.record(z.string(), z.unknown()).optional(),
-  proxy: z.array(z.unknown()).optional(),
+  proxyRoutes: z.array(z.unknown()).optional(),
   health: z.unknown().optional(),
   nodeIPs: z.array(z.string()).optional(),
   unmanagedBundles: z.array(z.unknown()).optional(),

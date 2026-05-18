@@ -2208,7 +2208,13 @@ class Agent:
                 
             if new_proxy != self.state['proxyRoutes']:
                 self.state['proxyRoutes'] = new_proxy
-                updates['proxy'] = new_proxy
+                # NB: key must be 'proxyRoutes', not 'proxy' — the TS
+                # store maps incoming SYNC_PARTIAL keys 1:1 to NodeTwin
+                # fields and ignores anything not in the schema (#593
+                # renamed proxy → proxyRoutes; every other write-site
+                # in this file uses the new name; this one was missed
+                # and silently dropped every post-install proxy update).
+                updates['proxyRoutes'] = new_proxy
             
             if updates:
                 log_debug(f"Pushing updates for: {list(updates.keys())}")
