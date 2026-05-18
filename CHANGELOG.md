@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.1.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.0.1...servicebay-v4.1.0) (2026-05-18)
+
+
+### Features
+
+* **diagnose:** oidc_provider_reachable probe — closes the SSO blind spot ([f3c8dee](https://github.com/mdopp/servicebay/commit/f3c8dee64d5e6c9c6349d829426c537b9a863927))
+
 ## [4.0.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.0.0...servicebay-v4.0.1) (2026-05-18)
 
 
