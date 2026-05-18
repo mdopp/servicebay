@@ -1,4 +1,67 @@
-# Media (Audiobookshelf + Navidrome) — template changelog
+# Media (Audiobookshelf + Jellyfin) — template changelog
+
+## v4 (breaking) — #618
+
+Swapped Navidrome out for Jellyfin. Audiobookshelf is unchanged.
+
+### Why
+
+Navidrome's only path for mobile-app authentication was the Subsonic
+API's HTTP Basic Auth — every family member had to type the local
+admin password into every device (Symfonium, DSub, play:Sub, etc.).
+There's no OAuth/SSO branch in the Subsonic protocol spec, so this
+was a protocol limitation, not a Navidrome bug.
+
+Jellyfin's **Quick Connect** sidesteps this: the mobile app shows a
+6-digit code, the operator (or family member) confirms it once in
+the web UI, the app is paired — no shared password leaves the
+operator's head. Web UI itself runs against Jellyfin's own user DB
+by default; operators can install `jellyfin-plugin-sso` manually
+later for Authelia-redirect SSO if they want, but Quick Connect
+already covers the practical case.
+
+### What changed
+
+- `template.yml`: removed the `navidrome` container + its volumes;
+  added a `jellyfin` container with `/config`, `/cache`, and a
+  read-only `/media` mount (default
+  `/mnt/data/stacks/file-share/data` — so Music/, Movies/, TV/,
+  Audiobooks/ all live under the same Samba-visible tree).
+- `variables.json`: dropped every `NAVIDROME_*` variable + the
+  `NAVIDROME_SUBDOMAIN` block (which carried the forward-auth
+  advanced_config); added `JELLYFIN_PORT` (8096),
+  `JELLYFIN_ADMIN_USER`/`_PASSWORD`, `JELLYFIN_MEDIA_PATH`, and a
+  `MEDIA_SUBDOMAIN` (still defaults to `music`) with a 100 MB upload
+  cap (Jellyfin's cover-art import needs it).
+- `post-deploy.py`: replaced the Navidrome seed with a Jellyfin
+  setup that (1) waits for /System/Info/Public, (2) walks the
+  /Startup/* sequence to skip the wizard and seed the admin from
+  `JELLYFIN_ADMIN_PASSWORD`, (3) authenticates via
+  /Users/AuthenticateByName, (4) enables Quick Connect, (5) adds
+  /media/Music as a "Music" library so the scan starts immediately.
+  Each step is best-effort with a clear breadcrumb if it fails.
+- `migrations/v3-to-v4.py`: moves the old Navidrome data dir to
+  `navidrome.bak` (operator deletes once confident) and surfaces
+  the data-loss caveats up-front: play history, stars, playlists,
+  per-user accounts are NOT carried across.
+
+### Required action for existing installs
+
+1. **Family members must re-pair** in their mobile apps: delete the
+   old "Navidrome" backend, add a "Jellyfin" backend pointing at
+   the same `music.<your-domain>` URL, choose "Quick Connect" as
+   the sign-in method.
+2. **Drop the `navidrome` OIDC client** from Authelia's
+   `configuration.yml` — v4 doesn't register it, but a stale entry
+   left over from v3 doesn't hurt (Authelia just ignores
+   unreachable clients).
+3. **Drop the Navidrome proxy-host's `advanced_config`** in NPM if
+   you customized it; the v4 `MEDIA_SUBDOMAIN` carries a cleaner
+   one (`client_max_body_size 100M` for Jellyfin cover-art uploads,
+   nothing else).
+4. Old `${DATA_DIR}/media/navidrome` is renamed to `navidrome.bak`
+   by the migration — `rm -rf` it once you've confirmed Jellyfin
+   is working.
 
 ## v3 (breaking) — #560 + #559
 

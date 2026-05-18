@@ -15,7 +15,7 @@
   },
   "TZ": {
     "type": "text",
-    "description": "Timezone (used for podcast download schedules)",
+    "description": "Timezone (used for podcast download schedules + Jellyfin metadata)",
     "default": "Europe/Berlin"
   },
   "ABS_AUDIOBOOKS_PATH": {
@@ -52,41 +52,41 @@
       "clientSecretVar": "ABS_OIDC_SECRET"
     }
   },
-  "NAVIDROME_PORT": {
+  "JELLYFIN_PORT": {
     "type": "text",
-    "description": "Port for the Navidrome web UI + Subsonic API",
-    "default": "4533"
+    "description": "Port for the Jellyfin web UI + API",
+    "default": "8096"
   },
-  "NAVIDROME_ADMIN_USER": {
+  "JELLYFIN_ADMIN_USER": {
     "type": "text",
-    "description": "Navidrome admin username (also used as Subsonic API user)",
+    "description": "Jellyfin initial admin username",
     "default": "admin"
   },
-  "NAVIDROME_ADMIN_PASSWORD": {
+  "JELLYFIN_ADMIN_PASSWORD": {
     "type": "secret",
-    "description": "Navidrome admin password — auto-generated. ServiceBay calls /auth/createAdmin after deploy so first login works without going through the in-app setup."
+    "description": "Jellyfin admin password — auto-generated. ServiceBay walks the first-run wizard via the /Startup/* API after deploy so first login works. Family members can either share this account, get their own via Settings → Users, or you enable jellyfin-plugin-sso later for Authelia SSO."
   },
-  "NAVIDROME_MUSIC_PATH": {
+  "JELLYFIN_MEDIA_PATH": {
     "type": "text",
-    "description": "Host path to your music library. Defaults to the file-share template's data dir, so files dropped into the Samba share appear automatically.",
-    "default": "/mnt/data/stacks/file-share/data/Music"
+    "description": "Host path mounted at /media (read-only). Defaults to the file-share volume so Music/, Movies/, TV/ etc. dropped into the Samba share appear in Jellyfin's library scan.",
+    "default": "/mnt/data/stacks/file-share/data"
   },
   "PUBLIC_DOMAIN": {
     "type": "text",
-    "description": "Public domain (used to build the SSO authority URL https://auth.<domain> and the redirect URL).",
+    "description": "Public domain (used to build the JELLYFIN_PublishedServerUrl env that mobile apps probe for backend URLs).",
     "default": "dopp.cloud"
   },
-  "NAVIDROME_SUBDOMAIN": {
+  "MEDIA_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for Navidrome (web UI + Symfonium endpoint). SSO is via Authelia forward-auth (Remote-User header); Subsonic API clients bypass it and use the local admin password.",
+    "description": "Subdomain for Jellyfin (web UI + Symfonium/Findroid/Streamyfin endpoint). Quick Connect handles mobile-app pairing — the app shows a 6-digit code, you confirm it once in the web UI (which can be SSO'd via jellyfin-plugin-sso if installed) and the app is paired without a shared password.",
     "default": "music",
     "exposure": "public",
-    "proxyPort": "NAVIDROME_PORT",
+    "proxyPort": "JELLYFIN_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
       "block_exploits": true,
       "ssl_forced": true,
-      "advanced_config": "__authelia_forward_auth__\n# Subsonic API endpoints bypass Authelia — mobile clients (Symfonium,\n# play:Sub, DSub, etc.) send their own Basic auth or u/p/t Subsonic\n# credentials and don't speak OIDC / forward-auth.\nlocation /rest/ {\n  proxy_pass $forward_scheme://$server:$port;\n  proxy_set_header Host $host;\n  proxy_set_header X-Real-IP $remote_addr;\n  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n  proxy_set_header X-Forwarded-Proto $scheme;\n  auth_request off;\n}\nlocation /share/ {\n  # Public share links — never gated.\n  proxy_pass $forward_scheme://$server:$port;\n  proxy_set_header Host $host;\n  auth_request off;\n}"
+      "advanced_config": "# Jellyfin needs a higher body limit for chunked uploads (cover\n# art replacement, library imports). Default NPM cap of 1MB rejects\n# those.\nclient_max_body_size 100M;"
     }
   }
 }

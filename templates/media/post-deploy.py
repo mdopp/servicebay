@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-post-deploy hook for the `media` stack (Audiobookshelf + Navidrome).
+post-deploy hook for the `media` stack (Audiobookshelf + Jellyfin).
 
 Convention (see lib/registry.ts:getTemplatePostDeployScript):
   - Runs on the agent host after `systemctl --user start media.service`
@@ -13,18 +13,26 @@ Convention (see lib/registry.ts:getTemplatePostDeployScript):
     SAVE-THESE-NOW banner / Bitwarden export — emit one per service.
   - Non-zero exit logs a warning but doesn't roll back the deploy.
 
-What this replaces (was hardcoded in src/lib/stackInstall/postInstall.ts
-under `if (isSelected('media'))`):
-  - logAudiobookshelfCredentials  → `__SB_CREDENTIAL__` for ABS
-  - logNavidromeCredentials       → `__SB_CREDENTIAL__` for Navidrome
-  - seedAudiobookshelf            → POST localhost:<port>/init via the
-                                    /api/system/media/init proxy endpoint
-  - seedNavidrome                 → same, with service=navidrome
+Schema v4 swapped Navidrome for Jellyfin so Symfonium / Findroid /
+Streamyfin can pair via Quick Connect (the closest practical thing to
+SSO for music-app pairing — operator confirms a 6-digit code in the
+web UI once, app is paired). Audiobookshelf section is unchanged.
 
-We keep using the existing /api/system/media/init endpoint rather than
-talking to ABS / Navidrome directly because that endpoint already
-encapsulates the right retry budget, idempotency check, and "first-run
-already done" handling. The script just supplies the inputs.
+What this does for Jellyfin:
+  1. Wait for /System/Info/Public to come up (image-pull budget).
+  2. Walk /Startup/* to skip the first-run wizard and seed the admin
+     user from JELLYFIN_ADMIN_PASSWORD.
+  3. Authenticate against /Users/AuthenticateByName to get a token.
+  4. POST /QuickConnect/Enable so mobile apps can pair without
+     shared passwords.
+  5. Add /media/Music as a "Music" virtual folder so the library scan
+     starts immediately. Other subdirs (Movies/, TV/, Audiobooks/)
+     stay un-imported — operator adds them by hand if wanted.
+
+Best-effort throughout: each step that fails just logs a clear
+breadcrumb so the operator can finish the setup manually in the
+Jellyfin UI — non-zero exit only on something that breaks the
+banner output.
 """
 
 from __future__ import annotations
@@ -92,7 +100,7 @@ def request_json(
 
 
 def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tuple[int, dict[str, object] | None]:
-    """POST JSON, return (status, parsed-body-or-None)."""
+    """POST JSON via the ServiceBay internal API (X-SB-Internal-Token if set)."""
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     token = os.environ.get("SB_API_TOKEN", "")
@@ -120,31 +128,26 @@ def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tu
         return 0, None
 
 
-def seed_media(service_label: str, service_payload_name: str, port_var: str, default_port: str,
-               user_var: str, default_user: str, password_var: str) -> None:
-    """
-    Wait for the media service to come up, then POST to ServiceBay's media-init
-    proxy endpoint. The endpoint itself retries against the upstream service
-    while the image is still pulling, so we just wrap it with a sensible
-    overall budget here. Idempotent: re-calls report `alreadySetup`.
-    """
-    user = env(user_var, default_user)
-    password = env(password_var)
-    port = env(port_var, default_port)
+# ── Audiobookshelf seed (unchanged from v3) ────────────────────────────
+
+
+def seed_audiobookshelf(port: str, user: str, password: str) -> None:
+    """Talk to ServiceBay's media-init proxy endpoint so ABS gets its admin
+    seeded. Idempotent; reports alreadySetup on second run."""
     if not password:
-        log(f"⚠️ {service_label}: no admin password in env ({password_var}), skipping seed.")
+        log(f"⚠️ Audiobookshelf: no admin password in env (ABS_ADMIN_PASSWORD), skipping seed.")
         return
 
     sb_api = env("SB_API_URL", "http://localhost:3000")
     init_url = f"{sb_api}/api/system/media/init"
 
-    log(f"Waiting for {service_label} to start...")
+    log("Waiting for Audiobookshelf to start...")
     started = time.time()
     last_beat = 0.0
-    deadline = 5 * 60  # 5 min — same budget the old hardcoded helper used
+    deadline = 5 * 60
     while time.time() - started < deadline:
         status, body = post_json(init_url, {
-            "service": service_payload_name,
+            "service": "audiobookshelf",
             "host": "localhost",
             "port": int(port),
             "username": user,
@@ -152,17 +155,161 @@ def seed_media(service_label: str, service_payload_name: str, port_var: str, def
         }, timeout=15)
         if status == 200 and body and body.get("ok"):
             if body.get("alreadySetup"):
-                log(f"ℹ️ {service_label} already initialized — keeping existing admin. Reset manually if the password doesn't match.")
+                log("ℹ️ Audiobookshelf already initialized — keeping existing admin. Reset manually if the password doesn't match.")
             else:
-                log(f"✅ {service_label} root user '{user}' created.")
+                log(f"✅ Audiobookshelf root user '{user}' created.")
             return
         elapsed = time.time() - started
         if elapsed - last_beat >= 10:
-            log(f"Still waiting for {service_label} ({int(elapsed)}s elapsed)...")
+            log(f"Still waiting for Audiobookshelf ({int(elapsed)}s elapsed)...")
             last_beat = elapsed
         time.sleep(5)
 
-    log(f"⚠️ {service_label} did not become reachable in 5 minutes. Open http://<server-ip>:{port} and create the admin user manually.")
+    log(f"⚠️ Audiobookshelf did not become reachable in 5 minutes. Open http://<server-ip>:{port} and create the admin user manually.")
+
+
+# ── Jellyfin first-run + Quick Connect + Music library ───────────────
+
+
+# Pseudo-device identity sent to /Users/AuthenticateByName so Jellyfin's
+# auth log shows where the token came from. The Device + DeviceId pair
+# also lets the operator revoke this token cleanly from
+# Dashboard → API Keys if they want a clean audit trail.
+JELLYFIN_AUTH_HEADER = (
+    'MediaBrowser Client="ServiceBay", Device="post-deploy", '
+    'DeviceId="servicebay-postdeploy", Version="1.0"'
+)
+
+
+def jellyfin_wait_ready(base_url: str, deadline_s: int = 600) -> bool:
+    """Poll /System/Info/Public until 200 (server up) or deadline. The
+    first-boot Jellyfin image pull is ~500 MB and the initial DB
+    migrations land 30-60 s after the container reports ready, so we
+    budget generously (10 min total) without spamming the log."""
+    started = time.time()
+    last_beat = 0.0
+    while time.time() - started < deadline_s:
+        code, _ = request_json("GET", f"{base_url}/System/Info/Public", timeout=10)
+        if code == 200:
+            return True
+        elapsed = time.time() - started
+        if elapsed - last_beat >= 15:
+            log(f"Still waiting for Jellyfin to come up ({int(elapsed)}s elapsed)...")
+            last_beat = elapsed
+        time.sleep(5)
+    return False
+
+
+def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str, tz: str) -> bool:
+    """Walk the /Startup/* sequence to bypass the interactive wizard.
+    Returns True on a clean walk; on any non-2xx step the function bails
+    early so the operator finishes setup in the browser instead of
+    leaving Jellyfin half-configured."""
+    # Idempotent guard: if the public info already says wizard is done,
+    # skip — this lets the post-deploy re-run without resetting admin.
+    code, info = request_json("GET", f"{base_url}/System/Info/Public", timeout=10)
+    if code == 200 and isinstance(info, dict) and info.get("StartupWizardCompleted"):
+        log("ℹ️ Jellyfin startup wizard already completed — leaving the existing admin.")
+        return True
+
+    # Locale + metadata language. German default to match the home;
+    # operator can change in Settings → Server later.
+    code, _ = request_json("POST", f"{base_url}/Startup/Configuration", {
+        "UICulture": "de-DE",
+        "MetadataCountryCode": "DE",
+        "PreferredMetadataLanguage": "de",
+    })
+    if code not in (200, 204):
+        log(f"⚠️ Jellyfin: POST /Startup/Configuration returned {code} — finish setup at the web UI.")
+        return False
+
+    # Admin user.
+    code, _ = request_json("POST", f"{base_url}/Startup/User", {
+        "Name": admin_user,
+        "Password": admin_password,
+    })
+    if code not in (200, 204):
+        log(f"⚠️ Jellyfin: POST /Startup/User returned {code} — finish setup at the web UI.")
+        return False
+
+    # Remote access settings: enable HTTP access from non-LAN clients
+    # (NPM proxies them in anyway), disable UPnP — Jellyfin shouldn't
+    # be poking the FritzBox port-map; we own that via ServiceBay.
+    code, _ = request_json("POST", f"{base_url}/Startup/RemoteAccess", {
+        "EnableRemoteAccess": True,
+        "EnableAutomaticPortMapping": False,
+    })
+    if code not in (200, 204):
+        # Non-fatal — the operator can flip these in Dashboard later.
+        log(f"(note) Jellyfin: POST /Startup/RemoteAccess returned {code} — flip the remote-access toggles in Dashboard if needed.")
+
+    code, _ = request_json("POST", f"{base_url}/Startup/Complete", {})
+    if code not in (200, 204):
+        log(f"⚠️ Jellyfin: POST /Startup/Complete returned {code} — finish setup at the web UI.")
+        return False
+
+    log(f"✅ Jellyfin first-run wizard skipped; admin '{admin_user}' seeded.")
+    return True
+
+
+def jellyfin_get_token(base_url: str, admin_user: str, admin_password: str) -> str | None:
+    """Authenticate as the seeded admin and return an access token. Each
+    /Users/AuthenticateByName needs the X-Emby-Authorization client
+    identifier — the server returns 400 without it."""
+    code, body = request_json(
+        "POST", f"{base_url}/Users/AuthenticateByName",
+        {"Username": admin_user, "Pw": admin_password},
+        extra_headers={"X-Emby-Authorization": JELLYFIN_AUTH_HEADER},
+    )
+    if code == 200 and isinstance(body, dict):
+        return body.get("AccessToken")
+    log(f"⚠️ Jellyfin authentication failed (HTTP {code}). Skipping Quick Connect + library auto-add.")
+    return None
+
+
+def jellyfin_enable_quick_connect(base_url: str, token: str) -> None:
+    """Enable Quick Connect server-side. Mobile apps then offer a "Quick
+    Connect" sign-in button that pairs without typing the password."""
+    code, _ = request_json(
+        "POST", f"{base_url}/QuickConnect/Enable?status=true",
+        None,
+        extra_headers={
+            "X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"',
+        },
+    )
+    if code in (200, 204):
+        log("✅ Jellyfin Quick Connect enabled — mobile apps can pair via 6-digit code.")
+    else:
+        log(f"(note) Could not enable Quick Connect via API (HTTP {code}) — flip it in Dashboard → General → Quick Connect.")
+
+
+def jellyfin_add_music_library(base_url: str, token: str, music_path: str) -> None:
+    """Register a 'Music' collection pointing at /media/Music inside the
+    container (which is the mounted host {{JELLYFIN_MEDIA_PATH}}/Music).
+    Idempotent: a 400 with `LibraryAlreadyExists` is treated as success."""
+    # The path that Jellyfin sees — /media is the container-side mount
+    # of JELLYFIN_MEDIA_PATH on the host. The wizard's MEDIA_PATH
+    # default is /mnt/data/stacks/file-share/data so /media/Music maps
+    # to /mnt/data/stacks/file-share/data/Music on the host.
+    container_path = "/media/Music"
+    qs = f"?name=Music&collectionType=music&paths={container_path}&refreshLibrary=true"
+    code, body = request_json(
+        "POST", f"{base_url}/Library/VirtualFolders{qs}",
+        None,
+        extra_headers={
+            "X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"',
+        },
+    )
+    if code in (200, 204):
+        log(f"✅ Added 'Music' library → {container_path} (scan started).")
+    elif code == 400 and isinstance(body, dict) and "exists" in str(body).lower():
+        log("ℹ️ Music library already registered — leaving as-is.")
+    else:
+        log(f"(note) Could not auto-add Music library (HTTP {code}). Add it manually in Dashboard → Libraries.")
+    # Operator hint: tell them how to wire Movies/TV/etc. The post-deploy
+    # doesn't auto-add those — Jellyfin's metadata sources differ per
+    # library type and we don't want to commit to a default.
+    log(f"   (Add Movies/TV/Photos libraries later from Dashboard → Libraries → Add Media Library; mount points live under /media/ inside the container — same tree as {music_path} on the host.)")
 
 
 def configure_abs_oidc(
@@ -235,22 +382,10 @@ def configure_abs_oidc(
         userinfo_url = f"{issuer_url}/api/oidc/userinfo"
         jwks_url = f"{issuer_url}/jwks.json"
 
-    # 3. Write auth settings.
-    #
-    # `authOpenIDSubfolderForRedirectURLs` is the critical one — ABS
-    # 2.17.4 added that key and its v2.17.4 DB migration sets it to ''
-    # only for installs that ALREADY had OIDC enabled at migration
-    # time. ServiceBay's flow is install ABS first → migrations run
-    # → post-deploy enables OIDC, so the migration's "OIDC not yet
-    # enabled" branch leaves the key undefined. ABS's web frontend
-    # then reads `undefined` literally and POSTs
-    # `redirect_uri=https://books.<domain>/undefined/auth/openid/callback`
-    # to Authelia, which rightly rejects with `invalid_request`
-    # ("redirect_uri does not match any of the OAuth 2.0 Client's
-    # pre-registered redirect_uris"). Setting this to '' (empty
-    # string == no subfolder) makes the frontend build the
-    # registered URI shape (`/auth/openid/callback`). Operator-side
-    # symptom captured verbatim in templates/media/CHANGELOG.md v3.
+    # 3. Write auth settings. `authOpenIDSubfolderForRedirectURLs` set
+    # explicitly to '' — without it ABS sends `/undefined/auth/openid/
+    # callback`, which Authelia rejects as redirect_uri mismatch. See
+    # templates/media/CHANGELOG.md v3 for the full story.
     code, resp = request_json(
         "PATCH", f"{abs_base}/api/auth-settings",
         {
@@ -281,7 +416,7 @@ def configure_abs_oidc(
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
-    # ── Audiobookshelf ──────────────────────────────────────────────────
+    # ── Audiobookshelf credential banner ──────────────────────────────
     abs_user = env("ABS_ADMIN_USER", "root")
     abs_password = env("ABS_ADMIN_PASSWORD")
     abs_port = env("ABS_PORT", "13378")
@@ -296,42 +431,40 @@ def main() -> int:
             notes="Library manager. Mobile apps use this credential too.",
         )
 
-    # ── Navidrome ───────────────────────────────────────────────────────
-    nd_user = env("NAVIDROME_ADMIN_USER", "admin")
-    nd_password = env("NAVIDROME_ADMIN_PASSWORD")
-    nd_port = env("NAVIDROME_PORT", "4533")
-    if nd_password:
-        log(f"✅ Navidrome admin saved (user: {nd_user}) — open http://{host}:{nd_port}. Subsonic clients (Symfonium etc.) use the same credentials. Password retrievable from Settings → Integrations → Saved credentials.")
+    # ── Jellyfin credential banner ────────────────────────────────────
+    jf_user = env("JELLYFIN_ADMIN_USER", "admin")
+    jf_password = env("JELLYFIN_ADMIN_PASSWORD")
+    jf_port = env("JELLYFIN_PORT", "8096")
+    if jf_password:
+        log(f"✅ Jellyfin admin saved (user: {jf_user}) — open http://{host}:{jf_port}. Mobile apps (Symfonium, Findroid, Streamyfin) pair via Quick Connect; no shared password needed after that.")
         emit_credential(
-            service="Navidrome",
-            url=f"http://{host}:{nd_port}",
-            username=nd_user,
-            password=nd_password,
+            service="Jellyfin",
+            url=f"http://{host}:{jf_port}",
+            username=jf_user,
+            password=jf_password,
             importance="critical",
-            notes="Music server. Symfonium / Subsonic clients use this too.",
+            notes="Web UI admin. Mobile apps pair via Quick Connect (Dashboard → Quick Connect → enable on web; in-app shows 6-digit code).",
         )
 
     # ── Audiobookshelf admin seed ──────────────────────────────────────
-    seed_media(
-        service_label="Audiobookshelf",
-        service_payload_name="audiobookshelf",
-        port_var="ABS_PORT",
-        default_port="13378",
-        user_var="ABS_ADMIN_USER",
-        default_user="root",
-        password_var="ABS_ADMIN_PASSWORD",
-    )
+    seed_audiobookshelf(abs_port, abs_user, abs_password)
 
-    # ── Navidrome admin seed ───────────────────────────────────────────
-    seed_media(
-        service_label="Navidrome",
-        service_payload_name="navidrome",
-        port_var="NAVIDROME_PORT",
-        default_port="4533",
-        user_var="NAVIDROME_ADMIN_USER",
-        default_user="admin",
-        password_var="NAVIDROME_ADMIN_PASSWORD",
-    )
+    # ── Jellyfin first-run + Quick Connect + Music library ───────────
+    if jf_password:
+        jellyfin_base = f"http://127.0.0.1:{jf_port}"
+        if jellyfin_wait_ready(jellyfin_base):
+            ready = jellyfin_run_first_setup(
+                jellyfin_base, jf_user, jf_password, env("TZ", "Europe/Berlin"),
+            )
+            if ready:
+                token = jellyfin_get_token(jellyfin_base, jf_user, jf_password)
+                if token:
+                    jellyfin_enable_quick_connect(jellyfin_base, token)
+                    jellyfin_add_music_library(
+                        jellyfin_base, token, env("JELLYFIN_MEDIA_PATH", "/mnt/data/stacks/file-share/data"),
+                    )
+        else:
+            log(f"⚠️ Jellyfin didn't come up in 10 minutes — image pull may still be running. Check via `podman logs media-jellyfin`, then finish setup at http://{host}:{jf_port}.")
 
     # ── ABS OIDC auto-configuration ───────────────────────────────────────
     abs_oidc_secret = env("ABS_OIDC_SECRET")

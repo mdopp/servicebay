@@ -6,16 +6,18 @@ metadata:
     app: media
     servicebay.role: media
   annotations:
-    servicebay.label: "Media (Audiobookshelf + Navidrome)"
-    servicebay.schema-version: "3"
+    servicebay.label: "Media (Audiobookshelf + Jellyfin)"
+    servicebay.schema-version: "4"
     # Audiobookshelf's post-deploy registers an OIDC client in Authelia
-    # and its public URLs route through nginx — both prerequisites.
+    # and both apps' public URLs route through nginx — both prerequisites.
     servicebay.dependencies: "nginx,auth"
-    servicebay.ports: "{{ABS_PORT}}/tcp,{{NAVIDROME_PORT}}/tcp"
+    servicebay.ports: "{{ABS_PORT}}/tcp,{{JELLYFIN_PORT}}/tcp"
 spec:
   hostNetwork: true
   containers:
-  # 1. Audiobookshelf — Audiobooks + podcasts library + listening apps
+  # 1. Audiobookshelf — Audiobooks + podcasts library + listening apps.
+  #    Authentication: native OIDC against Authelia (configured by
+  #    post-deploy.py via API), so family members single-sign-on.
   - name: audiobookshelf
     image: ghcr.io/advplyr/audiobookshelf:latest
     env:
@@ -35,58 +37,33 @@ spec:
       - mountPath: /podcasts
         name: abs-podcasts
 
-  # 2. Navidrome — Music library + Subsonic-API endpoint for mobile clients
-  - name: navidrome
-    image: docker.io/deluan/navidrome:latest
+  # 2. Jellyfin — Music library + (future) video, with Quick Connect for
+  #    Symfonium/Findroid/Streamyfin etc. Quick Connect is the practical
+  #    SSO answer for Subsonic-style apps: web-confirm a 6-digit code
+  #    that the mobile app shows, no shared passwords. Web-UI itself
+  #    runs against Jellyfin's own user DB by default — operators can
+  #    install jellyfin-plugin-sso (manual, Jellyfin Settings →
+  #    Plugins → Repositories) for Authelia-redirect SSO later if
+  #    they want; not on by default because the SSO plugin is
+  #    community-maintained and install is interactive.
+  - name: jellyfin
+    image: docker.io/jellyfin/jellyfin:latest
     env:
-      - name: ND_PORT
-        value: "{{NAVIDROME_PORT}}"
-      - name: ND_DATAFOLDER
-        value: /data
-      - name: ND_MUSICFOLDER
-        value: /music
-      - name: ND_LOGLEVEL
-        value: info
-      - name: ND_SCANSCHEDULE
-        value: "@every 1h"
-      - name: ND_ENABLEUSEREDITING
-        value: "true"
-      # SSO via Authelia forward-auth (#560, schema v3).
-      #
-      # Navidrome 0.61.2 (and current master) has ZERO native OIDC
-      # support — verified against upstream `conf/configuration.go`,
-      # which has no oidc/openid options at all. The v2 attempt to
-      # wire `ND_OIDC_*` env vars (#413) was based on a misreading
-      # of community docs; those env vars were silently ignored and
-      # the Navidrome login page only showed the local-account form.
-      # Operators typing their LLDAP credentials got 401.
-      #
-      # What Navidrome does support is a `Remote-User`-header path,
-      # exposed via `ND_EXTAUTH_USERHEADER` (formerly the deprecated
-      # `ND_REVERSEPROXYUSERHEADER`). When NPM forwards a verified
-      # `Remote-User` header — which now works after the
-      # `forwardAuth.ts` update to Authelia 4.38's
-      # `/api/authz/forward-auth` endpoint, also in this PR — Navidrome
-      # auto-creates the matching user on first visit. Subsonic API
-      # clients (mobile apps) bypass forward-auth via a /rest/* exception
-      # in the proxy host's nginx config and use the local admin
-      # password the install banner surfaces.
-      - name: ND_EXTAUTH_USERHEADER
-        value: "Remote-User"
-      # CIDRs that are trusted to forward Remote-User. NPM and
-      # Navidrome both run hostNetwork on the same box, so the source
-      # IP nginx connects from is either 127.0.0.1 or the host's LAN
-      # IP. The RFC1918 block covers any homelab LAN + localhost
-      # without hard-coding the operator's LAN range.
-      - name: ND_EXTAUTH_TRUSTEDSOURCES
-        value: "127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      - name: TZ
+        value: "{{TZ}}"
+      - name: JELLYFIN_PublishedServerUrl
+        value: "https://{{MEDIA_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}"
+      # `unevaluated` keeps Jellyfin from inserting its own privileged
+      # nginx-style restart logic; we manage the unit via Quadlet.
     ports:
-      - containerPort: {{NAVIDROME_PORT}}
+      - containerPort: {{JELLYFIN_PORT}}
     volumeMounts:
-      - mountPath: /data
-        name: navidrome-data
-      - mountPath: /music
-        name: navidrome-music
+      - mountPath: /config
+        name: jellyfin-config
+      - mountPath: /cache
+        name: jellyfin-cache
+      - mountPath: /media
+        name: jellyfin-media
         readOnly: true
 
   volumes:
@@ -106,11 +83,15 @@ spec:
     hostPath:
       path: {{ABS_PODCASTS_PATH}}
       type: DirectoryOrCreate
-  - name: navidrome-data
+  - name: jellyfin-config
     hostPath:
-      path: {{DATA_DIR}}/media/navidrome
+      path: {{DATA_DIR}}/media/jellyfin-config
       type: DirectoryOrCreate
-  - name: navidrome-music
+  - name: jellyfin-cache
     hostPath:
-      path: {{NAVIDROME_MUSIC_PATH}}
+      path: {{DATA_DIR}}/media/jellyfin-cache
+      type: DirectoryOrCreate
+  - name: jellyfin-media
+    hostPath:
+      path: {{JELLYFIN_MEDIA_PATH}}
       type: DirectoryOrCreate

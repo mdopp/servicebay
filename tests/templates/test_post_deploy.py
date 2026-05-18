@@ -373,16 +373,29 @@ class MediaScript(unittest.TestCase):
 
     def test_credentials_emitted_with_mocked_seed(self):
         m = load_script("media")
+        # Jellyfin doesn't reach the proxy media-init path — its setup
+        # talks straight to /System/Info/Public and the /Startup/* +
+        # /Users/AuthenticateByName endpoints. Mock all of those so
+        # the script walks happy-path without a real Jellyfin behind
+        # 127.0.0.1.
         responses = {
             "/api/system/media/init": {"status": 200, "body": {"ok": True, "alreadySetup": True}},
+            "/System/Info/Public": {"status": 200, "body": {"StartupWizardCompleted": False}},
+            "/Startup/Configuration": {"status": 204, "body": None},
+            "/Startup/User": {"status": 204, "body": None},
+            "/Startup/RemoteAccess": {"status": 204, "body": None},
+            "/Startup/Complete": {"status": 204, "body": None},
+            "/Users/AuthenticateByName": {"status": 200, "body": {"AccessToken": "jf-token-stub"}},
+            "/QuickConnect/Enable": {"status": 204, "body": None},
+            "/Library/VirtualFolders": {"status": 204, "body": None},
         }
         env = {
             "HOST": "h",
             "SB_API_URL": "http://sb.test",
             "ABS_ADMIN_PASSWORD": "abs-pass",
             "ABS_PORT": "13378",
-            "NAVIDROME_ADMIN_PASSWORD": "nav-pass",
-            "NAVIDROME_PORT": "4533",
+            "JELLYFIN_ADMIN_PASSWORD": "jf-pass",
+            "JELLYFIN_PORT": "8096",
         }
         import urllib.request
         with run_with_env(env), mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)):
@@ -390,7 +403,7 @@ class MediaScript(unittest.TestCase):
         self.assertEqual(rc, 0)
         services = {c["service"] for c in parse_credentials(out)}
         self.assertIn("Audiobookshelf", services)
-        self.assertIn("Navidrome", services)
+        self.assertIn("Jellyfin", services)
         # Neither admin password may leak into user-visible log lines
         # (#321) — only travel via __SB_CREDENTIAL__ markers.
         log_only = "\n".join(
@@ -398,7 +411,7 @@ class MediaScript(unittest.TestCase):
             if not line.startswith("__SB_CREDENTIAL__ ")
         )
         self.assertNotIn("abs-pass", log_only)
-        self.assertNotIn("nav-pass", log_only)
+        self.assertNotIn("jf-pass", log_only)
 
 
 class HomeAssistantScript(unittest.TestCase):
