@@ -53,7 +53,7 @@
       "client_id": "immich",
       "client_name": "Immich",
       "authorization_policy": "one_factor",
-      "redirect_uris": ["/auth/login", "/user-settings", "app.immich:/"],
+      "redirect_uris": ["/auth/login", "/user-settings", "app.immich:/", "app.immich:///oauth-callback"],
       "scopes": ["openid", "profile", "email"],
       "clientSecretVar": "IMMICH_SSO_SECRET",
       "token_endpoint_auth_method": "client_secret_post"

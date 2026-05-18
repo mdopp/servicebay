@@ -174,7 +174,7 @@ describe('POST /api/system/authelia/oidc-clients', () => {
           client_id: 'immich',
           client_name: 'Immich',
           authorization_policy: 'one_factor',
-          redirect_uris: ['/auth/login', '/user-settings', 'app.immich:/'],
+          redirect_uris: ['/auth/login', '/user-settings', 'app.immich:/', 'app.immich:///oauth-callback'],
           scopes: ['openid', 'profile', 'email'],
         },
       },
@@ -198,8 +198,14 @@ describe('POST /api/system/authelia/oidc-clients', () => {
     expect(writtenContent).toContain('client_id: immich');
     expect(writtenContent).toContain('https://photos.example.com/auth/login');
     expect(writtenContent).toContain('https://photos.example.com/user-settings');
-    // app.immich:/ is absolute, should not be prefixed
+    // Custom-scheme deep links pass through verbatim — no per-FQDN
+    // prefix. Both legacy (`app.immich:/`) and current Android-app
+    // (`app.immich:///oauth-callback`) variants must be present, or
+    // the Android sign-in fails with "redirect_uri does not match"
+    // even though the desktop browser works — that exact regression
+    // is the reason this second URI is here.
     expect(writtenContent).toContain('app.immich:/');
+    expect(writtenContent).toContain('app.immich:///oauth-callback');
   });
 
   it('skips already registered clients', async () => {

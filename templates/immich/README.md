@@ -32,6 +32,7 @@ To enable OIDC login via Authelia, add this client to your Authelia `configurati
           - 'https://photos.<your-domain>/auth/login'
           - 'https://photos.<your-domain>/user-settings'
           - 'app.immich:/'
+          - 'app.immich:///oauth-callback'
         scopes: ['openid', 'profile', 'email']
         response_types: ['code']
         grant_types: ['authorization_code']
