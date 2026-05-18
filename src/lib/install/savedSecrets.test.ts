@@ -12,11 +12,19 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+// Mocked config store: getConfig returns whatever updateConfig last wrote.
+// persistSingleSecret does a read-modify-write through both, so the tests
+// need them coupled rather than independent stubs.
+let mockConfigState: Partial<AppConfig> = {};
 vi.mock('@/lib/config', () => ({
-  updateConfig: vi.fn(async (_: unknown) => undefined),
+  getConfig: vi.fn(async () => mockConfigState as AppConfig),
+  updateConfig: vi.fn(async (updates: Partial<AppConfig>) => {
+    mockConfigState = { ...mockConfigState, ...updates };
+    return mockConfigState as AppConfig;
+  }),
 }));
 
-import { loadSavedSecrets, persistInstalledSecrets } from './savedSecrets';
+import { loadSavedSecrets, persistInstalledSecrets, persistSingleSecret } from './savedSecrets';
 import type { AppConfig } from '@/lib/config';
 import { updateConfig } from '@/lib/config';
 import type { StackVariable } from '@/lib/stackInstall/types';
@@ -25,6 +33,7 @@ const updateConfigMock = vi.mocked(updateConfig);
 
 beforeEach(() => {
   updateConfigMock.mockClear();
+  mockConfigState = {};
 });
 
 function mkConfig(partial: Partial<AppConfig>): AppConfig {
@@ -118,5 +127,70 @@ describe('persistInstalledSecrets', () => {
     }));
     const arg = updateConfigMock.mock.calls[0][0] as { installedSecrets: Array<{ varName: string; password: string }> };
     expect(arg.installedSecrets).toEqual([{ varName: 'LLDAP_ADMIN_PASSWORD', password: 'keep-me' }]);
+  });
+});
+
+describe('persistSingleSecret (#622 — persist at first generation)', () => {
+  it('appends a new entry on first call', async () => {
+    const wrote = await persistSingleSecret('LLDAP_ADMIN_PASSWORD', 'pw-1');
+    expect(wrote).toBe(true);
+    expect(mockConfigState.installedSecrets).toEqual([
+      { varName: 'LLDAP_ADMIN_PASSWORD', password: 'pw-1' },
+    ]);
+  });
+
+  it('is idempotent — same name+value is a no-op', async () => {
+    await persistSingleSecret('LLDAP_ADMIN_PASSWORD', 'pw-1');
+    updateConfigMock.mockClear();
+    const wrote = await persistSingleSecret('LLDAP_ADMIN_PASSWORD', 'pw-1');
+    expect(wrote).toBe(false);
+    expect(updateConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('updates the entry in place when the value changes (operator rotation)', async () => {
+    await persistSingleSecret('LLDAP_ADMIN_PASSWORD', 'pw-old');
+    await persistSingleSecret('LLDAP_ADMIN_PASSWORD', 'pw-new');
+    expect(mockConfigState.installedSecrets).toEqual([
+      { varName: 'LLDAP_ADMIN_PASSWORD', password: 'pw-new' },
+    ]);
+  });
+
+  it('preserves entries from prior installs when appending a new one', async () => {
+    mockConfigState = {
+      installedSecrets: [{ varName: 'PRIOR', password: 'keep' }],
+    };
+    await persistSingleSecret('NEW', 'fresh');
+    expect(mockConfigState.installedSecrets).toEqual([
+      { varName: 'PRIOR', password: 'keep' },
+      { varName: 'NEW', password: 'fresh' },
+    ]);
+  });
+
+  it('skips writes when varName or value is empty', async () => {
+    expect(await persistSingleSecret('', 'value')).toBe(false);
+    expect(await persistSingleSecret('NAME', '')).toBe(false);
+    expect(updateConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('serializes concurrent upserts so neither write is lost', async () => {
+    // Without the internal queue, both calls would read the same empty list,
+    // each compute a single-entry array, and the second write would clobber
+    // the first. With the queue, the second call sees the first's write.
+    await Promise.all([
+      persistSingleSecret('A', '1'),
+      persistSingleSecret('B', '2'),
+    ]);
+    const names = (mockConfigState.installedSecrets ?? []).map(e => e.varName).sort();
+    expect(names).toEqual(['A', 'B']);
+  });
+
+  it('round-trips through loadSavedSecrets', async () => {
+    await persistSingleSecret('IMMICH_ADMIN_PASSWORD', 'immich-pw');
+    await persistSingleSecret('AUTHELIA_JWT_SECRET', 'jwt-pw');
+    const loaded = loadSavedSecrets(mockConfigState as AppConfig);
+    expect(loaded).toEqual({
+      IMMICH_ADMIN_PASSWORD: 'immich-pw',
+      AUTHELIA_JWT_SECRET: 'jwt-pw',
+    });
   });
 });
