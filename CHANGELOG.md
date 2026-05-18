@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.2.1...servicebay-v4.2.2) (2026-05-18)
+
+
+### Bug Fixes
+
+* **install:** NPM readiness probe accepts 400 alongside 401 ([#617](https://github.com/mdopp/servicebay/issues/617)) ([5e124e7](https://github.com/mdopp/servicebay/commit/5e124e7f19b2d7dfa7e4a3f3b165a52b6bdb86a6))
+
 ## [4.2.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.2.0...servicebay-v4.2.1) (2026-05-18)
 
 
