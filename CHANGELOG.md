@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.47.0...servicebay-v4.0.0) (2026-05-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **media:** swap Navidrome for Jellyfin (Quick Connect for mobile SSO)
+
+### Features
+
+* **media:** swap Navidrome for Jellyfin (Quick Connect for mobile SSO) ([65663e6](https://github.com/mdopp/servicebay/commit/65663e671d0710769aecadc9f8681ed0d835243f))
+
+
+### Bug Fixes
+
+* **home-assistant:** declare token_endpoint_auth_method=client_secret_post ([5b1fa11](https://github.com/mdopp/servicebay/commit/5b1fa1171da74b8cfe16c030da76a01640bb67fb))
+* **immich:** register app.immich:///oauth-callback for Android sign-in ([df0402f](https://github.com/mdopp/servicebay/commit/df0402f7bb273e83e18e53e47a849d247a593844))
+
 ## [3.47.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.46.3...servicebay-v3.47.0) (2026-05-18)
 
 
