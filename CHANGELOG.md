@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.3.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.2.3...servicebay-v4.3.0) (2026-05-18)
+
+
+### Features
+
+* **install:** persist install secrets at first generation ([#622](https://github.com/mdopp/servicebay/issues/622)) ([#636](https://github.com/mdopp/servicebay/issues/636)) ([d465b3d](https://github.com/mdopp/servicebay/commit/d465b3daa7b95138f4266ec673c24f9f976f60cd))
+* **settings:** factory-reset UI + clear saved credentials ([#623](https://github.com/mdopp/servicebay/issues/623)) ([#637](https://github.com/mdopp/servicebay/issues/637)) ([b7bd1a6](https://github.com/mdopp/servicebay/commit/b7bd1a611284494d4419481e111bac12413e871b))
+* **stacks:** stack.yml manifest schema + parser + consistency lint ([#624](https://github.com/mdopp/servicebay/issues/624)) ([#638](https://github.com/mdopp/servicebay/issues/638)) ([00ce955](https://github.com/mdopp/servicebay/commit/00ce95594033ceac4b856f34b966c0d0bcc60a21))
+
 ## [4.2.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.2.2...servicebay-v4.2.3) (2026-05-18)
 
 
