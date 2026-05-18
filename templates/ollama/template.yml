@@ -15,6 +15,15 @@ metadata:
     # access goes through NPM forward-auth → Authelia using the
     # `__authelia_forward_auth__` sentinel from
     # src/lib/stackInstall/forwardAuth.ts.
+    # Readiness probe (#613). `/api/tags` returns 200 with the empty-
+    # list JSON once the model-store has been opened — downstream
+    # templates (hermes, plus user-attached chat UIs) need this signal
+    # before they query for available models.
+    servicebay.readiness: |
+      - kind: http
+        url: http://127.0.0.1:{{OLLAMA_PORT}}/api/tags
+        expect_status: 200
+        timeout: 3m
 spec:
   # hostNetwork so other ServiceBay templates (hermes, oscar-household)
   # can reach Ollama at 127.0.0.1:{{OLLAMA_PORT}} via the host netns.

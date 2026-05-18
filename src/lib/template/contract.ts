@@ -24,6 +24,7 @@
  */
 
 import { type TemplateApiVersions, type TemplateApiName, SUPPORTED_API_VERSIONS } from './apiVersions';
+import { parseReadinessYaml } from '@/lib/install/readiness/parse';
 
 /** Recognized template tiers. `feature` is the implicit default. */
 export type TemplateTier = 'infrastructure' | 'feature';
@@ -70,6 +71,19 @@ export interface TemplateManifest {
    * Empty / missing = template makes no such calls.
    */
   requiresApi?: TemplateApiVersions;
+  /**
+   * `metadata.annotations['servicebay.readiness']` (#613) — raw YAML body of
+   * the readiness probe list. Stored unparsed here because the parser runs
+   * twice over the template lifecycle:
+   *   1. At lint/test time, on the pre-Mustache template, just to assert
+   *      the structure is well-formed (with `{{VAR}}` placeholders left
+   *      as opaque strings).
+   *   2. At install time, on the Mustache-rendered body, to get the
+   *      concrete probe values to execute.
+   * `parseTemplateManifest` runs step 1 and surfaces structural errors;
+   * the install runner runs step 2 and executes the probes.
+   */
+  readinessRaw?: string;
 }
 
 /** Context the caller can pass to enable conditional rules. */
@@ -175,7 +189,55 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
       'requested version exceeds what this ServiceBay ships (see `src/lib/template/apiVersions.ts`). ' +
       'Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588).',
   },
+  {
+    annotation: 'servicebay.readiness',
+    field: 'readinessRaw',
+    required: false,
+    description:
+      'YAML block scalar declaring readiness probes the install runner waits on after the unit starts and ' +
+      'before invoking `post-deploy.py` (#613). Each probe is `{kind: http|tcp|ldap|command, ..., timeout: 60s}`. ' +
+      'Replaces ad-hoc wait helpers (`wait_for_lldap`, `wait_pod_running`, …) with a uniform shape, same retry ' +
+      'budget, and structured install-blocking error. Declare for any template another template lists in ' +
+      '`servicebay.dependencies` — otherwise downstream post-deploys race the upstream container.',
+  },
 ] as const;
+
+/**
+ * Pull a multi-line YAML block scalar (`key: |` or `key: >`) out of raw
+ * template YAML. Indentation-anchored: captures every subsequent line
+ * indented strictly more than the key line, stops at the first line that
+ * dedents back to (or past) the key. Returns the block body with the
+ * leading per-line indentation stripped — i.e. the raw YAML you'd feed
+ * into a follow-up `yaml.load`.
+ */
+function readBlockScalarAnnotation(yamlText: string, annotation: string): string | undefined {
+  const escaped = annotation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const headerRe = new RegExp(`^(\\s+)${escaped}:\\s*([|>])[+-]?\\s*$`, 'm');
+  const header = headerRe.exec(yamlText);
+  if (!header) return undefined;
+  const keyIndent = header[1].length;
+  const afterHeader = yamlText.slice(header.index + header[0].length);
+  const lines = afterHeader.split('\n');
+  // First line after the header is the start of the block; consume lines
+  // indented strictly deeper than the key. A blank line is part of the
+  // block if the next non-blank line is still indented.
+  const blockLines: string[] = [];
+  let blockIndent: number | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '') { blockLines.push(''); continue; }
+    const indent = line.length - line.trimStart().length;
+    if (indent <= keyIndent) break;
+    if (blockIndent === null) blockIndent = indent;
+    blockLines.push(line.slice(Math.min(indent, blockIndent)));
+  }
+  // Trim trailing blank lines that aren't part of any indented content.
+  while (blockLines.length > 0 && blockLines[blockLines.length - 1].trim() === '') {
+    blockLines.pop();
+  }
+  if (blockLines.length === 0) return undefined;
+  return blockLines.join('\n') + '\n';
+}
 
 /**
  * Pull a single annotation value out of raw YAML text. Regex-based on
@@ -289,6 +351,22 @@ export function parseTemplateManifest(
     requiresApi = { ...(requiresApi ?? {}), [api]: n };
   }
 
+  // readinessRaw (#613): pre-Mustache YAML body of the readiness probe list.
+  // Validated structurally here — values may contain `{{VAR}}` placeholders
+  // that the install runner substitutes before re-parsing at deploy time.
+  const readinessRaw = readBlockScalarAnnotation(yamlText, 'servicebay.readiness');
+  if (readinessRaw !== undefined) {
+    // `permissive: true` — the raw template still has `{{VAR}}` placeholders
+    // in fields like `port:` and `timeout:`. The install runner re-parses
+    // strictly after Mustache substitution.
+    const r = parseReadinessYaml(readinessRaw, { permissive: true });
+    if (!r.ok) {
+      for (const err of r.errors) {
+        errors.push(`Annotation \`servicebay.readiness\`: ${err}`);
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors, warnings };
   }
@@ -303,6 +381,7 @@ export function parseTemplateManifest(
       configMount,
       ports,
       requiresApi,
+      readinessRaw,
     },
     warnings,
   };
@@ -372,6 +451,9 @@ export function readManifestAnnotations(yamlText: string): Partial<TemplateManif
     }
   }
   if (requiresApi) out.requiresApi = requiresApi;
+
+  const readinessRaw = readBlockScalarAnnotation(yamlText, 'servicebay.readiness');
+  if (readinessRaw !== undefined) out.readinessRaw = readinessRaw;
 
   return out;
 }

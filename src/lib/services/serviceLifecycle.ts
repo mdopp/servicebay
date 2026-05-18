@@ -662,6 +662,42 @@ export class ServiceLifecycle {
              logger.warn('ServiceManager', `Service ${name} deployed but start failed:`, e);
         }
 
+        // Parse the manifest once — both the readiness wait (#613) and the
+        // requiresApi gate (#588) read from it. The yamlContent passed in
+        // is already Mustache-rendered, so probe values are concrete.
+        const { tryParseTemplateManifest } = await import('@/lib/template/contract');
+        const { assertApiCompat } = await import('@/lib/template/apiVersions');
+        const manifest = tryParseTemplateManifest(yamlContent);
+
+        // Readiness wait (#613): block on the template's declared probes
+        // before invoking post-deploy. Replaces ad-hoc per-script waits
+        // (wait_for_lldap, wait_pod_running, wait_default_user, …) with a
+        // uniform retry budget + structured failure shape. A probe deadline
+        // lapsing aborts the deploy *before* post-deploy.py runs, so
+        // post-deploy can assume its dependencies are actually ready.
+        if (manifest?.readinessRaw) {
+            const { waitForReadiness, describeProbe } = await import('@/lib/install/readiness/runner');
+            const result = await waitForReadiness({
+                readinessRaw: manifest.readinessRaw,
+                podName: name,
+                node: nodeName,
+                onLog: msg => onProgress?.(msg),
+            });
+            if (!result.ok) {
+                const failed = result.results.filter(r => !r.ok);
+                const lines = failed.map(r => {
+                    if (r.ok) return '';
+                    return `  • ${describeProbe(r.probe)} — ${r.reason}: ${r.message} (${Math.ceil(r.elapsedMs / 1000)}s, ${r.attempts} attempt${r.attempts === 1 ? '' : 's'})`;
+                }).filter(Boolean);
+                const msg = `${name}: readiness check failed:\n${lines.join('\n')}\n\n` +
+                    `The service was started but isn't responding as expected. Common causes:\n` +
+                    `  - Slow cold start beyond the probe timeout — bump \`timeout\` in the template's servicebay.readiness annotation.\n` +
+                    `  - The service crashed during init — \`journalctl --user -u ${name}\` for the unit log.\n` +
+                    `  - A dependency template (e.g. LLDAP) isn't fully up yet — the install order may be wrong.`;
+                throw new Error(msg);
+            }
+        }
+
         // Run the template's post-deploy.py if it shipped one. Convention:
         // see lib/registry.ts:getTemplatePostDeployScript for the protocol.
         // The script can talk to the now-running container directly (e.g.
@@ -676,9 +712,6 @@ export class ServiceLifecycle {
             // letting it silently break against a renamed endpoint. The
             // unit is already running and stays running — only the script
             // is skipped, with a clear error in the install log.
-            const { tryParseTemplateManifest } = await import('@/lib/template/contract');
-            const { assertApiCompat } = await import('@/lib/template/apiVersions');
-            const manifest = tryParseTemplateManifest(yamlContent);
             if (manifest?.requiresApi) {
                 assertApiCompat(name, manifest.requiresApi);
             }
