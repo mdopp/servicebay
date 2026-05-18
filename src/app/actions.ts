@@ -32,20 +32,18 @@ export async function syncAllRegistries() {
 }
 
 /**
- * Return stored secret values that the wizard should re-use on a
- * non-clean reinstall instead of generating new random values.
+ * Return stored secret values the wizard should re-use instead of
+ * generating fresh random ones. Wizard pre-fills with these so an
+ * operator who walks through `Configure` sees the actual passwords
+ * their services already have; the server-side install runner then
+ * applies the same override defensively (#615).
  *
- * Called by startConfigure when cleanInstall is false so that services
- * like LLDAP (which only reads its admin password from env on first DB
- * init) continue to work with the password already baked into their
- * data volume.
+ * Sourced from `loadSavedSecrets` so this surface stays in sync with
+ * the install runner's reuse logic — both walk `config.installedSecrets`
+ * plus the legacy `config.lldap` / `config.reverseProxy.npm` /
+ * `config.adguard` fields.
  */
 export async function fetchStoredVariableValues(): Promise<Record<string, string>> {
-  const config = await getConfig();
-  const values: Record<string, string> = {};
-  if (config.lldap?.password)           values['LLDAP_ADMIN_PASSWORD']   = config.lldap.password;
-  if (config.reverseProxy?.npm?.password) values['NGINX_ADMIN_PASSWORD'] = config.reverseProxy.npm.password;
-  if (config.reverseProxy?.npm?.email)    values['NGINX_ADMIN_EMAIL']    = config.reverseProxy.npm.email;
-  if (config.adguard?.password)          values['ADGUARD_ADMIN_PASSWORD'] = config.adguard.password;
-  return values;
+  const { loadSavedSecrets } = await import('@/lib/install/savedSecrets');
+  return loadSavedSecrets(await getConfig());
 }
