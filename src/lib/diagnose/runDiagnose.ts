@@ -161,7 +161,15 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
       5000,
     ),
     exec('cat /proc/uptime 2>/dev/null', 1500),
-    exec('podman ps --format "{{.Names}}|{{.Status}}" 2>/dev/null', 4000),
+    // `{{.RestartCount}}` is wired in alongside Names + Status because
+    // the Status-string heuristics below ("Up <30s", "Restarting") miss
+    // the case a container restarts every ~150 ms and `podman ps` keeps
+    // catching it during the up-phase. RestartCount is monotonic — a
+    // value > a small threshold means the container has crashed many
+    // times since its current podman db generation, regardless of how
+    // "up" it looks right now. Caught the Authelia 13,801-restart
+    // silent-fail (#622).
+    exec('podman ps --format "{{.Names}}|{{.Status}}|{{.RestartCount}}" 2>/dev/null', 4000),
   ]);
 
   // 2) Container engine
@@ -360,8 +368,25 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
   const treatYoungAsLoop = systemUptimeSec > recentBootGrace && !recentInstall;
 
   const psLines = trimOutput(psStatus.stdout, 80).split('\n').filter(Boolean);
+  // RestartCount > this is treated as a definite restart loop regardless
+  // of how "up" the container looks right now. Threshold deliberately
+  // small: a healthy long-lived container is 0; sporadic OOM-kill
+  // recovery is 1–2; anything >= 3 since podman's last db generation
+  // means something is consistently failing. Authelia in the #622 bug
+  // had 13,801 — even with the recent-install grace suppressing the
+  // status-string heuristics, this would have fired.
+  const RESTART_COUNT_LOOP_THRESHOLD = 3;
   const looping = psLines.filter(l => {
-    const status = (l.split('|')[1] ?? '').trim();
+    const parts = l.split('|');
+    const status = (parts[1] ?? '').trim();
+    const restartCountRaw = (parts[2] ?? '').trim();
+    const restartCount = parseInt(restartCountRaw, 10);
+    // Restart-count check first — it's the only signal that survives
+    // the status-string heuristics' boot/install grace window. If
+    // podman has had to restart this container several times since
+    // its current db generation, it's looping regardless of when the
+    // last attempt happened.
+    if (Number.isFinite(restartCount) && restartCount >= RESTART_COUNT_LOOP_THRESHOLD) return true;
     if (/^Restarting/i.test(status)) return true;
     if (/^Initialized/i.test(status)) return true;
     // Only flag "Up <30s" when the system has been up long enough that a
@@ -390,12 +415,19 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
   // recent logs actions to each looping container individually
   // (B15 / #251 items[] schema).
   const crashLoopItems: ProbeItem[] = offenderDiagnostics.map((o): ProbeItem => {
-    const name = (o.line.split('|')[0] ?? '').trim();
-    const podmanStatus = (o.line.split('|')[1] ?? '').trim();
+    const parts = o.line.split('|');
+    const name = (parts[0] ?? '').trim();
+    const podmanStatus = (parts[1] ?? '').trim();
+    const restartCountRaw = (parts[2] ?? '').trim();
+    const restartCount = parseInt(restartCountRaw, 10);
+    const restartTag = Number.isFinite(restartCount) && restartCount > 0
+      ? ` (RestartCount=${restartCount})`
+      : '';
+    const detailHead = `${podmanStatus}${restartTag}`;
     return {
       id: name,
       label: name,
-      detail: o.snippet ? `${podmanStatus} — ${o.snippet.split('\n').slice(-2).join(' | ')}` : podmanStatus,
+      detail: o.snippet ? `${detailHead} — ${o.snippet.split('\n').slice(-2).join(' | ')}` : detailHead,
       status: 'warn',
       actionIds: ['restart_pod', 'show_recent_logs'],
     };
