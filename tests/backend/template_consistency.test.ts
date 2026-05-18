@@ -671,3 +671,45 @@ describe('Template post-deploy.py syntax', () => {
     });
   }
 });
+
+// ─── 5. Readiness contract (#613) ───────────────────────────────────────────
+//
+// Every template that another template lists in `servicebay.dependencies`
+// must declare a `servicebay.readiness` annotation. Without it, downstream
+// templates race the upstream container — exactly the failure mode #613
+// was filed to eliminate. Templates with no downstream dependencies don't
+// need readiness (they're leaves and the install runner's settle-wait
+// catches them).
+describe('Readiness contract', () => {
+  it('every dependency target declares servicebay.readiness', async () => {
+    const { parseTemplateManifest } = await import('../../src/lib/template/contract');
+    const manifests = new Map<string, ReturnType<typeof parseTemplateManifest>>();
+    for (const t of templates) {
+      manifests.set(t.name, parseTemplateManifest(t.yamlContent, {
+        hasMustacheConfigs: Object.keys(t.configs).length > 0,
+      }));
+    }
+    const dependedOn = new Set<string>();
+    for (const [, result] of manifests) {
+      if (!result.ok) continue;
+      for (const dep of result.manifest.dependencies) dependedOn.add(dep);
+    }
+    const offenders: string[] = [];
+    for (const target of dependedOn) {
+      if (!templateNames.has(target)) continue; // separate test catches dangling deps
+      const r = manifests.get(target);
+      if (!r || !r.ok) continue; // manifest-validity test already flags this
+      if (!r.manifest.readinessRaw) {
+        const upstream = [...manifests.entries()]
+          .filter(([, m]) => m.ok && m.manifest.dependencies.includes(target))
+          .map(([n]) => n);
+        offenders.push(`${target} (listed as a dependency by: ${upstream.join(', ')})`);
+      }
+    }
+    expect(
+      offenders,
+      `Templates that other templates depend on but that declare no readiness probes:\n  ${offenders.join('\n  ')}\n\n` +
+      `Add a \`servicebay.readiness\` annotation listing the probes downstream templates can assume are passing.`,
+    ).toEqual([]);
+  });
+});

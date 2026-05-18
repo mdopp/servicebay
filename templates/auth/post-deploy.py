@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 import urllib.error
 import urllib.request
 
@@ -71,29 +70,6 @@ def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tu
             return e.code, None
     except (urllib.error.URLError, TimeoutError, OSError):
         return 0, None
-
-
-def wait_for_lldap(port: str, deadline_sec: int) -> bool:
-    """LLDAP cold-start is fast (<30s) but image pull can stretch this to a few min.
-    Probe via ServiceBay's reachability endpoint so the wait + heartbeat
-    behaves identically to the old hardcoded waitForLldap helper."""
-    sb_api = env("SB_API_URL", "http://localhost:3000")
-    started = time.time()
-    last_beat = 0.0
-    while time.time() - started < deadline_sec:
-        status, body = post_json(
-            f"{sb_api}/api/system/lldap/probe",
-            {"host": "localhost", "port": int(port)},
-            timeout=10,
-        )
-        if status == 200 and body and body.get("reachable"):
-            return True
-        elapsed = time.time() - started
-        if elapsed - last_beat >= 10:
-            log(f"Still waiting for LLDAP ({int(elapsed)}s elapsed)...")
-            last_beat = elapsed
-        time.sleep(3)
-    return False
 
 
 def main() -> int:
@@ -145,12 +121,11 @@ def main() -> int:
             notes="Signs LLDAP user sessions. Save for disaster recovery — without it old browser cookies become invalid after a restore.",
         )
 
-    # ── Wait for LLDAP, seed `admins` + `family` groups ──────────────────
-    log("Waiting for LLDAP to start (cold-start usually < 30s)...")
-    if not wait_for_lldap(lldap_port, deadline_sec=10 * 60):
-        log(f"⚠️ LLDAP did not respond in time. Open http://{host}:{lldap_port} as admin and create groups admins+family manually.")
-        return 0
-
+    # ── Seed `admins` + `family` groups ──────────────────────────────────
+    # The install runner's readiness probes (servicebay.readiness in this
+    # template's template.yml, #613) already blocked on LLDAP's GraphQL
+    # endpoint returning 401 — by the time we get here the SQLite schema
+    # is initialized and seed can run immediately.
     log("Seeding LLDAP groups...")
     seed_status, seed_body = post_json(
         f"{sb_api}/api/system/lldap/seed",
