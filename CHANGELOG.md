@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.46.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.46.1...servicebay-v3.46.2) (2026-05-18)
+
+
+### Bug Fixes
+
+* **agent:** push proxy updates under proxyRoutes key, not legacy 'proxy' ([a581af7](https://github.com/mdopp/servicebay/commit/a581af73736e630208d29450317723712a5af503))
+
 ## [3.46.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.46.0...servicebay-v3.46.1) (2026-05-18)
 
 
