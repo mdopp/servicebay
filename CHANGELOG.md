@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.46.1](https://github.com/mdopp/servicebay/compare/servicebay-v3.46.0...servicebay-v3.46.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **banner:** restore banner hangs at "2 of 3" — count only managed services ([b1ecb61](https://github.com/mdopp/servicebay/commit/b1ecb61821286ce26c21bec0b7f165c754777c1e))
+* **services:** replace this.* with explicit class refs in lifecycle/listing ([d9a7897](https://github.com/mdopp/servicebay/commit/d9a78975e0d4abbd655fedf9a0e93629f7d63f72))
+
 ## [3.46.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.45.0...servicebay-v3.46.0) (2026-05-17)
 
 
