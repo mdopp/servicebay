@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.1.0...servicebay-v4.2.0) (2026-05-18)
+
+
+### Features
+
+* **install:** declarative readiness checks — closes [#613](https://github.com/mdopp/servicebay/issues/613) ([#614](https://github.com/mdopp/servicebay/issues/614)) ([053d9b6](https://github.com/mdopp/servicebay/commit/053d9b6d87aaa01b93bb2bf26658a758982cc778))
+
+
+### Bug Fixes
+
+* **lldap:** correct paths + podman-unshare in the seed-rejection hint ([e80e496](https://github.com/mdopp/servicebay/commit/e80e496262edea67cc83296ce47bed147d955955))
+
 ## [4.1.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.0.1...servicebay-v4.1.0) (2026-05-18)
 
 
