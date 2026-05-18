@@ -63,7 +63,8 @@
       "authorization_policy": "one_factor",
       "redirect_uris": ["/auth/oidc/callback"],
       "scopes": ["openid", "profile", "email", "groups"],
-      "clientSecretVar": "HA_OIDC_SECRET"
+      "clientSecretVar": "HA_OIDC_SECRET",
+      "token_endpoint_auth_method": "client_secret_post"
     }
   }
 }

@@ -208,6 +208,53 @@ describe('POST /api/system/authelia/oidc-clients', () => {
     expect(writtenContent).toContain('app.immich:///oauth-callback');
   });
 
+  // Regression: each template's variables.json may set
+  // `token_endpoint_auth_method`; the registrar must pin it on the
+  // emitted client and NOT fall back to its default. The HA
+  // auth_oidc custom component sends credentials via POST body
+  // (`client_secret_post`) and Authelia hard-errors a token request
+  // when the registration says `client_secret_basic` — surfaced to
+  // the operator as the cryptic "Failed to get user details" after
+  // a successful Authelia login. Test pins the wire format so a
+  // refactor of the default-fallback can't quietly drop the override.
+  it("honors per-template token_endpoint_auth_method override (HA needs client_secret_post)", async () => {
+    mockNodes['node1'] = {};
+    mockServiceFiles['node1:auth'] = { yamlContent: AUTHELIA_YAML };
+    mockAgent.sendCommand.mockImplementation((cmd: string) => {
+      if (cmd === 'read_file') return Promise.resolve({ content: AUTHELIA_CONFIG_EMPTY });
+      if (cmd === 'write_file') return Promise.resolve({});
+      return Promise.resolve({});
+    });
+    mockTemplateVariables['home-assistant'] = {
+      HA_SUBDOMAIN: {
+        type: 'subdomain',
+        proxyPort: '8123',
+        oidcClient: {
+          client_id: 'homeassistant',
+          client_name: 'Home Assistant',
+          authorization_policy: 'one_factor',
+          redirect_uris: ['/auth/oidc/callback'],
+          scopes: ['openid', 'profile', 'email', 'groups'],
+          token_endpoint_auth_method: 'client_secret_post',
+        },
+      },
+    };
+
+    const req = createPostRequest({
+      templates: [{ name: 'home-assistant' }],
+      variables: { PUBLIC_DOMAIN: 'example.com', HA_SUBDOMAIN: 'home' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const writeCall = mockAgent.sendCommand.mock.calls.find((c: any) => c[0] === 'write_file');
+    const writtenContent: string = writeCall![1].content;
+    // The block for the homeassistant client must carry the override,
+    // not the default `client_secret_basic`.
+    const haBlock = writtenContent.split('client_id: homeassistant')[1]?.split('client_id:')[0] ?? '';
+    expect(haBlock).toContain("token_endpoint_auth_method: client_secret_post");
+    expect(haBlock).not.toContain('client_secret_basic');
+  });
+
   it('skips already registered clients', async () => {
     mockNodes['node1'] = {};
     mockServiceFiles['node1:auth'] = { yamlContent: AUTHELIA_YAML };
