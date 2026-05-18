@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.46.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.46.2...servicebay-v3.46.3) (2026-05-18)
+
+
+### Bug Fixes
+
+* **agent:** pipe stdin + timeout from exec payload to the subprocess ([c3bf3e9](https://github.com/mdopp/servicebay/commit/c3bf3e9f432bc62805c465fdd2aed629b309962b))
+
 ## [3.46.2](https://github.com/mdopp/servicebay/compare/servicebay-v3.46.1...servicebay-v3.46.2) (2026-05-18)
 
 
