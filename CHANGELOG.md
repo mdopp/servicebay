@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.47.0](https://github.com/mdopp/servicebay/compare/servicebay-v3.46.3...servicebay-v3.47.0) (2026-05-18)
+
+
+### Features
+
+* **notifications:** send-test-email button in Email Notifications settings ([c384318](https://github.com/mdopp/servicebay/commit/c384318383005020cb703439d06cc76ad41716b1))
+
+
+### Bug Fixes
+
+* **health:** show FAIL rows in red and expand long messages on demand ([b7ced02](https://github.com/mdopp/servicebay/commit/b7ced02a39e6285d45523e8c4adfb48f664791ab))
+
 ## [3.46.3](https://github.com/mdopp/servicebay/compare/servicebay-v3.46.2...servicebay-v3.46.3) (2026-05-18)
 
 
