@@ -588,13 +588,17 @@ async function runJob(jobId: string): Promise<void> {
   // The legacy NPM-specific block below is now subsumed by this general
   // path; kept anyway because it has a specific cert-archive-was-just-
   // restored log line that helps operators reason about what happened.
+  // Names of secret-typed variables we reused from saved state. The
+  // Authelia-storage self-heal below reads this to decide whether the
+  // encryption key matches existing on-disk Authelia storage or is
+  // freshly generated.
+  const reusedSecretNames = new Set<string>();
   const shouldReuseSecrets = !input.cleanInstall || (input.preserve?.includes('secrets') ?? true);
   if (shouldReuseSecrets) {
     try {
       const { getConfig } = await import('@/lib/config');
       const { loadSavedSecrets } = await import('./savedSecrets');
       const saved = loadSavedSecrets(await getConfig());
-      let overrides = 0;
       const overrideNames: string[] = [];
       for (const v of input.variables) {
         // `meta` is `unknown` on the persisted JobInputVariable shape —
@@ -603,19 +607,66 @@ async function runJob(jobId: string): Promise<void> {
         const type = (v.meta as { type?: string } | undefined)?.type;
         if (type !== 'secret' && type !== 'bcrypt' && type !== 'rsa-private') continue;
         const stored = saved[v.name];
-        if (!stored || stored === v.value) continue;
+        if (!stored) continue;
+        // Track the reuse even when value already matches — downstream
+        // self-heals only care whether the value came from saved state.
+        reusedSecretNames.add(v.name);
+        if (stored === v.value) continue;
         v.value = stored;
-        overrides++;
         overrideNames.push(v.name);
       }
-      if (overrides > 0) {
-        await log(jobId, `🔑 Reusing ${overrides} saved secret${overrides === 1 ? '' : 's'} from before the reset (${overrideNames.slice(0, 4).join(', ')}${overrideNames.length > 4 ? `, +${overrideNames.length - 4} more` : ''}) so services with preserved data volumes can still authenticate.`);
+      if (overrideNames.length > 0) {
+        await log(jobId, `🔑 Reusing ${overrideNames.length} saved secret${overrideNames.length === 1 ? '' : 's'} from before the reset (${overrideNames.slice(0, 4).join(', ')}${overrideNames.length > 4 ? `, +${overrideNames.length - 4} more` : ''}) so services with preserved data volumes can still authenticate.`);
       }
     } catch (e) {
       // Best-effort — a missing config or decryption failure shouldn't
       // block the install. The wizard's regenerated values still flow
       // through; we just lose the reuse benefit for this run.
       await log(jobId, `(note) could not load saved secrets: ${e instanceof Error ? e.message : String(e)}. Continuing with wizard-generated values.`);
+    }
+  }
+
+  // Authelia storage self-heal — Authelia encrypts its SQLite storage
+  // with AUTHELIA_STORAGE_ENCRYPTION_KEY. If the wizard regenerates the
+  // key (no saved value to reuse) but the preserved `authelia-data` dir
+  // still holds rows encrypted with the previous install's key,
+  // Authelia comes up returning 500 on every route — including the
+  // readiness probe's OIDC discovery endpoint. Without intervention the
+  // install times out 5 min later with no breadcrumb the operator can
+  // act on.
+  //
+  // When we detect this case (auth is being deployed, AUTHELIA_STORAGE_
+  // ENCRYPTION_KEY is *not* in the reused-from-saved set, and the data
+  // dir has content), wipe `authelia-data/` only. LLDAP user accounts
+  // at the sibling `auth/lldap` host path are preserved — that's the
+  // identity state operators actually care about. The wizard's
+  // post-deploy re-seeds Authelia's OIDC clients + storage schema from
+  // scratch.
+  const authIncluded = selected.some(s => s.name === 'auth' && !s.alreadyInstalled);
+  if (authIncluded && !reusedSecretNames.has('AUTHELIA_STORAGE_ENCRYPTION_KEY')) {
+    try {
+      const { agentManager } = await import('@/lib/agent/manager');
+      const { getConfig } = await import('@/lib/config');
+      const cfg = await getConfig();
+      const dataDir = cfg.templateSettings?.DATA_DIR || '/mnt/data/stacks';
+      const autheliaDataPath = `${dataDir}/auth/authelia-data`;
+      const node = input.node || 'Local';
+      const agent = await agentManager.ensureAgent(node);
+      const probe = await agent.sendCommand('exec', {
+        command: `[ -d "${autheliaDataPath}" ] && find "${autheliaDataPath}" -mindepth 1 -maxdepth 1 | head -1 || true`,
+      });
+      const hasContent = !!(probe.stdout || '').trim();
+      if (hasContent) {
+        await log(jobId, `🔄 Wiping Authelia storage at ${autheliaDataPath} — the encryption key is freshly generated and would mismatch the preserved storage (LLDAP users at ${dataDir}/auth/lldap are kept).`);
+        await agent.sendCommand('exec', { command: `rm -rf "${autheliaDataPath}"` });
+        await log(jobId, `✅ Authelia storage cleared. Authelia will bootstrap fresh on first start.`);
+      }
+    } catch (e) {
+      // Best-effort: if probe/wipe fails the install will hit the
+      // readiness-probe 5-min timeout. Surface the recovery one-liner
+      // so the operator can unstick themselves manually.
+      const dataDirFallback = (await getConfig()).templateSettings?.DATA_DIR || '/mnt/data/stacks';
+      await log(jobId, `(note) couldn't auto-clear Authelia storage: ${e instanceof Error ? e.message : String(e)}. If readiness times out, SSH to the node and \`rm -rf ${dataDirFallback}/auth/authelia-data\` before retrying.`);
     }
   }
 
