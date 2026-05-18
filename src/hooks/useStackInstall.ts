@@ -542,6 +542,12 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     // (e.g. subdomain vars used only for proxy configuration).
     for (const key of Object.keys(allMeta)) vars.add(key);
 
+    // Tracks variables whose value came from a fresh generation in *this*
+    // Configure run (not from storage / prefill / Settings). These are the
+    // ones we have to persist to `config.installedSecrets` right now —
+    // values that already came from storage are already saved by definition.
+    const newlyGenerated: Array<{ name: string; value: string }> = [];
+
     const resolvedVars: StackVariable[] = Array.from(vars).map(name => {
       const meta = allMeta[name];
       // Caller-provided prefills (PUBLIC_DOMAIN, NGINX_ADMIN_EMAIL, ...)
@@ -561,7 +567,12 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       if (!value && meta?.type === 'secret') {
         // On a reinstall without RESET, use the stored value if available so
         // services with existing data volumes keep the password they know.
-        value = storedValues[name] ?? generateRandomSecret();
+        if (storedValues[name]) {
+          value = storedValues[name];
+        } else {
+          value = generateRandomSecret();
+          newlyGenerated.push({ name, value });
+        }
       }
       return { name, value, global: isGlobal, meta };
     });
@@ -569,12 +580,20 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     // RSA private keys — server-generated, PEM pre-indented for YAML block scalars.
     await Promise.all(resolvedVars.map(async v => {
       if (v.value || v.meta?.type !== 'rsa-private') return;
+      // Reuse a stored RSA key over generating a new one — Authelia's OIDC
+      // tokens issued under the prior key would be rejected by clients
+      // pinned to it.
+      if (storedValues[v.name]) {
+        v.value = storedValues[v.name];
+        return;
+      }
       try {
         const res = await fetch('/api/system/keys/rsa');
         if (res.ok) {
           const data = await res.json();
           if (typeof data.pem === 'string') {
             v.value = data.pem.trimEnd().split('\n').map((l: string) => '          ' + l).join('\n');
+            newlyGenerated.push({ name: v.name, value: v.value });
           }
         }
       } catch { /* install will fail with a clearer error if it matters */ }
@@ -584,6 +603,10 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     // the secret pass so the source value is already populated.
     await Promise.all(resolvedVars.map(async v => {
       if (v.value || v.meta?.type !== 'bcrypt') return;
+      if (storedValues[v.name]) {
+        v.value = storedValues[v.name];
+        return;
+      }
       const sourceName = v.meta?.bcryptSource;
       if (!sourceName) return;
       const source = resolvedVars.find(x => x.name === sourceName);
@@ -596,10 +619,30 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         });
         if (res.ok) {
           const data = await res.json();
-          if (typeof data.hash === 'string') v.value = data.hash;
+          if (typeof data.hash === 'string') {
+            v.value = data.hash;
+            newlyGenerated.push({ name: v.name, value: data.hash });
+          }
         }
       } catch { /* leave empty */ }
     }));
+
+    // Persist every newly-generated secret-typed value BEFORE returning, so
+    // a mid-install failure (or the operator closing the wizard) doesn't
+    // strand values that exist only in browser state. The server endpoint
+    // is idempotent; if the same name+value already lives in
+    // `config.installedSecrets` the write is a no-op. #622.
+    if (newlyGenerated.length > 0) {
+      await Promise.all(newlyGenerated.map(async ({ name, value }) => {
+        try {
+          await fetch('/api/system/install/persist-secret', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ varName: name, value }),
+          });
+        } catch { /* server-side persistInstalledSecrets at install end is the safety net */ }
+      }));
+    }
 
     // VAULTWARDEN_DOMAIN derives from SUBDOMAIN + PUBLIC_DOMAIN.
     const pubDomain = resolvedVars.find(v => v.name === 'PUBLIC_DOMAIN')?.value;

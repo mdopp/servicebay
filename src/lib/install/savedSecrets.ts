@@ -1,5 +1,5 @@
 /**
- * Secret reuse across installs (#615).
+ * Secret reuse across installs (#615, extended in #622).
  *
  * The wizard's "secret" / "bcrypt" / "rsa-private" type variables get
  * fresh random values on every install — fine on a brand-new node,
@@ -7,10 +7,15 @@
  * like LLDAP only honour `LLDAP_LDAP_USER_PASS` on first DB init.
  *
  * This module:
- *   1. Persists every `type: secret | bcrypt | rsa-private` variable
- *      value at the end of every successful install (`persistInstalledSecrets`).
- *   2. Loads them back on the next install (`loadSavedSecrets`).
- *   3. Falls back to the legacy `config.lldap` / `config.adguard` /
+ *   1. Persists each secret-typed variable **at first generation**, before
+ *      any unit deploys (`persistSingleSecret`, called from the wizard's
+ *      Configure step). #622 — was previously post-success in #615, which
+ *      meant a mid-install failure lost the secrets the next retry needed.
+ *   2. Still runs an end-of-run persist (`persistInstalledSecrets`) as a
+ *      safety net for variables the wizard didn't generate explicitly
+ *      (e.g. operator-typed values).
+ *   3. Loads saved secrets back on the next install (`loadSavedSecrets`).
+ *   4. Falls back to the legacy `config.lldap` / `config.adguard` /
  *      `config.reverseProxy.npm` shapes for installs that predate the
  *      `installedSecrets` field.
  *
@@ -22,7 +27,7 @@
  * plaintext.
  */
 import type { AppConfig } from '@/lib/config';
-import { updateConfig } from '@/lib/config';
+import { getConfig, updateConfig } from '@/lib/config';
 
 /** Variable types that hold sensitive material the wizard regenerates. */
 const SECRET_TYPES = new Set(['secret', 'bcrypt', 'rsa-private']);
@@ -95,4 +100,47 @@ export async function persistInstalledSecrets(
   }
   const list = Array.from(map, ([varName, password]) => ({ varName, password }));
   await updateConfig({ installedSecrets: list });
+}
+
+/**
+ * Per-process queue for single-secret upserts. `updateConfig` already
+ * serializes its own read-modify-write across the config file, but the
+ * "append a single entry to an array field" pattern needs an outer lock:
+ * deepMerge replaces arrays wholesale, so two concurrent callers each
+ * reading the current list, computing `list + [their entry]`, and writing
+ * back would lose one of the two entries. Serializing here closes that
+ * window for all callers that go through `persistSingleSecret`.
+ */
+let singleSecretQueue: Promise<unknown> = Promise.resolve();
+function withSingleSecretLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = singleSecretQueue.then(fn, fn);
+  singleSecretQueue = next.catch(() => undefined);
+  return next;
+}
+
+/**
+ * Upsert one secret-typed variable into `config.installedSecrets` atomically.
+ * Called from the wizard's Configure step the moment a value is generated,
+ * so a mid-install failure can never strand the operator with secrets that
+ * exist only in browser state.
+ *
+ * No-ops if the entry already exists with the same value (idempotent), or
+ * if either argument is empty (an empty value must never clobber a saved
+ * one — see persistInstalledSecrets for the same rule).
+ *
+ * Returns `true` if it wrote, `false` if it was already up-to-date.
+ */
+export async function persistSingleSecret(varName: string, value: string): Promise<boolean> {
+  if (!varName || !value) return false;
+  return withSingleSecretLock(async () => {
+    const current = await getConfig();
+    const existing = current.installedSecrets ?? [];
+    const idx = existing.findIndex(e => e.varName === varName);
+    if (idx >= 0 && existing[idx].password === value) return false;
+    const next = idx >= 0
+      ? existing.map((e, i) => (i === idx ? { varName, password: value } : e))
+      : [...existing, { varName, password: value }];
+    await updateConfig({ installedSecrets: next });
+    return true;
+  });
 }
