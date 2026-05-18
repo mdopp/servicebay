@@ -5,6 +5,7 @@ import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import { getConfig, RegistryConfig } from './config';
 import { readManifestAnnotations } from './template/contract';
+import { parseStackManifest, type StackManifest } from './template/stackContract';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -94,8 +95,36 @@ export async function getTemplateSettingsSchema(): Promise<Record<string, Templa
 async function readTemplateMeta(
   itemDir: string,
   type: 'template' | 'stack',
+  name: string,
+  source: string,
 ): Promise<{ tier?: 'infrastructure' | 'feature'; dependencies: string[] }> {
-  if (type === 'stack') return { tier: undefined, dependencies: [] };
+  if (type === 'stack') {
+    // Stacks today are READMEs (`stacks/ai-stack/`, `stacks/full-stack/`).
+    // From #624 onward they MAY ship a `stack.yml` whose `servicebay.tier`
+    // annotation (`core` | `feature`) maps onto the existing template
+    // tier surface. README-only stacks keep returning empty meta — the
+    // wizard treats absence as "feature, no deps", same as before.
+    try {
+      const manifest = await getStackManifest(name, source);
+      if (manifest) {
+        return {
+          // `core` stacks present as `infrastructure` in the wizard's
+          // current shape — same gate as platform templates (auto-checked,
+          // can't be opted out of). Phase 5 introduces the explicit `core`
+          // tier; until then this mapping keeps the legacy UI behaviour.
+          tier: manifest.tier === 'core' ? 'infrastructure' : 'feature',
+          dependencies: manifest.dependsOnStacks,
+        };
+      }
+    } catch (e) {
+      // A malformed stack.yml shouldn't drop the stack from the registry
+      // listing — surface defaults so the operator still sees the stack
+      // (with a broken-manifest warning the consistency lint will catch
+      // at build time).
+      console.warn(`[registry] failed to load stack manifest for ${name}:`, e);
+    }
+    return { tier: undefined, dependencies: [] };
+  }
   try {
     const yaml = await fs.readFile(path.join(itemDir, 'template.yml'), 'utf-8');
     const annotations = readManifestAnnotations(yaml);
@@ -122,7 +151,7 @@ async function fetchDir(dirPath: string, type: 'template' | 'stack', source: str
 
     return await Promise.all(directories.map(async item => {
         const itemPath = path.join(dirPath, item.name);
-        const { tier, dependencies } = await readTemplateMeta(itemPath, type);
+        const { tier, dependencies } = await readTemplateMeta(itemPath, type, item.name, source);
         return {
             name: item.name,
             path: itemPath,
@@ -672,4 +701,54 @@ export async function getTemplateMigrationScripts(
   }
 
   return scanDir(path.join(TEMPLATES_PATH, name));
+}
+
+/**
+ * Read + parse a stack's `stack.yml` manifest (#624). Returns the parsed
+ * manifest, `null` when the stack has no `stack.yml` (README-only legacy),
+ * or throws when the file exists but is structurally broken — the caller
+ * (registry sync / consistency lint) should surface the error.
+ *
+ * Same registry-priority chain as `getTemplateYaml`: if `source` is
+ * pinned, read only from there; otherwise registries take priority over
+ * built-in. Throwing on parse failure (rather than returning `null`) is
+ * intentional — a typo'd annotation should never silently degrade to
+ * "no manifest, treat as README-only" because the wizard would then
+ * present the stack with default tier/lifecycle instead of complaining.
+ */
+export async function getStackManifest(
+  name: string,
+  source?: string,
+): Promise<StackManifest | null> {
+  const tryRead = async (dir: string): Promise<string | null> => {
+    try {
+      return await fs.readFile(path.join(dir, 'stack.yml'), 'utf-8');
+    } catch { return null; }
+  };
+
+  let yamlText: string | null = null;
+  if (source && source !== 'Built-in') {
+    yamlText = await tryRead(path.join(REGISTRIES_DIR, source, 'stacks', name));
+  } else {
+    if (!source) {
+      const config = await getConfig();
+      const registries = getRegistries(config);
+      for (const reg of registries) {
+        const found = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'stacks', name));
+        if (found !== null) { yamlText = found; break; }
+      }
+    }
+    if (yamlText === null) yamlText = await tryRead(path.join(STACKS_PATH, name));
+  }
+
+  if (yamlText === null) return null;
+
+  const result = parseStackManifest(yamlText);
+  if (!result.ok) {
+    throw new Error(
+      `stack \`${name}\` has an invalid stack.yml:\n` +
+      result.errors.map(e => `  - ${e}`).join('\n'),
+    );
+  }
+  return result.manifest;
 }

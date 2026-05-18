@@ -96,7 +96,8 @@
     ],
     "ignore": [
       "scripts/check-invariants.ts"
-    ]
+    ],
+    "ignoreExportsUsedInFile": true
   },
   "overrides": {
     "ellipsize": "^0.7.0",
