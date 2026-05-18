@@ -200,6 +200,23 @@ def jellyfin_wait_ready(base_url: str, deadline_s: int = 600) -> bool:
     return False
 
 
+def jellyfin_wait_default_user(base_url: str, deadline_s: int = 90) -> bool:
+    """Poll /Startup/FirstUser until it returns 200 — proves the
+    UserManager has finished its async init pass and created the
+    "default" user that /Startup/User's `_userManager.Users.First()`
+    requires. /System/Info/Public answers 200 well before this
+    happens; without the extra wait the post-deploy hits 500
+    "Sequence contains no elements" (#618 post-merge regression)."""
+    started = time.time()
+    while time.time() - started < deadline_s:
+        code, _ = request_json("GET", f"{base_url}/Startup/FirstUser", timeout=10)
+        if code == 200:
+            return True
+        # 404/500 here = UserManager hasn't initialized yet; back off
+        time.sleep(2)
+    return False
+
+
 def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str, tz: str) -> bool:
     """Walk the /Startup/* sequence to bypass the interactive wizard.
     Returns True on a clean walk; on any non-2xx step the function bails
@@ -453,6 +470,13 @@ def main() -> int:
     if jf_password:
         jellyfin_base = f"http://127.0.0.1:{jf_port}"
         if jellyfin_wait_ready(jellyfin_base):
+            # /System/Info/Public answers before UserManager's async init
+            # creates the default user that /Startup/User mutates — race
+            # the next call without this and Jellyfin returns 500
+            # "Sequence contains no elements".
+            if not jellyfin_wait_default_user(jellyfin_base):
+                log("⚠️ Jellyfin's UserManager didn't finish init in 90 s — finish setup at the web UI.")
+                return 0
             ready = jellyfin_run_first_setup(
                 jellyfin_base, jf_user, jf_password, env("TZ", "Europe/Berlin"),
             )

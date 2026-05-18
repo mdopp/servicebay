@@ -381,6 +381,7 @@ class MediaScript(unittest.TestCase):
         responses = {
             "/api/system/media/init": {"status": 200, "body": {"ok": True, "alreadySetup": True}},
             "/System/Info/Public": {"status": 200, "body": {"StartupWizardCompleted": False}},
+            "/Startup/FirstUser": {"status": 200, "body": {"Name": "stub"}},
             "/Startup/Configuration": {"status": 204, "body": None},
             "/Startup/User": {"status": 204, "body": None},
             "/Startup/RemoteAccess": {"status": 204, "body": None},
