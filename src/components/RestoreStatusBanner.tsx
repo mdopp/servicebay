@@ -12,6 +12,9 @@ interface ServiceLike {
   name: string;
   active?: boolean;
   status?: string;
+  isManaged?: boolean;
+  isServiceBay?: boolean;
+  type?: string;
 }
 
 /**
@@ -66,9 +69,22 @@ export default function RestoreStatusBanner() {
   //     while the underlying record decays)
   if (!status || !status.active) return null;
 
-  const total = services?.length ?? 0;
-  const up = services?.filter(s => s.active).length ?? 0;
+  // Only count real Quadlet-managed services (what setup-raid actually
+  // restores from quadlet-backup). /api/services injects virtual
+  // entries — Gateway (always active), Reverse Proxy placeholder
+  // ("not installed" when no real nginx yet, active=false), ServiceBay
+  // self — which would otherwise wedge the banner at e.g. "2 of 3"
+  // forever because the virtual proxy never comes up.
+  const managed = services?.filter(s => s.isManaged === true) ?? [];
+  const total = managed.length;
+  const up = managed.filter(s => s.active).length;
   const allUp = total > 0 && up === total;
+
+  // Nothing to restore (no managed services exist on this node yet —
+  // first install, or quadlet-backup was empty). Don't render — the
+  // banner's purpose is bridging the restore wait, not announcing
+  // emptiness.
+  if (total === 0) return null;
 
   if (allUp) {
     // Auto-dismiss the moment everything's running. Don't wait for
