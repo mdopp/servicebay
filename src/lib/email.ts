@@ -31,6 +31,45 @@ export async function sendTransactionalEmail(to: string, subject: string, messag
   });
 }
 
+/**
+ * Operator-triggered "Send test mail" from Settings → Notifications.
+ * Unlike `sendEmailAlert` / `sendTransactionalEmail` this **throws** on
+ * failure instead of swallowing into a console log — the caller is a
+ * UI button that wants to surface auth/connection errors to the
+ * operator immediately, so a silent fallback would defeat the entire
+ * purpose ("did my SMTP config work?"). Also bypasses the
+ * `email.enabled` gate so the operator can test before flipping the
+ * master toggle on.
+ */
+export async function sendTestEmail(to: string): Promise<void> {
+  const config = await getConfig();
+  const emailConfig = config.notifications?.email;
+  if (!emailConfig) {
+    throw new Error('No SMTP settings stored yet — fill in host/port/user/pass first.');
+  }
+  if (!emailConfig.host || !emailConfig.user || !emailConfig.pass || !emailConfig.from) {
+    throw new Error('SMTP settings incomplete — host, user, pass, and from are all required.');
+  }
+  const transporter = nodemailer.createTransport({
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
+    auth: { user: emailConfig.user, pass: emailConfig.pass },
+  });
+  await transporter.sendMail({
+    from: emailConfig.from,
+    to,
+    subject: '[ServiceBay] Test email',
+    text: 'This is a test email from your ServiceBay instance — if you see this, your SMTP settings are working.',
+    html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+      <h2 style="color: #3182ce;">ServiceBay test email</h2>
+      <p style="font-size: 16px; line-height: 1.5;">If you can read this, your SMTP settings (<code>${emailConfig.host}:${emailConfig.port}</code>) are working. Alerts and transactional emails will go out the same way.</p>
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="color: #718096; font-size: 12px;">Triggered manually from Settings → Notifications → Email</p>
+    </div>`,
+  });
+}
+
 async function sendMailInternal(opts: {
   overrideTo?: string;
   subject: string;

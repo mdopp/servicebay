@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Mail, Plus, Trash2 } from 'lucide-react';
+import { Mail, Plus, Trash2, Send, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useSettings } from '../SettingsContext';
 
 export default function EmailNotificationsSection() {
@@ -19,6 +19,33 @@ export default function EmailNotificationsSection() {
   } = useSettings();
 
   const [newRecipient, setNewRecipient] = useState('');
+  const [testRecipient, setTestRecipient] = useState('');
+  const [testStatus, setTestStatus] = useState<{ kind: 'idle' | 'sending' | 'ok' | 'fail'; message?: string }>({ kind: 'idle' });
+
+  const handleSendTest = async () => {
+    if (!testRecipient) return;
+    setTestStatus({ kind: 'sending' });
+    try {
+      // Flush any in-flight changes so the test uses what the operator
+      // sees in the inputs — onBlur usually does this, but the click
+      // path can race the blur on some browsers.
+      await persistSettings();
+      const res = await fetch('/api/system/notifications/email/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: testRecipient }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (res.ok && data.ok) {
+        setTestStatus({ kind: 'ok', message: `Sent to ${testRecipient}. Check the inbox — including spam.` });
+      } else {
+        const errMsg = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+        setTestStatus({ kind: 'fail', message: errMsg });
+      }
+    } catch (e) {
+      setTestStatus({ kind: 'fail', message: e instanceof Error ? e.message : String(e) });
+    }
+  };
 
   const handleAddRecipient = () => {
     if (newRecipient && !emailRecipients.includes(newRecipient)) {
@@ -153,6 +180,47 @@ export default function EmailNotificationsSection() {
                 <span className="text-sm text-gray-700 dark:text-gray-300">Use Secure Connection (TLS/SSL)</span>
               </label>
             </div>
+          </div>
+
+          <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Send test email</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              Verifies the SMTP settings above by sending one canned message to the address you enter. Works even when the master toggle is off — useful before enabling alerts.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={testRecipient}
+                onChange={e => setTestRecipient(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && testRecipient && testStatus.kind !== 'sending' && handleSendTest()}
+                disabled={saving || testStatus.kind === 'sending'}
+                className="flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                placeholder="recipient@example.com"
+              />
+              <button
+                onClick={handleSendTest}
+                disabled={saving || !testRecipient || testStatus.kind === 'sending'}
+                className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium shrink-0"
+              >
+                <Send size={16} />
+                {testStatus.kind === 'sending' ? 'Sending…' : 'Send test'}
+              </button>
+            </div>
+            {testStatus.kind === 'ok' && (
+              <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-sm text-emerald-800 dark:text-emerald-200">
+                <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
+                <span>{testStatus.message}</span>
+              </div>
+            )}
+            {testStatus.kind === 'fail' && (
+              <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-sm text-rose-800 dark:text-rose-200">
+                <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium mb-0.5">SMTP rejected the test:</p>
+                  <p className="font-mono text-xs break-words">{testStatus.message}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
