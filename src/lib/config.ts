@@ -363,6 +363,19 @@ export interface AppConfig {
    */
   installManifest?: InstallManifest;
   /**
+   * Internal: every `type: secret | bcrypt | rsa-private` variable value
+   * from the most recent install, keyed by template-variable name. Used
+   * by the install runner to reuse passwords across clean-installs that
+   * preserve secrets/identity — without this, the wizard regenerates
+   * `LLDAP_ADMIN_PASSWORD` etc. on every run and the new value mismatches
+   * the still-on-disk LDAP DB hash. Per-entry `password` field auto-
+   * encrypts via the SENSITIVE_KEYS regex; the `varName` is plaintext.
+   * Distinct from `installManifest.credentials` (user-facing) — that
+   * indexes by display name and skips internal-only secrets like
+   * `LLDAP_JWT_SECRET`.
+   */
+  installedSecrets?: Array<{ varName: string; password: string }>;
+  /**
    * Anonymous "request access" submissions from the family portal
    * (#242). Public POST endpoint appends here; admin Settings page
    * reads + resolves. Capped at 50 pending so spam can't fill the

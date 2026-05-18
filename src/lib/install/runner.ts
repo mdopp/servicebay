@@ -570,6 +570,55 @@ async function runJob(jobId: string): Promise<void> {
 
   const ctx: DeployContext = { jobId, input, scriptCredentials, deployed: [] };
 
+  // Secret reuse (#615) — before any deploy fires, override the wizard's
+  // freshly-generated `type: secret | bcrypt | rsa-private` values with
+  // whatever the saved state has for the same `varName`. Without this,
+  // a clean install that preserves `secrets`/`identity` regenerates
+  // LLDAP_ADMIN_PASSWORD (and friends), the new value mismatches the
+  // still-on-disk LDAP DB hash, and post-deploy.py's seed call gets a
+  // 401 from LLDAP. The operator's recovery path was "wipe the data dir
+  // and reinstall", which silently destroys identity state — the
+  // opposite of what they ticked.
+  //
+  // Conditions for the override:
+  //   - Not a clean install (always reuse saved state on plain re-install), OR
+  //   - Clean install AND `secrets` is in the preserve list (operator
+  //     explicitly chose to keep prior identity).
+  //
+  // The legacy NPM-specific block below is now subsumed by this general
+  // path; kept anyway because it has a specific cert-archive-was-just-
+  // restored log line that helps operators reason about what happened.
+  const shouldReuseSecrets = !input.cleanInstall || (input.preserve?.includes('secrets') ?? true);
+  if (shouldReuseSecrets) {
+    try {
+      const { getConfig } = await import('@/lib/config');
+      const { loadSavedSecrets } = await import('./savedSecrets');
+      const saved = loadSavedSecrets(await getConfig());
+      let overrides = 0;
+      const overrideNames: string[] = [];
+      for (const v of input.variables) {
+        // `meta` is `unknown` on the persisted JobInputVariable shape —
+        // narrow to the {type} subset we need without reaching for
+        // VariableMeta (a UI-side type).
+        const type = (v.meta as { type?: string } | undefined)?.type;
+        if (type !== 'secret' && type !== 'bcrypt' && type !== 'rsa-private') continue;
+        const stored = saved[v.name];
+        if (!stored || stored === v.value) continue;
+        v.value = stored;
+        overrides++;
+        overrideNames.push(v.name);
+      }
+      if (overrides > 0) {
+        await log(jobId, `🔑 Reusing ${overrides} saved secret${overrides === 1 ? '' : 's'} from before the reset (${overrideNames.slice(0, 4).join(', ')}${overrideNames.length > 4 ? `, +${overrideNames.length - 4} more` : ''}) so services with preserved data volumes can still authenticate.`);
+      }
+    } catch (e) {
+      // Best-effort — a missing config or decryption failure shouldn't
+      // block the install. The wizard's regenerated values still flow
+      // through; we just lose the reuse benefit for this run.
+      await log(jobId, `(note) could not load saved secrets: ${e instanceof Error ? e.message : String(e)}. Continuing with wizard-generated values.`);
+    }
+  }
+
   // Cert archive restore — runs once before the deploy loop when nginx
   // is in the install set AND the volume on disk is empty (fresh
   // install). The reset endpoint snapshots NPM's data dir to
@@ -783,6 +832,21 @@ async function runJob(jobId: string): Promise<void> {
       totalCount: input.items.filter(i => i.checked).length,
     },
   });
+
+  // Persist every secret-typed variable so the next install can reuse
+  // them (#615). Has to happen after `phase: 'done'` because we only
+  // want to record values from a successful run — a half-failed install
+  // might have rewritten LLDAP's DB with a new password mid-flight, and
+  // the operator's recovery action could be to retry with the previous
+  // value. Best-effort: a write failure here doesn't fail the install
+  // (config might be temporarily locked); the next successful install
+  // gets another chance.
+  try {
+    const { persistInstalledSecrets } = await import('./savedSecrets');
+    await persistInstalledSecrets(input.variables, await getConfig());
+  } catch (e) {
+    await log(jobId, `(note) couldn't persist installed secrets: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   // The CoreOS first-boot installer writes `stackSetupPending: true`
   // to flag "we set the box up, but no stack services are deployed

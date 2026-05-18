@@ -489,13 +489,16 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       }
     } catch { /* empty defaults are fine */ }
 
-    // On a non-clean reinstall, prefer stored passwords over freshly
-    // generated ones. Services like LLDAP only read their admin password
-    // on first DB init — a new random value would mismatch the data volume.
+    // Pre-fill the wizard with the operator's existing passwords so they
+    // see the actual values their services have on disk rather than
+    // freshly-regenerated ones (#615). The server-side install runner
+    // applies the same reuse logic defensively based on the operator's
+    // `preserve` flags at the Reset step — by then we know which groups
+    // they chose to keep. Loading here unconditionally is safe: clean-
+    // install + secrets-wiped will write fresh values back at install
+    // end, so the next install sees the post-wipe state.
     let storedValues: Record<string, string> = {};
-    if (!opts?.cleanInstall) {
-      try { storedValues = await fetchStoredVariableValues(); } catch { /* best-effort */ }
-    }
+    try { storedValues = await fetchStoredVariableValues(); } catch { /* best-effort */ }
 
     for (const item of selected) {
       try {
