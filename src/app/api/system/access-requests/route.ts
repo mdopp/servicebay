@@ -4,8 +4,15 @@ import crypto from 'crypto';
 import { getConfig, saveConfig, getAdminBaseUrl, type AccessRequest } from '@/lib/config';
 import { sendEmailAlert } from '@/lib/email';
 import { logger } from '@/lib/logger';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
+
+// NOTE: POST is intentionally NOT routed through `withApiHandler` —
+// the endpoint is public (anonymous family-LAN visitors hit it from
+// the portal) and the handler's built-in requireSession gate would
+// reject every submission. GET is admin-only and goes through the
+// handler.
 
 /**
  * "Request access" endpoint for the family portal (#242 follow-up).
@@ -119,8 +126,8 @@ export async function POST(request: Request) {
   return NextResponse.json({ ok: true, id: newRequest.id });
 }
 
-export async function GET() {
+export const GET = withApiHandler({}, async () => {
   const config = await getConfig();
   const requests = config.accessRequests ?? [];
   return NextResponse.json({ requests });
-}
+});
