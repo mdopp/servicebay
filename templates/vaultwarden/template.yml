@@ -12,6 +12,14 @@ metadata:
     # post-deploy OIDC-client registration can talk to Authelia and the
     # vault.<domain> proxy route resolves to a running NPM.
     servicebay.dependencies: "nginx,auth"
+    # Continuous health probe (#628). `/alive` is Vaultwarden's
+    # unauthenticated liveness endpoint — returns the current UTC
+    # timestamp on a healthy instance.
+    servicebay.healthcheck: |
+      url: http://localhost:{{VAULTWARDEN_PORT}}/alive
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   # v2 (#408): hostNetwork is required so Vaultwarden can reach
   # https://auth.<PUBLIC_DOMAIN>/.well-known/openid-configuration for

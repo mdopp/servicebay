@@ -30,36 +30,34 @@ metadata:
     # servicebay.config-mount: "/config"   # required iff *.mustache files exist
     # servicebay.tier: "infrastructure"    # auto-include + lock checked
     # servicebay.dependencies: "nginx,auth" # comma-separated install-time deps
-    # servicebay.readiness: |              # readiness probes (#613) — required
-    #   - kind: http                       # if another template depends on yours
-    #     url: http://localhost:8080/health
-    #     expect_status: 200
-    #     timeout: 60s
+    # servicebay.healthcheck: |             # continuous health probe (#626/#628)
+    #   url: http://localhost:8080/healthz  # — required if another template
+    #   interval: 30s                       # depends on yours
+    #   timeout: 5s
+    #   startup_timeout: 5m
 ```
 
-## Readiness probes (#613)
+## Healthcheck (#626 + #628)
 
-Declare `servicebay.readiness` for any template another template lists in its
-`servicebay.dependencies`. The install runner blocks on these probes between
-`systemctl start` and `post-deploy.py` — downstream templates' post-deploys
-can then assume the dependency is actually responsive.
+Declare `servicebay.healthcheck` for any template another template lists in its
+`servicebay.dependencies`. The install runner's settleWait blocks until
+`twin.services[].health.ready === true`, populated by ServiceBay's poller from
+this annotation. Downstream templates' post-deploys can then assume the
+dependency is actually responsive.
 
 Probe kinds:
 
-| `kind`    | Required fields              | Notes                                            |
-|-----------|------------------------------|--------------------------------------------------|
-| `http`    | `url`                        | `method` (GET/POST), `body`, `expect_status` (single int, `[lo, hi]`, or `"any"`). Default = `2xx–4xx`. |
-| `tcp`     | `host`, `port`               | Connect-only — succeeds as soon as the listener accepts. |
-| `ldap`    | `host`, `port`               | Optional `bind_dn` + `bind_password` to verify auth, not just port. |
-| `command` | `command` (+ `container`)    | Shell-exec on the install node. Use for SQLite migrations / file-presence checks. Default `expect_exit: 0`. |
+| `kind`   | Required fields  | Notes                                                                              |
+|----------|------------------|------------------------------------------------------------------------------------|
+| `http`   | `url`            | Default. Treats 2xx as success; parses optional JSON body `{ready, degraded?, deps?, message?}`. |
+| `tcp`    | `host`, `port`   | Raw socket-connect. Use for non-HTTP services (Wyoming protocol, Samba).           |
 
-Every probe takes `timeout` (default `60s`, accepts `Ns`, `Nm`, `Nms`, or bare-number seconds).
-The runner polls in parallel with a heartbeat every 15s — a probe deadline
-lapsing aborts the deploy *before* `post-deploy.py` runs.
+Other fields: `interval` (default 30s, ≥ 1s), `timeout` (default 5s),
+`startup_timeout` (default 5m — interpretation only; the poller starts firing
+immediately).
 
-Migration tip when replacing in-script `wait_for_*` helpers: pick the same
-endpoint/status the helper polled. Examples in this repo: `templates/auth/`,
-`templates/file-share/`, `templates/media/`.
+Examples in this repo: `templates/auth/template.yml` (HTTP),
+`templates/voice/template.yml` (TCP).
 
 `servicebay.dependencies` is the single source of truth for hard install-time
 dependencies. The wizard reads it to auto-check missing deps, block unchecking

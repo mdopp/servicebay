@@ -18,35 +18,12 @@ metadata:
     # without this the wizard's path resolver would also consider lldap's
     # mounts and pick whichever lands first in the parsed YAML.
     servicebay.config-mount: "/config"
-    # Readiness probes (#613). The install runner blocks on these between
-    # `systemctl start` and `post-deploy.py`. Replaces the in-script
-    # `wait_for_lldap` helper (still kept inside post-deploy.py as a
-    # defence-in-depth for the seed call, but the heavy lifting is here).
-    #   - LLDAP HTTP: GraphQL returns 401 once the SQLite schema is
-    #     initialized — earliest reliable "really ready" signal.
-    #   - LDAP socket: the 3890 port comes up a few seconds after the
-    #     HTTP port; downstream templates that bind via LDAP need this.
-    #   - Authelia OIDC discovery: 200 once Authelia has finished
-    #     loading its config + reached LLDAP.
-    servicebay.readiness: |
-      - kind: http
-        url: http://localhost:{{LLDAP_PORT}}/api/graphql
-        method: POST
-        body: '{"query":"{__typename}"}'
-        expect_status: 401
-        timeout: 10m
-      - kind: tcp
-        host: localhost
-        port: {{LLDAP_LDAP_PORT}}
-        timeout: 2m
-      - kind: http
-        url: http://localhost:{{AUTHELIA_PORT}}/.well-known/openid-configuration
-        expect_status: 200
-        timeout: 5m
-    # Continuous health probe (#626). Authelia's `/api/health` returns
-    # `{"status":"OK"}` and is unauthenticated. Proves both Authelia is
-    # alive AND has loaded its config; LLDAP is implicitly covered
-    # because Authelia refuses to start without it.
+    # Continuous health probe (#626 / #628). Authelia's `/api/health`
+    # returns `{"status":"OK"}` and is unauthenticated. Proves both
+    # Authelia is alive AND has loaded its config; LLDAP is implicitly
+    # covered because Authelia refuses to start without it. Phase 3C
+    # retired the install-time readiness probes; this single signal
+    # covers both install gating and ongoing monitoring.
     servicebay.healthcheck: |
       url: http://localhost:{{AUTHELIA_PORT}}/api/health
       interval: 30s

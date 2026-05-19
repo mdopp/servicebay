@@ -10,6 +10,13 @@ metadata:
     servicebay.ports: "{{IMMICH_PORT}}/tcp"
     # photos.<domain> is served via nginx; Immich's SSO uses Authelia.
     servicebay.dependencies: "nginx,auth"
+    # Continuous health probe (#628). `/api/server-info/ping` is Immich's
+    # unauthenticated liveness endpoint — returns `{"res":"pong"}`.
+    servicebay.healthcheck: |
+      url: http://localhost:{{IMMICH_PORT}}/api/server-info/ping
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   # v2 (#410): hostNetwork is required so Immich can fetch
   # https://auth.<PUBLIC_DOMAIN>/.well-known/openid-configuration for
