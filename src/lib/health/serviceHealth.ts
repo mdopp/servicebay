@@ -74,15 +74,20 @@ export class ServiceHealthPoller {
    * and restarts the timer — config changes (e.g. probe URL after a
    * template update) take effect immediately.
    *
-   * The first probe fires on the next tick (`config.intervalMs` ms from
-   * now), not immediately, so the bootstrap doesn't pummel the agent
-   * with N concurrent requests during start-up. Phase 3B may add a
-   * jittered immediate probe.
+   * The first probe also fires immediately (non-blocking) so settleWait /
+   * diagnose readers don't have to wait `intervalMs` for the first
+   * health result on a fresh deploy (#627 / Phase 3B). The bootstrap
+   * sweep at server start still pays the concurrent-fan-out cost but
+   * only on services that don't yet have a recent health result —
+   * already-running probes self-throttle via setInterval.
    */
   register(s: RegisteredService): void {
     const key = this.keyFor(s.nodeName, s.serviceName);
     this.registry.set(key, s);
-    if (this.running) this.startTimer(key);
+    if (this.running) {
+      this.startTimer(key);
+      void this.tick(key);
+    }
   }
 
   unregister(nodeName: string, serviceName: string): void {
