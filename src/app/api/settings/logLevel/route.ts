@@ -1,59 +1,30 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/lib/logger';
 import { updateConfig } from '@/lib/config';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  try {
-    const currentLevel = logger.getLogLevel();
-    return NextResponse.json({
-      success: true,
-      logLevel: currentLevel
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({
-      success: false,
-      error: message
-    }, { status: 500 });
-  }
-}
+const LogLevel = z.enum(['debug', 'info', 'warn', 'error']);
+const PutBody = z.object({ logLevel: LogLevel });
 
-export async function PUT(req: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(req);
-  if (__auth instanceof NextResponse) return __auth;
+/**
+ * Log-level GET/PUT (#603 / ARCH-14 settings cluster migration).
+ *
+ * Returns `{ success: true, logLevel }` rather than wrapping in the
+ * canonical `{ ok, data }` envelope so existing callers
+ * (`LogLevelControl.tsx`, `LogViewer.tsx`) don't need to change. The
+ * handler still buys us Zod validation, requireSession on PUT, and
+ * uniform error shape.
+ */
+export const GET = withApiHandler({}, async () => {
+  return NextResponse.json({ success: true, logLevel: logger.getLogLevel() });
+});
 
-  try {
-    const body = await req.json();
-    const { logLevel } = body;
-    
-    if (!logLevel) {
-      return NextResponse.json({
-        success: false,
-        error: 'logLevel is required'
-      }, { status: 400 });
-    }
-    
-    // Update in-memory logger
-    logger.setLogLevel(logLevel);
-    logger.info('API', `Log level changed to: ${logLevel}`);
-
-    // Persist to config
-    await updateConfig({ logLevel });
-    
-    return NextResponse.json({
-      success: true,
-      logLevel: logger.getLogLevel()
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.error('API', 'Failed to update log level:', err);
-    return NextResponse.json({
-      success: false,
-      error: message
-    }, { status: 500 });
-  }
-}
+export const PUT = withApiHandler({ body: PutBody }, async ({ body }) => {
+  logger.setLogLevel(body.logLevel);
+  logger.info('API', `Log level changed to: ${body.logLevel}`);
+  await updateConfig({ logLevel: body.logLevel });
+  return NextResponse.json({ success: true, logLevel: logger.getLogLevel() });
+});

@@ -1,55 +1,46 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
 import { getBackupFileMeta, restoreSystemBackup, restoreSystemBackupSelection, type BackupRestoreSelection } from '@/lib/systemBackup';
-import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
+const PostBody = z.object({
+  fileName: z.string().min(1).optional(),
+  uploadToken: z.string().regex(/^[a-z0-9-]+$/i).optional(),
+  selection: z.unknown().optional(),
+});
 
-  try {
-    const body = await request.json().catch(() => ({}));
-    const fileName = body.fileName as string | undefined;
-    const uploadToken = body.uploadToken as string | undefined;
-    const selection = body.selection as BackupRestoreSelection | undefined;
+export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
+  const { fileName, uploadToken } = body;
+  const selection = body.selection as BackupRestoreSelection | undefined;
 
-    let archivePath: string | undefined;
-    let cleanupPath: string | undefined;
-    if (fileName) {
-      const entry = await getBackupFileMeta(fileName);
-      archivePath = entry.path;
-    } else if (uploadToken && /^[a-z0-9-]+$/i.test(uploadToken)) {
-      archivePath = path.join(os.tmpdir(), `servicebay-upload-${uploadToken}.tar.gz`);
-      cleanupPath = archivePath;
-    } else {
-      return NextResponse.json({ error: 'fileName or uploadToken is required' }, { status: 400 });
-    }
-
-    if (selection) {
-      await restoreSystemBackupSelection(archivePath, selection);
-      if (cleanupPath) {
-        await fs.rm(cleanupPath, { force: true });
-      }
-      return NextResponse.json({ success: true });
-    }
-
-    if (cleanupPath) {
-      return NextResponse.json({ error: 'selection is required for uploaded backups' }, { status: 400 });
-    }
-
-    const restored = await restoreSystemBackup(fileName || path.basename(archivePath));
-    const payload = { fileName: restored.fileName, createdAt: restored.createdAt, size: restored.size };
-    if (cleanupPath) {
-      await fs.rm(cleanupPath, { force: true });
-    }
-    return NextResponse.json({ success: true, restored: payload });
-  } catch (error) {
-    return apiError(error, { tag: 'api:settings:backups:restore', status: 500 });
+  let archivePath: string | undefined;
+  let cleanupPath: string | undefined;
+  if (fileName) {
+    const entry = await getBackupFileMeta(fileName);
+    archivePath = entry.path;
+  } else if (uploadToken) {
+    archivePath = path.join(os.tmpdir(), `servicebay-upload-${uploadToken}.tar.gz`);
+    cleanupPath = archivePath;
+  } else {
+    return NextResponse.json({ error: 'fileName or uploadToken is required' }, { status: 400 });
   }
-}
+
+  if (selection) {
+    await restoreSystemBackupSelection(archivePath, selection);
+    if (cleanupPath) await fs.rm(cleanupPath, { force: true });
+    return NextResponse.json({ success: true });
+  }
+
+  if (cleanupPath) {
+    return NextResponse.json({ error: 'selection is required for uploaded backups' }, { status: 400 });
+  }
+
+  const restored = await restoreSystemBackup(fileName || path.basename(archivePath));
+  const payload = { fileName: restored.fileName, createdAt: restored.createdAt, size: restored.size };
+  return NextResponse.json({ success: true, restored: payload });
+});

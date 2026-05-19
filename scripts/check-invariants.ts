@@ -154,12 +154,12 @@ async function checkExecTemplateLiterals() {
 // 4. withApiHandler adoption ratio.
 //
 // Routes that hand-roll their own try/catch + envelope drift apart. The
-// abstraction in src/lib/api/handler.ts is the SoT. Pinned to current
-// adoption (1 of 96 = ~1%), should monotonically increase. The threshold
-// is "ratio must not decrease", not a fixed number, so a new
-// non-conforming route fails CI immediately.
+// abstraction in src/lib/api/handler.ts is the SoT. Should monotonically
+// increase; ratchet up after each cluster migration so any regression
+// fails CI immediately. Current run: 12/104 routes (~11%) after the
+// settings cluster landed in #603.
 // ---------------------------------------------------------------------------
-const MIN_WITH_API_HANDLER_RATIO = 0.01;
+const MIN_WITH_API_HANDLER_RATIO = 0.10;
 
 async function checkWithApiHandlerAdoption() {
     const routeFiles = await walk(path.join(SRC, 'app', 'api'), p => p.endsWith('/route.ts'));

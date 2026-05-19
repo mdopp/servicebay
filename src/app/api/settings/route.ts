@@ -4,25 +4,30 @@ import { getTemplateSettingsSchema } from '@/lib/registry';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { logger } from '@/lib/logger';
 import { AppConfigPartialSchema, formatConfigErrors } from '@/lib/config/schema';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
-export async function GET() {
+export const dynamic = 'force-dynamic';
+
+export const GET = withApiHandler({}, async () => {
   const [config, templateSettingsSchema] = await Promise.all([
     getConfig(),
-    getTemplateSettingsSchema()
+    getTemplateSettingsSchema(),
   ]);
+  return NextResponse.json({ ...config, templateSettingsSchema });
+});
 
-  return NextResponse.json({
-    ...config,
-    templateSettingsSchema
-  });
-}
-
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+/**
+ * Settings POST — accepts a Partial<AppConfig> via the AppConfigPartialSchema
+ * validator (#595), merges with the persisted config, persists, and returns
+ * the new full config so the UI doesn't have to re-fetch.
+ *
+ * Body validation is deliberately done inside the handler rather than via
+ * `withApiHandler`'s `body:` slot — `AppConfigPartialSchema` already
+ * formats errors with the more detailed `formatConfigErrors` shape the
+ * settings UI displays. Re-routing through the handler's Zod path would
+ * lose that fidelity.
+ */
+export const POST = withApiHandler({}, async ({ request }) => {
   let body: unknown;
   try {
     body = await request.json();
@@ -30,12 +35,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  // Validate the body shape against AppConfigSchema BEFORE merging (#595).
-  // `.partial().strict()` rejects unknown top-level keys (catches typos
-  // like `servername` vs `serverName` before they corrupt config.json)
-  // and wrong-typed primitives, while still allowing PATCH-style writes
-  // that only touch a subset of fields. Complex nested objects pass
-  // through for now — tightening them is purely additive.
   const parsed = AppConfigPartialSchema.safeParse(body);
   if (!parsed.success) {
     const errors = formatConfigErrors(parsed.error);
@@ -44,30 +43,22 @@ export async function POST(request: Request) {
   }
   const validated = parsed.data as Partial<AppConfig>;
 
-  try {
-    const currentConfig = await getConfig();
+  const currentConfig = await getConfig();
+  const newConfig: AppConfig = {
+    ...currentConfig,
+    ...validated,
+    templateSettings: validated.templateSettings ?? currentConfig.templateSettings,
+    notifications: validated.notifications ? {
+      ...currentConfig.notifications,
+      ...validated.notifications,
+    } : currentConfig.notifications,
+  };
 
-    // Merge — same shallow shape the old code used. notifications is
-    // shallow-merged so the UI can send a partial notifications block.
-    const newConfig: AppConfig = {
-      ...currentConfig,
-      ...validated,
-      templateSettings: validated.templateSettings ?? currentConfig.templateSettings,
-      notifications: validated.notifications ? {
-        ...currentConfig.notifications,
-        ...validated.notifications,
-      } : currentConfig.notifications,
-    };
+  await saveConfig(newConfig);
 
-    await saveConfig(newConfig);
-
-    if ('serverName' in validated) {
-      DigitalTwinStore.getInstance().setServerName(newConfig.serverName ?? null);
-    }
-
-    return NextResponse.json(newConfig);
-  } catch (error) {
-    logger.error('api:settings:post', 'Failed to save config', error);
-    return NextResponse.json({ error: 'Failed to save config' }, { status: 500 });
+  if ('serverName' in validated) {
+    DigitalTwinStore.getInstance().setServerName(newConfig.serverName ?? null);
   }
-}
+
+  return NextResponse.json(newConfig);
+});

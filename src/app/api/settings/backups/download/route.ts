@@ -1,33 +1,29 @@
 import fs from 'fs';
 import { Readable } from 'stream';
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getBackupFileMeta } from '@/lib/systemBackup';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const fileName = searchParams.get('file');
+const QuerySchema = z.object({ file: z.string().min(1) });
 
-  if (!fileName) {
-    return NextResponse.json({ error: 'file query parameter is required' }, { status: 400 });
-  }
-
+export const GET = withApiHandler({ query: QuerySchema }, async ({ query }) => {
   try {
-    const meta = await getBackupFileMeta(fileName);
+    const meta = await getBackupFileMeta(query.file);
     const nodeStream = fs.createReadStream(meta.path);
     const webStream = Readable.toWeb(nodeStream) as ReadableStream;
-
     return new NextResponse(webStream, {
       headers: {
         'Content-Type': 'application/gzip',
         'Content-Disposition': `attachment; filename="${meta.fileName}"`,
         'Content-Length': meta.size.toString(),
-        'Cache-Control': 'no-store'
-      }
+        'Cache-Control': 'no-store',
+      },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Backup not found';
     return NextResponse.json({ error: message }, { status: 404 });
   }
-}
+});
