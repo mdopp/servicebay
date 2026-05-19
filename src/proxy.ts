@@ -22,6 +22,13 @@ const PUBLIC_API_RULES: Array<{ prefix: string; methods?: ReadonlySet<string> }>
   // also gates by mode (LAN-only) and validates the service +
   // asset-kind path params before producing anything.
   { prefix: '/api/portal/asset', methods: new Set(['GET']) },
+  // Install-progress polling endpoint (#663 — S1). GET-only; the
+  // route handler requires a valid `jobId` query parameter (uuidv4
+  // from `createJob`). Public so that the install-progress overlay
+  // keeps updating when the session cookie is invalidated mid-install
+  // by a wipe-secrets clean install. Returns sanitised progress only
+  // — no `input.variables`, no credentials manifest.
+  { prefix: '/api/install/progress', methods: new Set(['GET']) },
 ];
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
