@@ -3,7 +3,24 @@ import { agentManager } from '@/lib/agent/manager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
+import { getConfig } from '@/lib/config';
 import { RESET_GROUPS, getChildExclusions, isAlwaysWipe, type ResetGroup } from '@/lib/install/resetGroups';
+
+/**
+ * Map a service name to the reset group whose wipe would destroy its
+ * on-disk data (#668 — S8 stale-route prediction).
+ *
+ * Mirrors the resetGroups.ts path table: nginx-proxy-manager lives
+ * under `certs`, `auth` under `identity`, everything else under
+ * `service-data`. ServiceBay-owned services (the kernel itself) sit in
+ * `secrets` but they don't have proxy routes, so they don't matter
+ * here.
+ */
+function resetGroupForService(service: string): ResetGroup {
+  if (service === 'nginx-proxy-manager' || service === 'nginx') return 'certs';
+  if (service === 'auth' || service === 'authelia' || service === 'lldap') return 'identity';
+  return 'service-data';
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -104,7 +121,27 @@ export async function GET(request: NextRequest) {
       };
     }));
 
-    return NextResponse.json({ node: nodeName, groups });
+    // Stale-route preview (#668 — S8). For every NPM proxy host the
+    // operator currently has, annotate which reset-group's wipe would
+    // strand it. The wizard panel filters this list by the operator's
+    // checkbox state and renders an "after this install, N routes will
+    // dangle" preview — so they can re-deploy or pre-delete those
+    // services before clicking RESET, instead of finding the orphans
+    // post-mortem in the diagnose page.
+    let proxyHosts: Array<{ domain: string; service: string; group: ResetGroup }> = [];
+    try {
+      const cfg = await getConfig();
+      const hosts = cfg.reverseProxy?.hosts ?? [];
+      proxyHosts = hosts
+        .filter(h => h.created && h.domain && h.service)
+        .map(h => ({ domain: h.domain, service: h.service, group: resetGroupForService(h.service) }));
+    } catch {
+      // Best-effort — a config-load failure shouldn't break the
+      // primary purpose of this endpoint (size info). Empty list means
+      // "no preview" not "no routes".
+    }
+
+    return NextResponse.json({ node: nodeName, groups, proxyHosts });
   } catch (error) {
     return apiError(error, { tag: 'api:system:stacks:reset:info', status: 500 });
   }

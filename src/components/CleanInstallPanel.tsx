@@ -37,7 +37,13 @@ type GroupInfo = {
   alwaysWipe?: boolean;
 };
 
-type InfoResponse = { node: string; groups: GroupInfo[] };
+type InfoResponse = {
+  node: string;
+  groups: GroupInfo[];
+  /** Existing NPM proxy hosts, tagged with the reset-group whose wipe
+   *  would orphan them. Empty when nothing's installed yet. */
+  proxyHosts?: Array<{ domain: string; service: string; group: GroupInfo['id'] }>;
+};
 
 const DEFAULT_KEPT: GroupInfo['id'][] = ['secrets', 'certs', 'identity'];
 
@@ -208,46 +214,31 @@ export default function CleanInstallPanel({
             </div>
           )}
 
-          {/* Dangerous-combination warnings (#668 — S9). Pure preview;
-              doesn't block the install. Each combination has a specific
-              consequence the operator should weigh before confirming. */}
+          {/* Stale proxy-route preview (#667 — S8). For every NPM
+              proxy host whose backing service is in a group that's
+              about to be wiped, show it so the operator knows what
+              they'll need to clean up post-install (or re-deploy
+              instead). Pure preview — operator decides. */}
           {(() => {
-            const wipingSecrets = !effectivePreserve.includes('secrets');
-            const keepingCerts = effectivePreserve.includes('certs');
-            const keepingIdentity = effectivePreserve.includes('identity');
-            const wipingCerts = !effectivePreserve.includes('certs');
-            const keepingSecrets = effectivePreserve.includes('secrets');
-            const warnings: { title: string; body: string }[] = [];
-            if (wipingSecrets && keepingCerts) {
-              warnings.push({
-                title: 'Wipe secrets + keep certs',
-                body: 'Session cookies will invalidate mid-install (AUTH_SECRET rotates). The UI install overlay will silently 401 — services keep coming up, but you may need to log in again to see progress. Dangling NPM proxy routes will appear for services in service-data that no longer exist.',
-              });
-            }
-            if (wipingSecrets && keepingIdentity) {
-              warnings.push({
-                title: 'Wipe secrets + keep identity',
-                body: 'LLDAP will not accept the wizard\'s freshly-generated admin password (the image only re-keys on first DB init). Recovery is operator-decision: see docs/CREDENTIAL_SELF_HEAL.md.',
-              });
-            }
-            if (wipingCerts && keepingSecrets) {
-              warnings.push({
-                title: 'Wipe certs + keep secrets',
-                body: 'Cert-archive auto-snapshot will run before the wipe so cert-reuse works on the next install. Only relevant if you\'ve hit Let\'s Encrypt\'s 5-duplicate/168h rate limit recently — wiping certs again now risks issuance failure on rebuild.',
-              });
-            }
-            if (warnings.length === 0) return null;
+            const stale = (info?.proxyHosts ?? []).filter(h => !effectivePreserve.includes(h.group));
+            if (stale.length === 0) return null;
             return (
-              <div className="space-y-1.5">
-                {warnings.map((w, i) => (
-                  <div key={i} className="text-xs flex items-start gap-1.5 p-2 rounded bg-yellow-100/80 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700">
-                    <AlertTriangle className="w-4 h-4 text-yellow-700 dark:text-yellow-400 shrink-0 mt-0.5" />
-                    <div>
-                      <div className="font-medium text-yellow-900 dark:text-yellow-100">{w.title}</div>
-                      <div className="text-yellow-800 dark:text-yellow-200/90 mt-0.5">{w.body}</div>
-                    </div>
+              <div className="text-xs flex items-start gap-1.5 p-2 rounded bg-orange-100/70 dark:bg-orange-900/30 border border-orange-300 dark:border-orange-700">
+                <AlertTriangle className="w-4 h-4 text-orange-700 dark:text-orange-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="font-medium text-orange-900 dark:text-orange-100">
+                    {stale.length} proxy route{stale.length === 1 ? '' : 's'} will become dangling
                   </div>
-                ))}
+                  <div className="text-orange-800 dark:text-orange-200/90 mt-0.5">
+                    {stale.slice(0, 5).map(h => (
+                      <div key={h.domain} className="font-mono">{h.domain} <span className="opacity-70">({h.service})</span></div>
+                    ))}
+                    {stale.length > 5 && <div className="opacity-70">… and {stale.length - 5} more</div>}
+                  </div>
+                  <div className="text-orange-800/80 dark:text-orange-200/70 mt-1">
+                    Fix after install via the diagnose page (Delete route) or re-deploy these services from the library.
+                  </div>
+                </div>
               </div>
             );
           })()}
