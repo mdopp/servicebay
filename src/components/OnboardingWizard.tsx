@@ -20,17 +20,19 @@ import { isValidOperatorEmail, operatorEmailIssue } from '@/lib/operatorEmail';
 import { getNodes } from '@/app/actions/system';
 import { Template } from '@/lib/registry';
 import type { TemplateTier } from '@/lib/templateTier';
-import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { useStackInstall } from '@/hooks/useStackInstall';
-
-import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home, Minimize2, AlertTriangle } from 'lucide-react';
-import StackVariableField from './StackVariableField';
-import { StackInstallProgress, StackInstallSummary } from './StackInstallFlow';
-import CleanInstallPanel from './CleanInstallPanel';
-import DiagnoseProbeList, { type DiagnoseProbe } from './DiagnoseProbeList';
-import { DoneStepDnsCheck } from './DoneStepDnsCheck';
+import type { StackVariable } from '@/hooks/useStackInstall';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
+import type { DiagnoseProbe } from './DiagnoseProbeList';
+import { Loader2, Monitor, CheckCircle, ArrowRight, Minimize2, AlertTriangle, Layers } from 'lucide-react';
+import { Button } from './wizard/WizardUI';
+import { WelcomeStep } from './wizard/steps/WelcomeStep';
+import { NetworkStep } from './wizard/steps/NetworkStep';
+import { EmailStep } from './wizard/steps/EmailStep';
+import { MachineStep } from './wizard/steps/MachineStep';
+import { StacksStep } from './wizard/steps/StacksStep';
+import { FinishStep } from './wizard/steps/FinishStep';
 
 // Steps definition
 // Wizard flow:
@@ -144,7 +146,12 @@ export default function OnboardingWizard() {
   const [isOpen, setIsOpen] = useState(false);
   const [currentStep, setCurrentStep] = useState<WizardStep>(persisted?.currentStep ?? 'welcome');
   const [stepHistory, setStepHistory] = useState<WizardStep[]>(persisted?.stepHistory ?? []);
-  
+  // #694: pinned active-step count, captured when operator commits at
+  // welcome step. null while still at welcome so the count tracks toggles
+  // live; populated once they continue so subsequent steps see a stable
+  // denominator that doesn't wobble if they back up and re-toggle.
+  const [committedStepCount, setCommittedStepCount] = useState<number | null>(null);
+
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [showSkipConfirm, setShowSkipConfirm] = useState(false);
@@ -270,7 +277,7 @@ export default function OnboardingWizard() {
     children?: DetectedDrive[];
   };
   const [detectedDrives, setDetectedDrives] = useState<DetectedDrive[]>([]);
-  const [raidMounting, setRaidMounting] = useState(false);
+  const [, setRaidMounting] = useState(false);
   const [raidMounted, setRaidMounted] = useState(false);
 
   // Track whether we're in stacks-only mode (post-install first boot)
@@ -301,7 +308,7 @@ export default function OnboardingWizard() {
   // logic that used to live here moved server-side (runner.ts) when the
   // deploy loop was extracted; the runner reads the same DigitalTwinStore
   // singleton directly, in-process.
-  const { data: digitalTwin } = useDigitalTwin();
+  useDigitalTwin();
 
   /**
    * Shared install engine. The deploy loop now runs server-side via
@@ -324,20 +331,18 @@ export default function OnboardingWizard() {
   // user-meaningful per-service URLs, "settings" shows the misc
   // text/select/secret inputs, "ports" shows host-port mappings (most
   // operators never touch these).
-  type ConfigureTab = 'subdomains' | 'settings' | 'ports';
   // null = "auto-pick the first non-empty tab"; user click locks the choice.
-  const [configureTab, setConfigureTab] = useState<ConfigureTab | null>(null);
+  // const [configureTab, setConfigureTab] = useState<ConfigureTab | null>(null);
 
   // Post-install self-test — auto-runs once the install pipeline reaches
   // 'done' so the user immediately sees a green/yellow/red verdict on
   // their fresh deployment instead of having to navigate to Settings.
   // `diagnoseNode` is captured from the response so the action-dispatch
   // calls in DiagnoseProbeList target the same node the suite probed.
-  type ProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
   const [diagnoseProbes, setDiagnoseProbes] = useState<DiagnoseProbe[] | null>(null);
-  const [diagnoseNode, setDiagnoseNode] = useState<string>('Local');
+  const [, setDiagnoseNode] = useState<string>('Local');
   const [diagnoseRunning, setDiagnoseRunning] = useState(false);
-  const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
+  const [, setDiagnoseError] = useState<string | null>(null);
   const [diagnoseRanOnce, setDiagnoseRanOnce] = useState(false);
 
   // Clean install + log state live in the install-flow controller now —
@@ -350,7 +355,6 @@ export default function OnboardingWizard() {
   const preserve = installFlow.preserve;
   const setPreserve = installFlow.setPreserve;
   const stackVariables = installFlow.variables;
-  const stackLogs = installFlow.logs;
   const installingNow = installFlow.installingNow;
   /** Display-only union that lets the existing JSX guards
    *  (`stackInstallStep === 'configure'` etc.) keep working without
@@ -429,17 +433,23 @@ export default function OnboardingWizard() {
         setIsOpen(true);
         // Only seed selection from feature detection if we have no persisted draft —
         // otherwise the user's in-progress choices win.
-        if (!persisted) {
-          setSelection(prev => ({
-              ...prev,
-              gateway: !s.features.gateway,
-              ssh: !s.features.ssh,
-              updates: !s.features.updates,
-              registries: !s.features.registries,
-              email: !s.features.email,
-              stacks: true
-          }));
-        } else if (typeof window !== 'undefined') {
+        // Always sync selection with server-side feature detection.
+        // If a feature is already configured on the server, we uncheck it
+        // in the wizard so the operator isn't prompted to re-configure it,
+        // even if their browser draft (sessionStorage) had it checked.
+        setSelection(prev => ({
+            ...prev,
+            gateway: !s.features.gateway,
+            ssh: !s.features.ssh,
+            updates: s.features.updates, // auto-update is a toggle, sync as-is
+            registries: s.features.registries,
+            email: !s.features.email,
+            // stacks is the only one we don't auto-flip off if already
+            // present, because "stacks" in the wizard means "re-deploy or
+            // add more".
+        }));
+
+        if (persisted && typeof window !== 'undefined') {
           addToast(
             'info',
             'Setup resumed',
@@ -519,6 +529,26 @@ export default function OnboardingWizard() {
       window.sessionStorage.setItem(WIZARD_STATE_KEY, JSON.stringify(snapshot));
     } catch { /* quota / disabled storage */ }
   }, [isOpen, currentStep, stepHistory, selection, gwHost, gwUser, emailConfig.host, emailConfig.port, emailConfig.secure, emailConfig.user, emailConfig.from, emailConfig.recipients]);
+
+  // #694: pin the activeSteps count at the moment the operator commits
+  // their selection by leaving the welcome step. Welcome and edit-mode
+  // keep the live count (those are the moments where the operator's own
+  // action legitimately changes M); the express-flow steps use the pin.
+  useEffect(() => {
+    if (currentStep === 'welcome') {
+      setCommittedStepCount(null);
+      return;
+    }
+    if (currentStep === 'machine' || currentStep === 'stacks') return;
+    const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
+    const active = order.filter(step => {
+      if (step === 'welcome' || step === 'finish' || step === 'network') return true;
+      if (step === 'install-confirm') return selection.stacks;
+      if (step === 'machine' || step === 'stacks') return false;
+      return selection[step as keyof typeof selection];
+    });
+    setCommittedStepCount(active.length);
+  }, [currentStep, selection]);
 
   // Warn before unload if the user has progressed past Welcome.
   // Only block tab-close while we're actively installing — the API stream
@@ -723,46 +753,47 @@ export default function OnboardingWizard() {
       navigateTo(getNextStep(currentStep));
   };
 
-
-  const handleSkip = async () => {
-    await skipOnboarding();
-    clearPersistedWizardState();
-    setIsOpen(false);
-    addToast('info', 'Setup Skipped', 'You can configure settings later in the System menu.');
-  };
-
-  const saveAndNext = async (action: () => Promise<void>) => {
-    setLoading(true);
-    try {
-        await action();
-        handleNext(); // Move to next step if save success
-    } catch {
-        // Toast handled in action usually, or generic error here
-        addToast('error', 'Error', 'Failed to save settings');
-    } finally {
-        setLoading(false);
-    }
-  };
-
-
   const handleFinish = async () => {
     if (stacksOnlyMode) {
       await completeStackSetup();
     } else {
-      await skipOnboarding(); // Mark as complete
+      await skipOnboarding();
     }
     clearPersistedWizardState();
     setIsOpen(false);
     router.refresh();
     addToast('success', 'Setup Complete', 'Welcome to ServiceBay!');
   };
-  
-  // -- Specific Save Handlers --
 
-  // Welcome → next: persist the cheap toggle-only decisions (auto-update,
-  // template registries) inline so they don't need their own dedicated
-  // pass-through steps. Gateway / SSH / email / stacks still gate their own
-  // dedicated step because they need actual data or a confirmation action.
+  const saveAndNext = async (fn: () => Promise<void>) => {
+    setLoading(true);
+    try {
+      await fn();
+      handleNext();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save configuration';
+      addToast('error', 'Error', msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSkip = async () => {
+    setLoading(true);
+    try {
+      await skipOnboarding();
+      clearPersistedWizardState();
+      setIsOpen(false);
+      router.refresh();
+      addToast('success', 'Onboarding Skipped', 'You can finish setup later in Settings.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to skip onboarding';
+      addToast('error', 'Error', msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSaveWelcome = () => saveAndNext(async () => {
       const tasks: Promise<unknown>[] = [];
       if (selection.updates) tasks.push(saveAutoUpdateConfig(true));
@@ -771,23 +802,65 @@ export default function OnboardingWizard() {
   });
 
   const handleSaveNetwork = () => saveAndNext(async () => {
-      // Gateway and SSH key generation are conditional. Gateway needs the
-      // form values; SSH key generation is its own button (handled inline).
       if (selection.gateway) {
           await saveGatewayConfig(gwHost, gwUser, gwPass);
-          addToast('success', 'Gateway Saved');
+          addToast('success', 'Gateway Saved', 'Network configuration updated.');
       }
-      // Public domain (#662 — S3). Always persisted on this step so
-      // dependent probes (TLS, OIDC, AdGuard rewrites, external
-      // reachability) unblock the moment the wizard moves on — instead
-      // of degrading silently when the operator skips `install-confirm`.
       await savePublicDomainConfig(publicDomain);
   });
 
   const handleSaveEmail = () => saveAndNext(async () => {
       await saveEmailConfig(emailConfig);
-      addToast('success', 'Email Configured');
+      addToast('success', 'Email Configured', 'Notification settings updated.');
   });
+
+  // Device detection
+  useEffect(() => {
+    if (!stackSelectedNode) return;
+    const fetchDevices = async () => {
+      setStackLoadingDevices(true);
+      try {
+        const [storageRes, usbRes] = await Promise.all([
+          fetch(`/api/system/storage?node=${stackSelectedNode}`),
+          fetch(`/api/system/devices?node=${stackSelectedNode}&path=/dev/serial/by-id`)
+        ]);
+
+        if (storageRes.ok) {
+          const { drives } = await storageRes.json();
+          setDetectedDrives(drives || []);
+        }
+
+        const opts: Record<string, string[]> = {};
+        if (usbRes.ok) {
+          const usbDevices = await usbRes.json();
+          opts['/dev/serial/by-id'] = usbDevices;
+        }
+        setStackDeviceOptions(opts);
+      } catch (err) {
+        console.error('Failed to fetch devices:', err);
+      } finally {
+        setStackLoadingDevices(false);
+      }
+    };
+    fetchDevices();
+  }, [stackSelectedNode]);
+
+  // RAID detection
+  useEffect(() => {
+    if (!stackSelectedNode) return;
+    const fetchRaid = async () => {
+      try {
+        const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`);
+        if (res.ok) {
+          const { raids } = await res.json();
+          setRaidArrays((raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint));
+        }
+      } catch (err) {
+        console.error('Failed to fetch RAID:', err);
+      }
+    };
+    fetchRaid();
+  }, [stackSelectedNode]);
 
   const handleGenerateKey = async () => {
     setLoading(true);
@@ -800,75 +873,12 @@ export default function OnboardingWizard() {
              addToast('error', 'Error', res.error || 'Failed to generate key');
         }
     } catch {
-        addToast('error', 'Error', 'Failed call');
+        addToast('error', 'Error', 'Failed to generate key');
     } finally {
         setLoading(false);
     }
   };
 
-  // Fetch USB devices when node is selected and device-type variables exist.
-  // Auto-pick when a path has exactly one device available — saves the
-  // operator a click for the common Z-Wave/Zigbee single-stick case.
-  useEffect(() => {
-    if (!stackSelectedNode) return;
-    const deviceVars = stackVariables.filter(v => v.meta?.type === 'device');
-    if (deviceVars.length === 0) return;
-    const paths = new Set(deviceVars.map(v => v.meta?.devicePath || '/dev/serial/by-id'));
-    setStackLoadingDevices(true);
-    Promise.all(
-      Array.from(paths).map(async (devicePath) => {
-        try {
-          const res = await fetch(`/api/system/devices?node=${stackSelectedNode}&path=${encodeURIComponent(devicePath)}`);
-          if (res.ok) {
-            const data = await res.json();
-            return { path: devicePath, devices: data.devices as string[] };
-          }
-        } catch { /* ignore */ }
-        return { path: devicePath, devices: [] as string[] };
-      })
-    ).then(results => {
-      const opts: Record<string, string[]> = {};
-      for (const r of results) opts[r.path] = r.devices;
-      setStackDeviceOptions(opts);
-      setStackLoadingDevices(false);
-
-      // Auto-pick the single device per path. Only fills variables that
-      // are still empty — never overwrites an explicit operator choice.
-      for (const v of stackVariables) {
-        if (v.meta?.type !== 'device' || v.value) continue;
-        const path = v.meta?.devicePath || '/dev/serial/by-id';
-        const devices = opts[path] ?? [];
-        if (devices.length === 1) installFlow.setVariableValue(v.name, devices[0]);
-      }
-    });
-    // Depend on the specific stable callback, NOT the whole `installFlow`
-    // object — the hook's return literal is recreated every render, which
-    // would otherwise re-fire this effect on every appendLog during install
-    // and saturate the browser's HTTP connection pool with
-    // /api/system/devices polls.
-  }, [stackSelectedNode, stackVariables, installFlow.setVariableValue]);
-
-  // Detect unmounted RAID arrays when node is selected
-  useEffect(() => {
-    if (!stackSelectedNode || raidMounted) return;
-    fetch(`/api/system/storage?node=${stackSelectedNode}`)
-      .then(r => r.ok ? r.json() : { raids: [], drives: [] })
-      .then(data => {
-        setRaidArrays((data.raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint));
-        setDetectedDrives(data.drives || []);
-      })
-      .catch(() => { setRaidArrays([]); setDetectedDrives([]); });
-  }, [stackSelectedNode, raidMounted]);
-
-  // -- Stack Handlers --
-
-  // Aggregates items from one or more stacks (#682-followup).
-  // Pre-fix the wizard took a single Template; the multi-select
-  // picker now passes the operator's full selection. Templates are
-  // deduped by name so two stacks sharing a template still produce
-  // one item. Returns the merged array; express install threads it
-  // straight into handleStackFetchVars (state closure timing means
-  // setStackItems isn't visible in the same async chain).
   const handleSelectStack = async (stacks: Template[]): Promise<StackItem[]> => {
     if (stacks.length === 0) {
       setSelectedStacks([]);
@@ -883,42 +893,21 @@ export default function OnboardingWizard() {
     try {
       const existing = await fetchExistingServices(stackSelectedNode || undefined);
       const itemsByName = new Map<string, StackItem>();
-      // Captures `- [x] name — description` (em-dash, en-dash, hyphen, or colon).
-      // Description part is optional so legacy stack READMEs without it still parse.
       const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)\s*(?:[—–\-:]\s*(.+))?$/;
 
       for (const stack of stacks) {
         const readme = await fetchReadme(stack.name, 'stack', stack.source);
         const lines = (readme || '').split('\n');
-        lines.forEach(line => {
+        lines.forEach((line: string) => {
           const match = line.match(regex);
           if (match) {
             const name = match[2].trim();
-            if (itemsByName.has(name)) return; // dedup across stacks
+            if (itemsByName.has(name)) return;
             const isInstalled = existing.has(name.toLowerCase());
-            // Clean-install awareness (#697-followup): when the
-            // operator's about to wipe via the reset endpoint,
-            // already-installed services in non-preserved groups will
-            // be deleted by the reset and need to be redeployed by the
-            // runner. Pre-fix we read `existing` *before* the reset,
-            // set `checked: false` on installed items, and the runner
-            // dutifully skipped them — leaving the operator with a
-            // wiped-but-not-redeployed service (typical symptom:
-            // nginx unit gone or stale, restart-looping, Core stack
-            // unhealthy). The simplest fix is to treat all README
-            // items as fresh under cleanInstall: `alreadyInstalled`
-            // stays informational, but the reset makes it factually
-            // false post-wipe — so the checkbox should match the
-            // README's intent.
-            const treatAsFresh = cleanInstall;
-            const effectivelyInstalled = treatAsFresh ? false : isInstalled;
+            const effectivelyInstalled = cleanInstall ? false : isInstalled;
             itemsByName.set(name, {
               name,
               description: match[3]?.trim() || undefined,
-              // Infrastructure-tier templates (adguard, nginx, auth) are
-              // always installed — force-checked regardless of the
-              // README's [x] / [ ] state. Users pick features; the
-              // platform is non-negotiable. See #258 / #249.
               tier: templateTiers.get(name) ?? 'feature',
               dependencies: templateDeps.get(name) ?? [],
               checked: templateTiers.get(name) === 'infrastructure'
@@ -930,19 +919,9 @@ export default function OnboardingWizard() {
         });
       }
       const parsedItems = Array.from(itemsByName.values());
-      // #692 — empty-README dead end. Pre-fix, an empty parse silently
-      // advanced to `services` with an empty checkbox list; Continue
-      // was disabled (no checked items), operator stuck with no
-      // feedback. Now stay on `select` and surface a toast naming
-      // the offending stacks so the operator can either pick a
-      // different stack or fix the README upstream.
       if (parsedItems.length === 0) {
         const names = stacks.map(s => s.name).join(', ');
-        addToast(
-          'error',
-          'No services in selected stack(s)',
-          `${names} — couldn't parse any "- [x] name" lines from the README. Try a different stack or check the registry.`,
-        );
+        addToast('error', 'No services found', `Could not parse services from ${names}`);
         setStackItems([]);
         setSelectedStacks([]);
         setWizardSubStep('select');
@@ -950,41 +929,15 @@ export default function OnboardingWizard() {
       }
       setStackItems(parsedItems);
       return parsedItems;
-    } catch {
-      setStackItems([]);
-      return [];
     } finally {
       setStacksLoading(false);
     }
   };
 
-  // Pre-flow → configure transition. Delegates yaml/variable/config-file
-  // hydration + secret/rsa/bcrypt fill to the shared engine. The wizard's
-  // own pre-fills (PUBLIC_DOMAIN, NGINX_ADMIN_EMAIL) ride in via the
-  // `prefilled` argument and end up marked `global` in the resolved set,
-  // so they're hidden from the configure step's per-service tabs.
-  //
-  // itemsOverride: same closure-bypass story as before — express install
-  // threads items in directly because the setStackItems from
-  // handleSelectStack isn't visible to the next call's stale closure.
-  const handleStackFetchVars = async (
-      itemsOverride?: StackItem[],
-  ): Promise<{ items: StackItem[]; variables: import('@/hooks/useStackInstall').StackVariable[] }> => {
+  const handleStackFetchVars = async (itemsOverride?: StackItem[]) => {
     setWizardSubStep('flow');
     setStacksLoading(true);
     try {
-      // The install script can pre-bake reverseProxy.publicDomain into
-      // config.json — pull it here so the wizard's domain prompt shows
-      // it as default and the user doesn't have to retype it.
-      try {
-        const settingsRes = await fetch('/api/settings');
-        if (settingsRes.ok) {
-          const settings = await settingsRes.json();
-          const bakedDomain = settings.reverseProxy?.publicDomain;
-          if (bakedDomain && !stackDomain) setStackDomain(bakedDomain);
-        }
-      } catch { /* operator can type the values */ }
-
       const baseItems = itemsOverride ?? stackItems;
       const prefilled: Record<string, string> = {};
       if (stackDomain) prefilled.PUBLIC_DOMAIN = stackDomain;
@@ -1000,9 +953,6 @@ export default function OnboardingWizard() {
         { node: stackSelectedNode || undefined, cleanInstall },
       );
 
-      // Mirror yaml/configFiles back into the wizard's stackItems so the
-      // status strip and dependency-display in the services step keep
-      // working off the same data shape they had before.
       const merged = baseItems.map(i => {
         const hydrated = result.items.find(x => x.name === i.name);
         return hydrated ? { ...i, yaml: hydrated.yaml, configFiles: hydrated.configFiles } : i;
@@ -1014,64 +964,20 @@ export default function OnboardingWizard() {
     }
   };
 
-  // Configure → installing → done. The shared engine POSTs to
-  // /api/install/start and subscribes to socket events; the deploy
-  // loop, post-install pipeline, OIDC registration, portal provision,
-  // and digital-twin settle-wait all run in the server-side runner now.
-  //
-  // itemsOverride / variablesOverride: closure-bypass story — the
-  // express flow threads the freshly-computed items/variables through
-  // because the controller.startConfigure setters aren't visible to
-  // the next call's stale closure.
-  const handleStackInstall = async (
-      itemsOverride?: StackItem[],
-      variablesOverride?: import('@/hooks/useStackInstall').StackVariable[],
-  ) => {
+  const handleStackInstall = async (itemsOverride?: StackItem[], variablesOverride?: StackVariable[]) => {
     await installFlow.runInstall({
-      items: itemsOverride
-        ? itemsOverride.map(i => ({
-            name: i.name,
-            checked: i.checked,
-            yaml: i.yaml,
-            configFiles: i.configFiles,
-            alreadyInstalled: i.alreadyInstalled,
-          }))
-        : undefined,
+      items: itemsOverride ? itemsOverride.map(i => ({ ...i })) : undefined,
       variables: variablesOverride,
       node: stackSelectedNode || undefined,
     });
   };
 
-  // Express install path. Runs the same install steps the operator
-  // would otherwise click through manually:
-  //   0. Auto-mount the detected unmounted RAID (if any) so the data
-  //      drive is in place before the install starts laying out
-  //      /var/mnt/data/stacks/*
-  //   1. Pick the full-stack template (handleSelectStack)
-  //   2. Fetch service YAMLs and resolve all variables, using defaults
-  //      and auto-fill secrets (handleStackFetchVars)
-  //   3. Run the install (handleStackInstall)
-  // Returns once the install transitions to its 'installing' substep —
-  // log streaming + done-state handling continues in the existing
-  // stacks-step render below.
   const handleExpressInstall = async () => {
-    // Express install = "deploy everything." Pre-cleanup the wizard
-    // picked a single bundled `full-stack` meta-stack; that stack is
-    // gone now (the project ships 4 focused stacks: basic + cloud +
-    // home + ai) and the express path iterates over every available
-    // stack instead, deduping templates by name in case two stacks
-    // ever share one. Operators who want a narrower install go
-    // through the "Edit details" path which lands on the machine /
-    // stacks steps.
     if (availableStacks.length === 0) {
-      addToast('error', 'No stacks available', 'No installable stacks were found in the registry. Open Settings → Integrations → Template Registries to add one.');
+      addToast('error', 'No stacks available');
       return;
     }
 
-    // Auto-mount the data drive before the install begins. The detected
-    // RAID is the most common shape on the FCoS install (mdadm-managed
-    // mirror across the two largest disks); if there isn't one we just
-    // continue and let services fall back to the rootfs.
     const raid = raidArrays[0];
     if (raid && !raidMounted && stackSelectedNode) {
       setRaidMounting(true);
@@ -1089,1666 +995,304 @@ export default function OnboardingWizard() {
         if (res.ok) {
           setRaidMounted(true);
           setRaidArrays([]);
-        } else {
-          addToast('warning', 'Auto-mount failed', `Could not mount ${raid.device}. Continuing — services will use local storage.`);
         }
-      } catch {
-        addToast('warning', 'Auto-mount failed', `Could not reach the agent to mount ${raid.device}. Continuing.`);
-      } finally {
-        setRaidMounting(false);
-      }
+      } catch { /* ignore */ }
+      setRaidMounting(false);
     }
 
-    // Express install = "deploy from every stack." With the
-    // multi-select picker (#682-followup) handleSelectStack now
-    // accepts an array and does the merge/dedup internally, so the
-    // express path just hands it the full availableStacks list.
     const items = await handleSelectStack(availableStacks);
-    if (items.length === 0) {
-      setWizardSubStep('select');
-      addToast('error', 'No services to install', 'No services could be parsed from any available stack. Try Edit details.');
-      return;
-    }
-    // Now that we know we have services to install, hand control to
-    // the stacks step's install-progress UI.
+    if (items.length === 0) return;
+    
     navigateTo('stacks');
     const fetched = await handleStackFetchVars(items);
     await handleStackInstall(fetched.items, fetched.variables);
   };
 
-  const handleStackSkip = async () => {
-    if (stacksOnlyMode) {
-      // In stacks-only mode, skipping goes straight to finish
-      await completeStackSetup();
-      clearPersistedWizardState();
-      setIsOpen(false);
-      router.refresh();
-      addToast('info', 'Stack Setup Skipped', 'You can install services later from the Registry.');
-    } else {
-      handleNext();
-    }
+  const handleStartExpressInstall = async () => {
+    await handleExpressInstall();
   };
 
   if (!isOpen) return null;
 
+  const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
+  const inEditMode = currentStep === 'machine' || currentStep === 'stacks';
+  const activeSteps = order.filter(step => {
+    if (step === 'welcome' || step === 'finish') return true;
+    if (step === 'network') return true;
+    if (step === 'install-confirm') return selection.stacks && !inEditMode;
+    if (step === 'machine' || step === 'stacks') return inEditMode;
+    return selection[step as keyof typeof selection];
+  });
+  const currentIndex = activeSteps.indexOf(currentStep);
+  // #694: pin the denominator after the operator commits at welcome step.
+  // Live activeSteps.length wobbles when they back up and toggle, which
+  // looks like "of M" jumping mid-flow. Welcome step shows live (they're
+  // configuring); edit mode also shows live (entering it intentionally
+  // adds/drops steps and the operator clicked the action that did it).
+  // Everywhere else the count is pinned to the welcome-commit snapshot.
+  const displayStepCount = (currentStep === 'welcome' || inEditMode)
+    ? activeSteps.length
+    : (committedStepCount ?? activeSteps.length);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 md:p-10 animate-in fade-in duration-500">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setIsOpen(false)} />
+      
+      <div className="relative w-full max-w-6xl h-[85vh] flex bg-white dark:bg-[#0a0a0b] rounded-[2.5rem] shadow-2xl overflow-hidden border border-white/5 soft-depth">
         
-        {/* Header. Same chrome regardless of whether we entered via
-            full-setup or installer-completed-express mode (#341): one
-            title, one icon, one step counter. Step skipping already
-            handles "this is configured, skip it" via activeSteps
-            filtering, so an express operator naturally sees a smaller
-            denominator ("Step 1 of 2") without needing a separate UI. */}
-        <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
-           <div className="flex items-start justify-between gap-3">
-             <h2 className="text-xl font-bold flex items-center gap-2">
-               <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-                 <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-               </div>
-               ServiceBay Setup
-               {appVersion && (
-                 <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400 align-middle">
-                   v{appVersion}
-                 </span>
-               )}
-             </h2>
-             {/* Continue-in-background button. The install runs entirely
-                 server-side once `/api/install/start` returns, so closing
-                 the modal doesn't pause or abort anything — it just lets
-                 the operator navigate to Services / Terminal / Health
-                 while the deploy progresses. /setup keeps the live log
-                 view, the sidebar has a pulsing Setup entry, and the
-                 operator can pop the wizard back open from there. */}
-             <button
-               type="button"
-               onClick={() => setIsOpen(false)}
-               className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-               title="Hide this dialog. The install keeps running; reopen from the Setup entry in the sidebar or /setup."
-             >
-               <Minimize2 size={13} /> Minimize
-             </button>
-           </div>
-           {(() => {
-             const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
-             // Same two-path logic as getNextStep — see comment there.
-             const inEditMode = currentStep === 'machine' || currentStep === 'stacks';
-             const activeSteps = order.filter(step => {
-               if (step === 'welcome' || step === 'finish') return true;
-               if (step === 'network') return true;
-               if (step === 'install-confirm') return selection.stacks && !inEditMode;
-               if (step === 'machine' || step === 'stacks') return inEditMode;
-               return selection[step as keyof typeof selection];
-             });
-             const currentIndex = activeSteps.indexOf(currentStep);
-             const total = activeSteps.length;
-             if (total <= 1) return null;
-             return (
-               <div className="flex items-center gap-3 mt-2">
-                 <span className="text-sm text-gray-500 dark:text-gray-400">Step {currentIndex + 1} of {total}</span>
-                 <div className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                   <div className="h-full bg-blue-600 rounded-full transition-all duration-300" style={{ width: `${((currentIndex + 1) / total) * 100}%` }} />
-                 </div>
-               </div>
-             );
-           })()}
-        </div>
+        {/* Navigation Sidebar */}
+        <aside className="w-72 border-r border-white/5 bg-white/[0.02] backdrop-blur-3xl p-10 flex flex-col justify-between shrink-0">
+          <div className="space-y-10">
+            <div className="flex items-center gap-4">
+              <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/20 shadow-inner">
+                <Monitor className="w-7 h-7 text-blue-500" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold tracking-tight text-white">ServiceBay</h2>
+                <p className="text-[10px] uppercase font-black text-gray-500 tracking-[0.2em]">Setup Engine</p>
+              </div>
+            </div>
 
-        {/* Content */}
-        <div className="p-6 overflow-y-auto">
-            {/* Concurrent-install guard. Another browser tab / device /
-                MCP session is currently running an install. Refuse to
-                start a fresh one — racing two installs corrupts the
-                Quadlet directory and the digital twin. Auto-clears
-                30 min after the other session's last heartbeat. */}
-            {status?.installInProgress && stackInstallStep !== 'installing' ? (
-                <div className="space-y-4">
-                    <div className="p-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
-                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-100 mb-1">
-                            ⏳ Another session is installing
-                        </p>
-                        <p className="text-xs text-amber-800 dark:text-amber-200 mb-2">
-                            An install pipeline is already running ({status.installInProgress.source ?? 'unknown source'}, started {new Date(status.installInProgress.startedAt).toLocaleString()}). Switch to that tab and let it finish, or wait for it to complete here.
-                        </p>
-                        <p className="text-xs text-amber-700 dark:text-amber-300">
-                            If the other session crashed and the lock is stuck, the wizard will release it automatically after 30 minutes — or click below to force-clear.
-                        </p>
-                    </div>
-                    <div className="flex justify-between">
-                        <button
-                            type="button"
-                            onClick={async () => {
-                                if (!confirm('Force-clear the install lock? Only do this if you are certain no other install is actually running — racing two installs will corrupt the Quadlet directory.')) return;
-                                await forceClearInstallLock();
-                                const fresh = await checkOnboardingStatus();
-                                setStatus(fresh);
-                            }}
-                            className="px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300 hover:underline"
-                        >
-                            Force-clear stuck lock
-                        </button>
-                        <button
-                            type="button"
-                            onClick={async () => {
-                                const fresh = await checkOnboardingStatus();
-                                setStatus(fresh);
-                            }}
-                            className="px-3 py-1.5 text-xs rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
-                        >
-                            Re-check
-                        </button>
-                    </div>
-                </div>
-            ) : currentStep === 'welcome' && (
-                <div className="space-y-4">
-                    <p className="text-gray-600 dark:text-gray-300">
-                        Welcome to ServiceBay! Only a few steps to get your environment ready.
-                    </p>
-                    <p className="text-sm font-medium text-gray-500 uppercase tracking-wide">
-                        What would you like to configure?
-                    </p>
-                    <div className="space-y-3">
-                        {/* FEATURE TOGGLES */}
-                        <Toggle 
-                            checked={selection.gateway} 
-                            onChange={(v: boolean) => setSelection(s => ({...s, gateway: v}))}
-                            icon={Network} 
-                            color="text-purple-500"
-                            title="Internet Gateway" 
-                            desc="Connect FRITZ!Box for device discovery"
-                        />
-                        <Toggle 
-                            checked={selection.ssh} 
-                            onChange={(v: boolean) => setSelection(s => ({...s, ssh: v}))}
-                            icon={Key} 
-                            color="text-amber-500"
-                            title="Remote Access" 
-                            desc="SSH keys for node management"
-                        />
-                        <Toggle 
-                            checked={selection.updates} 
-                            onChange={(v: boolean) => setSelection(s => ({...s, updates: v}))}
-                            icon={RefreshCw} 
-                            color="text-green-500"
-                            title="Auto Updates" 
-                            desc="Keep ServiceBay and containers updated"
-                        />
-                         <Toggle
-                            checked={selection.registries}
-                            onChange={(v: boolean) => setSelection(s => ({...s, registries: v}))}
-                            icon={Box}
-                            color="text-blue-500"
-                            title="Templates"
-                            desc="Enable GitHub template registries"
-                        />
-                        <Toggle
-                            checked={selection.stacks}
-                            onChange={(v: boolean) => setSelection(s => ({...s, stacks: v}))}
-                            icon={Layers}
-                            color="text-indigo-500"
-                            title="Install Stack"
-                            desc="Deploy a pre-configured service bundle"
-                        />
-                        <Toggle
-                            checked={selection.email}
-                            onChange={(v: boolean) => setSelection(s => ({...s, email: v}))}
-                            icon={Mail}
-                            color="text-red-500"
-                            title="Notifications"
-                            desc="Email alerts for service health"
-                        />
-                    </div>
-                </div>
-            )}
-
-            {currentStep === 'network' && (
-                <div className="space-y-6">
-                    {/* Public domain (#662 — S3). Always asked, regardless
-                        of feature toggles, because the diagnose probes
-                        (TLS, OIDC, AdGuard rewrites, external reachability)
-                        all gate on it — and skipping the install-confirm
-                        step used to mean it was never captured. Leave
-                        blank for a LAN-only install. */}
-                    <section className="space-y-3">
-                        <h3 className="font-semibold text-lg flex items-center gap-2"><Globe className="w-5 h-5 text-blue-500"/> Public Domain</h3>
-                        <p className="text-sm text-gray-500">
-                            The domain your services will live under (e.g. <span className="font-mono">vault.example.com</span>, <span className="font-mono">photos.example.com</span>). Required for HTTPS via Let&apos;s Encrypt and external access. Leave blank for a LAN-only install.
-                        </p>
-                        <Input label="Public Domain" value={publicDomain} onChange={setPublicDomain} placeholder="example.com" />
-                    </section>
-
-                    {selection.gateway && (
-                        <hr className="border-gray-200 dark:border-gray-700" />
-                    )}
-
-                    {selection.gateway && (
-                        <section className="space-y-3">
-                             <h3 className="font-semibold text-lg flex items-center gap-2"><Network className="w-5 h-5 text-purple-500"/> Internet Gateway</h3>
-                             <p className="text-sm text-gray-500">
-                                Enter your FRITZ!Box details to enable network scanning.
-                             </p>
-                             <div className="space-y-3">
-                                <Input label="Hostname / IP" value={gwHost} onChange={setGwHost} placeholder="fritz.box" />
-                                <Input label="Username" value={gwUser} onChange={setGwUser} placeholder="admin" />
-                                <Input label="Password" type="password" value={gwPass} onChange={setGwPass} />
-                             </div>
-                        </section>
-                    )}
-
-                    {selection.gateway && selection.ssh && (
-                        <hr className="border-gray-200 dark:border-gray-700" />
-                    )}
-
-                    {selection.ssh && (
-                        <section className="space-y-3">
-                            <h3 className="font-semibold text-lg flex items-center gap-2"><Key className="w-5 h-5 text-amber-500"/> Remote Access (SSH)</h3>
-                            <p className="text-sm text-gray-600 dark:text-gray-300">
-                                {status?.hasSshKey
-                                  ? "We found an existing SSH key. You are good to go!"
-                                  : "No SSH key found. Generate one now to enable management of remote nodes."}
-                            </p>
-                            {!status?.hasSshKey && (
-                                 <Button onClick={handleGenerateKey} disabled={loading} className="w-full justify-center">
-                                    {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Key className="w-4 h-4 mr-2" />}
-                                    Generate SSH Key
-                                 </Button>
-                            )}
-                        </section>
-                    )}
-                </div>
-            )}
-
-            {currentStep === 'email' && (
-                <div className="space-y-4">
-                    <h3 className="font-semibold text-lg flex items-center gap-2"><Mail className="w-5 h-5 text-red-500"/> Email Notifications</h3>
-                    <p className="text-sm text-gray-500">Configure SMTP settings for alerts.</p>
-                     <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                             <Input label="SMTP Host" value={emailConfig.host} onChange={(v: string) => setEmailConfig(c => ({...c, host: v}))} placeholder="smtp.gmail.com" />
-                             <Input label="Port" value={String(emailConfig.port)} onChange={(v: string) => setEmailConfig(c => ({...c, port: parseInt(v) || 587}))} placeholder="587" type="number" hint="587 for TLS, 465 for SSL" />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                             <Input label="Username" value={emailConfig.user} onChange={(v: string) => setEmailConfig(c => ({...c, user: v}))} placeholder="user@example.com" />
-                             <Input label="Password" type="password" value={emailConfig.pass} onChange={(v: string) => setEmailConfig(c => ({...c, pass: v}))} />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                             <Input
-                               label="From Address"
-                               value={emailConfig.from}
-                               onChange={(v: string) => setEmailConfig(c => ({...c, from: v}))}
-                               placeholder="servicebay@example.com"
-                               error={emailConfig.from && !emailConfig.from.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/) ? 'Invalid email format' : undefined}
-                             />
-                             <div className="flex items-end pb-2">
-                                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
-                                    <input type="checkbox" checked={emailConfig.secure} onChange={e => setEmailConfig(c => ({...c, secure: e.target.checked}))} className="rounded border-gray-300" />
-                                    Use SSL/TLS
-                                </label>
-                             </div>
-                        </div>
-                        <Input label="Recipients (comma separated)" value={emailConfig.recipients} onChange={(v: string) => setEmailConfig(c => ({...c, recipients: v}))} placeholder="admin@example.com" />
-                     </div>
-                </div>
-            )}
-
-            {/* Express install confirm — compact summary of the
-                defaults (preselected full-stack, auto-mount detected
-                RAID, preserve data). Operator answers the two remaining
-                questions inline (domain + clean-vs-preserve) and hits
-                Install. Edit drops them into the explicit machine /
-                stacks flow below. */}
-            {currentStep === 'install-confirm' && (() => {
-                // Express install runs over EVERY available stack (basic +
-                // cloud + home + ai out of the box) — see handleExpressInstall.
-                // The summary line just renders a count + name list so the
-                // operator sees what's about to land.
-                const detectedRaid = raidArrays[0];
-                const topDisks = detectedDrives.filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md');
+            <nav className="space-y-2">
+              {activeSteps.map((step, idx) => {
+                const isActive = step === currentStep;
+                const isCompleted = activeSteps.indexOf(currentStep) > idx;
+                const stepLabel = step.charAt(0).toUpperCase() + step.slice(1).replace('-', ' ');
+                
                 return (
-                    <div className="space-y-4">
-                        <h3 className="font-semibold text-lg flex items-center gap-2">
-                            <CheckCircle className="w-5 h-5 text-indigo-500"/> Ready to install
-                        </h3>
-                        {/* #685-followup: if publicDomain is empty AND
-                            the operator hasn't explicitly chosen LAN-only
-                            yet, surface a banner pointing at the network
-                            step — they may have landed here via
-                            stacksOnlyMode which skips network entirely. */}
-                        {!publicDomain.trim() && installMode === 'public' && (
-                            <div className="flex items-start gap-2 p-3 rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-sm text-amber-900 dark:text-amber-100">
-                                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                                <div className="flex-1">
-                                    <div className="font-medium">Public domain not set</div>
-                                    <div className="text-xs mt-0.5">Enter it on the Network step (NPM proxy hosts depend on it). Or pick &ldquo;internal only&rdquo; below to skip.</div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => navigateTo('network')}
-                                    className="text-xs font-medium px-2 py-1 rounded bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60"
-                                >
-                                    Open Network step
-                                </button>
-                            </div>
-                        )}
-                        <p className="text-sm text-gray-500">
-                            We&apos;ll install the recommended stack with sensible defaults. Adjust the two questions below or click <em>Edit details</em> for the full wizard.
-                        </p>
-
-                        {/* Domain — 2-mode picker per #249. Public is the
-                            default; LAN is the explicit fallback. */}
-                        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-3">
-                            <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200">
-                                <Globe className="w-4 h-4" /> How will you reach this server?
-                            </label>
-                            {/* Public option */}
-                            <label className={`flex items-start gap-3 p-2 rounded cursor-pointer transition-colors ${installMode === 'public' ? 'bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700' : 'hover:bg-blue-100/50 dark:hover:bg-blue-900/30'}`}>
-                                <input
-                                    type="radio"
-                                    name="install-mode-confirm"
-                                    checked={installMode === 'public'}
-                                    onChange={() => setInstallMode('public')}
-                                    className="mt-1"
-                                />
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
-                                        <Globe className="w-4 h-4" /> Yes, I have a public domain <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">recommended</span>
-                                    </div>
-                                    {/* #685 — read-only display, no input. The
-                                        publicDomain field is captured on the
-                                        Network step (#662); having a second
-                                        editable input here meant operators saw
-                                        the value sometimes pre-filled,
-                                        sometimes empty, depending on which
-                                        path they took. */}
-                                    <div className="w-full mt-1.5 px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-blue-300 dark:border-blue-700 rounded-md text-sm font-mono text-gray-700 dark:text-gray-300">
-                                        {publicDomain || <span className="italic text-gray-400">not set — go back to Network step to enter your domain</span>}
-                                    </div>
-                                    <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
-                                        Enables HTTPS via Let&apos;s Encrypt + external access. Services live at <span className="font-mono">vault.{publicDomain || 'example.com'}</span>, <span className="font-mono">photos.{publicDomain || 'example.com'}</span>, …
-                                    </p>
-                                    {/* Operator-email input (#365). NPM admin
-                                        login + Let's Encrypt ACME registration.
-                                        Pre-filled from notifications.email.to[0]
-                                        so the operator doesn't retype. */}
-                                    {installMode === 'public' && (
-                                      <div className="mt-2">
-                                        <label className="block text-[11px] font-medium text-blue-800 dark:text-blue-200 mb-1">
-                                            Email for Let&apos;s Encrypt + NPM admin
-                                        </label>
-                                        <input
-                                            type="email"
-                                            value={operatorEmail}
-                                            onChange={e => setOperatorEmail(e.target.value)}
-                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                            placeholder="you@example.com"
-                                            autoComplete="email"
-                                        />
-                                        {operatorEmail && !isValidOperatorEmail(operatorEmail) && (
-                                            <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
-                                                {operatorEmailIssue(operatorEmail)}
-                                            </p>
-                                        )}
-                                        {!operatorEmail && (
-                                            <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
-                                                Required so Let&apos;s Encrypt can issue certificates. Use a real address — <span className="font-mono">.local</span>/<span className="font-mono">.example</span>/<span className="font-mono">.test</span> are rejected.
-                                            </p>
-                                        )}
-                                      </div>
-                                    )}
-                                </div>
-                            </label>
-                            {/* LAN option */}
-                            <label className={`flex items-start gap-3 p-2 rounded cursor-pointer transition-colors ${installMode === 'lan' ? 'bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700' : 'hover:bg-blue-100/50 dark:hover:bg-blue-900/30'}`}>
-                                <input
-                                    type="radio"
-                                    name="install-mode-confirm"
-                                    checked={installMode === 'lan'}
-                                    onChange={() => setInstallMode('lan')}
-                                    className="mt-1"
-                                />
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
-                                        <Home className="w-4 h-4" /> No, internal only for now
-                                    </div>
-                                    <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
-                                        Services live at <span className="font-mono">vault.home.arpa</span> via AdGuard DNS rewrites. HTTP-only on the LAN; no external access. You can switch to a public domain later in Settings.
-                                    </p>
-                                </div>
-                            </label>
-                        </div>
-
-                        {/* Storage summary */}
-                        {(detectedRaid || topDisks.length > 0) && (
-                            <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <div className="flex items-center justify-between mb-1">
-                                    <span className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
-                                        <HardDrive className="w-4 h-4" /> Storage
-                                    </span>
-                                    <button type="button" onClick={() => navigateTo('machine')} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">Edit</button>
-                                </div>
-                                {detectedRaid && !raidMounted && (
-                                    <p className="text-xs text-gray-600 dark:text-gray-300">
-                                        Will auto-mount <span className="font-mono">{detectedRaid.device}</span>{detectedRaid.size && <> ({detectedRaid.size})</>} to <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">/var/mnt/data</code>{detectedRaid.degraded && <> · <span className="text-amber-600 dark:text-amber-400">degraded — 1 disk missing</span></>}.
-                                    </p>
-                                )}
-                                {raidMounted && (
-                                    <p className="text-xs text-green-700 dark:text-green-300">
-                                        Data drive mounted at <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">/var/mnt/data</code>.
-                                    </p>
-                                )}
-                                {!detectedRaid && !raidMounted && topDisks.length > 0 && (
-                                    <p className="text-xs text-gray-600 dark:text-gray-300">
-                                        Using local storage — {topDisks.map(d => `${d.path}${d.size ? ` (${d.size})` : ''}`).join(', ')}.
-                                    </p>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Stack summary. The small inline "Edit" button
-                            was removed in the wizard-multi-stack rework —
-                            it was a redundant shortcut to the same
-                            stacks/select destination the larger "Edit
-                            details" button already covers, and post-fix
-                            the picker is multi-select (default-all-
-                            checked) so the express summary is now
-                            literally "install all stacks." Operators who
-                            want a subset go through Edit details once. */}
-                        <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
-                            <span className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
-                                <Layers className="w-4 h-4" /> Stacks
-                            </span>
-                            <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
-                                {availableStacks.length > 0
-                                    ? <>{availableStacks.length} stacks: <span className="font-mono">{availableStacks.map(s => s.name).join(', ')}</span> — install all services with their defaults.</>
-                                    : 'Loading available stacks…'}
-                            </p>
-                        </div>
-
-                        {/* Existing data — granular preserve/wipe per group (#568) */}
-                        <CleanInstallPanel
-                            cleanInstall={cleanInstall}
-                            setCleanInstall={setCleanInstall}
-                            cleanInstallConfirm={cleanInstallConfirm}
-                            setCleanInstallConfirm={setCleanInstallConfirm}
-                            preserve={preserve}
-                            setPreserve={setPreserve}
-                            node={stackSelectedNode || undefined}
-                        />
+                  <div 
+                    key={step}
+                    className={`flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-500 group ${
+                      isActive ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20 shadow-lg shadow-blue-500/5' : 'text-gray-500 hover:text-gray-300'
+                    }`}
+                  >
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-black border-2 transition-all duration-500 ${
+                      isActive ? 'bg-blue-500 border-blue-400 text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]' : 
+                      isCompleted ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500' : 'border-gray-800 group-hover:border-gray-700'
+                    }`}>
+                      {isCompleted ? <CheckCircle size={14} /> : idx + 1}
                     </div>
+                    <span className={`text-sm font-bold tracking-tight ${isActive ? 'translate-x-1' : ''} transition-transform duration-500`}>
+                      {stepLabel}
+                    </span>
+                  </div>
                 );
-            })()}
+              })}
+            </nav>
+          </div>
 
-            {/* Machine prep — host-side decisions (domain, drives, fresh
-                install) the operator should answer before picking the
-                stack. Pulled out of the 'services' / 'configure' install
-                sub-steps so the long service list isn't competing for
-                attention. */}
-            {currentStep === 'machine' && (
-                <div className="space-y-4">
-                    <h3 className="font-semibold text-lg flex items-center gap-2"><HardDrive className="w-5 h-5 text-indigo-500"/> Machine Setup</h3>
-                    <p className="text-sm text-gray-500">
-                        Before installing services, decide how this machine should be reachable, whether to wipe any existing service data, and confirm the storage we plan to use.
-                    </p>
+          {appVersion && (
+            <div className="px-6 py-3 rounded-2xl bg-white/[0.02] border border-white/5">
+                <div className="text-[9px] uppercase font-black text-gray-600 tracking-widest mb-1">Architecture</div>
+                <div className="text-[11px] font-mono text-gray-400">sb-v{appVersion}-stable</div>
+            </div>
+          )}
+        </aside>
 
-                    {/* Domain — 2-mode picker per #249. Public is the
-                        default; LAN is the explicit fallback. */}
-                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-3">
-                        <label className="flex items-center gap-2 text-sm font-medium text-blue-800 dark:text-blue-200">
-                            <Globe className="w-4 h-4" /> How will you reach this server?
-                        </label>
-                        {/* Public option */}
-                        <label className={`flex items-start gap-3 p-2 rounded cursor-pointer transition-colors ${installMode === 'public' ? 'bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700' : 'hover:bg-blue-100/50 dark:hover:bg-blue-900/30'}`}>
-                            <input
-                                type="radio"
-                                name="install-mode-machine"
-                                checked={installMode === 'public'}
-                                onChange={() => setInstallMode('public')}
-                                className="mt-1"
-                            />
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
-                                    <Globe className="w-4 h-4" /> Yes, I have a public domain <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">recommended</span>
-                                </div>
-                                <input
-                                    type="text"
-                                    value={publicDomain}
-                                    onChange={e => { setPublicDomain(e.target.value); if (e.target.value) setInstallMode('public'); }}
-                                    onFocus={() => setInstallMode('public')}
-                                    className="w-full mt-1.5 px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                    placeholder="example.com"
-                                />
-                                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
-                                    Enables HTTPS via Let&apos;s Encrypt + external access. Services live at <span className="font-mono">vault.{publicDomain || 'example.com'}</span>, <span className="font-mono">photos.{publicDomain || 'example.com'}</span>, …
-                                </p>
-                                {installMode === 'public' && (
-                                  <div className="mt-2">
-                                    <label className="block text-[11px] font-medium text-blue-800 dark:text-blue-200 mb-1">
-                                        Email for Let&apos;s Encrypt + NPM admin
-                                    </label>
-                                    <input
-                                        type="email"
-                                        value={operatorEmail}
-                                        onChange={e => setOperatorEmail(e.target.value)}
-                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                        placeholder="you@example.com"
-                                        autoComplete="email"
-                                    />
-                                    {operatorEmail && !isValidOperatorEmail(operatorEmail) && (
-                                        <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
-                                            {operatorEmailIssue(operatorEmail)}
-                                        </p>
-                                    )}
-                                    {!operatorEmail && (
-                                        <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
-                                            Required so Let&apos;s Encrypt can issue certificates. Use a real address — <span className="font-mono">.local</span>/<span className="font-mono">.example</span>/<span className="font-mono">.test</span> are rejected.
-                                        </p>
-                                    )}
-                                  </div>
-                                )}
-                            </div>
-                        </label>
-                        {/* LAN option */}
-                        <label className={`flex items-start gap-3 p-2 rounded cursor-pointer transition-colors ${installMode === 'lan' ? 'bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700' : 'hover:bg-blue-100/50 dark:hover:bg-blue-900/30'}`}>
-                            <input
-                                type="radio"
-                                name="install-mode-machine"
-                                checked={installMode === 'lan'}
-                                onChange={() => setInstallMode('lan')}
-                                className="mt-1"
-                            />
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
-                                    <Home className="w-4 h-4" /> No, internal only for now
-                                </div>
-                                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
-                                    Services live at <span className="font-mono">vault.home.arpa</span> via AdGuard DNS rewrites. HTTP-only on the LAN; no external access. You can switch to a public domain later in Settings → Reverse Proxy.
-                                </p>
-                            </div>
-                        </label>
+        {/* Main Content Area */}
+        <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-br from-transparent to-blue-500/[0.02]">
+          <header className="px-12 py-10 flex items-center justify-between">
+            <div className="space-y-1">
+              <h1 className="text-3xl font-black tracking-tight capitalize text-white">
+                {currentStep.replace('-', ' ')}
+              </h1>
+              <div className="flex items-center gap-2">
+                <div className="h-1 w-12 bg-blue-500 rounded-full" />
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Stage {currentIndex + 1} of {displayStepCount}</p>
+              </div>
+            </div>
+            <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="p-3 text-gray-500 hover:text-white hover:bg-white/10 rounded-2xl transition-all duration-300 border border-transparent hover:border-white/10"
+              >
+                <Minimize2 size={24} />
+            </button>
+          </header>
+
+          <main className="flex-1 overflow-y-auto px-12 pb-12 scrollbar-thin">
+            {status?.installInProgress && stackInstallStep !== 'installing' && (
+               <div className="mb-10 p-6 rounded-[2rem] border border-amber-500/20 bg-amber-500/5 backdrop-blur-md animate-in slide-in-from-top-4 duration-700">
+                  <div className="flex items-center gap-3 text-amber-500 mb-3">
+                    <div className="p-2 bg-amber-500/10 rounded-xl">
+                        <AlertTriangle size={20} />
                     </div>
-
-                    {/* Detected drives */}
-                    {detectedDrives.filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md').length > 0 && (
-                        <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
-                            <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-                                <HardDrive className="w-4 h-4" /> Detected Drives
-                            </label>
-                            <div className="space-y-1">
-                                {detectedDrives
-                                    .filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md')
-                                    .map(d => (
-                                        <div key={d.path} className="text-xs text-gray-600 dark:text-gray-300 font-mono">
-                                            <span className="text-gray-900 dark:text-gray-100">{d.path}</span>
-                                            {d.size && <> &middot; {d.size}</>}
-                                            {d.model && <> &middot; <span className="text-gray-500">{d.model.trim()}</span></>}
-                                            {typeof d.rota === 'boolean' && <> &middot; <span className="text-gray-500">{d.rota ? 'HDD' : 'SSD/NVMe'}</span></>}
-                                            {d.mountpoint && <> &middot; mounted: <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">{d.mountpoint}</code></>}
-                                            {d.fsAvail && <> &middot; free: {d.fsAvail}{d.fsUsedPct ? ` (${d.fsUsedPct} used)` : ''}</>}
-                                            {!d.mountpoint && d.fstype && <> &middot; {d.fstype} (unmounted)</>}
-                                            {d.children && d.children.length > 0 && (
-                                                <div className="ml-4 text-[11px] text-gray-500 dark:text-gray-400">
-                                                    {d.children.map(c => (
-                                                        <div key={c.path}>
-                                                            └ {c.path}
-                                                            {c.size && <> &middot; {c.size}</>}
-                                                            {c.fstype && <> &middot; {c.fstype}</>}
-                                                            {c.mountpoint && <> &middot; <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">{c.mountpoint}</code></>}
-                                                            {c.fsAvail && <> &middot; free: {c.fsAvail}</>}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* RAID / data drive mount */}
-                    {raidArrays.length > 0 && !raidMounted && (
-                        <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                            <label className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">
-                                <HardDrive className="w-4 h-4" /> Unmounted RAID Detected
-                            </label>
-                            {raidArrays.map(raid => (
-                                <div key={raid.device} className="text-xs text-amber-700 dark:text-amber-300 mb-2">
-                                    <span className="font-mono">{raid.device}</span>
-                                    {raid.label && <> &middot; label: <strong>{raid.label}</strong></>}
-                                    {raid.size && <> &middot; {raid.size}</>}
-                                    {raid.degraded && <span className="text-amber-600 dark:text-amber-400"> (degraded — 1 disk missing, still usable)</span>}
-                                </div>
-                            ))}
-                            <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">
-                                This looks like your data drive. Mount it to <code className="bg-amber-100 dark:bg-amber-800/50 px-1 rounded">/var/mnt/data</code> so services can store data on it?
-                            </p>
-                            <button
-                                type="button"
-                                disabled={raidMounting}
-                                onClick={async () => {
-                                    setRaidMounting(true);
-                                    try {
-                                        const raid = raidArrays[0];
-                                        const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`, {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({
-                                                device: raid.device,
-                                                mountpoint: '/var/mnt/data',
-                                                label: raid.label,
-                                                fstype: raid.fstype,
-                                            }),
-                                        });
-                                        if (res.ok) {
-                                            setRaidMounted(true);
-                                            setRaidArrays([]);
-                                        }
-                                    } catch { /* ignore */ }
-                                    setRaidMounting(false);
-                                }}
-                                className="px-3 py-1.5 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                            >
-                                {raidMounting ? <><Loader2 className="w-3 h-3 animate-spin inline mr-1" /> Mounting...</> : 'Mount & persist across reboots'}
-                            </button>
-                        </div>
-                    )}
-                    {raidMounted && (
-                        <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                            <p className="text-sm text-green-800 dark:text-green-200 flex items-center gap-2">
-                                <CheckCircle className="w-4 h-4" /> RAID mounted at <code className="bg-green-100 dark:bg-green-800/50 px-1 rounded">/var/mnt/data</code> and will persist across reboots.
-                            </p>
-                        </div>
-                    )}
-
-                    {/* Clean install — granular preserve/wipe per group (#568) */}
-                    <CleanInstallPanel
-                        cleanInstall={cleanInstall}
-                        setCleanInstall={setCleanInstall}
-                        cleanInstallConfirm={cleanInstallConfirm}
-                        setCleanInstallConfirm={setCleanInstallConfirm}
-                        preserve={preserve}
-                        setPreserve={setPreserve}
-                        node={stackSelectedNode || undefined}
-                    />
-                </div>
-            )}
-
-            {currentStep === 'stacks' && (
-                <div className="space-y-4">
-                    <h3 className="font-semibold text-lg flex items-center gap-2"><Layers className="w-5 h-5 text-indigo-500"/> Install services</h3>
-
-                    {stackInstallStep === 'select' && (
-                        <>
-                            <p className="text-sm text-gray-500">
-                                Pick the stacks to install. Defaults to all — uncheck what you don&apos;t need. Continue with the selection or Skip to install services manually later from the Registry.
-                            </p>
-                            {stacksLoading ? (
-                                <div className="flex items-center justify-center py-8 text-gray-400">
-                                    <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading stacks...
-                                </div>
-                            ) : availableStacks.length === 0 ? (
-                                <div className="text-sm text-gray-500 py-4">
-                                    No stacks available. Enable template registries first, or install services manually later.
-                                </div>
-                            ) : (
-                                <div className="space-y-2">
-                                    {availableStacks.map(stack => {
-                                        const checked = pickerChecked.has(stack.name);
-                                        return (
-                                            <label
-                                                key={stack.name}
-                                                className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${
-                                                    checked
-                                                        ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-800'
-                                                        : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50'
-                                                }`}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    onChange={(e) => {
-                                                        setPickerChecked(prev => {
-                                                            const next = new Set(prev);
-                                                            if (e.target.checked) next.add(stack.name);
-                                                            else next.delete(stack.name);
-                                                            return next;
-                                                        });
-                                                    }}
-                                                    className="mt-1"
-                                                />
-                                                <div className="mt-0.5 text-indigo-500">
-                                                    {stack.type === 'stack' ? <Layers className="w-5 h-5" /> : <Package className="w-5 h-5" />}
-                                                </div>
-                                                <div className="flex-1">
-                                                    <div className="font-medium text-sm text-gray-900 dark:text-gray-100">{stack.name}</div>
-                                                    <div className="text-xs text-gray-500">{stack.source}</div>
-                                                </div>
-                                            </label>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </>
-                    )}
-
-                    {stackInstallStep === 'services' && (
-                        <>
-                            {/* Domain / drives / clean-install moved to the
-                                Machine step (currentStep === 'machine'). Show
-                                a small reminder of the domain choice the
-                                operator made there so this screen stays
-                                self-explanatory. */}
-                            <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-xs text-blue-800 dark:text-blue-200 flex items-center gap-2">
-                                <Globe className="w-3 h-3" />
-                                {stackNoDomain
-                                    ? 'LAN-only install (no public domain — access services by IP:port).'
-                                    : stackDomain
-                                        ? <>Public domain: <span className="font-mono">{stackDomain}</span></>
-                                        : 'No domain set — go back to Machine to choose.'}
-                            </div>
-
-                            <p className="text-sm text-gray-500 mb-2 mt-3">
-                                Select which services to install from{' '}
-                                <span className="font-medium">
-                                    {selectedStacks.length === 1
-                                        ? selectedStacks[0].name
-                                        : `${selectedStacks.length} stacks (${selectedStacks.map(s => s.name).join(', ')})`}
-                                </span>:
-                            </p>
-                            {/* Hard-dependency warning: surface any required
-                                deps that the operator has unchecked.
-                                Auto-include happens on check, but operator
-                                can still uncheck a dep manually after — at
-                                which point we shout. */}
-                            {(() => {
-                                const checked = stackItems.filter(i => i.checked && !i.alreadyInstalled);
-                                const checkedNames = new Set(checked.map(i => i.name));
-                                const installedNames = new Set(stackItems.filter(i => i.alreadyInstalled).map(i => i.name));
-                                const missing: { from: string; needs: string; reason?: string }[] = [];
-                                for (const item of checked) {
-                                    // Hard deps come from the template's
-                                    // `servicebay.dependencies` annotation
-                                    // (item.dependencies); SERVICE_DEPS is
-                                    // legacy hardcoded data that's now
-                                    // empty for `requires` — kept for the
-                                    // `recommendedWith` soft-dep badges only.
-                                    const required = [
-                                        ...(item.dependencies ?? []),
-                                        ...(SERVICE_DEPS[item.name]?.requires ?? []),
-                                    ];
-                                    for (const dep of new Set(required)) {
-                                        if (!checkedNames.has(dep) && !installedNames.has(dep)) {
-                                            missing.push({ from: item.name, needs: dep, reason: SERVICE_DEPS[item.name]?.reason });
-                                        }
-                                    }
-                                }
-                                // nginx is implicitly required as soon as the operator commits
-                                // to a public domain — every other service publishes via a
-                                // *_SUBDOMAIN variable that needs the proxy to reach the host. We
-                                // don't put this in SERVICE_DEPS because it would mean adding
-                                // `requires: ['nginx']` to ~10 services and cluttering each row
-                                // with a redundant red badge. Surface it once here instead.
-                                const wantsDomain = stackDomain.trim().length > 0 && !stackNoDomain;
-                                const hasPublishedService = checked.some(i => i.name !== 'nginx');
-                                const nginxAvailable = stackItems.some(i => i.name === 'nginx');
-                                if (
-                                    wantsDomain &&
-                                    nginxAvailable &&
-                                    hasPublishedService &&
-                                    !checkedNames.has('nginx') &&
-                                    !installedNames.has('nginx')
-                                ) {
-                                    missing.push({
-                                        from: 'public domain',
-                                        needs: 'nginx',
-                                        reason: 'Nginx Proxy Manager terminates HTTPS for every <subdomain>.' + stackDomain.trim() + ' route',
-                                    });
-                                }
-                                if (missing.length === 0) return null;
-                                return (
-                                    <div className="mb-2 p-2 rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-xs text-red-800 dark:text-red-200 space-y-1">
-                                        <div className="font-semibold">Required dependencies are not selected:</div>
-                                        {missing.map(m => (
-                                            <div key={`${m.from}-${m.needs}`}>
-                                                <span className="font-mono">{m.from}</span> requires <span className="font-mono">{m.needs}</span>
-                                                {m.reason && <span className="opacity-80"> — {m.reason}</span>}
-                                            </div>
-                                        ))}
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                const next = [...stackItems];
-                                                for (const m of missing) {
-                                                    const j = next.findIndex(x => x.name === m.needs);
-                                                    if (j >= 0) next[j].checked = true;
-                                                }
-                                                setStackItems(next);
-                                            }}
-                                            className="mt-1 px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-700 text-white"
-                                        >
-                                            Add the missing dependencies
-                                        </button>
-                                    </div>
-                                );
-                            })()}
-                            {stacksLoading ? (
-                                <div className="flex items-center justify-center py-4 text-gray-400">
-                                    <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...
-                                </div>
-                            ) : (
-                                <div className="space-y-2">
-                                    {/* Platform-tier templates render as a small
-                                        read-only block above the feature checkboxes —
-                                        users always get DNS / proxy / auth and can't
-                                        opt out. Per the design conversation in #249. */}
-                                    {stackItems.some(i => i.tier === 'infrastructure') && (
-                                        <div className="p-3 border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-900/10 rounded">
-                                            <div className="text-[11px] uppercase font-bold text-indigo-700 dark:text-indigo-300 mb-1.5">
-                                                Platform · always installed
-                                            </div>
-                                            <div className="flex flex-wrap gap-1.5">
-                                                {stackItems.filter(i => i.tier === 'infrastructure').map(item => (
-                                                    <span
-                                                        key={item.name}
-                                                        className="text-xs font-medium px-2 py-0.5 rounded bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-indigo-200 dark:border-indigo-800/60"
-                                                        title={item.description ?? ''}
-                                                    >
-                                                        {item.name}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                            <p className="text-[11px] text-indigo-700/80 dark:text-indigo-300/70 mt-1.5">
-                                                DNS, reverse proxy, and SSO are part of every install. Pick your features below.
-                                            </p>
-                                        </div>
-                                    )}
-                                    {stackItems.filter(i => i.tier !== 'infrastructure').map((item) => {
-                                        // Find this item's index in the master array
-                                        // so the checkbox onChange mutates the right
-                                        // entry. Filtering only changes render order.
-                                        const i = stackItems.findIndex(x => x.name === item.name);
-                                        return (
-                                        <label key={item.name} className={`flex items-start gap-3 p-3 border rounded transition-colors ${
-                                            item.alreadyInstalled
-                                                ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10'
-                                                : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer'
-                                        }`}>
-                                            <input
-                                                type="checkbox"
-                                                checked={item.checked}
-                                                disabled={item.alreadyInstalled}
-                                                onChange={() => {
-                                                    if (item.alreadyInstalled) return;
-                                                    const turningOn = !stackItems[i].checked;
-                                                    const newItems = [...stackItems];
-
-                                                    if (turningOn) {
-                                                        newItems[i].checked = true;
-                                                        // Auto-include hard deps from the
-                                                        // template annotation + any legacy
-                                                        // SERVICE_DEPS.requires entry.
-                                                        const required = [
-                                                            ...(item.dependencies ?? []),
-                                                            ...(SERVICE_DEPS[item.name]?.requires ?? []),
-                                                        ];
-                                                        for (const dep of new Set(required)) {
-                                                            const j = newItems.findIndex(x => x.name === dep);
-                                                            if (j >= 0 && !newItems[j].checked && !newItems[j].alreadyInstalled) {
-                                                                newItems[j].checked = true;
-                                                            }
-                                                        }
-                                                    } else {
-                                                        // Uncheck-guard: if another checked
-                                                        // template lists this item as a hard
-                                                        // dependency, removing it would put
-                                                        // the install into an invalid state.
-                                                        // Ask before cascading the uncheck so
-                                                        // the operator sees what's about to
-                                                        // be removed.
-                                                        const dependents = newItems.filter(other =>
-                                                            other.checked
-                                                            && !other.alreadyInstalled
-                                                            && other.name !== item.name
-                                                            && (other.dependencies ?? []).includes(item.name),
-                                                        );
-                                                        if (dependents.length > 0) {
-                                                            const ok = window.confirm(
-                                                                `${dependents.map(d => d.name).join(', ')} require ${item.name}. `
-                                                                + `Unchecking ${item.name} will also uncheck ${dependents.length === 1 ? 'that template' : 'those templates'}. Continue?`,
-                                                            );
-                                                            if (!ok) return;
-                                                            for (const d of dependents) {
-                                                                const j = newItems.findIndex(x => x.name === d.name);
-                                                                if (j >= 0) newItems[j].checked = false;
-                                                            }
-                                                        }
-                                                        newItems[i].checked = false;
-                                                    }
-                                                    setStackItems(newItems);
-                                                }}
-                                                className="w-5 h-5 mt-0.5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
-                                            />
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className={`font-medium text-sm ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-900 dark:text-gray-200'}`}>{item.name}</span>
-                                                    {item.alreadyInstalled && (
-                                                        <span className="text-xs text-green-600 dark:text-green-400">already installed</span>
-                                                    )}
-                                                    {/* Static role hint for nginx — every other
-                                                        service routes through it for HTTPS subdomain
-                                                        access, but spelling that out as a per-service
-                                                        "with nginx" badge would clutter ~10 rows.
-                                                        Surface the role here instead. */}
-                                                    {item.name === 'nginx' && (
-                                                        <span
-                                                            className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60"
-                                                            title="Required for HTTPS subdomain access. Every service with a *.<your-domain> subdomain proxies through here."
-                                                        >
-                                                            public-domain gateway
-                                                        </span>
-                                                    )}
-                                                    {/* Dependency badges. Hard deps in red so the
-                                                        operator notices; soft deps muted blue.
-                                                        Both labels link explicitly to the dep
-                                                        service name so it's obvious what's
-                                                        required. */}
-                                                    {[
-                                                        ...new Set([
-                                                            ...(item.dependencies ?? []),
-                                                            ...(SERVICE_DEPS[item.name]?.requires ?? []),
-                                                        ]),
-                                                    ].map(dep => (
-                                                        <span
-                                                            key={`req-${dep}`}
-                                                            className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"
-                                                            title={`Required dependency: ${dep}${SERVICE_DEPS[item.name]?.reason ? ' — ' + SERVICE_DEPS[item.name]?.reason : ''}`}
-                                                        >
-                                                            requires {dep}
-                                                        </span>
-                                                    ))}
-                                                    {(SERVICE_DEPS[item.name]?.recommendedWith ?? []).map(dep => (
-                                                        <span
-                                                            key={`rec-${dep}`}
-                                                            className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60"
-                                                            title={`Optional integration: ${dep}${SERVICE_DEPS[item.name]?.reason ? ' — ' + SERVICE_DEPS[item.name]?.reason : ''}`}
-                                                        >
-                                                            with {dep}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                                {item.description && (
-                                                    <p className={`text-xs mt-0.5 ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-500 dark:text-gray-400'}`}>
-                                                        {item.description}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        </label>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {/* Domain prompt is now at the TOP of this step
-                                so the operator answers it before scrolling
-                                through services. See the block above. */}
-
-                            {/* Detected drives + RAID prompt + clean-install
-                                toggle have all moved to the Machine step. */}
-                        </>
-                    )}
-
-                    {stackInstallStep === 'configure' && (
-                        <>
-                            {stackNodes.length > 1 && (
-                                <div className="mb-4">
-                                    <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Target Node</label>
-                                    <select
-                                        value={stackSelectedNode}
-                                        onChange={(e) => setStackSelectedNode(e.target.value)}
-                                        className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-                                    >
-                                        <option value="" disabled>Select a node</option>
-                                        {stackNodes.map(n => <option key={n.Name} value={n.Name}>{n.Name}</option>)}
-                                    </select>
-                                </div>
-                            )}
-
-                            {/* Clean-install toggle moved to the Machine
-                                step. Show a small reminder if RESET is
-                                staged so the operator knows what's about
-                                to happen on Install. */}
-                            {cleanInstall && cleanInstallConfirm === 'RESET' && (
-                                <div className="mb-4 p-2 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200">
-                                    🧹 Clean install staged: existing service data will be wiped before the new services are deployed.
-                                </div>
-                            )}
-                            {stacksLoading ? (
-                                <div className="flex items-center justify-center py-4 text-gray-400">
-                                    <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading variables...
-                                </div>
-                            ) : groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').length === 0 ? (
-                                <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded text-sm">
-                                    No configuration needed. Ready to install.
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    {/* Tab strip — categorise variables so
-                                        the operator isn't staring at a
-                                        50-line flat list. Subdomains first
-                                        (almost everyone touches them),
-                                        Settings second, Ports last (most
-                                        operators never touch ports). */}
-                                    {(() => {
-                                        const groups = groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global');
-                                        const isPortVar = (name: string) => /_PORT$/i.test(name);
-                                        const counts = {
-                                            subdomains: 0, settings: 0, ports: 0,
-                                        };
-                                        for (const g of groups) {
-                                            for (const v of g.variables) {
-                                                if (v.meta?.type === 'subdomain') counts.subdomains++;
-                                                else if (isPortVar(v.name)) counts.ports++;
-                                                else counts.settings++;
-                                            }
-                                        }
-                                        const tabs = ([
-                                            { id: 'subdomains' as ConfigureTab, label: 'Subdomains', count: counts.subdomains },
-                                            { id: 'settings' as ConfigureTab,   label: 'Settings',   count: counts.settings },
-                                            { id: 'ports' as ConfigureTab,      label: 'Ports',      count: counts.ports },
-                                        ] as const).filter(t => t.count > 0);
-                                        // If the user hasn't picked a tab yet, default to the first
-                                        // tab that actually has variables (so a stack with no
-                                        // subdomains lands on Settings, not an empty Subdomains).
-                                        const activeTab: ConfigureTab = configureTab ?? (tabs[0]?.id ?? 'settings');
-                                        return (
-                                            <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700">
-                                                {tabs.map(t => (
-                                                    <button
-                                                        key={t.id}
-                                                        type="button"
-                                                        onClick={() => setConfigureTab(t.id)}
-                                                        className={`px-3 py-1.5 text-sm font-medium border-b-2 transition-colors ${
-                                                            activeTab === t.id
-                                                                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                                                                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                                                        }`}
-                                                    >
-                                                        {t.label}
-                                                        <span className="ml-1.5 text-xs opacity-70">{t.count}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        );
-                                    })()}
-                                    {(configureTab ?? (groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').some(g => g.variables.some(v => v.meta?.type === 'subdomain')) ? 'subdomains' : 'settings')) === 'ports' && (
-                                        <p className="text-xs text-gray-500 dark:text-gray-400 italic px-1">
-                                            Host-port mappings. Defaults are usually fine — change only if you have a port collision with another service.
-                                        </p>
-                                    )}
-                                <div className="space-y-5 max-h-[50vh] overflow-y-auto">
-                                    {groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').map(group => {
-                                      // Filter group variables by active tab.
-                                      const isPortVar = (name: string) => /_PORT$/i.test(name);
-                                      const subdomainCountAll = groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').reduce((acc, g) => acc + g.variables.filter(v => v.meta?.type === 'subdomain').length, 0);
-                                      const tab = configureTab ?? (subdomainCountAll > 0 ? 'subdomains' : 'settings');
-                                      const filtered = group.variables.filter(v => {
-                                          if (tab === 'subdomains') return v.meta?.type === 'subdomain';
-                                          if (tab === 'ports') return isPortVar(v.name);
-                                          return v.meta?.type !== 'subdomain' && !isPortVar(v.name);
-                                      });
-                                      if (filtered.length === 0) return null;
-                                      return (
-                                      <div key={group.key} className="space-y-3">
-                                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 pb-1">{group.label}</h4>
-                                        {filtered.map((v) => {
-                                            // Humanise the visible label so the operator sees
-                                            // "Subdomain" inside "Immich (Photos)" instead of
-                                            // SCREAMING_SNAKE_CASE. Strip the group-key prefix
-                                            // when it matches, _ → space, lowercase, then
-                                            // capitalise the first word. Common abbreviations
-                                            // stay uppercase. The raw env-var name still shows
-                                            // muted on the right for power users.
-                                            const groupPrefix = group.key.toUpperCase().replace(/-/g, '_') + '_';
-                                            const stripped = v.name.startsWith(groupPrefix) ? v.name.slice(groupPrefix.length) : v.name;
-                                            const KEEP_UPPER = new Set(['DB', 'URL', 'API', 'SSH', 'TLS', 'SSL', 'OIDC', 'DNS', 'IP', 'ID', 'JWT', 'SMTP', 'CSV', 'CSRF', 'NPM', 'LDAP']);
-                                            const displayLabel = stripped.split('_').map((w, i) =>
-                                                KEEP_UPPER.has(w) ? w : (i === 0 ? w[0] + w.slice(1).toLowerCase() : w.toLowerCase())
-                                            ).join(' ');
-                                            // Hide redundant descriptions like "Subdomain for
-                                            // Immich" when the group label already says Immich.
-                                            // Short desc + contains a non-trivial token from
-                                            // the group label = redundant.
-                                            const groupTokens = (group.label.toLowerCase().match(/[a-z]+/g) ?? []).filter(t => t.length > 3);
-                                            const desc = v.meta?.description ?? '';
-                                            const isRedundant = desc.length <= 60 && groupTokens.some(t => desc.toLowerCase().includes(t));
-                                            return (
-                                            <div key={v.name}>
-                                                <div className="flex items-baseline justify-between gap-2 mb-1">
-                                                    <label className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate" title={v.name}>
-                                                        {displayLabel}
-                                                    </label>
-                                                    <span className="text-[10px] font-mono text-gray-400 dark:text-gray-500 opacity-50 shrink-0" title="Underlying environment variable">
-                                                        {v.name}
-                                                    </span>
-                                                </div>
-                                                {desc && !isRedundant && <p className="text-xs text-gray-500 mb-1">{desc}</p>}
-                                                {/* Variable input dispatch — type-specific UI lives in
-                                                    <StackVariableField>, shared with InstallerModal since #341. */}
-                                                <StackVariableField
-                                                    variable={v}
-                                                    onChange={(value) => installFlow.setVariableValue(v.name, value)}
-                                                    onExposureChange={(exposure) => installFlow.setVariableExposure(v.name, exposure)}
-                                                    publicDomain={stackVariables.find(x => x.name === 'PUBLIC_DOMAIN')?.value}
-                                                    inputClassName="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md text-sm"
-                                                    deviceContext={{
-                                                        deviceOptions: stackDeviceOptions,
-                                                        loadingDevices: stackLoadingDevices,
-                                                        canRefresh: !!stackSelectedNode,
-                                                        onRefresh: (devPath) => {
-                                                            setStackLoadingDevices(true);
-                                                            fetch(`/api/system/devices?node=${stackSelectedNode}&path=${encodeURIComponent(devPath)}`)
-                                                                .then(r => r.json())
-                                                                .then(data => { setStackDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] })); setStackLoadingDevices(false); })
-                                                                .catch(() => setStackLoadingDevices(false));
-                                                        },
-                                                    }}
-                                                />
-                                            </div>
-                                            );
-                                        })}
-                                      </div>
-                                      );
-                                    })}
-                                </div>
-                                </div>
-                            )}
-                        </>
-                    )}
-
-                    {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (() => {
-                        // Per-service status strip — REAL state from the digital twin,
-                        // not log parsing. Service counts as "deployed" only when its
-                        // systemd unit reports active; "installing" comes from the
-                        // hook's `installingNow` + log parsing for "Installing X..."
-                        // until the twin catches up; "failed" if either the deploy
-                        // log says ❌ or the twin reports the unit inactive after
-                        // deploy completed.
-                        const installItems = stackItems.filter(i => i.checked && !i.alreadyInstalled);
-                        const joined = stackLogs.join('\n');
-                        const node = stackSelectedNode || 'Local';
-                        const twinNode = digitalTwin?.nodes?.[node];
-                        const twinServices = twinNode?.services ?? [];
-                        const findService = (name: string) =>
-                            twinServices.find(s => s.name === name || s.name === `${name}.service` || s.name?.replace(/\.service$/, '') === name);
-                        const statusOf = (name: string): 'pending' | 'installing' | 'deployed' | 'failed' => {
-                            const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                            if (installingNow === name) return 'installing';
-                            if (new RegExp(`(?:❌|✗|Failed to install)\\s+${esc}\\b`, 'i').test(joined)) return 'failed';
-                            const svc = findService(name);
-                            if (svc) {
-                                if (svc.active) return 'deployed';
-                                if (new RegExp(`Installing\\s+${esc}\\.\\.\\.`, 'i').test(joined)) return 'installing';
-                                if (new RegExp(`✅\\s+${esc}\\s+deployed\\b`, 'i').test(joined)) return 'installing';
-                                return 'pending';
-                            }
-                            if (new RegExp(`(?:Installing\\s+|✅\\s+)${esc}`, 'i').test(joined)) return 'installing';
-                            return 'pending';
-                        };
-                        const dotClass: Record<string, string> = {
-                            pending:    'bg-gray-300 dark:bg-gray-600',
-                            installing: 'bg-blue-500 animate-pulse',
-                            deployed:   'bg-emerald-500',
-                            failed:     'bg-red-500',
-                        };
-                        const counts = installItems.reduce<Record<string, number>>((a, i) => {
-                            const s = statusOf(i.name);
-                            a[s] = (a[s] ?? 0) + 1;
-                            return a;
-                        }, {});
-                        const statusStrip = installItems.length === 0 ? null : (
-                            <div className="mb-3 p-3 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40">
-                                <div className="flex items-center justify-between mb-2">
-                                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Service status</p>
-                                    <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                                        {counts.deployed ?? 0}/{installItems.length} deployed
-                                        {counts.failed ? ` · ${counts.failed} failed` : ''}
-                                    </p>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {installItems.map(item => {
-                                        const s = statusOf(item.name);
-                                        return (
-                                            <span
-                                                key={item.name}
-                                                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border ${
-                                                    s === 'pending'
-                                                        ? 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 opacity-70'
-                                                        : s === 'failed'
-                                                            ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-                                                            : s === 'deployed'
-                                                                ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
-                                                                : 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                                                }`}
-                                                title={`${item.name}: ${s}`}
-                                            >
-                                                <span className={`w-2 h-2 rounded-full ${dotClass[s]}`}></span>
-                                                {item.name}
-                                            </span>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        );
-
-                        // Done-screen extras: self-test verdict (auto-runs on
-                        // phase=done, see effect above) + DNS/SSL/access-list
-                        // next-step panels when the install produced any proxy
-                        // routes. Rendered via the StackInstallSummary slot below.
-                        const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-                        // DNS verification runs only against public-exposure subdomains.
-                        // LAN-exposed ones (e.g. ZWAVE_JS_SUBDOMAIN) live on `.home.arpa`
-                        // via AdGuard rewrites — querying a public resolver for those
-                        // would always fail and surface as spurious "not resolving" hints.
-                        const subdomains = stackVariables.filter(
-                            v => v.meta?.type === 'subdomain' && v.value && v.meta?.exposure === 'public',
-                        );
-                        const hasProxyRoutes = !!domain && subdomains.length > 0;
-                        const diagCounts = (diagnoseProbes ?? []).reduce<Record<ProbeStatus, number>>(
-                            (a, p) => { a[p.status] = (a[p.status] ?? 0) + 1; return a; },
-                            { ok: 0, warn: 0, fail: 0, info: 0 },
-                        );
-                        const overall: ProbeStatus = diagCounts.fail > 0 ? 'fail' : diagCounts.warn > 0 ? 'warn' : diagCounts.ok > 0 ? 'ok' : 'info';
-                        const overallStyle = {
-                            ok:   { bg: 'bg-emerald-50 dark:bg-emerald-900/20', border: 'border-emerald-200 dark:border-emerald-800', text: 'text-emerald-800 dark:text-emerald-200', label: 'Self-test passed' },
-                            warn: { bg: 'bg-amber-50 dark:bg-amber-900/20',     border: 'border-amber-200 dark:border-amber-800',     text: 'text-amber-800 dark:text-amber-200',     label: 'Self-test: warnings' },
-                            fail: { bg: 'bg-red-50 dark:bg-red-900/20',         border: 'border-red-200 dark:border-red-800',         text: 'text-red-800 dark:text-red-200',         label: 'Self-test: failures' },
-                            info: { bg: 'bg-gray-50 dark:bg-gray-900/40',       border: 'border-gray-200 dark:border-gray-800',       text: 'text-gray-700 dark:text-gray-200',       label: 'Self-test: indeterminate' },
-                        }[overall];
-                        const doneFooter = (
-                            <>
-                                <div className={`p-3 rounded border text-sm ${overallStyle.bg} ${overallStyle.border}`}>
-                                    <div className="flex items-center justify-between mb-1.5">
-                                        <p className={`font-medium ${overallStyle.text}`}>
-                                            {diagnoseRunning
-                                                ? '⏳ Running self-test…'
-                                                : diagnoseError
-                                                    ? '⚠️ Self-test failed to run'
-                                                    : `${overall === 'ok' ? '✅' : overall === 'warn' ? '⚠️' : overall === 'fail' ? '❌' : 'ℹ️'} ${overallStyle.label}${diagnoseProbes ? ` — ${diagCounts.ok} ok · ${diagCounts.warn} warn · ${diagCounts.fail} fail` : ''}`}
-                                        </p>
-                                        <button
-                                            type="button"
-                                            onClick={() => { setDiagnoseRanOnce(false); }}
-                                            disabled={diagnoseRunning}
-                                            className="text-xs px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
-                                            title="Re-run self-test"
-                                        >
-                                            {diagnoseRunning ? 'Running…' : 'Run again'}
-                                        </button>
-                                    </div>
-                                    {diagnoseError && (
-                                        <p className="text-xs text-red-700 dark:text-red-300">{diagnoseError}</p>
-                                    )}
-                                    {diagnoseProbes && (diagCounts.warn > 0 || diagCounts.fail > 0) && (
-                                        <details className="mt-2 text-xs" open>
-                                            <summary className={`cursor-pointer ${overallStyle.text} mb-2`}>Details + fix-buttons ({diagCounts.warn + diagCounts.fail} issue{diagCounts.warn + diagCounts.fail === 1 ? '' : 's'})</summary>
-                                            <DiagnoseProbeList
-                                                probes={diagnoseProbes}
-                                                node={diagnoseNode}
-                                                compact
-                                                parentRunning={diagnoseRunning}
-                                                onRefresh={() => setDiagnoseRanOnce(false)}
-                                            />
-                                        </details>
-                                    )}
-                                    <p className={`text-xs mt-1 ${overallStyle.text} opacity-70`}>
-                                        Re-run any time at <span className="font-mono">Health → Self-Diagnose</span>.
-                                    </p>
-                                </div>
-                                {hasProxyRoutes && (
-                                    <DoneStepDnsCheck
-                                        domain={domain!}
-                                        subdomains={subdomains.map(sv => `${sv.value}.${domain}`)}
-                                    />
-                                )}
-                                {!hasProxyRoutes && installFlow.credentialsManifest.length === 0 && (
-                                    <p className="text-sm text-green-600 dark:text-green-400 font-medium">
-                                        Stack installation complete.
-                                    </p>
-                                )}
-                            </>
-                        );
-                        return (
-                            <div>
-                                <StackInstallProgress controller={installFlow} beforeLog={statusStrip} />
-                                {stackInstallStep === 'done' && (
-                                    <StackInstallSummary controller={installFlow} doneFooter={doneFooter} />
-                                )}
-                            </div>
-                        );
-                    })()}
-                </div>
-            )}
-
-            {currentStep === 'finish' && (
-                 <div className="text-center py-8 space-y-4">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 mb-4">
-                        <CheckCircle className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-2xl font-bold">You&apos;re all set!</h3>
-                    <p className="text-gray-600 dark:text-gray-300 max-w-sm mx-auto">
-                        ServiceBay is configured and ready to use. Any settings can be changed later in the Settings menu.
-                    </p>
-                 </div>
-            )}
-
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
-            {stacksOnlyMode ? (
-                // Stacks-only mode: left side is empty (sub-step back buttons are in the right side)
-                <div />
-            ) : currentStep === 'welcome' ? (
-                showSkipConfirm ? (
-                    <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleSkip}
-                          className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 dark:text-red-400 font-medium"
-                        >
-                            Yes, skip
-                        </button>
-                        <button
-                          onClick={() => setShowSkipConfirm(false)}
-                          className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                        >
-                            Back
-                        </button>
-                        <span className="text-xs text-gray-400">You can configure later in Settings.</span>
-                    </div>
-                ) : (
-                    <button
-                      onClick={() => setShowSkipConfirm(true)}
-                      className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
-                    >
-                        <SkipForward className="w-4 h-4" /> Skip Setup
-                    </button>
-                )
-            ) : (
-                <button
-                  onClick={handleBack}
-                  className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                >
-                    Back
-                </button>
+                    <h4 className="font-bold text-base">Concurrent Pipeline Active</h4>
+                  </div>
+                  <p className="text-sm text-amber-200/70 leading-relaxed mb-6">
+                    Another session is currently driving an installation. Racing two pipelines will corrupt the system state. Switch to the active tab or force-clear if it&apos;s a ghost lock.
+                  </p>
+                  <Button variant="outline" className="!py-2 !px-4 !text-xs !border-amber-500/30 hover:!bg-amber-500/10 text-amber-500" onClick={async () => {
+                    if (!confirm('Force-clear the install lock?')) return;
+                    await forceClearInstallLock();
+                    const fresh = await checkOnboardingStatus();
+                    setStatus(fresh);
+                  }}>
+                    Force-clear lock
+                  </Button>
+               </div>
             )}
 
             {currentStep === 'welcome' && (
-                <Button onClick={handleSaveWelcome} disabled={loading}>
-                    {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                    Next <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
+              <WelcomeStep selection={selection} setSelection={setSelection} />
             )}
 
-            {/* Step specific primary actions */}
-            {/* #695 — single canonical label. Pre-fix the button
-                said "Save & Next" or "Continue" depending on
-                selection.gateway, dating from when network only
-                existed when gateway was selected. After #662 the
-                step always captures publicDomain so there's always
-                data to save — one label fits both. */}
-            {currentStep === 'network' && <Button onClick={handleSaveNetwork} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save &amp; Continue</Button>}
-            {currentStep === 'email' && <Button onClick={handleSaveEmail} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save Email</Button>}
-
-            {/* Express install footer: Install kicks off the full
-                pipeline (full-stack defaults), Edit drops into the
-                explicit machine step for per-row control. */}
-            {currentStep === 'install-confirm' && (
-                <div className="flex gap-2 items-center">
-                    <button
-                        type="button"
-                        onClick={() => navigateTo('machine')}
-                        className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                    >
-                        Edit details
-                    </button>
-                    {/* #687 — surfaces *why* Install is disabled. Pre-fix
-                        the same hints existed but rendered inline as
-                        tiny amber text next to the button, easy to
-                        miss. Wrapping them in a single block with a
-                        leading bullet makes the failing conditions
-                        obvious and stays compact when fewer than 3
-                        apply. */}
-                    {(() => {
-                        const reasons: string[] = [];
-                        if (!stackDomain.trim() && !stackNoDomain) reasons.push('Enter a domain or check LAN-only.');
-                        if (installMode === 'public' && stackDomain.trim() && !isValidOperatorEmail(operatorEmail)) {
-                            reasons.push(`${operatorEmailIssue(operatorEmail)}.`);
-                        }
-                        if (cleanInstall && cleanInstallConfirm !== 'RESET') reasons.push('Type RESET to confirm clean install.');
-                        if (reasons.length === 0) return null;
-                        return (
-                            <div className="px-2 py-1.5 rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-800 dark:text-amber-200">
-                                <div className="font-medium mb-0.5">To install:</div>
-                                <ul className="list-disc list-inside space-y-0.5">
-                                    {reasons.map(r => <li key={r}>{r}</li>)}
-                                </ul>
-                            </div>
-                        );
-                    })()}
-                    <Button
-                        onClick={handleExpressInstall}
-                        disabled={
-                            (!stackDomain.trim() && !stackNoDomain)
-                            || (installMode === 'public' && !isValidOperatorEmail(operatorEmail))
-                            || (cleanInstall && cleanInstallConfirm !== 'RESET')
-                            || availableStacks.length === 0
-                        }
-                    >
-                        {cleanInstall ? 'Reset & Install' : 'Install Stack'}
-                    </Button>
-                </div>
+            {currentStep === 'network' && (
+              <NetworkStep 
+                selection={selection}
+                publicDomain={publicDomain}
+                setPublicDomain={setPublicDomain}
+                gwHost={gwHost}
+                setGwHost={setGwHost}
+                gwUser={gwUser}
+                setGwUser={setGwUser}
+                gwPass={gwPass}
+                setGwPass={setGwPass}
+                status={status}
+                handleGenerateKey={handleGenerateKey}
+                loading={loading}
+              />
             )}
 
-            {/* Machine step gates Continue on the same domain choice the
-                services sub-step used to gate, plus a RESET-typed
-                confirmation if clean install is checked. */}
-            {currentStep === 'machine' && (
-                <div className="flex gap-2 items-center">
-                    {!stackDomain.trim() && !stackNoDomain && (
-                        <span className="text-xs text-amber-700 dark:text-amber-300">Set a public domain (or check the LAN-only box) to continue.</span>
-                    )}
-                    {installMode === 'public' && stackDomain.trim() && !isValidOperatorEmail(operatorEmail) && (
-                        <span className="text-xs text-amber-700 dark:text-amber-300">{operatorEmailIssue(operatorEmail)}.</span>
-                    )}
-                    {cleanInstall && cleanInstallConfirm !== 'RESET' && (
-                        <span className="text-xs text-amber-700 dark:text-amber-300">Type RESET to confirm the clean install.</span>
-                    )}
-                    <Button
-                        onClick={handleNext}
-                        disabled={
-                            (!stackDomain.trim() && !stackNoDomain)
-                            || (installMode === 'public' && !isValidOperatorEmail(operatorEmail))
-                            || (cleanInstall && cleanInstallConfirm !== 'RESET')
-                        }
-                    >
-                        Continue <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
-                </div>
+            {currentStep === 'email' && (
+              <EmailStep emailConfig={emailConfig} setEmailConfig={setEmailConfig} />
             )}
 
-            {currentStep === 'stacks' && stackInstallStep === 'select' && (
-                <div className="flex gap-2 items-center">
-                    {/* #688 — was "Skip" pre-fix, which read as
-                        "skip the currently focused stack" in the new
-                        multi-select picker. Renamed to be explicit:
-                        operator gets *no* services installed via the
-                        wizard, can add them later from the Registry. */}
-                    <button
-                        onClick={handleStackSkip}
-                        className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                    >
-                        Install services later
-                    </button>
-                    <Button
-                        onClick={() => {
-                            const picked = availableStacks.filter(s => pickerChecked.has(s.name));
-                            void handleSelectStack(picked);
-                        }}
-                        disabled={pickerChecked.size === 0 || stacksLoading}
-                    >
-                        {stacksLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                        Continue <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
-                </div>
+            {(currentStep === 'machine' || currentStep === 'install-confirm') && (
+              <MachineStep
+                installMode={installMode}
+                setInstallMode={setInstallMode}
+                publicDomain={publicDomain}
+                operatorEmail={operatorEmail}
+                setOperatorEmail={setOperatorEmail}
+                isValidOperatorEmail={isValidOperatorEmail}
+                operatorEmailIssue={operatorEmailIssue}
+                detectedRaid={raidArrays[0]}
+                availableStacks={availableStacks}
+                cleanInstall={cleanInstall}
+                setCleanInstall={setCleanInstall}
+                cleanInstallConfirm={cleanInstallConfirm}
+                setCleanInstallConfirm={setCleanInstallConfirm}
+                preserve={preserve}
+                setPreserve={setPreserve}
+                stackSelectedNode={stackSelectedNode}
+                navigateTo={navigateTo}
+                detectedDrives={detectedDrives}
+                stackLoadingDevices={stackLoadingDevices}
+              />
             )}
-            {currentStep === 'stacks' && stackInstallStep === 'services' && (
-                <div className="flex gap-2 items-center">
-                    <button onClick={() => { setWizardSubStep('select'); setSelectedStacks([]); installFlow.reset(); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
-                    <Button
-                        onClick={() => { void handleStackFetchVars(); }}
-                        disabled={
-                            stackItems.filter(i => i.checked).length === 0
-                            || stacksLoading
-                        }
-                    >
-                        {stacksLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Continue
-                    </Button>
-                </div>
-            )}
-            {currentStep === 'stacks' && stackInstallStep === 'configure' && (
-                <div className="flex gap-2">
-                    <button onClick={() => { setWizardSubStep('services'); installFlow.reset(); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
-                    <Button
-                        onClick={() => { void handleStackInstall(); }}
-                        disabled={(!stackSelectedNode && stackNodes.length > 1)}
-                    >
-                        {cleanInstall ? 'Reset & Install' : 'Install Stack'}
-                    </Button>
-                </div>
-            )}
-            {currentStep === 'stacks' && stackInstallStep === 'installing' && (
-                <Button disabled><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Installing...</Button>
-            )}
-            {currentStep === 'stacks' && stackInstallStep === 'done' && (
-                <div className="flex gap-2 items-center">
-                    {/* Install-more loop (#682-followup) — opens the
-                        picker back up with no stacks pre-checked so the
-                        operator can pick another set without closing the
-                        wizard. Pre-fix, `done` was a strict terminal:
-                        the only way to install a second stack was to
-                        close and re-enter, which the auto-suppression
-                        rule blocked after the first install. */}
-                    <button
-                        onClick={() => {
-                            installFlow.reset();
-                            setSelectedStacks([]);
-                            setStackItems([]);
-                            setPickerChecked(new Set());
-                            setWizardSubStep('select');
-                        }}
-                        className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                    >
-                        Install another
-                    </button>
-                    <Button onClick={stacksOnlyMode ? handleFinish : handleNext}>
-                        {stacksOnlyMode ? <><CheckCircle className="w-4 h-4 mr-2" /> Finish</> : <>Continue <ArrowRight className="w-4 h-4 ml-2" /></>}
-                    </Button>
-                </div>
+
+            {currentStep === 'stacks' && (
+              <StacksStep 
+                stackInstallStep={stackInstallStep}
+                stacksLoading={stacksLoading}
+                availableStacks={availableStacks}
+                pickerChecked={pickerChecked}
+                setPickerChecked={setPickerChecked}
+                stackItems={stackItems}
+                setStackItems={setStackItems}
+                stackVariables={stackVariables}
+                installFlow={installFlow}
+                stackNodes={stackNodes}
+                stackSelectedNode={stackSelectedNode}
+                setStackSelectedNode={setStackSelectedNode}
+                installingNow={installingNow}
+                diagnoseProbes={diagnoseProbes}
+                diagnoseRunning={diagnoseRunning}
+                SERVICE_DEPS={SERVICE_DEPS}
+                stackDeviceOptions={stackDeviceOptions}
+                stackLoadingDevices={stackLoadingDevices}
+              />
             )}
 
             {currentStep === 'finish' && (
-                <Button onClick={handleFinish}>
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                    Finish Setup
-                </Button>
+                <FinishStep handleFinish={handleFinish} />
             )}
+          </main>
+
+          {/* Navigation Footer */}
+          <footer className="px-12 py-8 border-t border-white/5 flex items-center justify-between bg-white/[0.01] backdrop-blur-sm">
+             <Button 
+                variant="ghost" 
+                onClick={handleBack} 
+                disabled={stepHistory.length === 0 || loading || (currentStep === 'stacks' && stackInstallStep === 'installing')}
+                className="px-8 !text-gray-400 hover:!text-white"
+             >
+                Back
+             </Button>
+             
+             <div className="flex gap-4">
+                {currentStep === 'welcome' && (
+                   <Button onClick={handleSaveWelcome} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-blue-500/20">
+                      {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>}
+                   </Button>
+                )}
+                {currentStep === 'network' && (
+                   <Button onClick={handleSaveNetwork} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-blue-500/20">
+                      {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>}
+                   </Button>
+                )}
+                {currentStep === 'email' && (
+                   <Button onClick={handleSaveEmail} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-blue-500/20">
+                      {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>}
+                   </Button>
+                )}
+                {(currentStep === 'machine' || currentStep === 'install-confirm') && (
+                   <Button 
+                      onClick={currentStep === 'install-confirm' ? handleStartExpressInstall : handleNext} 
+                      disabled={loading || (currentStep === 'install-confirm' && cleanInstall && !cleanInstallConfirm)} 
+                      className="px-10 py-4 text-base shadow-xl shadow-blue-500/20"
+                   >
+                      {currentStep === 'install-confirm' ? (
+                         <span className="flex items-center gap-2"><Layers className="w-5 h-5" /> Install Now</span>
+                      ) : (
+                         <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>
+                      )}
+                   </Button>
+                )}
+                {currentStep === 'stacks' && (
+                   <>
+                      {stackInstallStep === 'select' && (
+                         <Button onClick={() => handleSelectStack(availableStacks.filter(s => pickerChecked.has(s.name)))} disabled={stacksLoading || pickerChecked.size === 0} className="px-10 py-4 text-base">
+                            Continue
+                         </Button>
+                      )}
+                      {stackInstallStep === 'services' && (
+                         <Button onClick={() => handleStackFetchVars()} disabled={stacksLoading || !stackItems.some(i => i.checked)} className="px-10 py-4 text-base">
+                            Continue
+                         </Button>
+                      )}
+                      {stackInstallStep === 'configure' && (
+                         <Button onClick={() => handleStackInstall()} disabled={stacksLoading} className="px-10 py-4 text-base">
+                            Install Stack
+                         </Button>
+                      )}
+                   </>
+                )}
+             </div>
+          </footer>
         </div>
 
+        {showSkipConfirm && (
+           <div className="absolute inset-0 z-[110] flex items-center justify-center p-8 bg-black/60 backdrop-blur-xl animate-in fade-in duration-500">
+              <div className="max-w-md w-full p-10 rounded-[2.5rem] bg-[#0d0d0e] border border-white/10 shadow-2xl space-y-8 animate-in zoom-in-95 duration-500">
+                <div className="space-y-3">
+                  <h3 className="text-2xl font-black text-white">Skip onboarding?</h3>
+                  <p className="text-sm text-gray-400 leading-relaxed">
+                    You can always return to the setup wizard later or configure everything manually in the Settings panel.
+                  </p>
+                </div>
+                <div className="flex gap-4">
+                  <Button variant="ghost" className="flex-1 !py-4" onClick={() => setShowSkipConfirm(false)}>Cancel</Button>
+                  <Button className="flex-1 !py-4 !bg-red-600 !border-red-500 shadow-xl shadow-red-600/20" onClick={handleSkip}>Skip anyway</Button>
+                </div>
+              </div>
+           </div>
+        )}
       </div>
     </div>
   );
 }
 
-// -- Helper Components --
 
-interface ToggleProps {
-    checked: boolean;
-    onChange: (checked: boolean) => void;
-    icon: React.ElementType;
-    color: string;
-    title: string;
-    desc: string;
-}
-
-function Toggle({ checked, onChange, icon: Icon, color, title, desc }: ToggleProps) {
-    return (
-        <div 
-            onClick={() => onChange(!checked)}
-            className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${
-                checked 
-                 ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' 
-                 : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800'
-            }`}
-        >
-            <div className={`mt-0.5 ${checked ? color : 'text-gray-400'}`}>
-                <Icon className="w-5 h-5" />
-            </div>
-            <div className="flex-1">
-                <div className={`font-medium text-sm ${checked ? 'text-gray-900 dark:text-gray-100' : 'text-gray-500'}`}>{title}</div>
-                <div className="text-xs text-gray-500">{desc}</div>
-            </div>
-            <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${
-                checked ? 'bg-blue-600 border-blue-600' : 'border-gray-300 dark:border-gray-600'
-            }`}>
-                {checked && <CheckCircle className="w-3.5 h-3.5 text-white" />}
-            </div>
-        </div>
-    )
-}
-
-interface InputProps {
-    label: string;
-    value: string;
-    onChange: (value: string) => void;
-    placeholder?: string;
-    type?: string;
-    hint?: string;
-    error?: string;
-}
-
-function Input({ label, value, onChange, placeholder, type = 'text', hint, error }: InputProps) {
-   return (
-      <div>
-        <label className="block text-xs font-medium text-gray-500 uppercase mb-1">{label}</label>
-        <input
-            type={type}
-            className={`w-full px-3 py-2 bg-white dark:bg-gray-900 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm ${
-                error ? 'border-red-400 dark:border-red-600' : 'border-gray-300 dark:border-gray-700'
-            }`}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-        />
-        {hint && !error && <p className="text-[11px] text-gray-400 mt-1">{hint}</p>}
-        {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
-    </div>
-   )
-}
-
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  children: React.ReactNode;
-}
-
-function Button({ children, onClick, disabled, className, ...props }: ButtonProps) {
-    return (
-        <button 
-            onClick={onClick} 
-            disabled={disabled}
-            className={`px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium text-sm flex items-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
-            {...props}
-        >
-            {children}
-        </button>
-    )
-}
 
