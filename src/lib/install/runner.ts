@@ -45,6 +45,7 @@ import { getCapabilityBus } from '@/lib/capabilities/bus';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { getConfig, saveConfig } from '@/lib/config';
+import { reconcileLanIp } from '@/lib/lanIp';
 import {
   appendLog,
   getJob,
@@ -513,6 +514,33 @@ async function runJob(jobId: string): Promise<void> {
       const msg = e instanceof Error ? e.message : 'unknown error';
       await log(jobId, `⚠️ Reset call failed: ${msg}. Continuing with install.`);
     }
+  }
+
+  // Capture / refresh the host's LAN IP synchronously (#660 — S2).
+  //
+  // Was previously a 60s boot-deferred setTimeout in server.ts that could
+  // race: when the timer fired before the agent was up, or before
+  // `secret.key` was rewritten on a wipe, `lanIp` never landed in config —
+  // and ~6 diagnose probes (router-DNS, AdGuard rewrites, NPM bootstrap,
+  // OIDC, TLS certs, LE requests) degraded to "no install-time value
+  // recorded yet" with no clear recovery path.
+  //
+  // Doing it here, in the runner that already has the agent under
+  // contract, makes the capture deterministic: every install (clean or
+  // not) writes the current outbound LAN IP before the deploy loop fires.
+  // The boot-timer in server.ts is now a drift-detection safety net for
+  // installs that pre-date this change; both call the same idempotent
+  // `reconcileLanIp` (no-op when value matches, history append on drift).
+  try {
+    const node = input.node || 'Local';
+    const ip = await reconcileLanIp(node);
+    if (ip) {
+      await log(jobId, `Captured LAN IP: ${ip}`);
+    } else {
+      await log(jobId, '⚠️ Could not detect LAN IP (agent returned no `ip route get` result); diagnose probes that depend on it will degrade.');
+    }
+  } catch (e) {
+    await log(jobId, `⚠️ LAN IP capture failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const checked = input.items.filter(i => i.checked);
