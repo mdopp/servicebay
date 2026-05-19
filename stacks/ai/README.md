@@ -1,4 +1,4 @@
-# AI Stack
+# AI stack
 
 Local-LLM agent runtime for ServiceBay — pairs `ollama` (model
 runtime) with `hermes` (agent loop, messaging gateways, MCP

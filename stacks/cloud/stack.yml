@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: cloud
+  annotations:
+    servicebay.label: "Cloud (Passwords, Photos, Files, Media, Calendar)"
+    servicebay.tier: "feature"
+    servicebay.depends-on-stacks: "basic"
+spec:
+  # Personal-cloud bundle: the services the operator's household reaches
+  # from outside the LAN (or from any device on it). Grouped here so a
+  # `wipe cloud` removes everything self-hosted-cloud-ish in one shot
+  # without touching home-automation state (home stack) or LLM runtime
+  # (ai stack).
+  templates: [vaultwarden, immich, file-share, media, radicale]

@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Stack
 metadata:
-  name: ai-stack
+  name: ai
   annotations:
-    servicebay.label: "AI stack (Ollama + Hermes)"
+    servicebay.label: "AI (Ollama + Hermes)"
     servicebay.tier: "feature"
     servicebay.depends-on-stacks: "basic"
 spec:
