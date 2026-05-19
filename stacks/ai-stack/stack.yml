@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: ai-stack
+  annotations:
+    servicebay.label: "AI stack (Ollama + Hermes)"
+    servicebay.tier: "feature"
+    servicebay.depends-on-stacks: "basic"
+spec:
+  # Two-template stack: ollama is the LLM runtime, hermes is the
+  # ServiceBay-side chat UI. Install order is derived from each
+  # template's `servicebay.dependencies` annotation — hermes depends on
+  # ollama, so the topo-sort within this stack puts ollama first.
+  templates: [ollama, hermes]

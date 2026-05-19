@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: basic
+  annotations:
+    servicebay.label: "Core services (NPM + LLDAP/Authelia + AdGuard)"
+    servicebay.tier: "core"
+    # `atomic-wipe` gates the stack-wipe button behind explicit FACTORY
+    # RESET — the core stack carries identity + cert state every feature
+    # depends on, so it can't be one-click wiped from the UI.
+    servicebay.lifecycle: "atomic-wipe"
+spec:
+  templates: [nginx, auth, adguard]
