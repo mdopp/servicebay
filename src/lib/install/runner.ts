@@ -680,7 +680,8 @@ async function runJob(jobId: string): Promise<void> {
       if (hasContent) {
         await log(jobId, `🔄 Wiping Authelia storage at ${autheliaDataPath} — the encryption key is freshly generated and would mismatch the preserved storage (LLDAP users at ${dataDir}/auth/lldap are kept).`);
         await agent.sendCommand('exec', { command: `rm -rf "${autheliaDataPath}"` });
-        await log(jobId, `✅ Authelia storage cleared. Authelia will bootstrap fresh on first start.`);
+        await agent.sendCommand('exec', { command: `mkdir -p "${autheliaDataPath}" && chown core:core "${autheliaDataPath}"` });
+        await log(jobId, `✅ Authelia storage cleared and recreated. Authelia will bootstrap fresh on first start.`);
       }
     } catch (e) {
       // Best-effort: if probe/wipe fails the install will hit the
