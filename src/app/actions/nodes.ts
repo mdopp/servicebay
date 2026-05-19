@@ -1,6 +1,7 @@
 'use server';
 
-import { listNodes, addNode, updateNode, removeNode, setDefaultNode, verifyNodeConnection, PodmanConnection } from '@/lib/nodes';
+import { listNodes, addNode, updateNode, removeNode, setDefaultNode, PodmanConnection } from '@/lib/nodes';
+import { verifyNodeConnection } from '@/lib/nodes/verify';
 import { HealthStore } from '@/lib/health/store';
 import { revalidatePath } from 'next/cache';
 import * as fs from 'fs';

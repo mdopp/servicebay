@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { addNode, listNodes, verifyNodeConnection } from '../../src/lib/nodes';
+import { addNode, listNodes } from '../../src/lib/nodes';
+import { verifyNodeConnection } from '../../src/lib/nodes/verify';
 import fs from 'fs/promises';
 import { getExecutor } from '../../src/lib/executor';
 

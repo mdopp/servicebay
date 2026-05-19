@@ -5,7 +5,10 @@ import { atomicWriteFile } from './util/atomicWrite';
 
 const NODES_FILE = path.join(DATA_DIR, 'nodes.json');
 
-const normalizeName = (name: string) => name.trim().toLowerCase();
+/** Normalise node names for case-insensitive comparison. Exported so
+ *  consumers (like `nodes/verify.ts`) can do the same lookup nodes.ts
+ *  does internally. */
+export const normalizeName = (name: string) => name.trim().toLowerCase();
 
 /**
  * Per-process serialization for node mutations. Without it, two
@@ -173,27 +176,9 @@ export async function updateNode(oldName: string, newNode: Partial<PodmanConnect
   });
 }
 
-export async function verifyNodeConnection(name: string): Promise<{ success: boolean; error?: string }> {
-    try {
-        const nodes = await loadNodes();
-    const node = nodes.find(n => normalizeName(n.Name) === normalizeName(name));
-        if (!node) {
-            throw new Error(`Node ${name} not found`);
-        }
-
-        // Dynamic import to avoid circular dependency (nodes -> executor -> agent -> handler -> nodes)
-        const { getExecutor } = await import('./executor');
-        const executor = getExecutor(node);
-        // We run 'podman info' remotely to verify both SSH access and Podman installation
-        await executor.exec('podman info'); 
-        
-        return { success: true };
-    } catch (e) {
-        console.warn(`Connection check failed for node ${name}:`, e);
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        return { success: false, error: errorMessage };
-    }
-}
+// `verifyNodeConnection` moved to `./nodes/verify.ts` (#601) so this
+// module stays a pure config-IO unit with no dependency on
+// `executor.ts` / the agent layer. Callers import from there.
 
 export async function removeNode(name: string): Promise<void> {
   return withLock(async () => {
