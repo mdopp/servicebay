@@ -114,6 +114,16 @@ async function ensureDir(): Promise<void> {
 const statePath = (id: string) => path.join(JOBS_DIR, `${id}.json`);
 const logPath = (id: string) => path.join(JOBS_DIR, `${id}.log`);
 
+/** In-memory cache of every job created this process. Survives a
+ *  vanishing on-disk state file (#705): the reset endpoint used to
+ *  wipe `/mnt/data/servicebay/install-jobs/` along with the rest of
+ *  the secrets group, dropping the state-json out from under the
+ *  runner mid-install. The next \`updateJob\` couldn't find it,
+ *  silently bailed, and the wizard's progress poll returned null
+ *  for the rest of the run. The cache lets \`updateJob\` rewrite
+ *  the disk file from in-memory state when that happens. */
+const memCache = new Map<string, JobState>();
+
 /** Atomic write via tmp + rename. Prevents readers from ever seeing a
  *  partially-written state file even if the process is killed mid-write. */
 async function atomicWrite(p: string, content: string): Promise<void> {
@@ -141,15 +151,23 @@ export async function createJob(opts: { source: string; input: JobInput }): Prom
   };
   await atomicWrite(statePath(job.id), JSON.stringify(job, null, 2));
   await fs.writeFile(logPath(job.id), '', 'utf-8');
+  memCache.set(job.id, job);
   return job;
 }
 
 export async function getJob(id: string): Promise<JobState | null> {
   try {
     const raw = await fs.readFile(statePath(id), 'utf-8');
-    return JSON.parse(raw) as JobState;
+    const parsed = JSON.parse(raw) as JobState;
+    // Refresh memory cache from disk on every read so server-restart
+    // gets stale-but-correct state until the next update writes back.
+    memCache.set(id, parsed);
+    return parsed;
   } catch {
-    return null;
+    // Fall back to memory cache when the disk file is missing or
+    // corrupt — see #705. Returning null silently used to strand the
+    // wizard's status poll.
+    return memCache.get(id) ?? null;
   }
 }
 
@@ -160,7 +178,18 @@ export async function updateJob(
   const current = await getJob(id);
   if (!current) return null;
   const next: JobState = { ...current, ...partial, updatedAt: new Date().toISOString() };
-  await atomicWrite(statePath(id), JSON.stringify(next, null, 2));
+  // Best-effort disk write. The memory cache is the authoritative
+  // store within this process; disk is for status-route reads + post-
+  // restart recovery (#705).
+  try {
+    await atomicWrite(statePath(id), JSON.stringify(next, null, 2));
+  } catch {
+    // Disk write failed (volume gone? permissions?). Cache still has
+    // the new state, status route reads from cache, runner keeps
+    // going. Worst case: a restart loses progress for this job, but
+    // the install itself continues.
+  }
+  memCache.set(id, next);
   return next;
 }
 
