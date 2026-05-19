@@ -26,7 +26,6 @@
 
 import Mustache from 'mustache';
 import type { VariableMeta } from '@/lib/registry';
-import { buildCredentialsManifest, formatCredentialsBanner, type Credential } from './credentialsManifest';
 import { expandForwardAuthSentinel } from './forwardAuth';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { getConfig } from '@/lib/config';
@@ -51,48 +50,10 @@ function apiFetch(p: string, init?: RequestInit): Promise<Response> {
 export { type StackVariable } from './types';
 import type { StackVariable } from './types';
 
-/** Selected stack item shape (subset, only what post-install needs). */
-interface StackItem {
-  name: string;
-  checked: boolean;
-}
-
-/** Format elapsed milliseconds as `Mm Ss` for human-readable log lines. */
-function fmtElapsed(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
-}
-
-/** Wait for NPM to become reachable. Polls every 3s, heartbeat log every 30s. */
-async function waitForNpm(
-  node: string | undefined,
-  onProgress: (msg: string) => void,
-  maxWait = 60 * 60_000,
-): Promise<boolean> {
-  const start = Date.now();
-  let lastBeat = 0;
-  while (Date.now() - start < maxWait) {
-    try {
-      const query = node ? `?node=${node}` : '';
-      const res = await apiFetch(`/api/system/nginx/status${query}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.installed && data.active) return true;
-      }
-    } catch { /* keep trying */ }
-    const elapsed = Date.now() - start;
-    // 10-second heartbeat — frequent enough that the user sees forward
-    // motion without spamming the log on long waits.
-    if (elapsed - lastBeat >= 10_000) {
-      onProgress(`Still waiting for Nginx Proxy Manager (${fmtElapsed(elapsed)} elapsed)...`);
-      lastBeat = elapsed;
-    }
-    await new Promise(r => setTimeout(r, 3000));
-  }
-  return false;
-}
+// #632 removed `waitForNpm` — the /api/system/nginx/bootstrap endpoint
+// already retries the target-creds login for 90s server-side, which
+// subsumes the pre-call reachability poll. NPM-startup waiting now
+// happens inside the bootstrap endpoint.
 
 /**
  * Render Mustache placeholders inside an NPM proxyConfig (mainly the
@@ -187,88 +148,10 @@ export function buildProxyHosts(variables: StackVariable[]): {
   return { domain, hosts };
 }
 
-export type ProxyResult = 'ok' | 'needs_credentials' | 'skipped' | 'error';
-
-interface ConfigureProxyOpts {
-  variables: StackVariable[];
-  node?: string;
-  onLog: (msg: string) => void;
-  credentials?: { email: string; password: string };
-  /** Skip the NPM-readiness wait (used when caller already waited). */
-  skipWait?: boolean;
-}
-
-/** Configure NPM proxy hosts, returns 'needs_credentials' if NPM rejected
- *  the default/stored creds — caller is expected to prompt the user and
- *  call again with `credentials` set. */
-export async function configureProxyRoutes(opts: ConfigureProxyOpts): Promise<ProxyResult> {
-  const { variables, node, onLog, credentials, skipWait } = opts;
-  const { domain, hosts } = buildProxyHosts(variables);
-  // Public mode: PUBLIC_DOMAIN set + at least one host built. LAN-only
-  // mode (no PUBLIC_DOMAIN) is intentionally not handled here — proxy
-  // routing on `.home.arpa` exists only for individual lan-exposed hosts
-  // alongside a public install. Pure LAN-mode reverse proxy is a
-  // separate flow.
-  if (!domain || hosts.length === 0) return 'skipped';
-
-  if (!credentials && !skipWait) {
-    onLog('Waiting for Nginx Proxy Manager to start (image pull / DB schema init can take a while)...');
-    const ready = await waitForNpm(node, onLog);
-    if (!ready) {
-      onLog('⚠️ Nginx Proxy Manager not ready. Configure proxy routes manually in the NPM admin panel.');
-      return 'skipped';
-    }
-    onLog('Configuring reverse proxy routes...');
-  }
-
-  try {
-    const res = await apiFetch('/api/system/nginx/proxy-hosts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        hosts,
-        publicDomain: domain,
-        node: node || undefined,
-        ...(credentials ? { npmCredentials: credentials } : {}),
-      }),
-    });
-    const data = await res.json();
-    if (res.ok && data.created?.length) {
-      onLog(`✅ Proxy routes created: ${data.created.join(', ')}`);
-      if (data.failed?.length) {
-        onLog(`⚠️ Some routes failed: ${data.failed.map((f: { domain: string }) => f.domain).join(', ')}`);
-      }
-      // Surface per-host cert outcomes for the public-exposure hosts.
-      // Failures here are not fatal — the cert_request_failure diagnose
-      // probe parses NPM's letsencrypt.log and lets the operator click
-      // Retry once the underlying cause is fixed.
-      type CertResult = { domain: string; issued: boolean; error?: string };
-      const certs: CertResult[] = Array.isArray(data.certs) ? data.certs : [];
-      const issued = certs.filter(c => c.issued).map(c => c.domain);
-      const failedCerts = certs.filter(c => !c.issued);
-      if (issued.length > 0) {
-        onLog(`🔒 Let's Encrypt certs issued: ${issued.join(', ')}`);
-      }
-      for (const fc of failedCerts) {
-        onLog(`⚠️ Cert request for ${fc.domain} failed — ${fc.error ?? 'see diagnose page for details'}.`);
-      }
-      const lanRestricted: string[] = Array.isArray(data.lanRestricted) ? data.lanRestricted : [];
-      if (lanRestricted.length > 0) {
-        onLog(`🛡️ LAN-only access list applied to ${lanRestricted.length} host${lanRestricted.length === 1 ? '' : 's'}: ${lanRestricted.join(', ')}`);
-      }
-      return 'ok';
-    }
-    if (res.status === 401 && data.needsCredentials) {
-      onLog('⚠️ NPM default credentials did not work. Please enter your NPM admin credentials below.');
-      return 'needs_credentials';
-    }
-    onLog(`⚠️ Proxy route error: ${data.error || 'unknown'}`);
-    return 'error';
-  } catch {
-    onLog('⚠️ Could not reach Nginx Proxy Manager.');
-    return 'error';
-  }
-}
+// #632 removed `configureProxyRoutes` — the nginx capability handler
+// now creates proxy hosts per-template via the same /api/system/nginx/
+// proxy-hosts endpoint, with the cert + lan-restriction + forward-auth
+// logic unchanged on the server side.
 
 /** Bootstrap a freshly-deployed NPM: log it in with built-in defaults
  *  (admin@example.com / changeme), apply the wizard's chosen email + password
@@ -284,7 +167,7 @@ export async function configureProxyRoutes(opts: ConfigureProxyOpts): Promise<Pr
  *
  *  This stays in the engine (rather than nginx-web/post-deploy.py) because
  *  the tri-state result drives the wizard's NPM-credentials prompt UI. */
-async function bootstrapNpmAdmin(opts: {
+export async function bootstrapNpmAdmin(opts: {
   variables: StackVariable[];
   node?: string;
   onLog: (msg: string) => void;
@@ -352,87 +235,9 @@ async function bootstrapNpmAdmin(opts: {
   }
 }
 
-interface RunPostInstallOpts {
-  selected: StackItem[];
-  variables: StackVariable[];
-  node?: string;
-  onLog: (msg: string) => void;
-  /**
-   * Credentials parsed from `__SB_CREDENTIAL__` markers a template's
-   * post-deploy.py emitted on stdout. Appended to the SAVE-THESE-NOW
-   * banner.
-   */
-  extraCredentials?: Credential[];
-}
-
-/** Orchestrate every post-install step. Returns the proxy-route status so
- *  the caller can decide whether to render the NPM-credential prompt.
- *
- *  Per-template seed/credential-surfacing logic runs as part of each
- *  service's post-deploy.py script during deploy (see ServiceManager.
- *  runPostDeployScript). This function only handles cross-template
- *  concerns: NPM bootstrap, proxy-host aggregation, and the final
- *  credentials banner. */
-export async function runPostInstall(opts: RunPostInstallOpts): Promise<ProxyResult> {
-  const { selected, variables, node, onLog, extraCredentials } = opts;
-  const isSelected = (name: string) => selected.some(i => i.name === name);
-
-  // NPM bootstrap is best-effort: if it fails we still want to run the
-  // proxy-route step — the user can finish the NPM piece via the
-  // credentials prompt.
-  let npmBootstrap: 'ok' | 'needs_credentials' | 'skipped' = 'skipped';
-  if (isSelected('nginx')) {
-    // NPM cold-starts the SQLite schema after the container is ready, so the
-    // very first /api/tokens call sometimes 502s. Wait until it's reachable
-    // before bootstrapping; configureProxyRoutes below would do the same wait
-    // anyway, just less informatively.
-    onLog('Waiting for Nginx Proxy Manager to start (image pull / DB schema init can take a while)...');
-    await waitForNpm(node, onLog);
-    npmBootstrap = await bootstrapNpmAdmin({ variables, node, onLog });
-  }
-
-  // If we just bootstrapped NPM (or determined it's locked to other creds),
-  // we already waited for it to be reachable — skip the second wait inside
-  // configureProxyRoutes so the install log doesn't repeat the heartbeat.
-  const proxyResult = await configureProxyRoutes({
-    variables,
-    node,
-    onLog,
-    skipWait: npmBootstrap !== 'skipped',
-  });
-
-  // Final banner — one block collecting every credential the user may need
-  // to remember. Built from `__SB_CREDENTIAL__` markers each template's
-  // post-deploy.py emitted plus the variable-driven OIDC entries derived
-  // from variables[].meta.oidcClient.
-  const host = typeof window !== 'undefined' ? window.location.hostname : '';
-  const manifest = [
-    ...buildCredentialsManifest({ variables, host }),
-    ...(extraCredentials ?? []),
-  ];
-  formatCredentialsBanner(manifest).forEach(onLog);
-
-  // Persist the manifest so the operator can come back to "what's the
-  // LLDAP admin password?" days later without keeping the install log
-  // open. Encrypted at rest via SENSITIVE_KEYS on the password field
-  // (#19 / A1). Best-effort: a failure here doesn't block the install.
-  if (manifest.length > 0) {
-    try {
-      const res = await apiFetch('/api/system/credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credentials: manifest }),
-      });
-      if (res.ok) {
-        onLog(`💾 Saved ${manifest.length} credential${manifest.length === 1 ? '' : 's'} to Settings → Credentials. Wipe them from there once you've stored them safely elsewhere.`);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        onLog(`⚠️ Couldn't persist the credentials manifest (${data.error ?? `HTTP ${res.status}`}) — they're still shown above; copy them now.`);
-      }
-    } catch (e) {
-      onLog(`⚠️ Couldn't reach the credentials endpoint (${e instanceof Error ? e.message : String(e)}) — copy the credentials above before continuing.`);
-    }
-  }
-
-  return proxyResult;
-}
+// #632 removed `runPostInstall` (the bulk orchestrator that called
+// `configureProxyRoutes` + `registerOidcClients` + manifest persist).
+// The install runner now drives each step itself: `bootstrapNpmAdmin`
+// for NPM bootstrap, `bus.emit('feature.installed', ...)` per template
+// for OIDC + proxy hosts + DNS rewrites + credentials manifest. The
+// helpers below stay exported for diagnose / portal-provisioner reuse.

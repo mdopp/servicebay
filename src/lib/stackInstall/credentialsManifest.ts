@@ -86,37 +86,11 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
   return out;
 }
 
-/** Format a manifest as a banner-style block for the install log. */
-export function formatCredentialsBanner(manifest: Credential[]): string[] {
-  if (manifest.length === 0) return [];
-  const critical = manifest.filter(c => c.importance === 'critical');
-  const system = manifest.filter(c => c.importance === 'system');
-  const lines: string[] = [
-    '',
-    '═══════════════════════════════════════════════════',
-    'CREDENTIALS — saved encrypted at Settings → Integrations → Saved credentials',
-    '═══════════════════════════════════════════════════',
-  ];
-  for (const c of critical) {
-    lines.push(`  ${c.service}`);
-    lines.push(`    URL:      ${c.url}`);
-    lines.push(`    User:     ${c.username}`);
-    lines.push(`    Password: ${c.password}`);
-    if (c.notes) lines.push(`    ↳ ${c.notes}`);
-    lines.push('');
-  }
-  if (system.length) {
-    lines.push('───── system / disaster-recovery (rarely needed) ─────');
-    for (const c of system) {
-      lines.push(`  ${c.service}: ${c.password}`);
-      if (c.notes) lines.push(`    ↳ ${c.notes}`);
-    }
-    lines.push('');
-  }
-  lines.push('Visible in Settings → Integrations → Saved credentials, or download a Bitwarden CSV from the Done step.');
-  lines.push('═══════════════════════════════════════════════════');
-  return lines;
-}
+// #632 removed `formatCredentialsBanner` — the install runner no longer
+// dumps the manifest into the deploy log. The wizard's Done UI reads
+// the same data from `job.credentialsManifest` and the credentials
+// capability handler persists each template's entries to
+// `config.installManifest`.
 
 /** Build a Bitwarden-import-ready CSV. Bitwarden's importer is forgiving on
  *  column order; we use the canonical set documented at

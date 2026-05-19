@@ -59,8 +59,8 @@ export interface JobInputItem {
 }
 
 /** Persisted variable shape. `meta` is intentionally `unknown` — only
- *  the runner re-types it when reading (see `meta?.oidcClient` access in
- *  registerOidcClients). The type system isn't load-bearing here. */
+ *  consumers re-type it when reading (see `meta?.oidcClient` access in
+ *  the Authelia capability handler). The type system isn't load-bearing here. */
 export interface JobInputVariable {
   name: string;
   value: string;
