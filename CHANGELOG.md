@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.5.0...servicebay-v4.6.0) (2026-05-19)
+
+
+### Features
+
+* **diagnose:** HTTP-status check on every public domain ([#611](https://github.com/mdopp/servicebay/issues/611)) ([#658](https://github.com/mdopp/servicebay/issues/658)) ([7797ee1](https://github.com/mdopp/servicebay/commit/7797ee1495f27210237f70d4526ee4e3f839226b))
+
 ## [4.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.4.0...servicebay-v4.5.0) (2026-05-19)
 
 
