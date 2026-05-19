@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.4.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.3.0...servicebay-v4.4.0) (2026-05-19)
+
+
+### Features
+
+* **capabilities:** typed in-process capability bus core ([#629](https://github.com/mdopp/servicebay/issues/629)) ([#641](https://github.com/mdopp/servicebay/issues/641)) ([44624ca](https://github.com/mdopp/servicebay/commit/44624ca8537010261c355b51488e98045be66176))
+* **health:** servicebay.healthcheck annotation + poller → twin.health ([#626](https://github.com/mdopp/servicebay/issues/626)) ([#640](https://github.com/mdopp/servicebay/issues/640)) ([af12c0e](https://github.com/mdopp/servicebay/commit/af12c0ef6f4ebccf742472ae522033bc3b3ef6f0))
+
 ## [4.3.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.2.3...servicebay-v4.3.0) (2026-05-18)
 
 
