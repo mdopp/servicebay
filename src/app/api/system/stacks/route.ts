@@ -1,0 +1,71 @@
+/**
+ * GET /api/system/stacks (#634)
+ *
+ * Returns every stack the local registry knows about with its parsed
+ * manifest + aggregated health. Drives the stacks list UI and the
+ * wizard's stack selection step (Phase 5B+).
+ */
+import fs from 'fs/promises';
+import path from 'path';
+import { NextResponse } from 'next/server';
+import { requireSession } from '@/lib/api/requireSession';
+import { apiError } from '@/lib/api/errors';
+import { getStackManifest } from '@/lib/registry';
+import { getStackHealth, type StackHealth } from '@/lib/install/stackHealth';
+import type { StackManifest } from '@/lib/template/stackContract';
+import { logger } from '@/lib/logger';
+
+export const dynamic = 'force-dynamic';
+
+const STACKS_PATH = path.join(process.cwd(), 'stacks');
+
+interface StackSummary {
+  name: string;
+  manifest: StackManifest | null;
+  health: StackHealth | null;
+}
+
+export async function GET(request: Request) {
+  const auth = await requireSession(request);
+  if (auth instanceof NextResponse) return auth;
+
+  try {
+    // The registry's `getTemplates()` also returns stacks but only with
+    // README-derived info — for Phase 5B we want the parsed manifest +
+    // aggregated health, which means going through getStackManifest +
+    // getStackHealth per stack. Light enough at our directory count.
+    let dirents: import('fs').Dirent[];
+    try {
+      dirents = await fs.readdir(STACKS_PATH, { withFileTypes: true });
+    } catch {
+      return NextResponse.json({ stacks: [] });
+    }
+    const names = dirents
+      .filter(d => d.isDirectory() && !d.name.startsWith('.'))
+      .map(d => d.name);
+
+    const stacks: StackSummary[] = await Promise.all(names.map(async (name): Promise<StackSummary> => {
+      try {
+        const manifest = await getStackManifest(name);
+        const health = manifest ? await getStackHealth(name) : null;
+        return { name, manifest, health };
+      } catch (e) {
+        logger.warn('api:stacks', `Failed to load stack ${name}: ${e instanceof Error ? e.message : String(e)}`);
+        return { name, manifest: null, health: null };
+      }
+    }));
+
+    // Sort: core stacks first (so the UI groups them at the top), then
+    // alphabetical within each tier.
+    stacks.sort((a, b) => {
+      const ta = a.manifest?.tier ?? 'feature';
+      const tb = b.manifest?.tier ?? 'feature';
+      if (ta !== tb) return ta === 'core' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return NextResponse.json({ stacks });
+  } catch (e) {
+    return apiError(e, { tag: 'api:system:stacks:list', status: 500 });
+  }
+}
