@@ -361,8 +361,19 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     let cancelled = false;
     const tick = async () => {
       try {
-        const url = `/api/install/status?jobId=${encodeURIComponent(jobId)}&logsSince=${logsOffsetRef.current}`;
-        const res = await fetch(url);
+        // Primary: the cookie-gated /status endpoint (full data).
+        // Fallback (#663 — S1): /progress is jobId-gated and returns
+        // sanitised progress only. The fallback fires when /status
+        // 401s — which is what happens during a clean install that
+        // wipes `secrets`: AUTH_SECRET rotates mid-install and the
+        // operator's session cookie is no longer trusted. Without
+        // this, the install overlay silently stops updating.
+        const statusUrl = `/api/install/status?jobId=${encodeURIComponent(jobId)}&logsSince=${logsOffsetRef.current}`;
+        let res = await fetch(statusUrl);
+        if (res.status === 401) {
+          const progressUrl = `/api/install/progress?jobId=${encodeURIComponent(jobId)}&logsSince=${logsOffsetRef.current}`;
+          res = await fetch(progressUrl);
+        }
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as {
           job: RemoteJobState | null;
@@ -401,7 +412,11 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
    *  the subscription effect then keeps it live. */
   const attachToJob = useCallback(async (id: string): Promise<void> => {
     try {
-      const res = await fetch(`/api/install/status?jobId=${encodeURIComponent(id)}`);
+      // Same /status → /progress 401 fallback as the poll loop (#663 — S1).
+      let res = await fetch(`/api/install/status?jobId=${encodeURIComponent(id)}`);
+      if (res.status === 401) {
+        res = await fetch(`/api/install/progress?jobId=${encodeURIComponent(id)}`);
+      }
       if (!res.ok) return;
       const data = await res.json() as {
         job: RemoteJobState | null;
