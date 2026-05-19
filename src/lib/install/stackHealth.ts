@@ -64,6 +64,60 @@ export function aggregateStackHealth(
 }
 
 /**
+ * One degraded core stack — UI-shaped summary for the tier-gate
+ * refusal modal and the CoreHealthBanner (#635 / Phase 5C). Names
+ * the stack + its unhealthy children so the operator can act without
+ * re-reading the diagnose page.
+ */
+export interface DegradedCoreEntry {
+  stack: string;
+  /** Friendly label from the stack's manifest. */
+  label: string;
+  /** Per-child state; only `unhealthy` / `unknown` keys appear. */
+  notReady: Array<{ template: string; state: 'unhealthy' | 'unknown' }>;
+}
+
+/**
+ * Scan every stack whose manifest declares `tier: core` and return the
+ * subset that isn't `health.ready === true`. Used by:
+ *   - `installStack` to refuse feature-stack installs when core is
+ *     degraded (#635 / Phase 5C tier gate).
+ *   - `<CoreHealthBanner>` to show what's broken with click-through
+ *     to diagnose actions.
+ */
+export async function getDegradedCoreSummary(nodeName: string = 'Local'): Promise<DegradedCoreEntry[]> {
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  const stacksDir = path.join(process.cwd(), 'stacks');
+  let dirents: import('fs').Dirent[];
+  try {
+    dirents = await fs.readdir(stacksDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const names = dirents.filter(d => d.isDirectory() && !d.name.startsWith('.')).map(d => d.name);
+
+  const degraded: DegradedCoreEntry[] = [];
+  for (const name of names) {
+    let manifest;
+    try {
+      manifest = await getStackManifest(name);
+    } catch { continue; }
+    if (!manifest || manifest.tier !== 'core') continue;
+    const health = await getStackHealth(name, nodeName);
+    if (!health || health.ready) continue;
+    degraded.push({
+      stack: name,
+      label: manifest.label,
+      notReady: Object.entries(health.children)
+        .filter(([, s]) => s !== 'ready')
+        .map(([template, state]) => ({ template, state: state as 'unhealthy' | 'unknown' })),
+    });
+  }
+  return degraded;
+}
+
+/**
  * Runtime entry point: look up the stack manifest, scan the twin for
  * each child template's health, return aggregated result.
  *

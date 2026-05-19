@@ -20,7 +20,7 @@
  */
 import { getStackManifest } from '@/lib/registry';
 import type { StackManifest } from '@/lib/template/stackContract';
-import { getStackHealth, type StackHealth } from './stackHealth';
+import { getStackHealth, getDegradedCoreSummary, type StackHealth, type DegradedCoreEntry } from './stackHealth';
 import { topoSortByDependencies } from '@/lib/stackInstall/dependencies';
 import { logger } from '@/lib/logger';
 
@@ -174,6 +174,7 @@ function parseTemplateDeps(yamlText: string): string[] {
 /** What the operator-visible install loop reports as it goes. */
 export type StackInstallProgress =
   | { kind: 'preflight-failed'; blockedBy: StackInstallPreflight['blockedBy'] }
+  | { kind: 'tier-gate-failed'; degraded: DegradedCoreEntry[] }
   | { kind: 'plan'; plan: StackInstallPlan }
   | { kind: 'template-start'; template: string }
   | { kind: 'template-ok'; template: string }
@@ -206,6 +207,26 @@ export async function installStack(
     return { ok: false, error: `Stack \`${stackName}\` has no manifest.` };
   }
   const node = opts.nodeName ?? 'Local';
+
+  // Tier gate (#635 / Phase 5C): refuse feature-stack installs when any
+  // tier:core stack isn't healthy. The user-locked rule has no override
+  // — operator must fix core first. Core stack installs (self-install
+  // or re-install) bypass this gate; otherwise an unhealthy core would
+  // prevent the operator from running the install that would fix it.
+  if (manifest.tier === 'feature') {
+    const degraded = await getDegradedCoreSummary(node);
+    if (degraded.length > 0) {
+      opts.onProgress?.({ kind: 'tier-gate-failed', degraded });
+      const summary = degraded.map(d => {
+        const offenders = d.notReady.map(n => `${n.template}(${n.state})`).join(', ');
+        return `${d.stack}: ${offenders}`;
+      }).join('; ');
+      return {
+        ok: false,
+        error: `Cannot install \`${stackName}\`: core not ready — ${summary}. Fix core services first.`,
+      };
+    }
+  }
 
   // Cross-stack dep gate.
   const pre = await preflightCrossStackDeps(manifest, node);

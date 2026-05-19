@@ -5,44 +5,33 @@ import { AlertTriangle, X } from 'lucide-react';
 import Link from 'next/link';
 
 /**
- * Core-stack health banner (#627 / Phase 3B).
+ * Core-stack health banner (#627 / Phase 3B, enriched in #635 /
+ * Phase 5C).
  *
- * Shows at the top of every dashboard page when any service in the
- * `basic` stack (`nginx`, `auth`, `adguard`) reports `health.ready ===
- * false` for more than the startup grace. Names the specific service
- * that's degraded and links to its diagnose probe.
- *
- * Today the core-stack membership is hardcoded — it'll come from the
- * \`stacks/basic/stack.yml\` manifest (#625) once Phase 5 wires the
- * stack runner up to the wizard. Until then this list is the source
- * of truth for "what does the system need to function?"
+ * Shows at the top of every dashboard page when any `tier: core` stack
+ * reports `health.ready !== true`. Sourced from the live stack
+ * manifests via `/api/system/core-health` so the membership list isn't
+ * hardcoded anymore.
  *
  * Polls every 15s, dismissable per browser session (sessionStorage).
  */
 
-const CORE_SERVICES = ['nginx', 'auth', 'adguard'] as const;
 const POLL_INTERVAL_MS = 15_000;
 const DISMISS_KEY = 'sb:core-health-banner-dismissed';
 
-interface ServiceHealth {
-  ready: boolean;
-  degraded?: boolean;
-  lastCheckedAt: string;
-  message?: string;
+interface DegradedNotReady {
+  template: string;
+  state: 'unhealthy' | 'unknown';
 }
 
-interface SystemInfoService {
-  name: string;
-  health?: ServiceHealth;
-  active?: boolean;
-}
-
-interface SystemInfo {
-  services?: SystemInfoService[];
+interface DegradedEntry {
+  stack: string;
+  label: string;
+  notReady: DegradedNotReady[];
 }
 
 export default function CoreHealthBanner() {
-  const [unhealthy, setUnhealthy] = useState<string[]>([]);
+  const [degraded, setDegraded] = useState<DegradedEntry[]>([]);
   // Read once at construct time. sessionStorage is synchronous; only the
   // server side has to guard against it being undefined. Doing this in
   // useState's initialiser avoids the synchronous-setState-in-effect
@@ -56,23 +45,11 @@ export default function CoreHealthBanner() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const res = await fetch('/api/system/info');
+        const res = await fetch('/api/system/core-health');
         if (!res.ok) return;
-        const data: SystemInfo = await res.json();
+        const data = await res.json() as { degraded: DegradedEntry[] };
         if (cancelled) return;
-        const services = Array.isArray(data.services) ? data.services : [];
-        const flagged = CORE_SERVICES.filter(name => {
-          const svc = services.find(s => s.name === name);
-          if (!svc) return false;
-          // A core service without a health record yet (template hasn't
-          // shipped the annotation, or poller hasn't run) is NOT flagged.
-          // We only surface explicit `ready: false` — the alternative is
-          // a chatty banner while infrastructure templates without
-          // healthcheck annotations roll out in Phase 3C.
-          if (!svc.health) return false;
-          return svc.health.ready === false;
-        });
-        setUnhealthy(flagged);
+        setDegraded(Array.isArray(data.degraded) ? data.degraded : []);
       } catch {
         /* keep previous state */
       }
@@ -82,12 +59,20 @@ export default function CoreHealthBanner() {
     return () => { cancelled = true; clearInterval(id); };
   }, [dismissed]);
 
-  if (dismissed || unhealthy.length === 0) return null;
+  if (dismissed || degraded.length === 0) return null;
 
   const dismiss = () => {
     sessionStorage.setItem(DISMISS_KEY, '1');
     setDismissed(true);
   };
+
+  // Only surface stacks that have a concrete "unhealthy" signal — pure
+  // `unknown` (template has no healthcheck annotation yet) doesn't
+  // warrant a red banner. Stays consistent with the tier-gate, which
+  // treats `unknown` as "not ready" for install gating but doesn't
+  // shout about it in the UI.
+  const visible = degraded.filter(d => d.notReady.some(n => n.state === 'unhealthy'));
+  if (visible.length === 0) return null;
 
   return (
     <div className="fixed top-4 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-[calc(100%-2rem)] bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-xl shadow-lg overflow-hidden">
@@ -97,9 +82,17 @@ export default function CoreHealthBanner() {
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-red-900 dark:text-red-100">
-            Core service{unhealthy.length === 1 ? '' : 's'} unhealthy: {unhealthy.join(', ')}
+            Core {visible.length === 1 ? 'stack' : 'stacks'} unhealthy: {visible.map(d => d.label).join(', ')}
           </h3>
-          <p className="text-xs text-red-800/80 dark:text-red-200/80 mt-0.5">
+          <ul className="mt-1.5 space-y-0.5">
+            {visible.flatMap(d => d.notReady.filter(n => n.state === 'unhealthy').map(n => (
+              <li key={`${d.stack}/${n.template}`} className="text-xs text-red-800/90 dark:text-red-200/90">
+                <code className="font-mono">{n.template}</code>{' '}
+                <span className="text-red-700/70 dark:text-red-300/70">({n.state})</span>
+              </li>
+            )))}
+          </ul>
+          <p className="text-xs text-red-800/80 dark:text-red-200/80 mt-2">
             Feature installs are gated on core health. Open <Link href="/diagnose" className="underline font-medium">Self-diagnose</Link> for the recovery path.
           </p>
         </div>
