@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 const state: { config: any } = { config: {} };
 
@@ -94,7 +95,7 @@ describe('GET /api/system/access-requests', () => {
     state.config.accessRequests = [
       { id: 'r1', requestedAt: '2026-01-01', name: 'A', email: 'a@b.c', status: 'pending' },
     ];
-    const res = await GET();
+    const res = await GET(new NextRequest('http://localhost/api/system/access-requests'));
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.requests).toHaveLength(1);
@@ -102,7 +103,7 @@ describe('GET /api/system/access-requests', () => {
   });
 
   it('returns empty list when nothing persisted', async () => {
-    const res = await GET();
+    const res = await GET(new NextRequest('http://localhost/api/system/access-requests'));
     const data = await res.json();
     expect(data.requests).toEqual([]);
   });
