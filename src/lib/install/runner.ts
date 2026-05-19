@@ -849,7 +849,50 @@ async function runJob(jobId: string): Promise<void> {
       node: input.node || undefined,
       onLog: (line: string) => { void log(jobId, line); },
     });
-    if (bootstrap === 'needs_credentials') {
+    let bootstrapState: 'ok' | 'needs_credentials' | 'skipped' = bootstrap;
+
+    // Self-heal on clean install with certs preserved (#704). The
+    // operator's data volume kept the OLD admin bcrypt; the wizard's
+    // INITIAL_ADMIN_PASSWORD env never overwrites an existing admin
+    // user. The pre-fix flow paused for the operator to type the old
+    // password — which they typically don't have (forgotten, never
+    // copied off the credentials banner). Auto-wipe the NPM data dir
+    // (admin sqlite + sites table) and retry bootstrap; letsencrypt/
+    // stays untouched so cert files survive — that's the only reason
+    // "preserve certs" exists in the first place.
+    if (
+      bootstrapState === 'needs_credentials'
+      && input.cleanInstall
+      && (input.preserve?.includes('certs') ?? true)
+    ) {
+      const node = input.node || 'Local';
+      const dataDir = (await getConfig()).templateSettings?.DATA_DIR || '/mnt/data/stacks';
+      await log(jobId, '🔄 NPM rejected the wizard credentials (stale admin from a prior install). Wiping NPM data/ — letsencrypt/ certs preserved.');
+      try {
+        const { agentManager } = await import('@/lib/agent/manager');
+        const agent = await agentManager.ensureAgent(node);
+        await agent.sendCommand('exec', {
+          command: `systemctl --user stop nginx.service 2>&1 || true; rm -rf "${dataDir}/nginx-proxy-manager/data"; systemctl --user start nginx.service 2>&1 || true`,
+        });
+        // Give NPM 30s to bootstrap fresh from INITIAL_ADMIN_* env.
+        await new Promise(r => setTimeout(r, 30_000));
+        const retry = await bootstrapNpmAdmin({
+          variables,
+          node: input.node || undefined,
+          onLog: (line: string) => { void log(jobId, line); },
+        });
+        if (retry === 'ok') {
+          await log(jobId, '✅ NPM bootstrap succeeded after self-heal.');
+          bootstrapState = 'ok';
+        } else {
+          await log(jobId, '⚠️ NPM still rejecting credentials after data-wipe retry; falling back to the credentials prompt.');
+        }
+      } catch (e) {
+        await log(jobId, `⚠️ NPM self-heal failed (${e instanceof Error ? e.message : String(e)}); falling back to the credentials prompt.`);
+      }
+    }
+
+    if (bootstrapState === 'needs_credentials') {
       // Prefer credentials saved in config over wizard's newly-generated
       // ones — we're in this branch because NPM rejected the wizard
       // values, so re-prompting with the same string is just confusing.
@@ -939,12 +982,15 @@ async function runJob(jobId: string): Promise<void> {
   await patchJob(jobId, { credentialsManifest: manifest });
 
   // Portal routing — apex + wildcard rewrites for the active domain.
-  // Stays here (not a per-template concern): runs once after AdGuard is
-  // deployed in this stack.
-  if (ctx.deployed.some(d => d.name === 'adguard')) {
-    await log(jobId, 'Provisioning AdGuard DNS rewrites + portal routing...');
-    await provisionPortalWithRetries((line: string) => { void log(jobId, line); });
-  }
+  // Always runs after a successful install (#707). Pre-fix this was
+  // gated on `adguard ∈ newlyDeployed`, which meant a feature-only
+  // install (e.g. operator adds the `cloud` stack to an existing
+  // host) silently skipped DNS-rewrite provisioning even though new
+  // subdomains were being created. Now run it whenever the
+  // prerequisites (publicDomain + AdGuard reachable) are met; the
+  // provisioner internally no-ops when AdGuard isn't installed yet.
+  await log(jobId, 'Provisioning AdGuard DNS rewrites + portal routing...');
+  await provisionPortalWithRetries((line: string) => { void log(jobId, line); });
 
   // Settle-wait against the in-process digital twin.
   await settleWait(jobId, ctx.deployed, input.node || 'Local');

@@ -165,14 +165,69 @@ export async function performStackReset(
     }
   }
 
-  // secrets: wipe contents of /var/mnt/data/servicebay/. Clear contents
-  // rather than removing the dir itself so the systemd mount unit +
-  // setup-raid don't trip on a missing path.
+  // secrets: clear secret.key + the encryption-keyed encrypted state.
+  // Operator-supplied non-secret config (publicDomain, gateway host,
+  // SMTP host etc.) and the agent's SSH key are NOT key-dependent;
+  // wiping them just creates a worse re-install experience (#702, #703).
+  //
+  // Pre-fix: \`find /var/mnt/data/servicebay -mindepth 1 -maxdepth 1\`
+  // removed everything — including \`ssh/id_rsa\` (agent loses its
+  // own host's SSH key → infinite ensureAgent retry loop) and
+  // \`config.json\` (publicDomain that the wizard JUST wrote vanishes
+  // before any deploy can read it — see #702).
+  //
+  // The targeted wipe:
+  //   - secret.key, .auth-secret.env → always (the actual cipher key)
+  //   - mcp-tokens.json → always (encrypted with secret.key)
+  //   - auth.db, logs.db, results/ → always (sqlite encrypted with key)
+  //   - checks.json → always (regenerated from manifests)
+  //   - install-jobs/ → preserved (job state survives — see #705)
+  //   - ssh/ → preserved (agent's own host key — see #703)
+  //   - config.json → scrubbed in place: drop every enc:v1: field and
+  //     the auth.passwordHash, keep operator-input fields like
+  //     publicDomain, lanDomain, gateway.host (see #702)
+  //   - cert-archive/ → preserved
   if (!preserve.includes('secrets')) {
+    // 1) Scrub config.json in place (Python one-liner: drop every
+    //    enc:v1:* value, drop auth.passwordHash, drop the encrypted
+    //    .password subkeys; keep everything else).
+    const scrubConfig = `python3 -c '
+import json, os, sys
+p = "/var/mnt/data/servicebay/config.json"
+if not os.path.exists(p):
+    sys.exit(0)
+with open(p) as f:
+    d = json.load(f)
+def scrub(obj):
+    if isinstance(obj, dict):
+        for k in list(obj.keys()):
+            v = obj[k]
+            if isinstance(v, str) and v.startswith("enc:v1:"):
+                del obj[k]
+            elif isinstance(v, (dict, list)):
+                scrub(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            scrub(v)
+scrub(d)
+auth = d.get("auth", {})
+auth.pop("passwordHash", None)
+auth.pop("bootstrapToken", None)
+tmp = p + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(d, f, indent=2)
+os.replace(tmp, p)
+' 2>&1 || true`;
+    await agent.sendCommand('exec', { command: scrubConfig });
+
+    // 2) Wipe everything else under /var/mnt/data/servicebay/ except
+    //    the preserved subdirs + the just-scrubbed config.json.
+    const preservedNames = ['ssh', 'install-jobs', 'cert-archive', 'config.json'];
+    const findExclusions = preservedNames.map(n => `! -name ${JSON.stringify(n)}`).join(' ');
     await agent.sendCommand('exec', {
-      command: 'find /var/mnt/data/servicebay -mindepth 1 -maxdepth 1 -exec rm -rf {} +',
+      command: `find /var/mnt/data/servicebay -mindepth 1 -maxdepth 1 ${findExclusions} -exec rm -rf {} +`,
     });
-    wipeStepsRun.push('secrets (ServiceBay state)');
+    wipeStepsRun.push('secrets (kept ssh/, install-jobs/, cert-archive/, scrubbed config.json)');
   }
 
   // alwaysWipe groups (quadlet-backup): always purged, even when their
