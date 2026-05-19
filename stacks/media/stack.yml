@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: media
+  annotations:
+    servicebay.label: "Media (Jellyfin + Audiobookshelf)"
+    servicebay.tier: "feature"
+    servicebay.depends-on-stacks: "basic"
+spec:
+  templates: [media]

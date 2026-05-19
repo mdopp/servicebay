@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: home-assistant
+  annotations:
+    servicebay.label: "Home Assistant"
+    servicebay.tier: "feature"
+    servicebay.depends-on-stacks: "basic"
+spec:
+  templates: [home-assistant]

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: file-share
+  annotations:
+    servicebay.label: "File share (Filebrowser + Samba)"
+    servicebay.tier: "feature"
+    servicebay.depends-on-stacks: "basic"
+spec:
+  templates: [file-share]
