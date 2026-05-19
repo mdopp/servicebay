@@ -19,6 +19,7 @@
  */
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getStackManifest } from '@/lib/registry';
+import { getConfig } from '@/lib/config';
 
 export type ChildHealthState = 'ready' | 'unhealthy' | 'unknown';
 
@@ -69,12 +70,33 @@ export function aggregateStackHealth(
  * the stack + its unhealthy children so the operator can act without
  * re-reading the diagnose page.
  */
+/**
+ * Best-effort cause inference (#665 — S5). When a known unhealthy
+ * pattern matches missing config we can hint at the recovery instead
+ * of leaving the operator to triage a generic "adguard unhealthy" red
+ * banner. Patterns must be conservative — a wrong hint is worse than
+ * none.
+ */
+export interface UnhealthyCause {
+  /** Short headline rendered next to the template name. */
+  summary: string;
+  /** Optional action label + href for the banner button. */
+  action?: { label: string; href: string };
+}
+
+export interface NotReadyChild {
+  template: string;
+  state: 'unhealthy' | 'unknown';
+  /** Populated when a known config-side cause matches (#665 — S5). */
+  cause?: UnhealthyCause;
+}
+
 export interface DegradedCoreEntry {
   stack: string;
   /** Friendly label from the stack's manifest. */
   label: string;
   /** Per-child state; only `unhealthy` / `unknown` keys appear. */
-  notReady: Array<{ template: string; state: 'unhealthy' | 'unknown' }>;
+  notReady: NotReadyChild[];
 }
 
 /**
@@ -85,6 +107,32 @@ export interface DegradedCoreEntry {
  *   - `<CoreHealthBanner>` to show what's broken with click-through
  *     to diagnose actions.
  */
+/**
+ * Map an unhealthy template name to a known cause when config is the
+ * obvious blocker. Pure read of config; no agent calls. New patterns
+ * land here when a recurring "X unhealthy because Y" emerges from
+ * field reports — keep the matcher narrow so unrelated unhealthy
+ * states still fall through to the generic banner copy.
+ */
+async function inferCause(
+  template: string,
+  config: { reverseProxy?: { lanIp?: string; publicDomain?: string } },
+): Promise<UnhealthyCause | undefined> {
+  if (template === 'adguard' && !config.reverseProxy?.lanIp) {
+    return {
+      summary: 'AdGuard depends on the install-time LAN IP. It hasn\'t been captured yet — wildcard DNS rewrites can\'t be provisioned.',
+      action: { label: 'Reconcile LAN IP', href: '/diagnose' },
+    };
+  }
+  if (template === 'nginx' && !config.reverseProxy?.publicDomain) {
+    return {
+      summary: 'NPM proxy hosts depend on a publicDomain. Wizard didn\'t capture one yet (or LAN-only install).',
+      action: { label: 'Open wizard', href: '/setup' },
+    };
+  }
+  return undefined;
+}
+
 export async function getDegradedCoreSummary(nodeName: string = 'Local'): Promise<DegradedCoreEntry[]> {
   const fs = await import('fs/promises');
   const path = await import('path');
@@ -97,6 +145,10 @@ export async function getDegradedCoreSummary(nodeName: string = 'Local'): Promis
   }
   const names = dirents.filter(d => d.isDirectory() && !d.name.startsWith('.')).map(d => d.name);
 
+  // Load config once for cause inference (#665 — S5).
+  let cfg: { reverseProxy?: { lanIp?: string; publicDomain?: string } } = {};
+  try { cfg = await getConfig(); } catch { /* cause hints stay empty */ }
+
   const degraded: DegradedCoreEntry[] = [];
   for (const name of names) {
     let manifest;
@@ -106,13 +158,16 @@ export async function getDegradedCoreSummary(nodeName: string = 'Local'): Promis
     if (!manifest || manifest.tier !== 'core') continue;
     const health = await getStackHealth(name, nodeName);
     if (!health || health.ready) continue;
-    degraded.push({
-      stack: name,
-      label: manifest.label,
-      notReady: Object.entries(health.children)
+    const notReady = await Promise.all(
+      Object.entries(health.children)
         .filter(([, s]) => s !== 'ready')
-        .map(([template, state]) => ({ template, state: state as 'unhealthy' | 'unknown' })),
-    });
+        .map(async ([template, state]): Promise<NotReadyChild> => ({
+          template,
+          state: state as 'unhealthy' | 'unknown',
+          cause: state === 'unhealthy' ? await inferCause(template, cfg) : undefined,
+        })),
+    );
+    degraded.push({ stack: name, label: manifest.label, notReady });
   }
   return degraded;
 }
