@@ -80,7 +80,15 @@ export async function performStackReset(
   // service was torn down even though its data dir stays.
   const services = await ServiceManager.listServices(nodeName);
   const preservedServices = new Set<string>();
-  if (preserve.includes('certs')) preservedServices.add('nginx-proxy-manager');
+  // Service template names (matches the `templates/<name>/` directory),
+  // not the on-disk path basenames. Pre-fix: 'nginx-proxy-manager' was
+  // the *path* basename — but ServiceManager.listServices returns the
+  // template/quadlet-unit name 'nginx', so the name miss never matched
+  // and the operator's `keep certs` choice silently tore down nginx
+  // before the install runner redeployed it (#679 follow-up). 'auth'
+  // happens to match because the template directory + path basename
+  // are both called `auth`.
+  if (preserve.includes('certs')) preservedServices.add('nginx');
   if (preserve.includes('identity')) preservedServices.add('auth');
   const toDelete = services
     .map(s => s.name)
