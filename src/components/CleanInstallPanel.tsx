@@ -208,6 +208,50 @@ export default function CleanInstallPanel({
             </div>
           )}
 
+          {/* Dangerous-combination warnings (#668 — S9). Pure preview;
+              doesn't block the install. Each combination has a specific
+              consequence the operator should weigh before confirming. */}
+          {(() => {
+            const wipingSecrets = !effectivePreserve.includes('secrets');
+            const keepingCerts = effectivePreserve.includes('certs');
+            const keepingIdentity = effectivePreserve.includes('identity');
+            const wipingCerts = !effectivePreserve.includes('certs');
+            const keepingSecrets = effectivePreserve.includes('secrets');
+            const warnings: { title: string; body: string }[] = [];
+            if (wipingSecrets && keepingCerts) {
+              warnings.push({
+                title: 'Wipe secrets + keep certs',
+                body: 'Session cookies will invalidate mid-install (AUTH_SECRET rotates). The UI install overlay will silently 401 — services keep coming up, but you may need to log in again to see progress. Dangling NPM proxy routes will appear for services in service-data that no longer exist.',
+              });
+            }
+            if (wipingSecrets && keepingIdentity) {
+              warnings.push({
+                title: 'Wipe secrets + keep identity',
+                body: 'LLDAP will not accept the wizard\'s freshly-generated admin password (the image only re-keys on first DB init). Recovery is operator-decision: see docs/CREDENTIAL_SELF_HEAL.md.',
+              });
+            }
+            if (wipingCerts && keepingSecrets) {
+              warnings.push({
+                title: 'Wipe certs + keep secrets',
+                body: 'Cert-archive auto-snapshot will run before the wipe so cert-reuse works on the next install. Only relevant if you\'ve hit Let\'s Encrypt\'s 5-duplicate/168h rate limit recently — wiping certs again now risks issuance failure on rebuild.',
+              });
+            }
+            if (warnings.length === 0) return null;
+            return (
+              <div className="space-y-1.5">
+                {warnings.map((w, i) => (
+                  <div key={i} className="text-xs flex items-start gap-1.5 p-2 rounded bg-yellow-100/80 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700">
+                    <AlertTriangle className="w-4 h-4 text-yellow-700 dark:text-yellow-400 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-medium text-yellow-900 dark:text-yellow-100">{w.title}</div>
+                      <div className="text-yellow-800 dark:text-yellow-200/90 mt-0.5">{w.body}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           <div>
             <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
               Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
