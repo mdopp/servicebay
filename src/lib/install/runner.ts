@@ -508,11 +508,23 @@ async function runJob(jobId: string): Promise<void> {
           await log(jobId, `⚠️ Some services could not be cleanly removed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`);
         }
       } else {
-        await log(jobId, `⚠️ Reset failed: ${data.error || 'unknown error'}. Continuing with install — existing data may remain.`);
+        // Pre-fix the runner logged a warning and continued. But the
+        // operator typed RESET to confirm they want a clean slate;
+        // proceeding to deploy on top of un-wiped state silently
+        // violates that promise (existing service data persists,
+        // stale containers count as already-installed in the wizard
+        // UI, the "8/12 deployed" confusion). Hard-fail the install
+        // so the operator can investigate + retry.
+        const detail = data.error || 'unknown error';
+        await log(jobId, `❌ Reset failed: ${detail}. Aborting install — existing service data would persist and counted as already-installed in the next run. Fix the reset cause then retry.`);
+        await patchJob(jobId, { phase: 'error', endedAt: new Date().toISOString(), error: `Reset failed: ${detail}` });
+        return;
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'unknown error';
-      await log(jobId, `⚠️ Reset call failed: ${msg}. Continuing with install.`);
+      await log(jobId, `❌ Reset call failed: ${msg}. Aborting install — clean-install was requested but the wipe didn't run. Check the server log and retry.`);
+      await patchJob(jobId, { phase: 'error', endedAt: new Date().toISOString(), error: `Reset call failed: ${msg}` });
+      return;
     }
   }
 
