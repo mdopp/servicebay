@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.7.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.7.0...servicebay-v4.7.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **install:** escape %s in AUTH_SECRET init systemd unit ([#679](https://github.com/mdopp/servicebay/issues/679)) ([531c20a](https://github.com/mdopp/servicebay/commit/531c20a48f74c6160c33cbe47ef015f2c93a19cc))
+
 ## [4.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.6.0...servicebay-v4.7.0) (2026-05-19)
 
 
