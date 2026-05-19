@@ -170,7 +170,13 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     // times since its current podman db generation, regardless of how
     // "up" it looks right now. Caught the Authelia 13,801-restart
     // silent-fail (#622).
-    exec('podman ps --format "{{.Names}}|{{.Status}}|{{.RestartCount}}" 2>/dev/null', 4000),
+    //
+    // #661 — keep stderr visible (no `2>/dev/null`) and match the 5s
+    // timeout of the pods probe. Previously the probe silenced stderr,
+    // then on non-zero exit reported a bare "podman ps failed" with no
+    // detail — directly contradicting the Pods probe above which uses
+    // the same engine. Now operators see the actual error text.
+    exec('podman ps --format "{{.Names}}|{{.Status}}|{{.RestartCount}}"', 5000),
   ]);
 
   // 2) Container engine
@@ -439,7 +445,7 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     label: 'Containers stable',
     status: psStatus.code !== 0 ? 'warn' : (looping.length === 0 ? 'ok' : 'warn'),
     detail: psStatus.code !== 0
-      ? (psStatus.stderr || 'podman ps failed')
+      ? `podman ps exit=${psStatus.code}${psStatus.stderr ? ` — ${psStatus.stderr.trim()}` : ''}`
       : (psLines.length === 0
           ? 'No running containers yet.'
           : looping.length === 0
