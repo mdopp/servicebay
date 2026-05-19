@@ -29,17 +29,19 @@ import Mustache from 'mustache';
 import {
   getTemplatePostDeployScript,
   getTemplateMigrationScripts,
+  getTemplateYaml,
 } from '@/lib/registry';
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
+import { parseTemplateManifest } from '@/lib/template/contract';
 import { topoSortByDependencies } from '@/lib/stackInstall/dependencies';
 import { selectMigrationChain } from '@/lib/stackInstall/migrations';
 import {
-  runPostInstall,
-  configureProxyRoutes,
+  bootstrapNpmAdmin,
   type StackVariable,
 } from '@/lib/stackInstall/postInstall';
 import { buildCredentialsManifest, type Credential } from '@/lib/stackInstall/credentialsManifest';
 import { provisionPortalWithRetries } from '@/lib/stackInstall/portalProvision';
+import { getCapabilityBus } from '@/lib/capabilities/bus';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { getConfig, saveConfig } from '@/lib/config';
@@ -201,46 +203,6 @@ async function settleWait(
     await log(jobId, `✅ All ${expected.length} services active after ${elapsed}s.`);
   } else {
     await log(jobId, `⚠️ ${lastReady}/${expected.length} services active after ${elapsed}s — slow image pulls or a real failure. Self-diagnose below will tell you which.`);
-  }
-}
-
-/** Cross-template OIDC client registration. One POST collects every
- *  checked template's clients in a single call. */
-async function registerOidcClients(
-  jobId: string,
-  checkedItems: JobInputItem[],
-  vars: StackVariable[],
-  templateSource: string,
-): Promise<void> {
-  if (!vars.find(v => v.name === 'PUBLIC_DOMAIN')?.value) return;
-  const hasOidcClients = vars.some(v => v.meta?.oidcClient && v.meta?.type === 'subdomain' && v.value);
-  if (!hasOidcClients) return;
-
-  await log(jobId, 'Registering OIDC clients with Authelia...');
-  const variableValues = vars.reduce<Record<string, string>>((acc, v) => {
-    acc[v.name] = v.value;
-    return acc;
-  }, {});
-  try {
-    const res = await apiFetch('/api/system/authelia/oidc-clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        templates: checkedItems.map(i => ({ name: i.name, source: templateSource })),
-        variables: variableValues,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      if (data.added?.length) await log(jobId, `✅ OIDC clients registered: ${data.added.join(', ')}`);
-      if (data.skipped?.length) await log(jobId, `ℹ️ Already registered: ${data.skipped.join(', ')}`);
-    } else if (res.status === 404) {
-      await log(jobId, '⚠️ Authelia not deployed — OIDC clients not registered. Deploy Authelia first, then redeploy this service.');
-    } else {
-      await log(jobId, `⚠️ Could not register OIDC clients: ${data.error || 'unknown error'}`);
-    }
-  } catch {
-    await log(jobId, '⚠️ Could not reach Authelia. Register OIDC clients manually.');
   }
 }
 
@@ -777,95 +739,114 @@ async function runJob(jobId: string): Promise<void> {
     }
   }
 
-  // Post-install — NPM bootstrap + proxy hosts.
+  // Post-install — NPM bootstrap (seeds admin creds). #632 moved the
+  // bulk proxy-host / OIDC-client / DNS-rewrite / credentials-manifest
+  // work to capability handlers; this section only handles the operator-
+  // interactive NPM credentials prompt that doesn't fit the bus pattern.
   const variables = input.variables as StackVariable[];
-  const proxyResult = await runPostInstall({
-    selected: ctx.deployed.map(d => ({ name: d.name, checked: true })),
-    variables,
-    node: input.node || undefined,
-    onLog: (line: string) => { void log(jobId, line); },
-    extraCredentials: scriptCredentials,
-  });
+  const newlyDeployed = new Set(ctx.deployed.map(d => d.name).filter(name => {
+    const item = input.items.find(i => i.name === name);
+    return item && !item.alreadyInstalled;
+  }));
 
-  await registerOidcClients(jobId, input.items.filter(i => i.checked), variables, input.templateSource);
+  if (newlyDeployed.has('nginx')) {
+    const bootstrap = await bootstrapNpmAdmin({
+      variables,
+      node: input.node || undefined,
+      onLog: (line: string) => { void log(jobId, line); },
+    });
+    if (bootstrap === 'needs_credentials') {
+      // Prefer credentials saved in config over wizard's newly-generated
+      // ones — we're in this branch because NPM rejected the wizard
+      // values, so re-prompting with the same string is just confusing.
+      const savedNpm = (await getConfig()).reverseProxy?.npm;
+      const fallback = {
+        email: savedNpm?.email
+          || variables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value
+          || '',
+        password: savedNpm?.password
+          || variables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value
+          || '',
+      };
+      const creds = await waitForCredentials(jobId, fallback);
+      if (abortFlags.get(jobId)) {
+        await patchJob(jobId, { phase: 'aborted', endedAt: new Date().toISOString() });
+        return;
+      }
+      if (creds) {
+        await patchJob(jobId, { phase: 'running', needsCredentials: undefined });
+        // Persist so the nginx capability handler (and every other call
+        // site through getNpmToken) picks up these creds.
+        await apiFetch('/api/system/nginx/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(creds),
+        }).catch(() => undefined);
+        // Also override the in-memory variables so subsequent emits use
+        // them (the proxy-host POST honours wizard-generated creds, but
+        // operator-supplied ones land in config and get picked up via
+        // getNpmToken's fallback chain).
+        for (const v of variables) {
+          if (v.name === 'NGINX_ADMIN_EMAIL') v.value = creds.email;
+          if (v.name === 'NGINX_ADMIN_PASSWORD') v.value = creds.password;
+        }
+        await log(jobId, 'Saved NPM credentials for future installs.');
+      } else {
+        await log(jobId, '⚠️ NPM credentials skipped — proxy routes may not be configured.');
+        await patchJob(jobId, { phase: 'running', needsCredentials: undefined });
+      }
+    }
+  }
 
-  // Build the final credentials manifest now so the Done UI has it as
-  // soon as the job lands in `done`.
+  // Per-template capability events (#632). Each newly-deployed template
+  // fires `feature.installed`; subscribed handlers (Authelia OIDC, NPM
+  // proxy hosts, AdGuard DNS, credentials manifest) do their cross-
+  // service registration. Handlers are idempotent — re-emitting is safe.
+  const bus = getCapabilityBus();
+  for (const name of newlyDeployed) {
+    try {
+      const yamlText = await getTemplateYaml(name, input.templateSource);
+      if (!yamlText) {
+        await log(jobId, `(note) skipped capability emit for ${name}: template.yml not found`);
+        continue;
+      }
+      const parsed = parseTemplateManifest(yamlText);
+      if (!parsed.ok) {
+        await log(jobId, `(note) skipped capability emit for ${name}: ${parsed.errors.join('; ')}`);
+        continue;
+      }
+      const result = await bus.emit({
+        kind: 'feature.installed',
+        template: name,
+        manifest: parsed.manifest,
+        variables,
+      });
+      for (const f of result.failures) {
+        // Surface as diagnose-style log lines but don't abort — handler
+        // failures are recoverable and the operator can retry the
+        // specific service via diagnose actions.
+        if (!f.result.ok) {
+          await log(jobId, `⚠️ ${f.handler} (${name}): ${f.result.message}`);
+        }
+      }
+    } catch (e) {
+      await log(jobId, `(note) capability emit failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Build the final credentials manifest for the Done UI. Handler
+  // already persisted per-template entries to `config.installManifest`
+  // (credentials capability handler); this builds the JOB-STATE manifest
+  // the wizard's Done step reads.
   const manifest = [
     ...buildCredentialsManifest({ variables, host: input.host }),
     ...scriptCredentials,
   ];
   await patchJob(jobId, { credentialsManifest: manifest });
 
-  // NPM credentials prompt (mid-flow user input). Pause here until the
-  // operator submits or skips.
-  if (proxyResult === 'needs_credentials') {
-    // Prefer the credentials already saved in config over the wizard's
-    // newly-generated ones. We're only in this branch because NPM
-    // rejected the wizard creds — pre-filling the prompt with the same
-    // rejected password just confuses the operator (they think it's a
-    // valid password and copy it into NPM, where it still fails). The
-    // saved creds were what worked the last time NPM accepted anything,
-    // so they're the most plausible guess for what NPM's DB still holds.
-    const savedNpm = (await getConfig()).reverseProxy?.npm;
-    const fallback = {
-      email: savedNpm?.email
-        || variables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value
-        || '',
-      password: savedNpm?.password
-        || variables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value
-        || '',
-    };
-    const creds = await waitForCredentials(jobId, fallback);
-    if (abortFlags.get(jobId)) {
-      await patchJob(jobId, { phase: 'aborted', endedAt: new Date().toISOString() });
-      return;
-    }
-    if (creds) {
-      await log(jobId, 'Retrying with provided credentials...');
-      await patchJob(jobId, { phase: 'running', needsCredentials: undefined });
-      const retry = await configureProxyRoutes({
-        variables,
-        node: input.node || undefined,
-        onLog: (line: string) => { void log(jobId, line); },
-        credentials: creds,
-        skipWait: true,
-      });
-      if (retry === 'needs_credentials') {
-        await log(jobId, '❌ Authentication failed. Please check your credentials.');
-        // Re-pause for another attempt.
-        const second = await waitForCredentials(jobId, fallback);
-        if (!second) {
-          await patchJob(jobId, { phase: 'running', needsCredentials: undefined });
-        } else {
-          await configureProxyRoutes({
-            variables,
-            node: input.node || undefined,
-            onLog: (line: string) => { void log(jobId, line); },
-            credentials: second,
-            skipWait: true,
-          });
-          await apiFetch('/api/system/nginx/credentials', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(second),
-          }).catch(() => undefined);
-        }
-      } else {
-        await apiFetch('/api/system/nginx/credentials', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(creds),
-        }).catch(() => undefined);
-        await log(jobId, 'Saved NPM credentials for future installs.');
-      }
-    } else {
-      await log(jobId, 'NPM credentials skipped — proxy routes were not configured.');
-      await patchJob(jobId, { phase: 'running', needsCredentials: undefined });
-    }
-  }
-
-  // Portal routing — only meaningful when AdGuard is in the stack.
+  // Portal routing — apex + wildcard rewrites for the active domain.
+  // Stays here (not a per-template concern): runs once after AdGuard is
+  // deployed in this stack.
   if (ctx.deployed.some(d => d.name === 'adguard')) {
     await log(jobId, 'Provisioning AdGuard DNS rewrites + portal routing...');
     await provisionPortalWithRetries((line: string) => { void log(jobId, line); });

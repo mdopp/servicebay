@@ -8,8 +8,9 @@ export const dynamic = 'force-dynamic';
 /**
  * Resume a paused install with operator-supplied NPM admin credentials.
  * The runner is awaiting an in-memory promise keyed by `jobId`; this
- * endpoint resolves it with the supplied creds so the deploy loop can
- * retry `configureProxyRoutes` with them.
+ * endpoint resolves it with the supplied creds. The runner saves them
+ * to `config.reverseProxy.npm` and lets the nginx capability handler
+ * pick them up on the next emit.
  */
 export async function POST(request: Request) {
   // requireSession gate (#596) — defense-in-depth atop proxy.ts.
