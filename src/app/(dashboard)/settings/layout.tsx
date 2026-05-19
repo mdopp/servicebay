@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Database, Loader2, Plug, Server, Settings } from 'lucide-react';
+import { Database, Layers, Loader2, Plug, Server, Settings } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { SettingsProvider, useSettings } from './_lib/SettingsContext';
 
 const TABS = [
   { id: 'nodes', label: 'Nodes', icon: Server },
+  { id: 'stacks', label: 'Stacks', icon: Layers },
   { id: 'system', label: 'System', icon: Settings },
   { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'backups', label: 'Backups', icon: Database },
