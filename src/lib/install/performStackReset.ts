@@ -75,21 +75,20 @@ export async function performStackReset(
   }
 
   // Service inventory: stop + remove Quadlet for everything except
-  // services whose data dir falls under a preserved group. Otherwise
-  // the operator would lose the cert-reuse benefit because the NPM
-  // service was torn down even though its data dir stays.
+  // protected services (servicebay itself). Pre-fix the certs and
+  // identity groups *also* kept their owning services — nginx and
+  // auth — on the assumption that "preserve data" implied "preserve
+  // unit." But Quadlet yaml on disk can be stale (#697-followup:
+  // operator's previous install left an nginx.yml with broken
+  // `{{DATA_DIR}}` substitution, the preserve kept it, the install
+  // runner skipped nginx as already-installed, and the operator hit
+  // a permanent restart-loop). The data dir is what actually needs
+  // preserving — handled separately by the path-based exclusion
+  // below — so the reset wipes the service unit and lets the
+  // install runner redeploy a freshly-rendered yaml against the
+  // preserved data.
   const services = await ServiceManager.listServices(nodeName);
   const preservedServices = new Set<string>();
-  // Service template names (matches the `templates/<name>/` directory),
-  // not the on-disk path basenames. Pre-fix: 'nginx-proxy-manager' was
-  // the *path* basename — but ServiceManager.listServices returns the
-  // template/quadlet-unit name 'nginx', so the name miss never matched
-  // and the operator's `keep certs` choice silently tore down nginx
-  // before the install runner redeployed it (#679 follow-up). 'auth'
-  // happens to match because the template directory + path basename
-  // are both called `auth`.
-  if (preserve.includes('certs')) preservedServices.add('nginx');
-  if (preserve.includes('identity')) preservedServices.add('auth');
   const toDelete = services
     .map(s => s.name)
     .filter(name => !PROTECTED_SERVICES.has(name) && !preservedServices.has(name));

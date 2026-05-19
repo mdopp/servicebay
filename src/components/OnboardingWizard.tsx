@@ -23,7 +23,7 @@ import type { TemplateTier } from '@/lib/templateTier';
 import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { useStackInstall } from '@/hooks/useStackInstall';
 
-import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home, Minimize2 } from 'lucide-react';
+import { Loader2, Monitor, Network, Key, CheckCircle, ArrowRight, SkipForward, RefreshCw, Box, Mail, Layers, Package, Globe, HardDrive, Home, Minimize2, AlertTriangle } from 'lucide-react';
 import StackVariableField from './StackVariableField';
 import { StackInstallProgress, StackInstallSummary } from './StackInstallFlow';
 import CleanInstallPanel from './CleanInstallPanel';
@@ -896,6 +896,22 @@ export default function OnboardingWizard() {
             const name = match[2].trim();
             if (itemsByName.has(name)) return; // dedup across stacks
             const isInstalled = existing.has(name.toLowerCase());
+            // Clean-install awareness (#697-followup): when the
+            // operator's about to wipe via the reset endpoint,
+            // already-installed services in non-preserved groups will
+            // be deleted by the reset and need to be redeployed by the
+            // runner. Pre-fix we read `existing` *before* the reset,
+            // set `checked: false` on installed items, and the runner
+            // dutifully skipped them — leaving the operator with a
+            // wiped-but-not-redeployed service (typical symptom:
+            // nginx unit gone or stale, restart-looping, Core stack
+            // unhealthy). The simplest fix is to treat all README
+            // items as fresh under cleanInstall: `alreadyInstalled`
+            // stays informational, but the reset makes it factually
+            // false post-wipe — so the checkbox should match the
+            // README's intent.
+            const treatAsFresh = cleanInstall;
+            const effectivelyInstalled = treatAsFresh ? false : isInstalled;
             itemsByName.set(name, {
               name,
               description: match[3]?.trim() || undefined,
@@ -906,9 +922,9 @@ export default function OnboardingWizard() {
               tier: templateTiers.get(name) ?? 'feature',
               dependencies: templateDeps.get(name) ?? [],
               checked: templateTiers.get(name) === 'infrastructure'
-                ? !isInstalled
-                : (!isInstalled && match[1].toLowerCase() === 'x'),
-              alreadyInstalled: isInstalled,
+                ? !effectivelyInstalled
+                : (!effectivelyInstalled && match[1].toLowerCase() === 'x'),
+              alreadyInstalled: effectivelyInstalled,
             });
           }
         });
@@ -1394,6 +1410,27 @@ export default function OnboardingWizard() {
                         <h3 className="font-semibold text-lg flex items-center gap-2">
                             <CheckCircle className="w-5 h-5 text-indigo-500"/> Ready to install
                         </h3>
+                        {/* #685-followup: if publicDomain is empty AND
+                            the operator hasn't explicitly chosen LAN-only
+                            yet, surface a banner pointing at the network
+                            step — they may have landed here via
+                            stacksOnlyMode which skips network entirely. */}
+                        {!publicDomain.trim() && installMode === 'public' && (
+                            <div className="flex items-start gap-2 p-3 rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-sm text-amber-900 dark:text-amber-100">
+                                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                                <div className="flex-1">
+                                    <div className="font-medium">Public domain not set</div>
+                                    <div className="text-xs mt-0.5">Enter it on the Network step (NPM proxy hosts depend on it). Or pick &ldquo;internal only&rdquo; below to skip.</div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => navigateTo('network')}
+                                    className="text-xs font-medium px-2 py-1 rounded bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60"
+                                >
+                                    Open Network step
+                                </button>
+                            </div>
+                        )}
                         <p className="text-sm text-gray-500">
                             We&apos;ll install the recommended stack with sensible defaults. Adjust the two questions below or click <em>Edit details</em> for the full wizard.
                         </p>
