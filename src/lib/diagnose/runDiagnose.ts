@@ -176,7 +176,12 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     // then on non-zero exit reported a bare "podman ps failed" with no
     // detail — directly contradicting the Pods probe above which uses
     // the same engine. Now operators see the actual error text.
-    exec('podman ps --format "{{.Names}}|{{.Status}}|{{.RestartCount}}"', 5000),
+    // The field was renamed from `RestartCount` to `Restarts` in
+    // podman 5.8 (Fedora 44 ships 5.8.1). The old name crashes the
+    // template render with "can't evaluate field RestartCount in
+    // type containers.psReporter" — every diagnose run shows a fake
+    // "podman ps exit=125" failure on FCoS 44+.
+    exec('podman ps --format "{{.Names}}|{{.Status}}|{{.Restarts}}"', 5000),
   ]);
 
   // 2) Container engine
