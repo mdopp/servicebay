@@ -719,3 +719,88 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Failed to configure proxy hosts' }, { status: 500 });
     }
 }
+
+
+/**
+ * DELETE /api/system/nginx/proxy-hosts?domain=<fqdn>[&node=<n>]
+ *
+ * Removes a proxy host by domain. Called by the NPM capability handler
+ * (#630) on `feature.uninstalled`. Idempotent: a 404 means the host
+ * was already gone (or never existed), which uninstall paths treat as
+ * success.
+ *
+ * Mirrors POST's NPM-discovery + token-acquisition pattern. Doesn't
+ * touch the cert — orphaned LE certs aren't free to dispose of (the
+ * shared cert bundle may still be in use by another host), and the
+ * cert_request_failure diagnose probe surfaces stale certs separately.
+ */
+export async function DELETE(request: Request) {
+    const __auth = await requireSession(request);
+    if (__auth instanceof NextResponse) return __auth;
+
+    try {
+        const url = new URL(request.url);
+        const domain = url.searchParams.get('domain');
+        const node = url.searchParams.get('node') ?? undefined;
+        if (!domain) {
+            return NextResponse.json({ error: 'domain query parameter is required' }, { status: 400 });
+        }
+
+        const npm = await resolveNpm(node);
+        if (!npm) {
+            return NextResponse.json({
+                error: 'Nginx Proxy Manager not found or not running',
+            }, { status: 404 });
+        }
+
+        const token = await getNpmToken(npm.apiUrl);
+        if (!token) {
+            return NextResponse.json({
+                error: 'Could not authenticate with NPM. Please provide your NPM admin credentials.',
+                adminUrl: npm.apiUrl,
+                needsCredentials: true,
+            }, { status: 401 });
+        }
+
+        const existing = await findProxyHostByDomain(npm.apiUrl, token, domain);
+        if (!existing) {
+            return NextResponse.json({ removed: false, reason: 'not_found' }, { status: 404 });
+        }
+
+        const res = await fetch(`${npm.apiUrl}/api/nginx/proxy-hosts/${existing.id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            logger.warn('ProxyHosts', `NPM DELETE for ${domain} (id=${existing.id}) returned ${res.status}: ${body}`);
+            return NextResponse.json({
+                error: `NPM API returned ${res.status}`,
+            }, { status: 502 });
+        }
+
+        // Mirror POST's persist step: drop the host from
+        // `config.reverseProxy.hosts` so the route inventory stays in
+        // sync. Best-effort — a missing config write doesn't undo the
+        // NPM-side delete.
+        try {
+            const cfg = await getConfig();
+            const hosts = cfg.reverseProxy?.hosts ?? [];
+            const next = hosts.filter(h => h.domain !== domain);
+            if (next.length !== hosts.length) {
+                await updateConfig({
+                    reverseProxy: { ...(cfg.reverseProxy || {}), hosts: next },
+                });
+            }
+        } catch (e) {
+            logger.warn('ProxyHosts', `Failed to drop ${domain} from config.reverseProxy.hosts: ${e}`);
+        }
+
+        logger.info('ProxyHosts', `Removed proxy host: ${domain} (id=${existing.id})`);
+        return NextResponse.json({ removed: true, domain, id: existing.id });
+    } catch (error) {
+        logger.error('api:nginx:proxy-hosts:delete', 'Failed to delete proxy host', error);
+        return NextResponse.json({ error: 'Failed to delete proxy host' }, { status: 500 });
+    }
+}

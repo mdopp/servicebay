@@ -223,7 +223,7 @@ describe('type-safety (compile-time)', () => {
 
     await bus.emit(INSTALLED('immich'));
     expect(captured.label).toBe('Test');
-    await bus.emit({ kind: 'feature.uninstalled', template: 'foo' });
+    await bus.emit({ kind: 'feature.uninstalled', template: 'foo', lastKnownVariables: [] });
     expect(captured.template).toBe('foo');
     await bus.emit({ kind: 'feature.uninstalling', template: 'bar', lastKnownVariables: [] });
     expect(captured.vars).toBe('0');
