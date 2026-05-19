@@ -633,15 +633,17 @@ app.prepare().then(() => {
       }
     })();
 
-    // LAN IP reconcile (#318). Captures the install-time IP on first
-    // boot and updates the stored value (with history) when the IP
-    // drifts. Deferred 60s so the Local agent has time to come up
-    // through the socket lifecycle — detectLanIp() needs an `exec`
-    // round-trip. Best-effort: a missing IP just leaves the previous
-    // value alone, the diagnose probe handles the no-value case.
+    // LAN-IP drift detection (#318, #660). Install-time *capture* now
+    // happens synchronously inside the install runner (see #660 — the
+    // 60s boot-timer was race-prone). What stays here is the drift
+    // safety net for long-running installs where the host's outbound
+    // IP changes after install (DHCP lease, NIC swap, OS upgrade).
+    // `reconcileLanIp` is idempotent: no-op when current == stored,
+    // history append when it drifts. Deferred 60s so the Local agent
+    // has time to come up through the socket lifecycle.
     setTimeout(() => {
       reconcileLanIp('Local').catch(err =>
-        logger.warn('Server', `LAN IP reconcile failed: ${err instanceof Error ? err.message : String(err)}`),
+        logger.warn('Server', `LAN IP drift check failed: ${err instanceof Error ? err.message : String(err)}`),
       );
     }, 60_000);
 
