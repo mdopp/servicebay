@@ -1,40 +1,27 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { ServiceName } from '@/lib/api/schemas';
-import { parseRouteParam } from '@/lib/api/validate';
-import { apiError } from '@/lib/api/errors';
+import { withApiHandlerParams } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ name: string }> }
-) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
+export const dynamic = 'force-dynamic';
 
-  const parsed = await parseRouteParam(params, 'name', ServiceName);
-  if (!parsed.ok) return parsed.response;
-  const name = parsed.value;
-  const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node') || 'Local';
+const Body = z.object({ newName: z.string().min(1) });
+const Query = z.object({ node: z.string().optional() });
 
-  try {
-    const body = await request.json();
-    const { newName } = body;
-
-    if (!newName) {
-      return NextResponse.json({ error: 'New name is required' }, { status: 400 });
+export const POST = withApiHandlerParams<z.infer<typeof Body>, z.infer<typeof Query>, { name: string }>(
+  { body: Body, query: Query },
+  async ({ body, query, params }) => {
+    const oldCheck = ServiceName.safeParse(decodeURIComponent(params.name));
+    if (!oldCheck.success) {
+      return NextResponse.json({ error: 'invalid name' }, { status: 400 });
     }
-
-    const newCheck = ServiceName.safeParse(newName);
+    const newCheck = ServiceName.safeParse(body.newName);
     if (!newCheck.success) {
       return NextResponse.json({ error: 'invalid newName' }, { status: 400 });
     }
-
-    await ServiceManager.renameService(nodeName, name, newCheck.data);
+    const nodeName = query.node || 'Local';
+    await ServiceManager.renameService(nodeName, oldCheck.data, newCheck.data);
     return NextResponse.json({ success: true });
-  } catch (error) {
-    return apiError(error, { tag: 'api:services:rename', status: 500 });
-  }
-}
+  },
+);

@@ -159,7 +159,7 @@ async function checkExecTemplateLiterals() {
 // fails CI immediately. Current run: 12/104 routes (~11%) after the
 // settings cluster landed in #603.
 // ---------------------------------------------------------------------------
-const MIN_WITH_API_HANDLER_RATIO = 0.10;
+const MIN_WITH_API_HANDLER_RATIO = 0.15;
 
 async function checkWithApiHandlerAdoption() {
     const routeFiles = await walk(path.join(SRC, 'app', 'api'), p => p.endsWith('/route.ts'));
@@ -167,7 +167,9 @@ async function checkWithApiHandlerAdoption() {
     let adopted = 0;
     for (const file of routeFiles) {
         const content = await readFile(file, 'utf-8');
-        if (/\bwithApiHandler\s*[<(]/.test(content)) adopted++;
+        // #603 — match both the static-route wrapper and the
+        // dynamic-segment variant (`withApiHandlerParams`).
+        if (/\bwithApiHandler(Params)?\s*[<(]/.test(content)) adopted++;
     }
     const ratio = adopted / routeFiles.length;
     if (ratio < MIN_WITH_API_HANDLER_RATIO) {

@@ -57,6 +57,58 @@ export interface ParsedRequest<B, Q> {
   request: NextRequest;
 }
 
+export interface ParsedRequestWithParams<B, Q, P> extends ParsedRequest<B, Q> {
+  /** Resolved Next.js dynamic-route params (e.g. `{ name: 'immich' }`
+   *  for `/api/services/[name]/route.ts`). */
+  params: P;
+}
+
+const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+/** Shared validation + error-envelope core used by both wrappers. */
+async function runHandler<B, Q>(
+  options: ApiHandlerOptions<B, Q>,
+  request: NextRequest,
+  invoke: (parsed: { body: B; query: Q }) => Promise<Response | NextResponse | unknown>,
+): Promise<Response> {
+  try {
+    if (MUTATING_METHODS.has(request.method)) {
+      // Lazy import to keep handler.ts free of the cookie-parse import
+      // chain when the module is loaded by middleware-adjacent code.
+      const { requireSession } = await import('./requireSession');
+      const auth = await requireSession(request);
+      if (auth instanceof NextResponse) return auth;
+    }
+
+    const rawBody = options.body ? await readJsonBody(request) : undefined;
+    const body = options.body ? options.body.parse(rawBody) : (undefined as B);
+    const rawQuery = searchParamsToObject(request.nextUrl.searchParams);
+    const query = options.query ? options.query.parse(rawQuery) : (undefined as Q);
+
+    const result = await invoke({ body, query });
+    if (result instanceof Response) return result;
+    return NextResponse.json({ ok: true, data: result });
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      return NextResponse.json(
+        { ok: false, error: 'validation failed', code: 'VALIDATION', details: e.flatten() } satisfies ApiErrorBody,
+        { status: 400 },
+      );
+    }
+    if (e instanceof ApiError) {
+      return NextResponse.json(
+        { ok: false, error: e.message, code: e.code, details: e.details } satisfies ApiErrorBody,
+        { status: e.status },
+      );
+    }
+    logger.error('Api', `Unhandled error in ${request.method} ${request.nextUrl.pathname}`, e);
+    return NextResponse.json(
+      { ok: false, error: 'internal server error' } satisfies ApiErrorBody,
+      { status: 500 },
+    );
+  }
+}
+
 /**
  * Wrap a Next.js API route handler with shared validation, error handling,
  * and error envelope. Throws ApiError to short-circuit with a typed status.
@@ -66,48 +118,38 @@ export interface ParsedRequest<B, Q> {
  * cheap 401 instead of triggering full validation. GET/HEAD/OPTIONS skip
  * the gate (proxy.ts is still the primary gate for those; the wrapper's
  * role here is the redundant per-route check the audit asked for).
+ *
+ * Use the sibling `withApiHandlerParams` for dynamic-segment routes
+ * (`/api/services/[name]/...`): Next.js's generated route types refuse
+ * a 2-arg handler on non-dynamic routes, so the two shapes need
+ * separate entry points.
  */
-const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 export function withApiHandler<B = undefined, Q = undefined>(
   options: ApiHandlerOptions<B, Q>,
   handler: (input: ParsedRequest<B, Q>) => Promise<Response | NextResponse | unknown>,
 ) {
   return async (request: NextRequest): Promise<Response> => {
-    try {
-      if (MUTATING_METHODS.has(request.method)) {
-        // Lazy import to keep handler.ts free of the cookie-parse import
-        // chain when the module is loaded by middleware-adjacent code.
-        const { requireSession } = await import('./requireSession');
-        const auth = await requireSession(request);
-        if (auth instanceof NextResponse) return auth;
-      }
+    return runHandler(options, request, ({ body, query }) =>
+      handler({ body, query, request }),
+    );
+  };
+}
 
-      const rawBody = options.body ? await readJsonBody(request) : undefined;
-      const body = options.body ? options.body.parse(rawBody) : (undefined as B);
-      const rawQuery = searchParamsToObject(request.nextUrl.searchParams);
-      const query = options.query ? options.query.parse(rawQuery) : (undefined as Q);
-
-      const result = await handler({ body, query, request });
-      if (result instanceof Response) return result;
-      return NextResponse.json({ ok: true, data: result });
-    } catch (e) {
-      if (e instanceof z.ZodError) {
-        return NextResponse.json(
-          { ok: false, error: 'validation failed', code: 'VALIDATION', details: e.flatten() } satisfies ApiErrorBody,
-          { status: 400 },
-        );
-      }
-      if (e instanceof ApiError) {
-        return NextResponse.json(
-          { ok: false, error: e.message, code: e.code, details: e.details } satisfies ApiErrorBody,
-          { status: e.status },
-        );
-      }
-      logger.error('Api', `Unhandled error in ${request.method} ${request.nextUrl.pathname}`, e);
-      return NextResponse.json(
-        { ok: false, error: 'internal server error' } satisfies ApiErrorBody,
-        { status: 500 },
-      );
-    }
+/**
+ * Dynamic-segment variant (#603). Next.js passes
+ * `{ params: Promise<{...}> }` as the second arg to route handlers in
+ * dynamic segments. This wrapper awaits and forwards it to the handler
+ * under `input.params` so consumers can destructure
+ * `{ params: { name } }` without re-implementing the await.
+ */
+export function withApiHandlerParams<B = undefined, Q = undefined, P = unknown>(
+  options: ApiHandlerOptions<B, Q>,
+  handler: (input: ParsedRequestWithParams<B, Q, P>) => Promise<Response | NextResponse | unknown>,
+) {
+  return async (request: NextRequest, ctx: { params: Promise<P> }): Promise<Response> => {
+    return runHandler(options, request, async ({ body, query }) => {
+      const params = await ctx.params;
+      return handler({ body, query, request, params });
+    });
   };
 }

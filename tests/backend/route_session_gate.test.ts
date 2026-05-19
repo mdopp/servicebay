@@ -60,7 +60,10 @@ describe('per-route session gate (#596)', () => {
       const src = fs.readFileSync(file, 'utf-8');
       const apiPath = fileToApiPath(file);
       const usesGateDirectly = /requireSession\s*\(/.test(src);
-      const usesWrapper = /withApiHandler\b/.test(src);
+      // Matches both the static-route wrapper and the dynamic-segment
+      // variant (#603 — `withApiHandlerParams` is the second entry
+      // point for routes that pass `{ params }` to their handler).
+      const usesWrapper = /withApiHandler(Params)?\b/.test(src);
       for (const method of MUTATING) {
         const re = new RegExp(
           `export\\s+(?:async\\s+)?function\\s+${method}\\b|export\\s+const\\s+${method}\\s*=`,
