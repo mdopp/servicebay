@@ -19,9 +19,16 @@ import Link from 'next/link';
 const POLL_INTERVAL_MS = 15_000;
 const DISMISS_KEY = 'sb:core-health-banner-dismissed';
 
+interface UnhealthyCause {
+  summary: string;
+  action?: { label: string; href: string };
+}
+
 interface DegradedNotReady {
   template: string;
   state: 'unhealthy' | 'unknown';
+  /** Populated when a known config-side cause matches (#665 — S5). */
+  cause?: UnhealthyCause;
 }
 
 interface DegradedEntry {
@@ -84,16 +91,33 @@ export default function CoreHealthBanner() {
           <h3 className="text-sm font-semibold text-red-900 dark:text-red-100">
             Core {visible.length === 1 ? 'stack' : 'stacks'} unhealthy: {visible.map(d => d.label).join(', ')}
           </h3>
-          <ul className="mt-1.5 space-y-0.5">
+          <ul className="mt-1.5 space-y-1.5">
             {visible.flatMap(d => d.notReady.filter(n => n.state === 'unhealthy').map(n => (
               <li key={`${d.stack}/${n.template}`} className="text-xs text-red-800/90 dark:text-red-200/90">
                 <code className="font-mono">{n.template}</code>{' '}
                 <span className="text-red-700/70 dark:text-red-300/70">({n.state})</span>
+                {/* #665 — S5: render the causal-chain hint when the
+                    server inferred a known config-side blocker, so
+                    operators see "X unhealthy → because Y, click Z"
+                    instead of a bare "(unhealthy)" red badge. */}
+                {n.cause && (
+                  <div className="mt-0.5 ml-3 text-red-800/80 dark:text-red-200/80">
+                    → {n.cause.summary}
+                    {n.cause.action && (
+                      <>
+                        {' '}
+                        <Link href={n.cause.action.href} className="underline font-medium">
+                          {n.cause.action.label}
+                        </Link>
+                      </>
+                    )}
+                  </div>
+                )}
               </li>
             )))}
           </ul>
           <p className="text-xs text-red-800/80 dark:text-red-200/80 mt-2">
-            Feature installs are gated on core health. Open <Link href="/diagnose" className="underline font-medium">Self-diagnose</Link> for the recovery path.
+            Feature installs are gated on core health. Open <Link href="/diagnose" className="underline font-medium">Self-diagnose</Link> for the full recovery path.
           </p>
         </div>
         <button
