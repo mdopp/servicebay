@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.8.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.8.1...servicebay-v4.8.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* **install:** cascade-bug batch — wipe scope, NPM drift, hermes, state, DNS ([#708](https://github.com/mdopp/servicebay/issues/708)) ([38f398b](https://github.com/mdopp/servicebay/commit/38f398b990971b1e9f0f50bc86cffb879ff6daaa))
+
 ## [4.8.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.8.0...servicebay-v4.8.1) (2026-05-19)
 
 
