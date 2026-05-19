@@ -50,9 +50,22 @@ const CHECK_ID = 'npm_auth';
 export async function checkNpmDataStale(): Promise<NpmDataStaleResult> {
   const result = HealthStore.getLastResult(CHECK_ID);
   if (!result) {
+    // #664 — S4: distinguish "not yet scheduled (config missing)" from
+    // "scheduled, first run pending." The npm_auth check is created
+    // when ServiceBay records NPM admin credentials (see
+    // `postInstall.bootstrapNpmAdmin`). If the check doesn't exist
+    // yet the probe is blocked on NPM bootstrap; if it exists but has
+    // no result, the scheduler will fire it shortly.
+    const exists = HealthStore.getChecks().some(c => c.id === CHECK_ID);
+    if (!exists) {
+      return {
+        status: 'info',
+        detail: 'Waiting on NPM admin bootstrap — the npm_auth check is created once ServiceBay records the NPM admin credentials. Re-run after the install finishes its NPM step.',
+      };
+    }
     return {
       status: 'info',
-      detail: 'Check has not run yet. Open Settings → Health to trigger it manually.',
+      detail: 'Scheduled — first run pending. Open Settings → Health to trigger it manually.',
     };
   }
   if (result.message && result.message.startsWith(NPM_AUTH_MESSAGE_PREFIX)) {

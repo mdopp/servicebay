@@ -12,6 +12,7 @@ import type { CheckResult } from '@/lib/health/types';
 
 const state = {
   results: new Map<string, CheckResult>(),
+  checks: [{ id: 'lan_ip_drift' }] as Array<{ id: string }>,
   reconcileResult: '192.168.1.10' as string | null,
   provisionResult: { ok: true, detail: 'all 3 rewrites in place' } as { ok: boolean; detail: string },
   config: {
@@ -23,6 +24,7 @@ const state = {
 vi.mock('@/lib/health/store', () => ({
   HealthStore: {
     getLastResult: (id: string) => state.results.get(id) ?? null,
+    getChecks: () => state.checks,
   },
 }));
 
@@ -51,6 +53,7 @@ import { dispatchProbeAction, actionsForProbe } from '../actions';
 
 beforeEach(() => {
   state.results = new Map();
+  state.checks = [{ id: 'lan_ip_drift' }];
   state.reconcileResult = '192.168.1.10';
   state.provisionResult = { ok: true, detail: 'all 3 rewrites in place' };
   state.config = {
@@ -60,10 +63,17 @@ beforeEach(() => {
 });
 
 describe('checkLanIpChanged (reader)', () => {
-  it('returns info when HealthStore has no result yet', async () => {
+  it('returns info when HealthStore has no result yet (check exists, first run pending)', async () => {
     const out = await checkLanIpChanged();
     expect(out.status).toBe('info');
-    expect(out.detail).toMatch(/has not run yet/);
+    expect(out.detail).toMatch(/first run pending/);
+  });
+
+  it('reports the missing-prereq state when the lan_ip_drift check has not been created yet (#664)', async () => {
+    state.checks = [];
+    const out = await checkLanIpChanged();
+    expect(out.status).toBe('info');
+    expect(out.detail).toMatch(/install-time LAN-IP/);
   });
 
   it('decodes a happy-path warn payload', async () => {

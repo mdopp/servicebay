@@ -44,9 +44,19 @@ export interface CertExpiryResult {
 export async function checkCertExpiry(): Promise<CertExpiryResult> {
   const result = HealthStore.getLastResult(CHECK_ID);
   if (!result) {
+    // #664 — S4: distinguish missing-prereq from pending-schedule.
+    // The cert_expiry check exists once at least one proxy host with
+    // a public exposure is recorded (NPM has certs to inspect).
+    const exists = HealthStore.getChecks().some(c => c.id === CHECK_ID);
+    if (!exists) {
+      return {
+        status: 'info',
+        detail: 'No proxy hosts with public exposure recorded yet — nothing to check expiry on. Add a public domain in the wizard or Settings → Reverse Proxy.',
+      };
+    }
     return {
       status: 'info',
-      detail: 'Check has not run yet. Open Settings → Health to trigger it manually.',
+      detail: 'Scheduled — first run pending. Open Settings → Health to trigger it manually.',
     };
   }
   if (result.message && result.message.startsWith(CERT_EXPIRY_MESSAGE_PREFIX)) {

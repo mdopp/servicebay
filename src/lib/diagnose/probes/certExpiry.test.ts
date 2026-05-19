@@ -6,6 +6,7 @@ const state = {
   config: {} as any,
   services: [] as any[],
   results: new Map<string, CheckResult>(),
+  checks: [{ id: 'cert_expiry' }] as Array<{ id: string }>,
 };
 
 vi.mock('@/lib/config', () => ({
@@ -19,6 +20,7 @@ vi.mock('@/lib/services/ServiceManager', () => ({
 vi.mock('@/lib/health/store', () => ({
   HealthStore: {
     getLastResult: (id: string) => state.results.get(id) ?? null,
+    getChecks: () => state.checks,
   },
 }));
 
@@ -35,16 +37,24 @@ beforeEach(() => {
   state.config = { reverseProxy: { npm: { email: 'a@b.c', password: 'pw' } } };
   state.services = ACTIVE_NGINX;
   state.results = new Map();
+  state.checks = [{ id: 'cert_expiry' }];
   mockFetch.mockReset();
 });
 
 // ─── Reader (Phase 3b: thin HealthStore reader) ─────────────────────────
 
 describe('checkCertExpiry (reader)', () => {
-  it('returns info when HealthStore has no result yet', async () => {
+  it('returns info when HealthStore has no result yet (check exists, first run pending)', async () => {
     const out = await checkCertExpiry();
     expect(out.status).toBe('info');
-    expect(out.detail).toMatch(/has not run yet/);
+    expect(out.detail).toMatch(/first run pending/);
+  });
+
+  it('reports the missing-prereq state when the cert_expiry check has not been created yet (#664)', async () => {
+    state.checks = [];
+    const out = await checkCertExpiry();
+    expect(out.status).toBe('info');
+    expect(out.detail).toMatch(/No proxy hosts with public exposure/);
   });
 
   it('decodes the runner-encoded payload (warn with items[])', async () => {
