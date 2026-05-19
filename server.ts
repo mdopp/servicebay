@@ -23,6 +23,7 @@ import { setTraceProvider } from './src/lib/logger';
 import crypto from 'crypto';
 // Monitoring init moved to Agent logic in V4
 import { HealthService } from './src/lib/health/service';
+import { initCapabilities } from './src/lib/capabilities/init';
 import { agentManager } from './src/lib/agent/manager';
 import { AgentHandler } from './src/lib/agent/handler';
 import { listNodes } from './src/lib/nodes';
@@ -423,6 +424,17 @@ app.prepare().then(() => {
 
   // Pass IO to updater
   setUpdaterIO(io);
+
+  // Capability bus (#629 / Phase 4A) — typed event dispatcher platform
+  // services subscribe to. Touch the singleton early so the lazy
+  // construction race is resolved before HealthService spins up.
+  // Handler registrations land in Phase 4B+; today it just initialises
+  // the bus.
+  try {
+    initCapabilities();
+  } catch (err) {
+    logger.error('Server', 'Failed to initialise capability bus:', err);
+  }
 
   // Initialize Monitoring Service (V4 Legacy Bridge)
   HealthService.init(io).catch(err => {
