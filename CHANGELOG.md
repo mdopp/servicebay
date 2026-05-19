@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.8.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.8.0...servicebay-v4.8.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **stacks:** README checklist format so wizard parses templates ([#699](https://github.com/mdopp/servicebay/issues/699)) ([066b8f3](https://github.com/mdopp/servicebay/commit/066b8f33bd2af26318e67d948c658a962740e399))
+
 ## [4.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.7.1...servicebay-v4.8.0) (2026-05-19)
 
 
