@@ -112,6 +112,18 @@ const advancePastMachineStep = async () => {
   fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 };
 
+// Pre-#682 the picker was click-a-tile-to-pick; now it's a multi-
+// select checkbox list with all stacks pre-checked + a Continue
+// button. The tests still want the "user picked stacks" outcome —
+// commit the default selection by clicking Continue.
+const commitStackPicker = async () => {
+  await waitFor(() => screen.getByText('full-stack'));
+  // The picker step renders TWO buttons in its footer: Skip and
+  // Continue. Pick Continue specifically.
+  const continues = screen.getAllByRole('button', { name: /Continue/i });
+  fireEvent.click(continues[continues.length - 1]);
+};
+
 // Helper: default status with no setup needed
 const completedStatus = {
   needsSetup: false,
@@ -402,8 +414,7 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             await advancePastMachineStep();
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             await waitFor(() => {
                 expect(screen.getByText('nginx-web')).toBeDefined();
@@ -418,8 +429,7 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             await advancePastMachineStep();
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             await waitFor(() => screen.getByText('nginx-web'));
 
@@ -445,8 +455,7 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             await advancePastMachineStep();
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             await waitFor(() => screen.getByText('nginx-web'));
 
@@ -465,8 +474,7 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             await advancePastMachineStep();
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
@@ -488,8 +496,7 @@ describe('OnboardingWizard', () => {
             await advancePastMachineStep();
 
             // Select stack
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             // Continue to configure
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
@@ -521,8 +528,7 @@ describe('OnboardingWizard', () => {
 
             // Machine → select stack → services → configure → install → done
             await advancePastMachineStep();
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
@@ -581,8 +587,7 @@ describe('OnboardingWizard', () => {
 
             // Machine → select stack → services → configure → install → done
             await advancePastMachineStep();
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
@@ -650,8 +655,7 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             // Select stack → services → configure → install
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
             optOutOfDomain();
@@ -685,8 +689,7 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             await advancePastMachineStep();
-            await waitFor(() => screen.getByText('full-stack'));
-            fireEvent.click(screen.getByText('full-stack'));
+            await commitStackPicker();
 
             // Check all items to ensure nginx-web would be in selected
             await waitFor(() => screen.getByText('nginx-web'));

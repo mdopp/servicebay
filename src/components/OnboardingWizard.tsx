@@ -195,7 +195,21 @@ export default function OnboardingWizard() {
    *  StackItem with its deps so the auto-check + uncheck-guard +
    *  "requires X" badge run off the same map. */
   const [templateDeps, setTemplateDeps] = useState<Map<string, string[]>>(new Map());
-  const [selectedStack, setSelectedStack] = useState<Template | null>(null);
+  // Multi-stack selection (#682-followup): the picker is now a
+  // checkbox list, default-all-checked. The aggregated items[] from
+  // all selected stacks flows through handleStackFetchVars →
+  // handleStackInstall as if it came from a single stack. Pre-fix
+  // this was a single `selectedStack` and the operator could only
+  // ever install one bundle per wizard run — see
+  // docs/WIZARD_UX_AUDIT.md.
+  //
+  // `selectedStacks` is the *committed* set (used by the
+  // services/configure/installing path after the operator hits
+  // Continue). `pickerChecked` is the *in-progress* set the
+  // checkbox rows write to; it survives Back navigation so the
+  // operator's selection isn't reset on round-trip.
+  const [selectedStacks, setSelectedStacks] = useState<Template[]>([]);
+  const [pickerChecked, setPickerChecked] = useState<Set<string>>(new Set());
   const [stackItems, setStackItems] = useState<StackItem[]>([]);
   /** Stage in the install sub-flow. 'select' and 'services' are wizard-
    *  specific UIs (stack picker + per-service dependency resolution); the
@@ -297,7 +311,11 @@ export default function OnboardingWizard() {
    * single-template redeploys via the InstallerModal.
    */
   const installFlow = useStackInstall({
-    templateSource: selectedStack?.source || 'Built-in',
+    // All bundled stacks share the same source. When the operator
+    // picks multiple, we use the first one's source as the
+    // representative — there's no per-stack source override anyway,
+    // since the install runner doesn't consume `templateSource`.
+    templateSource: selectedStacks[0]?.source || 'Built-in',
     source: 'wizard',
   });
 
@@ -577,8 +595,13 @@ export default function OnboardingWizard() {
       // checkbox grid. The bundled set ships 4 stacks so this branch
       // doesn't fire there; express install handles the multi-stack
       // case by iterating in handleExpressInstall.
-      if (stacks.length === 1 && !selectedStack) {
-        await handleSelectStack(stacks[0]);
+      // Initialize picker checkbox state to all-checked on first
+      // load. Pre-existing pickerChecked (operator returned via
+      // Back from the services step) wins over the default — they
+      // don't get their selection reset.
+      setPickerChecked(prev => prev.size > 0 ? prev : new Set(stacks.map(s => s.name)));
+      if (stacks.length === 1 && selectedStacks.length === 0) {
+        await handleSelectStack([stacks[0]]);
       }
     } catch {
       // Stacks not available yet, that's OK
@@ -586,7 +609,7 @@ export default function OnboardingWizard() {
     } finally {
       setStacksLoading(false);
     }
-    // handleSelectStack + selectedStack referenced in the auto-select
+    // handleSelectStack + selectedStacks referenced in the auto-select
     // branch — they don't change identity within a wizard run, so
     // omitting from deps is safe and avoids a re-loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -839,46 +862,58 @@ export default function OnboardingWizard() {
 
   // -- Stack Handlers --
 
-  // Returns the parsed items in addition to setting state. Express
-  // install threads them into the next step directly because React
-  // closures captured before the setStackItems can't see the new
-  // value within the same async chain.
-  const handleSelectStack = async (stack: Template): Promise<StackItem[]> => {
-    setSelectedStack(stack);
+  // Aggregates items from one or more stacks (#682-followup).
+  // Pre-fix the wizard took a single Template; the multi-select
+  // picker now passes the operator's full selection. Templates are
+  // deduped by name so two stacks sharing a template still produce
+  // one item. Returns the merged array; express install threads it
+  // straight into handleStackFetchVars (state closure timing means
+  // setStackItems isn't visible in the same async chain).
+  const handleSelectStack = async (stacks: Template[]): Promise<StackItem[]> => {
+    if (stacks.length === 0) {
+      setSelectedStacks([]);
+      setStackItems([]);
+      setWizardSubStep('select');
+      return [];
+    }
+    setSelectedStacks(stacks);
     setWizardSubStep('services');
     setStacksLoading(true);
 
     try {
-      const [readme, existing] = await Promise.all([
-        fetchReadme(stack.name, 'stack', stack.source),
-        fetchExistingServices(stackSelectedNode || undefined),
-      ]);
-      const lines = (readme || '').split('\n');
-      const parsedItems: StackItem[] = [];
+      const existing = await fetchExistingServices(stackSelectedNode || undefined);
+      const itemsByName = new Map<string, StackItem>();
       // Captures `- [x] name — description` (em-dash, en-dash, hyphen, or colon).
       // Description part is optional so legacy stack READMEs without it still parse.
       const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)\s*(?:[—–\-:]\s*(.+))?$/;
-      lines.forEach(line => {
-        const match = line.match(regex);
-        if (match) {
-          const name = match[2].trim();
-          const isInstalled = existing.has(name.toLowerCase());
-          parsedItems.push({
-            name,
-            description: match[3]?.trim() || undefined,
-            // Infrastructure-tier templates (adguard, nginx, auth) are
-            // always installed — force-checked regardless of the
-            // README's [x] / [ ] state. Users pick features; the
-            // platform is non-negotiable. See #258 / #249.
-            tier: templateTiers.get(name) ?? 'feature',
-            dependencies: templateDeps.get(name) ?? [],
-            checked: templateTiers.get(name) === 'infrastructure'
-              ? !isInstalled
-              : (!isInstalled && match[1].toLowerCase() === 'x'),
-            alreadyInstalled: isInstalled,
-          });
-        }
-      });
+
+      for (const stack of stacks) {
+        const readme = await fetchReadme(stack.name, 'stack', stack.source);
+        const lines = (readme || '').split('\n');
+        lines.forEach(line => {
+          const match = line.match(regex);
+          if (match) {
+            const name = match[2].trim();
+            if (itemsByName.has(name)) return; // dedup across stacks
+            const isInstalled = existing.has(name.toLowerCase());
+            itemsByName.set(name, {
+              name,
+              description: match[3]?.trim() || undefined,
+              // Infrastructure-tier templates (adguard, nginx, auth) are
+              // always installed — force-checked regardless of the
+              // README's [x] / [ ] state. Users pick features; the
+              // platform is non-negotiable. See #258 / #249.
+              tier: templateTiers.get(name) ?? 'feature',
+              dependencies: templateDeps.get(name) ?? [],
+              checked: templateTiers.get(name) === 'infrastructure'
+                ? !isInstalled
+                : (!isInstalled && match[1].toLowerCase() === 'x'),
+              alreadyInstalled: isInstalled,
+            });
+          }
+        });
+      }
+      const parsedItems = Array.from(itemsByName.values());
       setStackItems(parsedItems);
       return parsedItems;
     } catch {
@@ -1030,25 +1065,11 @@ export default function OnboardingWizard() {
       }
     }
 
-    // Iterate every available stack, collecting items. handleSelectStack
-    // also does setSelectedStack/setStackItems for the UI — the last
-    // iteration's value remains in state, which is acceptable since
-    // express install transitions to the install-progress UI on the
-    // next line and never returns to a stack-picker view.
-    //
-    // Thread the merged items through handleStackFetchVars +
-    // handleStackInstall as a chain in the same render's closure —
-    // calling them with the state setters' return values doesn't help
-    // because the setStackItems writes aren't visible to the next
-    // call's stale closure.
-    const itemsByName = new Map<string, StackItem>();
-    for (const stack of availableStacks) {
-      const stackItems = await handleSelectStack(stack);
-      for (const item of stackItems) {
-        if (!itemsByName.has(item.name)) itemsByName.set(item.name, item);
-      }
-    }
-    const items = Array.from(itemsByName.values());
+    // Express install = "deploy from every stack." With the
+    // multi-select picker (#682-followup) handleSelectStack now
+    // accepts an array and does the merge/dedup internally, so the
+    // express path just hands it the full availableStacks list.
+    const items = await handleSelectStack(availableStacks);
     if (items.length === 0) {
       setWizardSubStep('select');
       addToast('error', 'No services to install', 'No services could be parsed from any available stack. Try Edit details.');
@@ -1467,14 +1488,19 @@ export default function OnboardingWizard() {
                             </div>
                         )}
 
-                        {/* Stack summary */}
+                        {/* Stack summary. The small inline "Edit" button
+                            was removed in the wizard-multi-stack rework —
+                            it was a redundant shortcut to the same
+                            stacks/select destination the larger "Edit
+                            details" button already covers, and post-fix
+                            the picker is multi-select (default-all-
+                            checked) so the express summary is now
+                            literally "install all stacks." Operators who
+                            want a subset go through Edit details once. */}
                         <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-200 dark:border-gray-700">
-                            <div className="flex items-center justify-between">
-                                <span className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
-                                    <Layers className="w-4 h-4" /> Stack
-                                </span>
-                                <button type="button" onClick={() => navigateTo('stacks')} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">Edit</button>
-                            </div>
+                            <span className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+                                <Layers className="w-4 h-4" /> Stacks
+                            </span>
                             <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
                                 {availableStacks.length > 0
                                     ? <>{availableStacks.length} stacks: <span className="font-mono">{availableStacks.map(s => s.name).join(', ')}</span> — install all services with their defaults.</>
@@ -1697,7 +1723,7 @@ export default function OnboardingWizard() {
                     {stackInstallStep === 'select' && (
                         <>
                             <p className="text-sm text-gray-500">
-                                Pick a curated set of services to install. You&apos;ll choose which ones from the set on the next step. (Or skip and install individual services later from the Registry.)
+                                Pick the stacks to install. Defaults to all — uncheck what you don&apos;t need. Continue with the selection or Skip to install services manually later from the Registry.
                             </p>
                             {stacksLoading ? (
                                 <div className="flex items-center justify-center py-8 text-gray-400">
@@ -1709,22 +1735,40 @@ export default function OnboardingWizard() {
                                 </div>
                             ) : (
                                 <div className="space-y-2">
-                                    {availableStacks.map(stack => (
-                                        <div
-                                            key={stack.name}
-                                            onClick={() => handleSelectStack(stack)}
-                                            className="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-200 dark:hover:border-blue-800"
-                                        >
-                                            <div className="mt-0.5 text-indigo-500">
-                                                {stack.type === 'stack' ? <Layers className="w-5 h-5" /> : <Package className="w-5 h-5" />}
-                                            </div>
-                                            <div className="flex-1">
-                                                <div className="font-medium text-sm text-gray-900 dark:text-gray-100">{stack.name}</div>
-                                                <div className="text-xs text-gray-500">{stack.source}</div>
-                                            </div>
-                                            <ArrowRight className="w-4 h-4 text-gray-400 mt-1" />
-                                        </div>
-                                    ))}
+                                    {availableStacks.map(stack => {
+                                        const checked = pickerChecked.has(stack.name);
+                                        return (
+                                            <label
+                                                key={stack.name}
+                                                className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${
+                                                    checked
+                                                        ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-800'
+                                                        : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                                                }`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={(e) => {
+                                                        setPickerChecked(prev => {
+                                                            const next = new Set(prev);
+                                                            if (e.target.checked) next.add(stack.name);
+                                                            else next.delete(stack.name);
+                                                            return next;
+                                                        });
+                                                    }}
+                                                    className="mt-1"
+                                                />
+                                                <div className="mt-0.5 text-indigo-500">
+                                                    {stack.type === 'stack' ? <Layers className="w-5 h-5" /> : <Package className="w-5 h-5" />}
+                                                </div>
+                                                <div className="flex-1">
+                                                    <div className="font-medium text-sm text-gray-900 dark:text-gray-100">{stack.name}</div>
+                                                    <div className="text-xs text-gray-500">{stack.source}</div>
+                                                </div>
+                                            </label>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </>
@@ -1746,7 +1790,14 @@ export default function OnboardingWizard() {
                                         : 'No domain set — go back to Machine to choose.'}
                             </div>
 
-                            <p className="text-sm text-gray-500 mb-2 mt-3">Select which services to install from <span className="font-medium">{selectedStack?.name}</span>:</p>
+                            <p className="text-sm text-gray-500 mb-2 mt-3">
+                                Select which services to install from{' '}
+                                <span className="font-medium">
+                                    {selectedStacks.length === 1
+                                        ? selectedStacks[0].name
+                                        : `${selectedStacks.length} stacks (${selectedStacks.map(s => s.name).join(', ')})`}
+                                </span>:
+                            </p>
                             {/* Hard-dependency warning: surface any required
                                 deps that the operator has unchecked.
                                 Auto-include happens on check, but operator
@@ -2448,11 +2499,28 @@ export default function OnboardingWizard() {
             )}
 
             {currentStep === 'stacks' && stackInstallStep === 'select' && (
-                <Button onClick={handleStackSkip}>Skip <ArrowRight className="w-4 h-4 ml-2" /></Button>
+                <div className="flex gap-2 items-center">
+                    <button
+                        onClick={handleStackSkip}
+                        className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                    >
+                        Skip
+                    </button>
+                    <Button
+                        onClick={() => {
+                            const picked = availableStacks.filter(s => pickerChecked.has(s.name));
+                            void handleSelectStack(picked);
+                        }}
+                        disabled={pickerChecked.size === 0 || stacksLoading}
+                    >
+                        {stacksLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                        Continue <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                </div>
             )}
             {currentStep === 'stacks' && stackInstallStep === 'services' && (
                 <div className="flex gap-2 items-center">
-                    <button onClick={() => { setWizardSubStep('select'); setSelectedStack(null); installFlow.reset(); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+                    <button onClick={() => { setWizardSubStep('select'); setSelectedStacks([]); installFlow.reset(); }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
                     <Button
                         onClick={() => { void handleStackFetchVars(); }}
                         disabled={
@@ -2479,9 +2547,30 @@ export default function OnboardingWizard() {
                 <Button disabled><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Installing...</Button>
             )}
             {currentStep === 'stacks' && stackInstallStep === 'done' && (
-                <Button onClick={stacksOnlyMode ? handleFinish : handleNext}>
-                    {stacksOnlyMode ? <><CheckCircle className="w-4 h-4 mr-2" /> Finish</> : <>Continue <ArrowRight className="w-4 h-4 ml-2" /></>}
-                </Button>
+                <div className="flex gap-2 items-center">
+                    {/* Install-more loop (#682-followup) — opens the
+                        picker back up with no stacks pre-checked so the
+                        operator can pick another set without closing the
+                        wizard. Pre-fix, `done` was a strict terminal:
+                        the only way to install a second stack was to
+                        close and re-enter, which the auto-suppression
+                        rule blocked after the first install. */}
+                    <button
+                        onClick={() => {
+                            installFlow.reset();
+                            setSelectedStacks([]);
+                            setStackItems([]);
+                            setPickerChecked(new Set());
+                            setWizardSubStep('select');
+                        }}
+                        className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                    >
+                        Install another
+                    </button>
+                    <Button onClick={stacksOnlyMode ? handleFinish : handleNext}>
+                        {stacksOnlyMode ? <><CheckCircle className="w-4 h-4 mr-2" /> Finish</> : <>Continue <ArrowRight className="w-4 h-4 ml-2" /></>}
+                    </Button>
+                </div>
             )}
 
             {currentStep === 'finish' && (
