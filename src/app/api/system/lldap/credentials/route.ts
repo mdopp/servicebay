@@ -1,15 +1,12 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getConfig, saveConfig, updateConfig } from '@/lib/config';
-import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
-/**
- * Read whether LLDAP admin credentials are stored. Never returns the password
- * itself — only `configured: boolean`, the URL, and the username.
- */
-export async function GET() {
+/** LLDAP admin credentials (#603 — migrated to withApiHandler). */
+export const GET = withApiHandler({}, async () => {
   const config = await getConfig();
   const lldap = config.lldap;
   return NextResponse.json({
@@ -17,51 +14,25 @@ export async function GET() {
     url: lldap?.url ?? '',
     username: lldap?.username ?? '',
   });
-}
+});
 
-/**
- * Save LLDAP admin credentials. Body: `{ url, username, password }`. Used by
- * the onboarding wizard right after the lldap stack is deployed so the user
- * can later retrieve the auto-generated admin password from Settings.
- */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
+const PostBody = z.object({
+  url: z.string().min(1),
+  username: z.string().min(1).optional(),
+  password: z.string().min(1),
+});
 
-  try {
-    const body = await request.json();
-    const { url, username, password } = body as {
-      url?: string;
-      username?: string;
-      password?: string;
-    };
+export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
+  await updateConfig({
+    lldap: { url: body.url, username: body.username || 'admin', password: body.password },
+  });
+  return NextResponse.json({ ok: true });
+});
 
-    if (typeof url !== 'string' || !url || typeof password !== 'string' || !password) {
-      return NextResponse.json({ error: 'url and password are required' }, { status: 400 });
-    }
-
-    await updateConfig({
-      lldap: { url, username: username || 'admin', password },
-    });
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    return apiError(error, { tag: 'api:system:lldap:credentials:post', status: 500 });
-  }
-}
-
-/**
- * Forget stored LLDAP credentials. Uses saveConfig directly because
- * updateConfig deep-merges and cannot delete keys.
- */
-export async function DELETE(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const DELETE = withApiHandler({}, async () => {
   const config = await getConfig();
   const next = { ...config };
   delete next.lldap;
   await saveConfig(next);
   return NextResponse.json({ ok: true });
-}
+});
