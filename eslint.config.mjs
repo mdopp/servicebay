@@ -91,7 +91,10 @@ const servicebayPlugin = {
                 (s) =>
                   s.type === "ImportSpecifier" &&
                   s.imported.type === "Identifier" &&
-                  s.imported.name === "withApiHandler",
+                  // #603 — match both the static-route wrapper and the
+                  // dynamic-segment variant.
+                  (s.imported.name === "withApiHandler" ||
+                    s.imported.name === "withApiHandlerParams"),
               )
             ) {
               hasWithApiHandlerImport = true;
@@ -116,7 +119,8 @@ const servicebayPlugin = {
                     decl.init &&
                     decl.init.type === "CallExpression" &&
                     decl.init.callee.type === "Identifier" &&
-                    decl.init.callee.name === "withApiHandler"
+                    (decl.init.callee.name === "withApiHandler" ||
+                      decl.init.callee.name === "withApiHandlerParams")
                   )
                 ) {
                   offendingExports.push({ node, name: decl.id.name });

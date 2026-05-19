@@ -1,52 +1,38 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { ServiceName } from '@/lib/api/schemas';
-import { parseRouteParam } from '@/lib/api/validate';
-import { apiError } from '@/lib/api/errors';
+import { withApiHandlerParams } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
-const VALID_ACTIONS = ['start', 'stop', 'restart', 'update'];
+export const dynamic = 'force-dynamic';
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ name: string }> }
-) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
+const Body = z.object({
+  action: z.enum(['start', 'stop', 'restart', 'update']),
+});
+const Query = z.object({ node: z.string().optional() });
 
-  const parsed = await parseRouteParam(params, 'name', ServiceName);
-  if (!parsed.ok) return parsed.response;
-  const name = parsed.value;
-  const { action } = await request.json();
-  const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node') || 'Local';
+export const POST = withApiHandlerParams<z.infer<typeof Body>, z.infer<typeof Query>, { name: string }>(
+  { body: Body, query: Query },
+  async ({ body, query, params }) => {
+    const check = ServiceName.safeParse(decodeURIComponent(params.name));
+    if (!check.success) {
+      return NextResponse.json({ error: 'invalid name' }, { status: 400 });
+    }
+    const name = check.data;
+    const nodeName = query.node || 'Local';
 
-  if (!VALID_ACTIONS.includes(action)) {
-    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
-  }
-
-  try {
-    let result;
-    switch (action) {
+    switch (body.action) {
       case 'start':
         await ServiceManager.startService(nodeName, name);
-        result = await ServiceManager.getServiceStatus(nodeName, name);
-        break;
+        return NextResponse.json(await ServiceManager.getServiceStatus(nodeName, name));
       case 'stop':
         await ServiceManager.stopService(nodeName, name);
-        result = await ServiceManager.getServiceStatus(nodeName, name);
-        break;
+        return NextResponse.json(await ServiceManager.getServiceStatus(nodeName, name));
       case 'restart':
         await ServiceManager.restartService(nodeName, name);
-        result = await ServiceManager.getServiceStatus(nodeName, name);
-        break;
+        return NextResponse.json(await ServiceManager.getServiceStatus(nodeName, name));
       case 'update':
-        result = await ServiceManager.updateAndRestartService(nodeName, name);
-        break;
+        return NextResponse.json(await ServiceManager.updateAndRestartService(nodeName, name));
     }
-    return NextResponse.json(result);
-  } catch (e) {
-    return apiError(e, { tag: 'api:services:action', status: 500 });
-  }
-}
+  },
+);
