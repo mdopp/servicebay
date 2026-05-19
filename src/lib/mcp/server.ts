@@ -7,7 +7,8 @@ import {
 } from '@/lib/manager';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
-import { listNodes, getNodeConnection, verifyNodeConnection } from '@/lib/nodes';
+import { listNodes, getNodeConnection } from '@/lib/nodes';
+import { verifyNodeConnection } from '@/lib/nodes/verify';
 import { agentManager } from '@/lib/agent/manager';
 import { HealthStore } from '@/lib/health/store';
 import { CheckRunner } from '@/lib/health/runner';

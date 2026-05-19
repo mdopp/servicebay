@@ -27,21 +27,10 @@ module.exports = {
             name: 'no-circular',
             severity: 'error',
             comment:
-                'Circular dependencies make refactoring and reasoning painful. Ratchet TODO: ' +
-                'fix the 6 known cycles (agent/executor ↔ ssh/pool ↔ nodes ↔ executor; ' +
-                'config ↔ registry ↔ migrations; mcp/bootstrapToken ↔ mcp/tokens; ' +
-                'stackInstall/credentialsManifest ↔ postInstall), then drop the ' +
-                'exemption below.',
-            from: {
-                pathNot: [
-                    '^src/lib/executor\\.ts$',
-                    '^src/lib/nodes\\.ts$',
-                    '^src/lib/agent/executor\\.ts$',
-                    '^src/lib/agent/manager\\.ts$',
-                    '^src/lib/agent/handler\\.ts$',
-                    '^src/lib/ssh/pool\\.ts$',
-                ],
-            },
+                'Circular dependencies make refactoring and reasoning painful. ' +
+                '#601 broke the last known cycle (extracted verifyNodeConnection ' +
+                'from nodes.ts to nodes/verify.ts). Any new cycle now fails CI.',
+            from: {},
             to: { circular: true },
         },
         {

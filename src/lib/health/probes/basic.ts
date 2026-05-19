@@ -10,7 +10,7 @@ import vm from 'vm';
 import { registerProbe } from './registry';
 import { assertHttpTargetAllowed } from '../ssrfGuard';
 import { ContainerId, ServiceName, HostString } from '../../api/schemas';
-import { verifyNodeConnection } from '../../nodes';
+import { verifyNodeConnection } from '../../nodes/verify';
 import { agentManager } from '../../agent/manager';
 import { getConfig } from '../../config';
 

@@ -66,7 +66,7 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 | `lib → app` imports | 0 | 0 | `.dependency-cruiser.cjs:lib-no-import-app` (#600) |
 | `lib → components` imports | 0 | 0 | `.dependency-cruiser.cjs:lib-no-import-components` |
 | `lib → dashboards` imports | 0 | 0 | `.dependency-cruiser.cjs:lib-no-import-dashboards` |
-| Circular dependency cycles | 6 known | 0 new | `.dependency-cruiser.cjs:no-circular` |
+| Circular dependency cycles | 0 | 0 | `.dependency-cruiser.cjs:no-circular` (#601 — final cycle broken by extracting `verifyNodeConnection` out of `nodes.ts`) |
 | Forks of the Mustache renderer | 0 | 0 | `.dependency-cruiser.cjs:one-renderer` (#599) |
 | Bypasses of `ServiceManager` facade | 0 | 0 | `.dependency-cruiser.cjs:service-manager-single-mutation-path` |
 
