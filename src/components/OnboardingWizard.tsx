@@ -914,6 +914,24 @@ export default function OnboardingWizard() {
         });
       }
       const parsedItems = Array.from(itemsByName.values());
+      // #692 — empty-README dead end. Pre-fix, an empty parse silently
+      // advanced to `services` with an empty checkbox list; Continue
+      // was disabled (no checked items), operator stuck with no
+      // feedback. Now stay on `select` and surface a toast naming
+      // the offending stacks so the operator can either pick a
+      // different stack or fix the README upstream.
+      if (parsedItems.length === 0) {
+        const names = stacks.map(s => s.name).join(', ');
+        addToast(
+          'error',
+          'No services in selected stack(s)',
+          `${names} — couldn't parse any "- [x] name" lines from the README. Try a different stack or check the registry.`,
+        );
+        setStackItems([]);
+        setSelectedStacks([]);
+        setWizardSubStep('select');
+        return [];
+      }
       setStackItems(parsedItems);
       return parsedItems;
     } catch {
@@ -1399,14 +1417,16 @@ export default function OnboardingWizard() {
                                     <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100">
                                         <Globe className="w-4 h-4" /> Yes, I have a public domain <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">recommended</span>
                                     </div>
-                                    <input
-                                        type="text"
-                                        value={publicDomain}
-                                        onChange={e => { setPublicDomain(e.target.value); if (e.target.value) setInstallMode('public'); }}
-                                        onFocus={() => setInstallMode('public')}
-                                        className="w-full mt-1.5 px-3 py-2 bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                        placeholder="example.com"
-                                    />
+                                    {/* #685 — read-only display, no input. The
+                                        publicDomain field is captured on the
+                                        Network step (#662); having a second
+                                        editable input here meant operators saw
+                                        the value sometimes pre-filled,
+                                        sometimes empty, depending on which
+                                        path they took. */}
+                                    <div className="w-full mt-1.5 px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-blue-300 dark:border-blue-700 rounded-md text-sm font-mono text-gray-700 dark:text-gray-300">
+                                        {publicDomain || <span className="italic text-gray-400">not set — go back to Network step to enter your domain</span>}
+                                    </div>
                                     <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-1">
                                         Enables HTTPS via Let&apos;s Encrypt + external access. Services live at <span className="font-mono">vault.{publicDomain || 'example.com'}</span>, <span className="font-mono">photos.{publicDomain || 'example.com'}</span>, …
                                     </p>
@@ -2433,7 +2453,13 @@ export default function OnboardingWizard() {
             )}
 
             {/* Step specific primary actions */}
-            {currentStep === 'network' && <Button onClick={handleSaveNetwork} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} {selection.gateway ? 'Save & Next' : 'Continue'}</Button>}
+            {/* #695 — single canonical label. Pre-fix the button
+                said "Save & Next" or "Continue" depending on
+                selection.gateway, dating from when network only
+                existed when gateway was selected. After #662 the
+                step always captures publicDomain so there's always
+                data to save — one label fits both. */}
+            {currentStep === 'network' && <Button onClick={handleSaveNetwork} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save &amp; Continue</Button>}
             {currentStep === 'email' && <Button onClick={handleSaveEmail} disabled={loading}>{loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save Email</Button>}
 
             {/* Express install footer: Install kicks off the full
@@ -2448,15 +2474,30 @@ export default function OnboardingWizard() {
                     >
                         Edit details
                     </button>
-                    {!stackDomain.trim() && !stackNoDomain && (
-                        <span className="text-xs text-amber-700 dark:text-amber-300">Enter a domain or check LAN-only.</span>
-                    )}
-                    {installMode === 'public' && stackDomain.trim() && !isValidOperatorEmail(operatorEmail) && (
-                        <span className="text-xs text-amber-700 dark:text-amber-300">{operatorEmailIssue(operatorEmail)}.</span>
-                    )}
-                    {cleanInstall && cleanInstallConfirm !== 'RESET' && (
-                        <span className="text-xs text-amber-700 dark:text-amber-300">Type RESET to confirm clean install.</span>
-                    )}
+                    {/* #687 — surfaces *why* Install is disabled. Pre-fix
+                        the same hints existed but rendered inline as
+                        tiny amber text next to the button, easy to
+                        miss. Wrapping them in a single block with a
+                        leading bullet makes the failing conditions
+                        obvious and stays compact when fewer than 3
+                        apply. */}
+                    {(() => {
+                        const reasons: string[] = [];
+                        if (!stackDomain.trim() && !stackNoDomain) reasons.push('Enter a domain or check LAN-only.');
+                        if (installMode === 'public' && stackDomain.trim() && !isValidOperatorEmail(operatorEmail)) {
+                            reasons.push(`${operatorEmailIssue(operatorEmail)}.`);
+                        }
+                        if (cleanInstall && cleanInstallConfirm !== 'RESET') reasons.push('Type RESET to confirm clean install.');
+                        if (reasons.length === 0) return null;
+                        return (
+                            <div className="px-2 py-1.5 rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-800 dark:text-amber-200">
+                                <div className="font-medium mb-0.5">To install:</div>
+                                <ul className="list-disc list-inside space-y-0.5">
+                                    {reasons.map(r => <li key={r}>{r}</li>)}
+                                </ul>
+                            </div>
+                        );
+                    })()}
                     <Button
                         onClick={handleExpressInstall}
                         disabled={
@@ -2500,11 +2541,16 @@ export default function OnboardingWizard() {
 
             {currentStep === 'stacks' && stackInstallStep === 'select' && (
                 <div className="flex gap-2 items-center">
+                    {/* #688 — was "Skip" pre-fix, which read as
+                        "skip the currently focused stack" in the new
+                        multi-select picker. Renamed to be explicit:
+                        operator gets *no* services installed via the
+                        wizard, can add them later from the Registry. */}
                     <button
                         onClick={handleStackSkip}
                         className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
                     >
-                        Skip
+                        Install services later
                     </button>
                     <Button
                         onClick={() => {
