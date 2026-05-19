@@ -6,6 +6,7 @@ import {
     checkOnboardingStatus,
     skipOnboarding,
     saveGatewayConfig,
+    savePublicDomainConfig,
     saveAutoUpdateConfig,
     saveRegistriesConfig,
     saveEmailConfig,
@@ -615,6 +616,23 @@ export default function OnboardingWizard() {
   // `config.notifications.email.to[0]` — the operator already gave us
   // this during bootstrap so they don't have to retype.
   useEffect(() => {
+    // Network step prefill (#662 — S3): pull publicDomain so the
+    // operator sees the install-script-baked or previously-saved value
+    // rather than an empty box. Same source as install-confirm uses.
+    if (currentStep !== 'network') return;
+    if (publicDomain) return;
+    let cancelled = false;
+    fetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
+      if (cancelled) return;
+      const baked = s?.reverseProxy?.publicDomain;
+      if (typeof baked === 'string' && baked.length > 0) {
+        setPublicDomain(baked);
+      }
+    }).catch(() => { /* silent — operator can type the value */ });
+    return () => { cancelled = true; };
+  }, [currentStep, publicDomain]);
+
+  useEffect(() => {
     if (currentStep !== 'install-confirm') return;
     if (stackDomain && operatorEmail) return;
     let cancelled = false;
@@ -664,7 +682,9 @@ export default function OnboardingWizard() {
       const inEditMode = current === 'machine' || current === 'stacks';
       const activeSteps = order.filter(step => {
          if (step === 'welcome' || step === 'finish') return true;
-         if (step === 'network') return selection.gateway || selection.ssh;
+         // network step is always active now — captures publicDomain
+         // (#662) in addition to optional gateway/SSH config.
+         if (step === 'network') return true;
          if (step === 'install-confirm') return selection.stacks && !inEditMode;
          if (step === 'machine' || step === 'stacks') return inEditMode;
          return selection[step as keyof typeof selection];
@@ -733,6 +753,11 @@ export default function OnboardingWizard() {
           await saveGatewayConfig(gwHost, gwUser, gwPass);
           addToast('success', 'Gateway Saved');
       }
+      // Public domain (#662 — S3). Always persisted on this step so
+      // dependent probes (TLS, OIDC, AdGuard rewrites, external
+      // reachability) unblock the moment the wizard moves on — instead
+      // of degrading silently when the operator skips `install-confirm`.
+      await savePublicDomainConfig(publicDomain);
   });
 
   const handleSaveEmail = () => saveAndNext(async () => {
@@ -1083,7 +1108,7 @@ export default function OnboardingWizard() {
              const inEditMode = currentStep === 'machine' || currentStep === 'stacks';
              const activeSteps = order.filter(step => {
                if (step === 'welcome' || step === 'finish') return true;
-               if (step === 'network') return selection.gateway || selection.ssh;
+               if (step === 'network') return true;
                if (step === 'install-confirm') return selection.stacks && !inEditMode;
                if (step === 'machine' || step === 'stacks') return inEditMode;
                return selection[step as keyof typeof selection];
@@ -1211,6 +1236,24 @@ export default function OnboardingWizard() {
 
             {currentStep === 'network' && (
                 <div className="space-y-6">
+                    {/* Public domain (#662 — S3). Always asked, regardless
+                        of feature toggles, because the diagnose probes
+                        (TLS, OIDC, AdGuard rewrites, external reachability)
+                        all gate on it — and skipping the install-confirm
+                        step used to mean it was never captured. Leave
+                        blank for a LAN-only install. */}
+                    <section className="space-y-3">
+                        <h3 className="font-semibold text-lg flex items-center gap-2"><Globe className="w-5 h-5 text-blue-500"/> Public Domain</h3>
+                        <p className="text-sm text-gray-500">
+                            The domain your services will live under (e.g. <span className="font-mono">vault.example.com</span>, <span className="font-mono">photos.example.com</span>). Required for HTTPS via Let&apos;s Encrypt and external access. Leave blank for a LAN-only install.
+                        </p>
+                        <Input label="Public Domain" value={publicDomain} onChange={setPublicDomain} placeholder="example.com" />
+                    </section>
+
+                    {selection.gateway && (
+                        <hr className="border-gray-200 dark:border-gray-700" />
+                    )}
+
                     {selection.gateway && (
                         <section className="space-y-3">
                              <h3 className="font-semibold text-lg flex items-center gap-2"><Network className="w-5 h-5 text-purple-500"/> Internet Gateway</h3>
