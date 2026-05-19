@@ -279,7 +279,7 @@ describe('OnboardingWizard', () => {
         const hostInput = screen.getByPlaceholderText('fritz.box');
         fireEvent.change(hostInput, { target: { value: '192.168.1.1' } });
 
-        const saveBtn = screen.getByRole('button', { name: /Save & Next/i });
+        const saveBtn = screen.getByRole('button', { name: /Save & Continue/i });
         fireEvent.click(saveBtn);
 
         await waitFor(() => {
@@ -389,7 +389,7 @@ describe('OnboardingWizard', () => {
             await advancePastMachineStep();
 
             await waitFor(() => {
-                expect(screen.getByRole('button', { name: /Skip/i })).toBeDefined();
+                expect(screen.getByRole('button', { name: /Install services later/i })).toBeDefined();
             });
         });
 
@@ -400,8 +400,8 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             await advancePastMachineStep();
-            await waitFor(() => screen.getByRole('button', { name: /Skip/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Skip/i }));
+            await waitFor(() => screen.getByRole('button', { name: /Install services later/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Install services later/i }));
 
             await waitFor(() => {
                 expect(completeStackSetup).toHaveBeenCalled();
@@ -564,10 +564,13 @@ describe('OnboardingWizard', () => {
 
             render(<OnboardingWizard />);
 
-            // Domain prompt is now on the machine step (the first step
-            // stacksOnlyMode lands on), not the services sub-step. The
-            // 2-mode picker (D19-PR5) renders both the public-domain
-            // text input + the internal-only radio.
+            // Domain prompt is on the machine step. Pre-#685 the
+            // install-confirm step *also* had an editable text input
+            // (operator-visible duplicate); now it's a read-only
+            // display. Navigate explicitly to machine to find the
+            // input.
+            await waitFor(() => screen.getByRole('button', { name: /Edit details/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Edit details/i }));
             await waitFor(() => {
                 expect(screen.getAllByPlaceholderText('example.com').length).toBeGreaterThan(0);
                 expect(screen.getAllByRole('radio', { name: /No, internal only/i }).length).toBeGreaterThan(0);
