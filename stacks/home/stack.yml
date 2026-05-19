@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: home
+  annotations:
+    servicebay.label: "Home (Home Assistant + Voice)"
+    servicebay.tier: "feature"
+    servicebay.depends-on-stacks: "basic"
+spec:
+  # Smart-home + voice pipeline. Voice was extracted from
+  # home-assistant in #348 but the two are coupled — HA's
+  # voice-assistant integration only makes sense alongside the
+  # Wyoming services (faster-whisper / piper / openwakeword). Bundling
+  # them means the operator never ends up with HA but no voice (broken
+  # voice assistant) or voice but no HA (orphan Wyoming endpoints).
+  templates: [home-assistant, voice]

@@ -572,10 +572,11 @@ export default function OnboardingWizard() {
       setTemplateDeps(deps);
       setStackNodes(nodes);
       if (nodes.length === 1) setStackSelectedNode(nodes[0].Name);
-      // Single-stack-only installs (the common case — only `full-stack`
-      // ships built-in) should skip the picker step; the user has
-      // nothing to choose. Auto-select it so they land directly in
-      // the per-service checkbox grid.
+      // Single-stack registries (downstream / external) skip the
+      // picker step — nothing to choose, drop straight into the
+      // checkbox grid. The bundled set ships 4 stacks so this branch
+      // doesn't fire there; express install handles the multi-stack
+      // case by iterating in handleExpressInstall.
       if (stacks.length === 1 && !selectedStack) {
         await handleSelectStack(stacks[0]);
       }
@@ -985,12 +986,15 @@ export default function OnboardingWizard() {
   // log streaming + done-state handling continues in the existing
   // stacks-step render below.
   const handleExpressInstall = async () => {
-    // Fall through to whichever stack is available — `full-stack` is the
-    // bundled default but a downstream / external registry can legitimately
-    // ship a different set. Only fail when there are zero stacks at all.
-    const fullStack = availableStacks.find(s => s.name === 'full-stack')
-        ?? availableStacks[0];
-    if (!fullStack) {
+    // Express install = "deploy everything." Pre-cleanup the wizard
+    // picked a single bundled `full-stack` meta-stack; that stack is
+    // gone now (the project ships 4 focused stacks: basic + cloud +
+    // home + ai) and the express path iterates over every available
+    // stack instead, deduping templates by name in case two stacks
+    // ever share one. Operators who want a narrower install go
+    // through the "Edit details" path which lands on the machine /
+    // stacks steps.
+    if (availableStacks.length === 0) {
       addToast('error', 'No stacks available', 'No installable stacks were found in the registry. Open Settings → Integrations → Template Registries to add one.');
       return;
     }
@@ -1026,19 +1030,28 @@ export default function OnboardingWizard() {
       }
     }
 
-    // Thread the freshly-computed items + variables through both
-    // helpers — calling them as a chain in the same render's closure
-    // means the setStackItems / setStackVariables they make aren't
-    // visible to the next call's stale closure. Without the explicit
-    // hand-off, handleStackInstall used to read an empty stackItems
-    // array and "Stack installation complete" appeared with nothing
-    // actually deployed.
-    const items = await handleSelectStack(fullStack);
+    // Iterate every available stack, collecting items. handleSelectStack
+    // also does setSelectedStack/setStackItems for the UI — the last
+    // iteration's value remains in state, which is acceptable since
+    // express install transitions to the install-progress UI on the
+    // next line and never returns to a stack-picker view.
+    //
+    // Thread the merged items through handleStackFetchVars +
+    // handleStackInstall as a chain in the same render's closure —
+    // calling them with the state setters' return values doesn't help
+    // because the setStackItems writes aren't visible to the next
+    // call's stale closure.
+    const itemsByName = new Map<string, StackItem>();
+    for (const stack of availableStacks) {
+      const stackItems = await handleSelectStack(stack);
+      for (const item of stackItems) {
+        if (!itemsByName.has(item.name)) itemsByName.set(item.name, item);
+      }
+    }
+    const items = Array.from(itemsByName.values());
     if (items.length === 0) {
-      // handleSelectStack already nudged sub-step to 'services' — bring
-      // it back to a clean state on install-confirm.
       setWizardSubStep('select');
-      addToast('error', 'Stack readme empty', 'Could not parse any services from the full-stack README. Try Edit details.');
+      addToast('error', 'No services to install', 'No services could be parsed from any available stack. Try Edit details.');
       return;
     }
     // Now that we know we have services to install, hand control to
@@ -1331,7 +1344,10 @@ export default function OnboardingWizard() {
                 Install. Edit drops them into the explicit machine /
                 stacks flow below. */}
             {currentStep === 'install-confirm' && (() => {
-                const fullStack = availableStacks.find(s => s.name === 'full-stack') ?? availableStacks[0];
+                // Express install runs over EVERY available stack (basic +
+                // cloud + home + ai out of the box) — see handleExpressInstall.
+                // The summary line just renders a count + name list so the
+                // operator sees what's about to land.
                 const detectedRaid = raidArrays[0];
                 const topDisks = detectedDrives.filter(d => d.type === 'disk' || /^raid/.test(d.type) || d.type === 'md');
                 return (
@@ -1460,8 +1476,8 @@ export default function OnboardingWizard() {
                                 <button type="button" onClick={() => navigateTo('stacks')} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">Edit</button>
                             </div>
                             <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
-                                {fullStack
-                                    ? <><span className="font-mono">{fullStack.name}</span> from <span className="font-mono">{fullStack.source}</span> — install all services with their defaults.</>
+                                {availableStacks.length > 0
+                                    ? <>{availableStacks.length} stacks: <span className="font-mono">{availableStacks.map(s => s.name).join(', ')}</span> — install all services with their defaults.</>
                                     : 'Loading available stacks…'}
                             </p>
                         </div>
