@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.6.0...servicebay-v4.7.0) (2026-05-19)
+
+
+### Features
+
+* **banner:** explain core-stack-unhealthy with a causal chain ([#665](https://github.com/mdopp/servicebay/issues/665)) ([#678](https://github.com/mdopp/servicebay/issues/678)) ([b6b286e](https://github.com/mdopp/servicebay/commit/b6b286e4eab752891a1c9229282862d0c836df4c))
+* **diagnose:** distinguish missing-prereq from pending-schedule ([#664](https://github.com/mdopp/servicebay/issues/664)) ([#677](https://github.com/mdopp/servicebay/issues/677)) ([ef225be](https://github.com/mdopp/servicebay/commit/ef225be32a98847fffc6953ee966b6356531dee2))
+* **install:** preview stale proxy routes in clean-install confirm ([#667](https://github.com/mdopp/servicebay/issues/667)) ([#675](https://github.com/mdopp/servicebay/issues/675)) ([af7cc58](https://github.com/mdopp/servicebay/commit/af7cc58b579844745acfb8018293ff6e8d9a148a))
+* **install:** public progress endpoint survives AUTH_SECRET rotation ([#663](https://github.com/mdopp/servicebay/issues/663)) ([#676](https://github.com/mdopp/servicebay/issues/676)) ([bd787fd](https://github.com/mdopp/servicebay/commit/bd787fd919143d424f6368e56861cfd2eb253f26))
+* **install:** warn about dangerous wipe-group combinations ([#668](https://github.com/mdopp/servicebay/issues/668)) ([#674](https://github.com/mdopp/servicebay/issues/674)) ([30c027c](https://github.com/mdopp/servicebay/commit/30c027cee45bfe25484cbb1e3a02da5c609dfad8))
+* **wizard:** capture publicDomain in network step ([#662](https://github.com/mdopp/servicebay/issues/662)) ([#673](https://github.com/mdopp/servicebay/issues/673)) ([4c1707a](https://github.com/mdopp/servicebay/commit/4c1707ad48b234f14d83f6b27c2028a64282e471))
+
+
+### Bug Fixes
+
+* **diagnose:** surface actual error on 'Containers stable' probe failure ([#661](https://github.com/mdopp/servicebay/issues/661)) ([#670](https://github.com/mdopp/servicebay/issues/670)) ([627c411](https://github.com/mdopp/servicebay/commit/627c411d213093083d9e9762526d6257c6d003d5))
+* **install:** capture LAN IP synchronously in runner, not boot-timer ([#660](https://github.com/mdopp/servicebay/issues/660)) ([#669](https://github.com/mdopp/servicebay/issues/669)) ([dd4c0e3](https://github.com/mdopp/servicebay/commit/dd4c0e3c022d7dcdcdb3d8f5fef589b9c6f0ae9a))
+
 ## [4.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.5.0...servicebay-v4.6.0) (2026-05-19)
 
 
