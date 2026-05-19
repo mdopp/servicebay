@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.4.0...servicebay-v4.5.0) (2026-05-19)
+
+
+### Features
+
+* **capabilities:** AdGuard DNS + credentials manifest handlers ([#631](https://github.com/mdopp/servicebay/issues/631)) ([#645](https://github.com/mdopp/servicebay/issues/645)) ([e90e304](https://github.com/mdopp/servicebay/commit/e90e3048bbc4c92f6be20f38041c2a67fdc79cc9))
+* **capabilities:** Authelia + NPM handlers ([#630](https://github.com/mdopp/servicebay/issues/630)) ([#643](https://github.com/mdopp/servicebay/issues/643)) ([8f24f75](https://github.com/mdopp/servicebay/commit/8f24f75269c36ab753d2590f71ee3c502d64a697))
+* **health:** delete readiness subsystem; healthcheck is the only signal ([#628](https://github.com/mdopp/servicebay/issues/628)) ([#649](https://github.com/mdopp/servicebay/issues/649)) ([16e89e9](https://github.com/mdopp/servicebay/commit/16e89e9070a9eb8607b6b63ef0b3bfecf8b7bc45))
+* **health:** migrate settleWait + add CoreHealthBanner reader ([#627](https://github.com/mdopp/servicebay/issues/627)) ([#648](https://github.com/mdopp/servicebay/issues/648)) ([a0cd847](https://github.com/mdopp/servicebay/commit/a0cd847300f1c9474415e33240dbe1338c093cfe))
+* **install:** cut runner.ts over to capability bus events ([#632](https://github.com/mdopp/servicebay/issues/632)) ([#646](https://github.com/mdopp/servicebay/issues/646)) ([2a9d244](https://github.com/mdopp/servicebay/commit/2a9d24459e91b374fa2d62131d1285a50e4438ff))
+* **install:** stack runner + stack-level health aggregation ([#633](https://github.com/mdopp/servicebay/issues/633)) ([#650](https://github.com/mdopp/servicebay/issues/650)) ([bb0c0cb](https://github.com/mdopp/servicebay/commit/bb0c0cb21213cdb91e42d8b9f11d99199b254740))
+* **install:** tier gate refuses feature install on degraded core ([#635](https://github.com/mdopp/servicebay/issues/635)) ([#652](https://github.com/mdopp/servicebay/issues/652)) ([82e831d](https://github.com/mdopp/servicebay/commit/82e831d2c2b864016076123b9aec20d118c35370))
+* **stacks:** migrate existing templates to stack manifests ([#625](https://github.com/mdopp/servicebay/issues/625)) ([#647](https://github.com/mdopp/servicebay/issues/647)) ([461cb7a](https://github.com/mdopp/servicebay/commit/461cb7a2739681ea5aa33fbaf607bb7dfd7708e6))
+* **stacks:** stack list/status/wipe API + StackCard + Settings → Stacks ([#634](https://github.com/mdopp/servicebay/issues/634)) ([#651](https://github.com/mdopp/servicebay/issues/651)) ([fb0e8d0](https://github.com/mdopp/servicebay/commit/fb0e8d0a865466c40fe2a7cba0bfb67cb6292d39))
+
 ## [4.4.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.3.0...servicebay-v4.4.0) (2026-05-19)
 
 
