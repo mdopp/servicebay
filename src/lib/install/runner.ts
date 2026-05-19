@@ -163,9 +163,20 @@ async function waitForCredentials(
 }
 
 /** Settle-wait: poll the digital twin in-process until every newly
- *  deployed service shows up as active. The browser version of this
- *  used to receive twin snapshots over Socket.IO; server-side we read
- *  the singleton directly, which is both simpler and authoritative. */
+ *  deployed service is ready.
+ *
+ *  Readiness preference order (#627):
+ *    1. `twin.services[].health.ready === true` — set by the service-health
+ *       poller (#626) when the template ships a `servicebay.healthcheck`
+ *       annotation. This is the canonical signal Phase 3 migrates everyone
+ *       onto.
+ *    2. `twin.services[].active === true` — legacy systemd-state-only
+ *       fallback for templates without a healthcheck annotation yet.
+ *       Phase 3C removes this once every template has migrated.
+ *
+ *  Either signal counts. The browser version of this used to receive twin
+ *  snapshots over Socket.IO; server-side we read the singleton directly,
+ *  which is both simpler and authoritative. */
 async function settleWait(
   jobId: string,
   deployed: { name: string }[],
@@ -183,7 +194,15 @@ async function settleWait(
     const twinNode = snapshot.nodes?.[node];
     const services = twinNode?.services ?? [];
     const ready = expected.filter(name =>
-      services.some(s => (s.name === name || s.name === `${name}.service`) && s.active),
+      services.some(s => {
+        if (s.name !== name && s.name !== `${name}.service`) return false;
+        // Prefer the unified health signal when the poller has populated
+        // it. `degraded: true` still counts as ready for settle purposes —
+        // the operator sees the soft-fail in the UI banner, but the install
+        // doesn't get stuck on it.
+        if (s.health) return s.health.ready === true;
+        return s.active === true;
+      }),
     ).length;
     const now = Date.now();
     if (ready !== lastReady) {
@@ -737,6 +756,19 @@ async function runJob(jobId: string): Promise<void> {
       await patchJob(jobId, { phase: 'error', endedAt: new Date().toISOString(), error: msg });
       return;
     }
+  }
+
+  // Register newly-deployed services with the health poller (#627).
+  // The bootstrap walks every service in the twin and registers each
+  // one whose template ships a `servicebay.healthcheck` annotation;
+  // the poller's register() fires an immediate probe so settleWait
+  // below sees `twin.health.ready` populate within seconds, not on
+  // the next 30s tick.
+  try {
+    const { bootstrapServiceHealth } = await import('@/lib/health/serviceHealthBootstrap');
+    await bootstrapServiceHealth(input.node || 'Local');
+  } catch (e) {
+    await log(jobId, `(note) couldn't refresh service-health registrations: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // Post-install — NPM bootstrap (seeds admin creds). #632 moved the
