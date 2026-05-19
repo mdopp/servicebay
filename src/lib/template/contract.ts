@@ -24,7 +24,6 @@
  */
 
 import { type TemplateApiVersions, type TemplateApiName, SUPPORTED_API_VERSIONS } from './apiVersions';
-import { parseReadinessYaml } from '@/lib/install/readiness/parse';
 import { parseHealthcheckYaml } from '@/lib/health/serviceHealthcheck';
 
 /** Recognized template tiers. `feature` is the implicit default. */
@@ -73,27 +72,17 @@ export interface TemplateManifest {
    */
   requiresApi?: TemplateApiVersions;
   /**
-   * `metadata.annotations['servicebay.readiness']` (#613) — raw YAML body of
-   * the readiness probe list. Stored unparsed here because the parser runs
-   * twice over the template lifecycle:
-   *   1. At lint/test time, on the pre-Mustache template, just to assert
-   *      the structure is well-formed (with `{{VAR}}` placeholders left
-   *      as opaque strings).
-   *   2. At install time, on the Mustache-rendered body, to get the
-   *      concrete probe values to execute.
-   * `parseTemplateManifest` runs step 1 and surfaces structural errors;
-   * the install runner runs step 2 and executes the probes.
-   */
-  readinessRaw?: string;
-  /**
-   * `metadata.annotations['servicebay.healthcheck']` (#626) — raw YAML body
-   * of the continuous health probe. Stored unparsed for the same dual-
-   * lifecycle reason as `readinessRaw`: lint-time accepts `{{VAR}}`
-   * placeholders, the poller re-parses at runtime once Mustache has run.
-   * Distinct from `readinessRaw`: that's a list of one-shot install-time
-   * probes; this is a single continuous probe with interval + startup
-   * grace. Phase 3B retires `readinessRaw` once every template carries
-   * a healthcheck.
+   * `metadata.annotations['servicebay.healthcheck']` (#626) — raw YAML
+   * body of the continuous health probe. Stored unparsed because the
+   * parser runs twice:
+   *   1. At lint/test time on the pre-Mustache template — `{{VAR}}`
+   *      placeholders survive as opaque strings.
+   *   2. At runtime in the bootstrap, on the Mustache-rendered body,
+   *      to get concrete probe values.
+   * Phase 3C (#628) replaced the install-time `servicebay.readiness`
+   * annotation with this single signal — settleWait now reads
+   * `twin.health.ready` for install gating, same source the
+   * continuous-monitoring readers use.
    */
   healthcheckRaw?: string;
 }
@@ -202,17 +191,6 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
       'Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588).',
   },
   {
-    annotation: 'servicebay.readiness',
-    field: 'readinessRaw',
-    required: false,
-    description:
-      'YAML block scalar declaring readiness probes the install runner waits on after the unit starts and ' +
-      'before invoking `post-deploy.py` (#613). Each probe is `{kind: http|tcp|ldap|command, ..., timeout: 60s}`. ' +
-      'Replaces ad-hoc wait helpers (`wait_for_lldap`, `wait_pod_running`, …) with a uniform shape, same retry ' +
-      'budget, and structured install-blocking error. Declare for any template another template lists in ' +
-      '`servicebay.dependencies` — otherwise downstream post-deploys race the upstream container.',
-  },
-  {
     annotation: 'servicebay.healthcheck',
     field: 'healthcheckRaw',
     required: false,
@@ -220,7 +198,8 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
       'YAML block scalar declaring a continuous health probe ServiceBay polls on the configured interval (#626). ' +
       'Shape: `{kind?: http|tcp, url|host+port, interval: 30s, timeout: 5s, startup_timeout: 5m}`. The endpoint ' +
       'should return `{ready, degraded?, deps?, message?}`. Result lands on `twin.services[].health` and is the ' +
-      'single source of truth that Phase 3B migrates `settleWait`, diagnose, and per-template `wait_for_X` helpers onto.',
+      'single source of truth for install gating (`settleWait`), diagnose readers, and the core-health banner. ' +
+      'Phase 3C (#628) replaced the install-time `servicebay.readiness` annotation with this single signal.',
   },
 ] as const;
 
@@ -373,24 +352,8 @@ export function parseTemplateManifest(
     requiresApi = { ...(requiresApi ?? {}), [api]: n };
   }
 
-  // readinessRaw (#613): pre-Mustache YAML body of the readiness probe list.
-  // Validated structurally here — values may contain `{{VAR}}` placeholders
-  // that the install runner substitutes before re-parsing at deploy time.
-  const readinessRaw = readBlockScalarAnnotation(yamlText, 'servicebay.readiness');
-  if (readinessRaw !== undefined) {
-    // `permissive: true` — the raw template still has `{{VAR}}` placeholders
-    // in fields like `port:` and `timeout:`. The install runner re-parses
-    // strictly after Mustache substitution.
-    const r = parseReadinessYaml(readinessRaw, { permissive: true });
-    if (!r.ok) {
-      for (const err of r.errors) {
-        errors.push(`Annotation \`servicebay.readiness\`: ${err}`);
-      }
-    }
-  }
-
   // healthcheckRaw (#626): pre-Mustache YAML body of the continuous health
-  // probe. Same dual-lifecycle as readinessRaw — `{{VAR}}` placeholders in
+  // probe. Pre-Mustache `{{VAR}}` placeholders in
   // `url` / `port` survive lint-time and resolve at runtime.
   const healthcheckRaw = readBlockScalarAnnotation(yamlText, 'servicebay.healthcheck');
   if (healthcheckRaw !== undefined) {
@@ -416,7 +379,6 @@ export function parseTemplateManifest(
       configMount,
       ports,
       requiresApi,
-      readinessRaw,
       healthcheckRaw,
     },
     warnings,
@@ -487,9 +449,6 @@ export function readManifestAnnotations(yamlText: string): Partial<TemplateManif
     }
   }
   if (requiresApi) out.requiresApi = requiresApi;
-
-  const readinessRaw = readBlockScalarAnnotation(yamlText, 'servicebay.readiness');
-  if (readinessRaw !== undefined) out.readinessRaw = readinessRaw;
 
   const healthcheckRaw = readBlockScalarAnnotation(yamlText, 'servicebay.healthcheck');
   if (healthcheckRaw !== undefined) out.healthcheckRaw = healthcheckRaw;

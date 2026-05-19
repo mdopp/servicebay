@@ -669,34 +669,16 @@ export class ServiceLifecycle {
         const { assertApiCompat } = await import('@/lib/template/apiVersions');
         const manifest = tryParseTemplateManifest(yamlContent);
 
-        // Readiness wait (#613): block on the template's declared probes
-        // before invoking post-deploy. Replaces ad-hoc per-script waits
-        // (wait_for_lldap, wait_pod_running, wait_default_user, …) with a
-        // uniform retry budget + structured failure shape. A probe deadline
-        // lapsing aborts the deploy *before* post-deploy.py runs, so
-        // post-deploy can assume its dependencies are actually ready.
-        if (manifest?.readinessRaw) {
-            const { waitForReadiness, describeProbe } = await import('@/lib/install/readiness/runner');
-            const result = await waitForReadiness({
-                readinessRaw: manifest.readinessRaw,
-                podName: name,
-                node: nodeName,
-                onLog: msg => onProgress?.(msg),
-            });
-            if (!result.ok) {
-                const failed = result.results.filter(r => !r.ok);
-                const lines = failed.map(r => {
-                    if (r.ok) return '';
-                    return `  • ${describeProbe(r.probe)} — ${r.reason}: ${r.message} (${Math.ceil(r.elapsedMs / 1000)}s, ${r.attempts} attempt${r.attempts === 1 ? '' : 's'})`;
-                }).filter(Boolean);
-                const msg = `${name}: readiness check failed:\n${lines.join('\n')}\n\n` +
-                    `The service was started but isn't responding as expected. Common causes:\n` +
-                    `  - Slow cold start beyond the probe timeout — bump \`timeout\` in the template's servicebay.readiness annotation.\n` +
-                    `  - The service crashed during init — \`journalctl --user -u ${name}\` for the unit log.\n` +
-                    `  - A dependency template (e.g. LLDAP) isn't fully up yet — the install order may be wrong.`;
-                throw new Error(msg);
-            }
-        }
+        // #628 retired the per-template readiness-probe gate that used
+        // to run here. Continuous health is now the single source of
+        // truth: the install runner's settleWait reads `twin.health.
+        // ready` (populated by the service-health poller from the
+        // `servicebay.healthcheck` annotation) AFTER post-deploy runs.
+        // Post-deploy scripts that need to block on their own service
+        // being responsive still do so via in-script helpers (e.g.
+        // ollama's wait_for_ready, immich's wait_pod_running) which
+        // are local to each script and don't depend on ServiceBay's
+        // install layer.
 
         // Run the template's post-deploy.py if it shipped one. Convention:
         // see lib/registry.ts:getTemplatePostDeployScript for the protocol.

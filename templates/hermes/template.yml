@@ -13,6 +13,17 @@ metadata:
     # ollama lands first and the http://127.0.0.1:11434 target resolves
     # on first Hermes start.
     servicebay.dependencies: "ollama"
+    # Continuous health probe (#628). The Hermes API server requires an
+    # API_SERVER_KEY for every endpoint, so an unauthenticated HTTP
+    # probe would always get 401. A raw TCP connect proves the listener
+    # is up without smuggling secrets into the probe config.
+    servicebay.healthcheck: |
+      kind: tcp
+      host: 127.0.0.1
+      port: "{{HERMES_API_PORT}}"
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   # hostNetwork so:
   #   1. Hermes can reach Ollama at 127.0.0.1:11434 — two hostNetwork
