@@ -16,11 +16,15 @@ import { logger } from '@/lib/logger';
 import { getCapabilityBus } from './bus';
 import { registerAutheliaHandlers } from './authelia';
 import { registerNginxHandlers } from './nginx';
+import { registerAdguardHandlers } from './adguard';
+import { registerCredentialsHandlers } from './credentials';
 
 export function initCapabilities(): void {
   const bus = getCapabilityBus();
   registerAutheliaHandlers(bus);
   registerNginxHandlers(bus);
+  registerAdguardHandlers(bus);
+  registerCredentialsHandlers(bus);
   const counts = (['feature.installing', 'feature.installed', 'feature.uninstalling', 'feature.uninstalled'] as const)
     .map(k => `${k}=${bus.list(k).length}`)
     .join(' ');

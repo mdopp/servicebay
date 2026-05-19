@@ -43,8 +43,9 @@ interface ProvisionResult {
 }
 
 /** Locate ServiceBay's own LAN IP from config. Used as the rewrite
- *  target in AdGuard so devices resolving the apex see ServiceBay. */
-async function findServiceBayLanIp(): Promise<string | null> {
+ *  target in AdGuard so devices resolving the apex see ServiceBay.
+ *  Exported for the AdGuard capability handler (#631). */
+export async function findServiceBayLanIp(): Promise<string | null> {
   const config = await getConfig();
   return config.reverseProxy?.lanIp ?? null;
 }
@@ -53,8 +54,8 @@ async function findServiceBayLanIp(): Promise<string | null> {
  *  `config.adguard` block (written by AdGuard's post-deploy via
  *  /api/system/adguard/credentials) and fall back to the legacy
  *  templateSettings lookup for installs that predate the credentials
- *  endpoint. */
-async function findAdguardCreds(): Promise<{ adminUrl: string; username: string; password: string } | null> {
+ *  endpoint. Exported for the AdGuard capability handler (#631). */
+export async function findAdguardCreds(): Promise<{ adminUrl: string; username: string; password: string } | null> {
   const config = await getConfig();
   if (config.adguard?.password) {
     return {

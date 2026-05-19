@@ -515,6 +515,7 @@ describe('OIDC client_id single source of truth', () => {
     'src/app/api/system/authelia/oidc-clients/route.ts', // forwards client.client_id from input
     'src/lib/registry.ts',                           // type definition
     'src/lib/capabilities/authelia.test.ts',         // unit tests use fixture meta to drive the handler
+    'src/lib/capabilities/credentials.test.ts',      // unit tests use fixture meta to drive the handler
   ]);
 
   it('no src/ file hardcodes a client_id / username literal that mirrors an OIDC declaration', () => {

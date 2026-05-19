@@ -31,6 +31,15 @@ export interface Credential {
   importance: 'critical' | 'system';
   /** One-liner shown next to the entry. */
   notes?: string;
+  /**
+   * Owning template name (#631). Capability handlers use this to filter
+   * the manifest on uninstall — entries without `template` (legacy
+   * pre-Phase-4C entries) are never auto-removed. Set by
+   * `buildCredentialsManifest` for OIDC entries and by post-deploy.py
+   * `__SB_CREDENTIAL__` capture for runtime entries (which now carry
+   * the captured template name).
+   */
+  template?: string;
 }
 
 interface BuildOpts {
@@ -69,6 +78,8 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
       password: secret,
       importance: 'system',
       notes: 'Wired into the container env (SSO_CLIENT_SECRET) automatically — save for disaster recovery only.',
+      // #631: tag with owning template so uninstall can remove it.
+      template: sv.meta?.templateName,
     });
   }
 
