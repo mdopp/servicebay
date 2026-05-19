@@ -1,13 +1,15 @@
 # Cloud stack
 
 The personal-cloud bundle — services reachable from outside the LAN
-that handle private data the household relies on:
+that handle private data the household relies on.
 
-- **vaultwarden** — Bitwarden-compatible password manager
-- **immich** — Photos + AI search, mobile auto-upload
-- **file-share** — Syncthing + Samba + FileBrowser (LDAP/SSO‑wired)
-- **media** — Jellyfin streaming + Audiobookshelf for podcasts/books
-- **radicale** — CalDAV/CardDAV (calendar + contacts), LDAP-bound
+## Included Services
+
+- [x] vaultwarden — Bitwarden-compatible password manager
+- [x] immich — Photos + AI search, mobile auto-upload
+- [x] file-share — Syncthing + Samba + FileBrowser (LDAP/SSO‑wired)
+- [x] media — Jellyfin streaming + Audiobookshelf for podcasts/books
+- [x] radicale — CalDAV/CardDAV (calendar + contacts), LDAP-bound
 
 ## Why a single stack
 
