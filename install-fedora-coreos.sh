@@ -741,12 +741,21 @@ ${SERVICEBAY_SSH_PRIV}
           # mkdir is idempotent; the conditional generation lives in the
           # shell script so an existing .auth-secret.env survives intact
           # even when this oneshot re-runs (e.g. after `systemctl daemon-reload`).
+          # systemd treats `%s` in ExecStart= as a specifier ($SHELL) and
+          # substitutes it *before* invoking sh. Pre-fix: the printf format
+          # string was rewritten from "AUTH_SECRET=%s\n" to
+          # "AUTH_SECRET=/bin/bash\n" — so every fresh install wrote that
+          # 9-char nonsense into .auth-secret.env, and ServiceBay's
+          # assertAuthSecret() (≥32 chars required) crashed the container
+          # in a restart loop. Escape with `%%s` so systemd renders it as
+          # literal `%s` before the shell sees it. Same fix anywhere
+          # `printf` is used inside ExecStart=/usr/bin/sh -c.
           ExecStart=/usr/bin/sh -c '\
             install -d -m 0755 -o ${HOST_USER} -g ${HOST_USER} /var/mnt/data/servicebay; \
             if [ ! -s /var/mnt/data/servicebay/.auth-secret.env ]; then \
               SECRET=$$(/usr/bin/openssl rand -hex 32); \
               umask 0177; \
-              printf "AUTH_SECRET=%s\\n" "$$SECRET" > /var/mnt/data/servicebay/.auth-secret.env; \
+              printf "AUTH_SECRET=%%s\\n" "$$SECRET" > /var/mnt/data/servicebay/.auth-secret.env; \
               chown ${HOST_USER}:${HOST_USER} /var/mnt/data/servicebay/.auth-secret.env; \
               echo "AUTH_SECRET written (fresh install or first migration)"; \
             else \
