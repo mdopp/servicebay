@@ -15,6 +15,15 @@ metadata:
     servicebay.dependencies: "nginx,auth"
     servicebay.ports: "{{ADGUARD_ADMIN_PORT}}/tcp,53/udp,53/tcp"
     servicebay.config-mount: /opt/adguardhome/conf
+    # Continuous health probe (#626). `/control/status` is AdGuard's
+    # built-in JSON status endpoint — unauthenticated, returns `running`
+    # + DNS query counters. Cheap 200 that confirms the admin listener
+    # is alive.
+    servicebay.healthcheck: |
+      url: http://localhost:{{ADGUARD_ADMIN_PORT}}/control/status
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   hostNetwork: true
   containers:

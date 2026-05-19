@@ -24,6 +24,24 @@ export class HealthService {
     // 1. Ensure defaults
     await initializeDefaultChecks();
 
+    // 1a. Service-health poller (#626 / Phase 3A). Discovers deployed
+    //     services that ship a `servicebay.healthcheck` annotation and
+    //     registers each with the continuous poller. Result lands on
+    //     `ServiceUnit.health` in the digital twin — the single source
+    //     of truth Phase 3B migrates `settleWait`, diagnose probes, and
+    //     per-template `wait_for_X` helpers onto.
+    //
+    //     Best-effort: a discovery failure on one service doesn't block
+    //     boot, and the periodic agent sync will eventually pick up new
+    //     services. Phase 3B replaces this one-shot bootstrap with
+    //     capability-bus hooks on deploy/wipe.
+    try {
+      const { bootstrapServiceHealth } = await import('./serviceHealthBootstrap');
+      await bootstrapServiceHealth('Local');
+    } catch (e) {
+      logger.warn('Health', `Service-health bootstrap failed: ${e instanceof Error ? e.message : String(e)}. Probes will be available after next restart.`);
+    }
+
     // 1b. Open the boot-grace email-batch window. Health checks
     //     that flip ok → fail during the first 10 min after boot
     //     (or until events settle for 90 s, whichever comes first)

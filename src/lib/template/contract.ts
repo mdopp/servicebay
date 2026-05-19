@@ -25,6 +25,7 @@
 
 import { type TemplateApiVersions, type TemplateApiName, SUPPORTED_API_VERSIONS } from './apiVersions';
 import { parseReadinessYaml } from '@/lib/install/readiness/parse';
+import { parseHealthcheckYaml } from '@/lib/health/serviceHealthcheck';
 
 /** Recognized template tiers. `feature` is the implicit default. */
 export type TemplateTier = 'infrastructure' | 'feature';
@@ -84,6 +85,17 @@ export interface TemplateManifest {
    * the install runner runs step 2 and executes the probes.
    */
   readinessRaw?: string;
+  /**
+   * `metadata.annotations['servicebay.healthcheck']` (#626) — raw YAML body
+   * of the continuous health probe. Stored unparsed for the same dual-
+   * lifecycle reason as `readinessRaw`: lint-time accepts `{{VAR}}`
+   * placeholders, the poller re-parses at runtime once Mustache has run.
+   * Distinct from `readinessRaw`: that's a list of one-shot install-time
+   * probes; this is a single continuous probe with interval + startup
+   * grace. Phase 3B retires `readinessRaw` once every template carries
+   * a healthcheck.
+   */
+  healthcheckRaw?: string;
 }
 
 /** Context the caller can pass to enable conditional rules. */
@@ -199,6 +211,16 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
       'Replaces ad-hoc wait helpers (`wait_for_lldap`, `wait_pod_running`, …) with a uniform shape, same retry ' +
       'budget, and structured install-blocking error. Declare for any template another template lists in ' +
       '`servicebay.dependencies` — otherwise downstream post-deploys race the upstream container.',
+  },
+  {
+    annotation: 'servicebay.healthcheck',
+    field: 'healthcheckRaw',
+    required: false,
+    description:
+      'YAML block scalar declaring a continuous health probe ServiceBay polls on the configured interval (#626). ' +
+      'Shape: `{kind?: http|tcp, url|host+port, interval: 30s, timeout: 5s, startup_timeout: 5m}`. The endpoint ' +
+      'should return `{ready, degraded?, deps?, message?}`. Result lands on `twin.services[].health` and is the ' +
+      'single source of truth that Phase 3B migrates `settleWait`, diagnose, and per-template `wait_for_X` helpers onto.',
   },
 ] as const;
 
@@ -367,6 +389,19 @@ export function parseTemplateManifest(
     }
   }
 
+  // healthcheckRaw (#626): pre-Mustache YAML body of the continuous health
+  // probe. Same dual-lifecycle as readinessRaw — `{{VAR}}` placeholders in
+  // `url` / `port` survive lint-time and resolve at runtime.
+  const healthcheckRaw = readBlockScalarAnnotation(yamlText, 'servicebay.healthcheck');
+  if (healthcheckRaw !== undefined) {
+    const r = parseHealthcheckYaml(healthcheckRaw, { permissive: true });
+    if (!r.ok) {
+      for (const err of r.errors) {
+        errors.push(`Annotation \`servicebay.healthcheck\`: ${err}`);
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors, warnings };
   }
@@ -382,6 +417,7 @@ export function parseTemplateManifest(
       ports,
       requiresApi,
       readinessRaw,
+      healthcheckRaw,
     },
     warnings,
   };
@@ -454,6 +490,9 @@ export function readManifestAnnotations(yamlText: string): Partial<TemplateManif
 
   const readinessRaw = readBlockScalarAnnotation(yamlText, 'servicebay.readiness');
   if (readinessRaw !== undefined) out.readinessRaw = readinessRaw;
+
+  const healthcheckRaw = readBlockScalarAnnotation(yamlText, 'servicebay.healthcheck');
+  if (healthcheckRaw !== undefined) out.healthcheckRaw = healthcheckRaw;
 
   return out;
 }

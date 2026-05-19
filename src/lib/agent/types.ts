@@ -118,6 +118,38 @@ export interface ServiceUnit {
   effectiveHostNetwork?: boolean;
   proxyConfiguration?: unknown; // Nginx/Traefik Routing Table (Enriched)
   verifiedDomains?: string[]; // Enriched by TwinStore (Nginx/Traefik Reverse Lookup)
+  /**
+   * Latest result from the continuous health probe (#626). Populated by
+   * the `serviceHealth` poller from each template's `servicebay.healthcheck`
+   * annotation. Single source of truth that Phase 3B migrates `settleWait`,
+   * diagnose probes, and per-template `wait_for_X` helpers onto.
+   *
+   * Stored in `DigitalTwinStore.serviceHealth` (a side-map keyed by
+   * `nodeName + serviceName`) and re-attached to each service on every
+   * twin update — without that, the agent's periodic services-array
+   * replacement would wipe this field between probe runs.
+   */
+  health?: ServiceHealth;
+}
+
+export interface ServiceHealth {
+  /** `true` when the probe most recently returned a healthy response.
+   *  Templates can also surface `degraded: true` to signal "running but
+   *  in a soft-fail state" — readers should treat that as `ready: true`
+   *  for gating purposes but show a warning in the UI. */
+  ready: boolean;
+  degraded?: boolean;
+  /** ISO timestamp of when the probe last completed (success or fail). */
+  lastCheckedAt: string;
+  /** Operator-facing message — typically the response body's `message`
+   *  field, or the network error on probe failure. Bounded so a chatty
+   *  service can't bloat the twin. */
+  message?: string;
+  /** Per-dependency status the service reports about its own backends
+   *  (e.g. Authelia reports lldap, smtp). Strict `ok`/`degraded`/
+   *  `unreachable` so a typo on the service side doesn't silently drop
+   *  signal. */
+  deps?: Record<string, 'ok' | 'degraded' | 'unreachable'>;
 }
 
 export interface ProxyRoute {
