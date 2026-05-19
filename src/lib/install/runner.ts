@@ -679,6 +679,40 @@ async function runJob(jobId: string): Promise<void> {
     }
   }
 
+  // LLDAP admin-password drift detection (#666). The pathological
+  // combination is "wipe secrets, preserve identity": the wizard
+  // generates a fresh LLDAP_ADMIN_PASSWORD, but the LLDAP image does
+  // not rotate the admin password from env on subsequent starts — it
+  // only does so on first DB init. So the operator can't log in with
+  // the wizard's password, and the previous password is gone with the
+  // wiped `secret.key`. Authelia self-heals by wiping its data dir
+  // (#619); LLDAP can't because that would destroy *all* user accounts.
+  //
+  // Best we can do is detect the situation and log a clear breadcrumb
+  // so the operator finds the recovery path (docs/CREDENTIAL_SELF_HEAL.md)
+  // instead of silently getting locked out. No code action — the
+  // recovery is operator-decision territory.
+  if (authIncluded && !reusedSecretNames.has('LLDAP_ADMIN_PASSWORD')) {
+    try {
+      const { agentManager } = await import('@/lib/agent/manager');
+      const { getConfig } = await import('@/lib/config');
+      const cfg = await getConfig();
+      const dataDir = cfg.templateSettings?.DATA_DIR || '/mnt/data/stacks';
+      const lldapDbPath = `${dataDir}/auth/lldap/users.db`;
+      const node = input.node || 'Local';
+      const agent = await agentManager.ensureAgent(node);
+      const probe = await agent.sendCommand('exec', {
+        command: `[ -s "${lldapDbPath}" ] && echo present || true`,
+      });
+      const dbPresent = (probe.stdout || '').trim() === 'present';
+      if (dbPresent) {
+        await log(jobId, `⚠️ LLDAP admin-password drift detected: existing users.db at ${lldapDbPath} won't accept the wizard's freshly-generated password. If you can't log in to LLDAP, see docs/CREDENTIAL_SELF_HEAL.md for the recovery path.`);
+      }
+    } catch (e) {
+      await log(jobId, `(note) LLDAP drift probe failed: ${e instanceof Error ? e.message : String(e)} — continuing.`);
+    }
+  }
+
   // Cert archive restore — runs once before the deploy loop when nginx
   // is in the install set AND the volume on disk is empty (fresh
   // install). The reset endpoint snapshots NPM's data dir to
