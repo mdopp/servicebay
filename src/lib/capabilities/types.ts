@@ -80,10 +80,18 @@ export interface FeatureUninstallingEvent {
  * cross-service state (OIDC client deletion, NPM proxy host removal,
  * DNS rewrite removal). A handler failure here is non-blocking but
  * gets surfaced as a diagnose finding.
+ *
+ * Carries `lastKnownVariables` (same as `feature.uninstalling`) because
+ * cross-service cleanup needs to reconstruct what was registered:
+ * NPM's proxy host domains are `<subdomain>.<PUBLIC_DOMAIN>`, AdGuard's
+ * rewrites use the same shape — without the variable snapshot the
+ * handler can't tell what to remove. The caller is responsible for
+ * passing the same map both events saw.
  */
 export interface FeatureUninstalledEvent {
   kind: 'feature.uninstalled';
   template: string;
+  lastKnownVariables: StackVariable[];
 }
 
 /**
