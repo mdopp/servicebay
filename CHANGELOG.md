@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.7.1...servicebay-v4.8.0) (2026-05-19)
+
+
+### Features
+
+* **install:** NVIDIA GPU layer — Butane unit + standalone script ([#682](https://github.com/mdopp/servicebay/issues/682)) ([62e8f1b](https://github.com/mdopp/servicebay/commit/62e8f1b4512ec974692dcb42f38fc67758a2e101))
+* **wizard:** multi-select stack picker + install-another loop ([#683](https://github.com/mdopp/servicebay/issues/683)) ([678f221](https://github.com/mdopp/servicebay/commit/678f22139795b0fa6c3b545503300c214d80bc04))
+
+
+### Bug Fixes
+
+* **install:** clean-install actually redeploys preserved services ([#698](https://github.com/mdopp/servicebay/issues/698)) ([4136a34](https://github.com/mdopp/servicebay/commit/4136a34f54427353c8a8f6ecf06b137d8ef46e0b))
+* **wizard:** quick-win batch for 5 UX papercuts ([#697](https://github.com/mdopp/servicebay/issues/697)) ([323252b](https://github.com/mdopp/servicebay/commit/323252b873eb380bfb57f2a6d6539501d06aef8d))
+
 ## [4.7.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.7.0...servicebay-v4.7.1) (2026-05-19)
 
 
