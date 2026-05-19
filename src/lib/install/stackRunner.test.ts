@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { StackManifest } from '@/lib/template/stackContract';
+import type { DegradedCoreEntry } from './stackHealth';
 
 const getStackManifestMock = vi.fn<(name: string) => Promise<StackManifest | null>>();
 vi.mock('@/lib/registry', () => ({
@@ -19,6 +20,18 @@ const twinStub: {
 vi.mock('@/lib/store/twin', () => ({
   DigitalTwinStore: { getInstance: () => twinStub },
 }));
+
+// `getDegradedCoreSummary` walks the on-disk `stacks/` directory in
+// real use. The tier-gate test cares about its return value, not its
+// fs traversal, so we stub it. Default = no degraded core (gate passes).
+const degradedCoreMock = vi.fn<() => Promise<DegradedCoreEntry[]>>().mockResolvedValue([]);
+vi.mock('./stackHealth', async () => {
+  const actual = await vi.importActual<typeof import('./stackHealth')>('./stackHealth');
+  return {
+    ...actual,
+    getDegradedCoreSummary: () => degradedCoreMock(),
+  };
+});
 
 import { installStack, preflightCrossStackDeps, prepareStackInstall } from './stackRunner';
 
@@ -43,6 +56,8 @@ const immich: StackManifest = {
 beforeEach(() => {
   getStackManifestMock.mockReset();
   twinStub.nodes = {};
+  degradedCoreMock.mockReset();
+  degradedCoreMock.mockResolvedValue([]);
 });
 
 function setNodeHealth(node: string, health: Record<string, boolean>): void {
@@ -211,5 +226,70 @@ describe('installStack', () => {
     const starts = events.filter(e => (e as { kind?: string }).kind === 'template-start') as Array<{ template: string }>;
     // nginx already-installed → skipped; deploy fires for auth, adguard.
     expect(starts.map(s => s.template)).toEqual(['auth', 'adguard']);
+  });
+});
+
+describe('installStack — tier gate (#635 / Phase 5C)', () => {
+  function makeOpts() {
+    const events: unknown[] = [];
+    return {
+      events,
+      opts: {
+        loadTemplateYaml: async (n: string) =>
+          `apiVersion: v1\nkind: Pod\nmetadata:\n  name: ${n}\n  annotations:\n    servicebay.label: "${n}"\nspec:\n  containers: []\n`,
+        getReadyTemplates: async () => new Set<string>(),
+        deployTemplate: async () => ({ ok: true as const }),
+        onProgress: (e: unknown) => events.push(e),
+      },
+    };
+  }
+
+  it('refuses feature-stack install when any core stack is degraded', async () => {
+    getStackManifestMock.mockResolvedValue(immich);
+    degradedCoreMock.mockResolvedValueOnce([
+      { stack: 'basic', label: 'Core services', notReady: [{ template: 'auth', state: 'unhealthy' }] },
+    ]);
+    const { opts, events } = makeOpts();
+    const r = await installStack('immich', opts);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/core not ready/);
+    expect(r.error).toMatch(/auth\(unhealthy\)/);
+    const gate = events.find(e => (e as { kind?: string }).kind === 'tier-gate-failed') as { degraded: DegradedCoreEntry[] };
+    expect(gate.degraded).toHaveLength(1);
+  });
+
+  it('allows feature-stack install when core is healthy', async () => {
+    const basicCore: StackManifest = {
+      name: 'basic', label: 'Core', tier: 'core', lifecycle: 'atomic-wipe',
+      dependsOnStacks: [], templates: ['nginx'],
+    };
+    // Use mockImplementation so multiple lookups (installStack, preflight
+    // → getStackHealth → getStackManifest('basic'), prepareStackInstall)
+    // all resolve correctly by name.
+    getStackManifestMock.mockImplementation(async (name: string) => {
+      if (name === 'immich') return immich;
+      if (name === 'basic') return basicCore;
+      return null;
+    });
+    twinStub.nodes['Local'] = {
+      services: [{ name: 'nginx', health: { ready: true } }],
+    };
+    degradedCoreMock.mockResolvedValueOnce([]);
+    const r = await installStack('immich', makeOpts().opts);
+    expect(r.ok).toBe(true);
+  });
+
+  it('does NOT gate a tier=core stack on itself (core install can fix core)', async () => {
+    // `basic` is tier:core; even if it reports as degraded (because
+    // it's not installed yet), installing it must not refuse on the
+    // tier gate — that's the install path that would fix the
+    // problem.
+    getStackManifestMock.mockResolvedValueOnce(basic);
+    getStackManifestMock.mockResolvedValueOnce(basic);
+    degradedCoreMock.mockResolvedValueOnce([
+      { stack: 'basic', label: 'Core', notReady: [{ template: 'nginx', state: 'unknown' }] },
+    ]);
+    const r = await installStack('basic', makeOpts().opts);
+    expect(r.ok).toBe(true);
   });
 });
