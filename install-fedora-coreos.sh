@@ -588,6 +588,104 @@ ${SERVICEBAY_SSH_PRIV}
           [Install]
           WantedBy=multi-user.target
 
+    # NVIDIA GPU layer for hosts with an NVIDIA card. Runs at first boot
+    # in two stages — driver install (needs a reboot to load the kmod)
+    # and CDI generation (after the kmod is live). Marker files at
+    # /var/lib/install-nvidia-{driver,cdi}-done suppress re-runs.
+    #
+    # The script is a no-op on hosts without NVIDIA hardware, so it is
+    # safe to bake into every install. Gated by the operator's
+    # `ENABLE_NVIDIA` choice at ISO-build time (#680-followup): we only
+    # ship the unit when they opted in, so CPU-only nodes don't burn
+    # disk + boot time on rpmfusion layering.
+    - path: /usr/local/bin/install-nvidia.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+          # Bail cleanly on hosts without an NVIDIA GPU. lspci is the
+          # cheapest detector — module load isn't reliable yet because
+          # the driver may not be present.
+          if ! /usr/sbin/lspci 2>/dev/null | grep -qi 'NVIDIA Corporation'; then
+              echo "install-nvidia: no NVIDIA GPU detected, skipping" >&2
+              # Mark both stages done so we don't keep retrying.
+              touch /var/lib/install-nvidia-driver-done /var/lib/install-nvidia-cdi-done
+              exit 0
+          fi
+
+          FEDORA_VERSION=$$(/usr/bin/rpm -E %fedora)
+
+          # Stage 1: layer the packages. RPM Fusion ships the driver
+          # build; `nvidia-container-toolkit` provides `nvidia-ctk` for
+          # CDI generation (the standard podman-NVIDIA bridge as of
+          # Container Toolkit ≥1.14). The open kernel modules
+          # (`kmod-nvidia-open-dkms`) are NVIDIA's recommended path
+          # for Turing+ GPUs — covers Ada Lovelace (RTX 2000/4000 Ada).
+          if [ ! -f /var/lib/install-nvidia-driver-done ]; then
+              echo "install-nvidia: layering NVIDIA driver + container toolkit..."
+              /usr/bin/rpm-ostree install --idempotent --allow-inactive \
+                  "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$${FEDORA_VERSION}.noarch.rpm" \
+                  "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$${FEDORA_VERSION}.noarch.rpm"
+              /usr/bin/rpm-ostree install --idempotent --allow-inactive \
+                  kmod-nvidia-open-dkms \
+                  xorg-x11-drv-nvidia-cuda \
+                  nvidia-container-toolkit
+              touch /var/lib/install-nvidia-driver-done
+              echo "install-nvidia: packages staged, scheduling reboot to load kmod"
+              # rpm-ostree changes apply on next boot. Stage 2 picks up
+              # there.
+              /usr/bin/systemctl reboot
+              exit 0
+          fi
+
+          # Stage 2: kernel module should be live now. Verify, then
+          # generate the CDI config that podman reads for GPU passthrough.
+          if [ ! -f /var/lib/install-nvidia-cdi-done ]; then
+              echo "install-nvidia: stage 2 — checking nvidia kernel module..."
+              for i in $$(/usr/bin/seq 1 30); do
+                  if /usr/sbin/lsmod | grep -q '^nvidia '; then break; fi
+                  sleep 2
+              done
+              if ! /usr/sbin/lsmod | grep -q '^nvidia '; then
+                  echo "install-nvidia: nvidia module did not load — operator should check journalctl -u dkms*" >&2
+                  exit 1
+              fi
+              /usr/bin/mkdir -p /etc/cdi
+              if /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml; then
+                  echo "install-nvidia: CDI config at /etc/cdi/nvidia.yaml"
+                  /usr/bin/nvidia-ctk cdi list || true
+                  touch /var/lib/install-nvidia-cdi-done
+              else
+                  echo "install-nvidia: nvidia-ctk cdi generate failed" >&2
+                  exit 1
+              fi
+          fi
+
+          echo "install-nvidia: done"
+
+    - path: /etc/systemd/system/install-nvidia.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Install NVIDIA driver + container toolkit (idempotent)
+          ConditionPathExists=!/var/lib/install-nvidia-cdi-done
+          After=network-online.target install-python.service
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          # Long timeout — rpm-ostree layering + akmod build can take
+          # several minutes on cold-cache, especially on slow ARM /
+          # mini-PC class hardware.
+          TimeoutStartSec=900
+          ExecStart=/bin/bash /usr/local/bin/install-nvidia.sh
+
+          [Install]
+          WantedBy=multi-user.target
+
     # Re-install config-merge script (#331). On a re-install, setup-raid
     # leaves the existing config.json alone (so runtime-managed values
     # like encrypted password hashes + LLDAP creds + NPM creds + post-
@@ -1005,6 +1103,13 @@ ${SERVICEBAY_SSH_PRIV}
     # Enable Python3 install on first boot
     - path: /etc/systemd/system/multi-user.target.wants/install-python.service
       target: /etc/systemd/system/install-python.service
+
+    # Enable NVIDIA driver + container-toolkit layer on first boot.
+    # The script no-ops (and self-marks done) on hosts without an
+    # NVIDIA GPU, so unconditionally wiring this symlink is fine — it
+    # costs one lspci call on CPU-only nodes.
+    - path: /etc/systemd/system/multi-user.target.wants/install-nvidia.service
+      target: /etc/systemd/system/install-nvidia.service
 
     # Enable AUTH_SECRET init on first boot (#565). The `[Install]
     # WantedBy=` block in the unit file isn't enough on its own because
