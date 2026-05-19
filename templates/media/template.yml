@@ -12,24 +12,16 @@ metadata:
     # and both apps' public URLs route through nginx — both prerequisites.
     servicebay.dependencies: "nginx,auth"
     servicebay.ports: "{{ABS_PORT}}/tcp,{{JELLYFIN_PORT}}/tcp"
-    # Readiness probes (#613). Replace the in-script
-    # `jellyfin_wait_default_user` helper — the install runner now
-    # blocks here instead, with the same `/Startup/FirstUser`-based
-    # signal that the UserManager has finished its async init pass
-    # (without which `/Startup/User` returns 500 "Sequence contains
-    # no elements", #618). Audiobookshelf's `/healthcheck` endpoint
+    # Continuous health probe (#628). Audiobookshelf's `/healthcheck`
     # returns 200 once the SQLite store is initialized and the OIDC
-    # subsystem is wired — earliest reliable readiness for the OIDC
-    # client-registration step in post-deploy.
-    servicebay.readiness: |
-      - kind: http
-        url: http://localhost:{{JELLYFIN_PORT}}/Startup/FirstUser
-        expect_status: 200
-        timeout: 5m
-      - kind: http
-        url: http://localhost:{{ABS_PORT}}/healthcheck
-        expect_status: [200, 204]
-        timeout: 5m
+    # subsystem is wired. Jellyfin shares the pod lifecycle, so if
+    # ABS is up the pod is up; #618's UserManager-init race is gated
+    # by post-deploy.py's own retry loop, not by this continuous probe.
+    servicebay.healthcheck: |
+      url: http://localhost:{{ABS_PORT}}/healthcheck
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   hostNetwork: true
   containers:

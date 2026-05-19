@@ -14,6 +14,18 @@ metadata:
     # user-guide.md (the portal-card builder only includes templates
     # that declare one).
     servicebay.ports: "10300/tcp,10200/tcp,10400/tcp"
+    # Continuous health probe (#628). Wyoming protocol is binary-over-TCP,
+    # no HTTP; a successful TCP connect to Whisper's port proves the
+    # primary speech-to-text container is up. The Piper + openWakeWord
+    # siblings share the pod lifecycle (Quadlet kube unit), so if
+    # Whisper is up the rest are too.
+    servicebay.healthcheck: |
+      kind: tcp
+      host: localhost
+      port: 10300
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   # hostNetwork so other pods (Home Assistant primarily) reach the
   # Wyoming endpoints at localhost on the standard ports — keeping the

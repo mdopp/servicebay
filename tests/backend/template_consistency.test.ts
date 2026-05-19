@@ -674,16 +674,16 @@ describe('Template post-deploy.py syntax', () => {
   }
 });
 
-// ─── 5. Readiness contract (#613) ───────────────────────────────────────────
+// ─── 5. Healthcheck contract (#626 + #628) ─────────────────────────────────
 //
 // Every template that another template lists in `servicebay.dependencies`
-// must declare a `servicebay.readiness` annotation. Without it, downstream
-// templates race the upstream container — exactly the failure mode #613
-// was filed to eliminate. Templates with no downstream dependencies don't
-// need readiness (they're leaves and the install runner's settle-wait
-// catches them).
-describe('Readiness contract', () => {
-  it('every dependency target declares servicebay.readiness', async () => {
+// must declare a `servicebay.healthcheck` annotation. Without it, downstream
+// templates' install gate (settleWait → twin.health) has nothing to wait on
+// and they race the upstream container. Templates with no downstream
+// dependencies don't strictly need it for install gating but should declare
+// one for ongoing monitoring (the CoreHealthBanner reads this).
+describe('Healthcheck contract', () => {
+  it('every dependency target declares servicebay.healthcheck', async () => {
     const { parseTemplateManifest } = await import('../../src/lib/template/contract');
     const manifests = new Map<string, ReturnType<typeof parseTemplateManifest>>();
     for (const t of templates) {
@@ -701,7 +701,7 @@ describe('Readiness contract', () => {
       if (!templateNames.has(target)) continue; // separate test catches dangling deps
       const r = manifests.get(target);
       if (!r || !r.ok) continue; // manifest-validity test already flags this
-      if (!r.manifest.readinessRaw) {
+      if (!r.manifest.healthcheckRaw) {
         const upstream = [...manifests.entries()]
           .filter(([, m]) => m.ok && m.manifest.dependencies.includes(target))
           .map(([n]) => n);
@@ -710,8 +710,8 @@ describe('Readiness contract', () => {
     }
     expect(
       offenders,
-      `Templates that other templates depend on but that declare no readiness probes:\n  ${offenders.join('\n  ')}\n\n` +
-      `Add a \`servicebay.readiness\` annotation listing the probes downstream templates can assume are passing.`,
+      `Templates that other templates depend on but that declare no healthcheck:\n  ${offenders.join('\n  ')}\n\n` +
+      `Add a \`servicebay.healthcheck\` annotation pointing at an HTTP endpoint (or TCP probe for non-HTTP services) so settleWait can gate on it.`,
     ).toEqual([]);
   });
 });

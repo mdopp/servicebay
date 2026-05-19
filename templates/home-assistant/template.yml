@@ -12,6 +12,14 @@ metadata:
     servicebay.dependencies: "nginx,auth"
     servicebay.config-mount: "/config"
     servicebay.ports: "8123/tcp,8091/tcp,3001/tcp"
+    # Continuous health probe (#628). `/manifest.json` is the PWA
+    # manifest — unauthenticated, served once HA's HTTP listener is up.
+    # Avoids the /api token requirement of the regular /api endpoint.
+    servicebay.healthcheck: |
+      url: http://localhost:8123/manifest.json
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   hostNetwork: true
   containers:

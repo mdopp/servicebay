@@ -10,6 +10,13 @@ metadata:
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
     # caldav.<domain> goes through nginx; auth is the SSO front.
     servicebay.dependencies: "nginx,auth"
+    # Continuous health probe (#628). Radicale's `/` root returns the
+    # web client — 200 once the HTTP listener accepted the config.
+    servicebay.healthcheck: |
+      url: http://localhost:{{RADICALE_PORT}}/
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
 spec:
   hostNetwork: true
   initContainers:
