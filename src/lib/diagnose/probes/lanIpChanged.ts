@@ -50,9 +50,21 @@ registerRefreshNow(PROBE_ID, CHECK_ID, 'LAN IP drift');
 export async function checkLanIpChanged(): Promise<LanIpProbeResult> {
   const result = HealthStore.getLastResult(CHECK_ID);
   if (!result) {
+    // #664 — S4: tell apart "config missing" from "first run pending."
+    // The lan_ip_drift check exists once an install has recorded
+    // reverseProxy.lanIp (#660 makes this synchronous at install
+    // time). If it doesn't exist, the install hasn't completed its
+    // LAN-IP capture yet.
+    const exists = HealthStore.getChecks().some(c => c.id === CHECK_ID);
+    if (!exists) {
+      return {
+        status: 'info',
+        detail: 'Waiting on install-time LAN-IP capture (#660). The drift check is created once reverseProxy.lanIp is recorded. Run a clean install or click "Reconcile now" below to capture the current IP.',
+      };
+    }
     return {
       status: 'info',
-      detail: 'Check has not run yet. Open Settings → Health to trigger it manually.',
+      detail: 'Scheduled — first run pending. Open Settings → Health to trigger it manually.',
     };
   }
   if (result.message && result.message.startsWith(LAN_IP_DRIFT_MESSAGE_PREFIX)) {

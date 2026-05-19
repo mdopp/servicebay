@@ -6,6 +6,7 @@ const state = {
   config: {} as any,
   services: [] as any[],
   results: new Map<string, CheckResult>(),
+  checks: [{ id: 'cert_request_failure' }] as Array<{ id: string }>,
 };
 
 const mockAgent = { sendCommand: vi.fn() };
@@ -25,6 +26,7 @@ vi.mock('@/lib/agent/manager', () => ({
 vi.mock('@/lib/health/store', () => ({
   HealthStore: {
     getLastResult: (id: string) => state.results.get(id) ?? null,
+    getChecks: () => state.checks,
   },
 }));
 
@@ -44,6 +46,7 @@ beforeEach(() => {
   };
   state.services = ACTIVE_NGINX;
   state.results = new Map();
+  state.checks = [{ id: 'cert_request_failure' }];
   mockAgent.sendCommand.mockReset();
   mockFetch.mockReset();
 });
@@ -151,10 +154,17 @@ acme.errors.Error: urn:ietf:params:acme:error:rateLimited :: Error creating new 
 // ─── Reader (Phase 3b: thin HealthStore reader) ─────────────────────────
 
 describe('checkCertRequestFailure (reader)', () => {
-  it('returns info when HealthStore has no result yet', async () => {
+  it('returns info when HealthStore has no result yet (check exists, first run pending)', async () => {
     const out = await checkCertRequestFailure();
     expect(out.status).toBe('info');
-    expect(out.detail).toMatch(/has not run yet/);
+    expect(out.detail).toMatch(/first run pending/);
+  });
+
+  it('reports the missing-prereq state when the le_request_failure check has not been created yet (#664)', async () => {
+    state.checks = [];
+    const out = await checkCertRequestFailure();
+    expect(out.status).toBe('info');
+    expect(out.detail).toMatch(/NPM bootstrap/);
   });
 
   it('decodes the runner-encoded payload into the probe shape', async () => {

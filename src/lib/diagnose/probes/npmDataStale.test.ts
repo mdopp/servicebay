@@ -8,11 +8,13 @@ import type { CheckResult } from '@/lib/health/types';
 
 const state = {
   results: new Map<string, CheckResult>(),
+  checks: [{ id: 'npm_auth' }] as Array<{ id: string }>,
 };
 
 vi.mock('@/lib/health/store', () => ({
   HealthStore: {
     getLastResult: (id: string) => state.results.get(id) ?? null,
+    getChecks: () => state.checks,
   },
 }));
 
@@ -20,13 +22,21 @@ import { checkNpmDataStale } from './npmDataStale';
 
 beforeEach(() => {
   state.results = new Map();
+  state.checks = [{ id: 'npm_auth' }];
 });
 
 describe('checkNpmDataStale (reader)', () => {
-  it('returns info when HealthStore has no result yet', async () => {
+  it('returns info when HealthStore has no result yet (check exists, just pending first run)', async () => {
     const out = await checkNpmDataStale();
     expect(out.status).toBe('info');
-    expect(out.detail).toMatch(/has not run yet/);
+    expect(out.detail).toMatch(/first run pending/);
+  });
+
+  it('reports the missing-prereq state when the npm_auth check has not been created yet (#664)', async () => {
+    state.checks = [];
+    const out = await checkNpmDataStale();
+    expect(out.status).toBe('info');
+    expect(out.detail).toMatch(/NPM admin bootstrap/);
   });
 
   it('decodes a stale-credentials fail payload', async () => {

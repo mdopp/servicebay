@@ -56,9 +56,18 @@ export interface CertRequestFailureResult {
 export async function checkCertRequestFailure(): Promise<CertRequestFailureResult> {
   const result = HealthStore.getLastResult(CHECK_ID);
   if (!result) {
+    // #664 — S4: distinguish missing-prereq from pending-schedule.
+    // The le_request_failure check is created at NPM bootstrap.
+    const exists = HealthStore.getChecks().some(c => c.id === CHECK_ID);
+    if (!exists) {
+      return {
+        status: 'info',
+        detail: 'Waiting on NPM bootstrap — the LE request-failure check is created once the proxy stack is in place.',
+      };
+    }
     return {
       status: 'info',
-      detail: 'Check has not run yet. Open Settings → Health to trigger it manually.',
+      detail: 'Scheduled — first run pending. Open Settings → Health to trigger it manually.',
     };
   }
   if (result.message && result.message.startsWith(CERT_REQUEST_FAILURE_MESSAGE_PREFIX)) {
