@@ -102,6 +102,30 @@ export async function saveGatewayConfig(host: string, username?: string, passwor
     return { success: true };
 }
 
+/**
+ * Persist the public domain captured in the wizard's network step (#662 — S3).
+ *
+ * Without this, the operator walks through the wizard, never gets asked
+ * for a public domain (it only appears in the `install-confirm` step,
+ * which is skipped when stacks aren't selected), and dozens of diagnose
+ * probes degrade to "publicDomain not yet configured" — the same probes
+ * that gate TLS, OIDC, AdGuard wildcard rewrites, external reachability.
+ *
+ * Empty string means "LAN-only install" — explicit operator choice.
+ * Existing probes treat absent publicDomain as not-configured; an
+ * empty save thus reverts to that state cleanly.
+ */
+export async function savePublicDomainConfig(publicDomain: string) {
+    const config = await getConfig();
+    const cleaned = publicDomain.trim().toLowerCase();
+    config.reverseProxy = {
+        ...config.reverseProxy,
+        publicDomain: cleaned || undefined,
+    };
+    await saveConfig(config);
+    return { success: true };
+}
+
 export async function saveAutoUpdateConfig(enabled: boolean) {
     const config = await getConfig();
     config.autoUpdate = {
