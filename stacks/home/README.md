@@ -1,10 +1,11 @@
 # Home stack
 
-Smart-home automation + local voice pipeline:
+Smart-home automation + local voice pipeline.
 
-- **home-assistant** — HA core + Z-Wave + Matter bridges
-- **voice** — Wyoming protocol services: faster-whisper (STT) +
-  piper (TTS) + openWakeWord (wake detection)
+## Included Services
+
+- [x] home-assistant — HA core + Z-Wave + Matter bridges
+- [x] voice — Wyoming pipeline: faster-whisper (STT) + piper (TTS) + openWakeWord (wake detection)
 
 ## Why a single stack
 
