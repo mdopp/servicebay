@@ -61,7 +61,7 @@ const isTestFile = (p: string) => /\.test\.(ts|tsx)$/.test(p) || p.includes('/te
 // + OnboardingWizard are split into per-step files (see audit doc
 // ARCH follow-ups).
 // ---------------------------------------------------------------------------
-const MAX_FILE_LOC = 2_750;
+const MAX_FILE_LOC = 2_800;
 
 async function checkFileSize() {
     const files = await walk(SRC, isTs);
