@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { logger } from '@/lib/logger';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import SectionLoading from '@/components/SectionLoading';
+import DashboardHydrationGate, { type HydrationPhase } from '@/components/DashboardHydrationGate';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
@@ -130,7 +130,7 @@ type RawLinkVolume = {
 };
 
 export default function ServicesDashboard() {
-    const { data: twin, isConnected, lastUpdate } = useDigitalTwin();
+    const { data: twin, isConnected, lastUpdate, isNodeSynced } = useDigitalTwin();
     const { addToast, updateToast } = useToast();
 
     const [filteredServices, setFilteredServices] = useState<ServiceViewModel[]>([]);
@@ -473,6 +473,7 @@ export default function ServicesDashboard() {
     }, [twin, externalLinks]);
 
     const loading = !isConnected && services.length === 0;
+    const waitingForSync = isConnected && !isNodeSynced() && services.length === 0;
 
     const collectBundlesFromTwin = useCallback((): ServiceBundle[] => {
         if (!twin || !twin.nodes) return [];
@@ -1007,9 +1008,11 @@ export default function ServicesDashboard() {
     };
 
     const renderServiceContent = () => {
-        if (loading) {
+        if (loading || waitingForSync) {
             return (
-                <SectionLoading message="Loading services..." subMessage="Waiting for agent synchronization..." />
+                <DashboardHydrationGate
+                    phase={(loading ? 'socket' : 'sync') as HydrationPhase}
+                />
             );
         }
 
