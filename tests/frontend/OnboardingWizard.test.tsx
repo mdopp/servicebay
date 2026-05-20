@@ -122,6 +122,17 @@ const commitStackPicker = async () => {
   // Continue. Pick Continue specifically.
   const continues = screen.getAllByRole('button', { name: /Continue/i });
   fireEvent.click(continues[continues.length - 1]);
+  // handleSelectStack runs async (fetchReadme per stack) before the
+  // services step's items array is populated. Wait for the parsed
+  // service rows to appear so the test's next Continue click doesn't
+  // race against the still-loading + disabled Continue button on
+  // services. Without this the test passes locally (fast microtasks)
+  // but flakes in CI (#691). `getAllByText` because the SelectedStacks
+  // panel and the checklist can both render the same service name.
+  await waitFor(() => {
+    const matches = screen.queryAllByText(/nginx-web|redis-cache/);
+    if (matches.length === 0) throw new Error('Service rows have not rendered yet');
+  });
 };
 
 // Helper: default status with no setup needed
