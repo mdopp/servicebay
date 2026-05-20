@@ -37,10 +37,24 @@ spec:
   containers:
   - name: hermes
     image: docker.io/nousresearch/hermes-agent:latest
-    # Pre-fix the pod overrode `command: [gateway, run]`. Upstream
-    # dropped the `gateway` binary from PATH and the image entrypoint
-    # is now `/usr/bin/tini -g -- /opt/hermes/docker/entrypoint.sh`
-    # — letting that run (no command override) is what works (#706).
+    # The image's entrypoint is `/usr/bin/tini -g -- /opt/hermes/docker/entrypoint.sh`,
+    # which at the end does `exec hermes "$@"`. Without args the
+    # interactive TUI starts, detects no terminal, exits with
+    # "Goodbye!", systemd restarts → infinite TUI-exit loop (#706
+    # initial fix dropped `command:` entirely, which IS what produced
+    # this loop — the pre-#706 `command: [gateway, run]` was using
+    # `gateway` as if it were a binary, which podman kube interprets
+    # as `command:` → looks for `gateway` on PATH → not found → exit
+    # 125. Both forms were wrong.
+    #
+    # Correct invocation: pass `gateway run` as `args:` (CMD), let
+    # the image's entrypoint receive them and `exec hermes gateway
+    # run`. The entrypoint's first-arg-is-executable shortcut doesn't
+    # fire because `gateway` isn't an exec on PATH — falls through to
+    # the `exec hermes "$@"` branch, which is exactly what we want.
+    args:
+    - gateway
+    - run
     env:
     # API server config (per upstream Docker docs at
     # https://hermes-agent.nousresearch.com/docs/user-guide/docker).
