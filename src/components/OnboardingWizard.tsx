@@ -102,9 +102,29 @@ async function fetchExistingServices(node?: string): Promise<Set<string>> {
 
 const WIZARD_STATE_KEY = 'sb.onboarding.v1';
 
+/**
+ * stepHistory entry. The substep field (#691) lets the back-walk
+ * restore both the outer step AND the inner stacks substep in one
+ * pop — drops the special-case substep-rewind logic that used to
+ * live in handleBack and that was the original reason for the
+ * inline Back affordances the audit doc flagged.
+ *
+ * Old entries (plain WizardStep) are migrated forward on load so a
+ * partially-completed wizard from a pre-fix session keeps working.
+ */
+type StackSubStep = 'select' | 'services' | 'flow';
+interface StepHistoryEntry {
+  step: WizardStep;
+  subStep: StackSubStep;
+}
+
 interface PersistedWizardState {
   currentStep: WizardStep;
-  stepHistory: WizardStep[];
+  // Allow both shapes on load; we normalize to StepHistoryEntry[]
+  // before the React state ever sees it. Keep `unknown` here so
+  // historical sessions don't blow up the JSON.parse.
+  stepHistory: StepHistoryEntry[] | WizardStep[];
+  subStep?: StackSubStep;
   selection: {
     gateway: boolean;
     ssh: boolean;
@@ -121,6 +141,21 @@ interface PersistedWizardState {
   emailUser: string;
   emailFrom: string;
   emailRecipients: string;
+}
+
+function normalizeStepHistory(raw: PersistedWizardState['stepHistory'] | undefined): StepHistoryEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(entry => {
+    if (typeof entry === 'string') {
+      // Pre-fix sessions stored a bare WizardStep — the substep
+      // wasn't tracked, so default it to 'select' (the stacks step's
+      // landing). Worst-case the operator walks back into the picker
+      // instead of restoring a sub-state; that's strictly better than
+      // crashing when the back button is clicked.
+      return { step: entry, subStep: 'select' };
+    }
+    return entry;
+  });
 }
 
 function loadPersistedWizardState(): PersistedWizardState | null {
@@ -145,7 +180,7 @@ export default function OnboardingWizard() {
   const persisted = typeof window !== 'undefined' ? loadPersistedWizardState() : null;
   const [isOpen, setIsOpen] = useState(false);
   const [currentStep, setCurrentStep] = useState<WizardStep>(persisted?.currentStep ?? 'welcome');
-  const [stepHistory, setStepHistory] = useState<WizardStep[]>(persisted?.stepHistory ?? []);
+  const [stepHistory, setStepHistory] = useState<StepHistoryEntry[]>(normalizeStepHistory(persisted?.stepHistory));
   // #694: pinned active-step count, captured when operator commits at
   // welcome step. null while still at welcome so the count tracks toggles
   // live; populated once they continue so subsequent steps see a stable
@@ -221,7 +256,19 @@ export default function OnboardingWizard() {
   /** Stage in the install sub-flow. 'select' and 'services' are wizard-
    *  specific UIs (stack picker + per-service dependency resolution); the
    *  shared engine takes over from 'configure' onwards via `installFlow`. */
-  const [wizardSubStep, setWizardSubStep] = useState<'select' | 'services' | 'flow'>('select');
+  const [wizardSubStep, setWizardSubStepRaw] = useState<StackSubStep>(persisted?.subStep ?? 'select');
+  /**
+   * Push the current `{ step, subStep }` onto stepHistory before
+   * switching to a new substep, so Back walks subStep transitions
+   * the same way it walks top-level step transitions (#691). The
+   * old `setWizardSubStep` setter is preserved as `setWizardSubStepRaw`
+   * for the two callers that need an unrecorded change (initial mount
+   * and post-finish reset).
+   */
+  const navigateToSubStep = (next: StackSubStep) => {
+    setStepHistory(prev => [...prev, { step: currentStep, subStep: wizardSubStep }]);
+    setWizardSubStepRaw(next);
+  };
   const [stackNodes, setStackNodes] = useState<{ Name: string; URI: string }[]>([]);
   const [stackSelectedNode, setStackSelectedNode] = useState('');
   const [stacksLoading, setStacksLoading] = useState(false);
@@ -515,6 +562,7 @@ export default function OnboardingWizard() {
     const snapshot: PersistedWizardState = {
       currentStep,
       stepHistory,
+      subStep: wizardSubStep,
       selection,
       gwHost,
       gwUser,
@@ -528,7 +576,7 @@ export default function OnboardingWizard() {
     try {
       window.sessionStorage.setItem(WIZARD_STATE_KEY, JSON.stringify(snapshot));
     } catch { /* quota / disabled storage */ }
-  }, [isOpen, currentStep, stepHistory, selection, gwHost, gwUser, emailConfig.host, emailConfig.port, emailConfig.secure, emailConfig.user, emailConfig.from, emailConfig.recipients]);
+  }, [isOpen, currentStep, stepHistory, wizardSubStep, selection, gwHost, gwUser, emailConfig.host, emailConfig.port, emailConfig.secure, emailConfig.user, emailConfig.from, emailConfig.recipients]);
 
   // #694: pin the activeSteps count at the moment the operator commits
   // their selection by leaving the welcome step. Welcome and edit-mode
@@ -710,35 +758,27 @@ export default function OnboardingWizard() {
   }, [currentStep, stackDomain, stackNoDomain, operatorEmail]);
 
   const navigateTo = (step: WizardStep) => {
-      setStepHistory(prev => [...prev, currentStep]);
+      setStepHistory(prev => [...prev, { step: currentStep, subStep: wizardSubStep }]);
       setCurrentStep(step);
   };
 
   const handleBack = () => {
-    // Sub-step navigation within `stacks`: each services/configure step
-    // should rewind one sub-state before popping the outer wizard
-    // history. Without this the footer Back jumps all the way out to
-    // `machine`, which surprised operators in #686 (they clicked Back
-    // expecting to step one stage, got teleported to a different step).
-    if (currentStep === 'stacks') {
-      if (wizardSubStep === 'services') {
-        // services → picker
-        setSelectedStacks([]);
-        setStackItems([]);
-        setWizardSubStep('select');
-        return;
-      }
-      if (wizardSubStep === 'flow') {
-        // configure → services
-        setWizardSubStep('services');
-        return;
-      }
-      // sub-step === 'select' → fall through to the outer pop.
-    }
+    // Single uniform pop — #691 dropped the special-case substep
+    // rewind that used to live here. Every forward transition
+    // (`navigateTo` and `navigateToSubStep`) records the outgoing
+    // step + subStep, so popping naturally restores both. The
+    // "Back goes one stage" surprise in #686 is the same fix.
     const prev = stepHistory[stepHistory.length - 1];
-    if (prev) {
-        setStepHistory(h => h.slice(0, -1));
-        setCurrentStep(prev);
+    if (!prev) return;
+    setStepHistory(h => h.slice(0, -1));
+    // Restore both axes from the popped entry. If the popped entry
+    // also walks us back to 'select' we clean the in-flight stack
+    // selection so the picker isn't ghosted by the previous choice.
+    setCurrentStep(prev.step);
+    setWizardSubStepRaw(prev.subStep);
+    if (prev.step === 'stacks' && prev.subStep === 'select') {
+      setSelectedStacks([]);
+      setStackItems([]);
     }
   };
 
@@ -903,11 +943,12 @@ export default function OnboardingWizard() {
     if (stacks.length === 0) {
       setSelectedStacks([]);
       setStackItems([]);
-      setWizardSubStep('select');
+      // No-op recovery: stay on the picker without polluting history.
+      setWizardSubStepRaw('select');
       return [];
     }
     setSelectedStacks(stacks);
-    setWizardSubStep('services');
+    navigateToSubStep('services');
     setStacksLoading(true);
 
     try {
@@ -944,7 +985,9 @@ export default function OnboardingWizard() {
         addToast('error', 'No services found', `Could not parse services from ${names}`);
         setStackItems([]);
         setSelectedStacks([]);
-        setWizardSubStep('select');
+        // Parse-failure recovery — bounce back to picker without
+        // pushing the failed forward step onto history.
+        setWizardSubStepRaw('select');
         return [];
       }
       setStackItems(parsedItems);
@@ -955,7 +998,7 @@ export default function OnboardingWizard() {
   };
 
   const handleStackFetchVars = async (itemsOverride?: StackItem[]) => {
-    setWizardSubStep('flow');
+    navigateToSubStep('flow');
     setStacksLoading(true);
     try {
       const baseItems = itemsOverride ?? stackItems;
