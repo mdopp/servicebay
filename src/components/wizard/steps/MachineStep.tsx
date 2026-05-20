@@ -31,6 +31,7 @@ interface MachineStepProps {
     installMode: 'public' | 'lan';
     setInstallMode: (v: 'public' | 'lan') => void;
     publicDomain: string;
+    setPublicDomain: (v: string) => void;
     operatorEmail: string;
     setOperatorEmail: (v: string) => void;
     isValidOperatorEmail: (v: string) => boolean;
@@ -47,12 +48,18 @@ interface MachineStepProps {
     navigateTo: (step: WizardStep) => void;
     detectedDrives: DetectedDrive[];
     stackLoadingDevices: boolean;
+    /** True when the operator landed on the express install-confirm
+     *  screen (vs the verbose machine step). Surfaces the "Edit details"
+     *  drop-into-verbose-flow button + the express banner so the
+     *  express landing has its own copy. */
+    isExpressMode?: boolean;
 }
 
 export function MachineStep({
     installMode,
     setInstallMode,
     publicDomain,
+    setPublicDomain,
     operatorEmail,
     setOperatorEmail,
     isValidOperatorEmail,
@@ -68,7 +75,8 @@ export function MachineStep({
     stackSelectedNode,
     navigateTo,
     detectedDrives,
-    stackLoadingDevices
+    stackLoadingDevices,
+    isExpressMode,
 }: MachineStepProps) {
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -76,11 +84,26 @@ export function MachineStep({
                 <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
                     <HardDrive className="w-5 h-5 text-indigo-500"/>
                 </div>
-                <div>
+                <div className="flex-1">
                     <h3 className="font-bold text-lg leading-none">Machine & Review</h3>
                     <p className="text-xs text-gray-500 mt-1">Finalize host configuration and storage</p>
                 </div>
+                {isExpressMode && (
+                    <Button
+                        variant="outline"
+                        onClick={() => navigateTo('machine')}
+                        className="!py-1.5 !px-3 !text-xs"
+                    >
+                        Edit details
+                    </Button>
+                )}
             </div>
+
+            {isExpressMode && (
+                <p className="text-sm text-gray-500 leading-relaxed">
+                    We&apos;ll install the recommended stack with sensible defaults. Adjust the two questions below or click <em>Edit details</em> for the full wizard.
+                </p>
+            )}
 
             {!publicDomain.trim() && installMode === 'public' && (
                 <div className="flex items-start gap-4 p-4 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 shadow-sm">
@@ -104,42 +127,69 @@ export function MachineStep({
                         <Globe className="w-4 h-4" /> Reachability
                     </div>
                     
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div 
+                    <div role="radiogroup" aria-label="Install mode" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label
                             id="mode-public"
-                            onClick={() => setInstallMode('public')}
+                            htmlFor="mode-public-input"
                             className={`flex flex-col gap-2 p-4 rounded-xl border cursor-pointer transition-all ${
-                                installMode === 'public' 
-                                ? 'bg-white dark:bg-blue-600/10 border-blue-400 shadow-sm ring-1 ring-blue-400' 
+                                installMode === 'public'
+                                ? 'bg-white dark:bg-blue-600/10 border-blue-400 shadow-sm ring-1 ring-blue-400'
                                 : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/5 opacity-60'
                             }`}
                         >
+                            <input
+                                id="mode-public-input"
+                                type="radio"
+                                name="installMode"
+                                value="public"
+                                aria-label="Yes, public domain"
+                                checked={installMode === 'public'}
+                                onChange={() => setInstallMode('public')}
+                                className="sr-only"
+                            />
                             <div className="flex items-center justify-between">
                                 <div className="text-sm font-bold">Public Domain</div>
                                 {installMode === 'public' && <CheckCircle className="w-4 h-4 text-blue-500" />}
                             </div>
                             <p className="text-[10px] text-gray-500">HTTPS + Let&apos;s Encrypt</p>
-                        </div>
+                        </label>
 
-                        <div 
+                        <label
                             id="mode-lan"
-                            onClick={() => setInstallMode('lan')}
+                            htmlFor="mode-lan-input"
                             className={`flex flex-col gap-2 p-4 rounded-xl border cursor-pointer transition-all ${
-                                installMode === 'lan' 
-                                ? 'bg-white dark:bg-amber-600/10 border-amber-400 shadow-sm ring-1 ring-amber-400' 
+                                installMode === 'lan'
+                                ? 'bg-white dark:bg-amber-600/10 border-amber-400 shadow-sm ring-1 ring-amber-400'
                                 : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/5 opacity-60'
                             }`}
                         >
+                            <input
+                                id="mode-lan-input"
+                                type="radio"
+                                name="installMode"
+                                value="lan"
+                                aria-label="No, internal only"
+                                checked={installMode === 'lan'}
+                                onChange={() => setInstallMode('lan')}
+                                className="sr-only"
+                            />
                             <div className="flex items-center justify-between">
                                 <div className="text-sm font-bold">Internal Only</div>
                                 {installMode === 'lan' && <CheckCircle className="w-4 h-4 text-amber-500" />}
                             </div>
                             <p className="text-[10px] text-gray-500">LAN-only via AdGuard</p>
-                        </div>
+                        </label>
                     </div>
 
                     {installMode === 'public' && (
                         <div className="space-y-4 pt-2 animate-in fade-in duration-300">
+                            <Input
+                                label="Public Domain"
+                                value={publicDomain}
+                                onChange={v => setPublicDomain(v)}
+                                placeholder="example.com"
+                                hint="Required for Let's Encrypt and external access"
+                            />
                             <Input
                                 label="Operator Email"
                                 value={operatorEmail}

@@ -259,8 +259,8 @@ describe('OnboardingWizard', () => {
 
         render(<OnboardingWizard />);
 
-        await waitFor(() => screen.getByRole('button', { name: /Next/i }));
-        fireEvent.click(screen.getByRole('button', { name: /Next/i }));
+        await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
         await waitFor(() => {
             expect(screen.getAllByText(/Internet Gateway/i).length).toBeGreaterThan(0);
@@ -272,14 +272,14 @@ describe('OnboardingWizard', () => {
         (checkOnboardingStatus as any).mockResolvedValue(needsSetupStatus);
 
         render(<OnboardingWizard />);
-        await waitFor(() => screen.getByRole('button', { name: /Next/i }));
-        fireEvent.click(screen.getByRole('button', { name: /Next/i }));
+        await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
         await waitFor(() => screen.getByPlaceholderText('fritz.box'));
         const hostInput = screen.getByPlaceholderText('fritz.box');
         fireEvent.change(hostInput, { target: { value: '192.168.1.1' } });
 
-        const saveBtn = screen.getByRole('button', { name: /Save & Continue/i });
+        const saveBtn = screen.getByRole('button', { name: /Continue/i });
         fireEvent.click(saveBtn);
 
         await waitFor(() => {
@@ -300,7 +300,7 @@ describe('OnboardingWizard', () => {
                 // "ServiceBay Setup" with the Monitor icon. Step
                 // skipping handles the express case by collapsing
                 // the active-steps array.
-                expect(screen.getAllByText(/ServiceBay Setup/i).length).toBeGreaterThan(0);
+                expect(screen.getAllByText(/ServiceBay/i).length).toBeGreaterThan(0);
             });
             // Should NOT show the full setup welcome
             expect(screen.queryByText(/Welcome to ServiceBay/i)).toBeNull();
@@ -348,7 +348,7 @@ describe('OnboardingWizard', () => {
             render(<OnboardingWizard />);
 
             await waitFor(() => {
-                expect(screen.getAllByText(/ServiceBay Setup/i).length).toBeGreaterThan(0);
+                expect(screen.getAllByText(/ServiceBay/i).length).toBeGreaterThan(0);
             });
         });
 
@@ -510,7 +510,7 @@ describe('OnboardingWizard', () => {
             // Default mock returns phase=done immediately so the wizard transitions
             // to the Done step on the first poll tick.
             await waitFor(() => {
-                expect(screen.getByText(/installation complete/i)).toBeDefined();
+                expect(screen.getByText(/deployed successfully|installation complete/i)).toBeDefined();
             });
 
             // Should have called the install runner endpoint
@@ -538,8 +538,8 @@ describe('OnboardingWizard', () => {
 
             // Wizard polls /api/install/status; the default mock returns phase=done
             // so the Finish button appears once the polling effect's first tick lands.
-            await waitFor(() => screen.getByRole('button', { name: /Finish/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Finish/i }));
+            await waitFor(() => screen.getByRole('button', { name: /Go to Dashboard/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Go to Dashboard/i }));
 
             await waitFor(() => {
                 expect(completeStackSetup).toHaveBeenCalled();

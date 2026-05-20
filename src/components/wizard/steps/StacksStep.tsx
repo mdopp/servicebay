@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import { Layers, Package, Loader2, CheckCircle, Box } from 'lucide-react';
+import { Layers, Package, Loader2, CheckCircle, Box, ArrowRight } from 'lucide-react';
+import { Button } from '../WizardUI';
 import type { Template } from '@/lib/registry';
 import type { StackItem as BaseStackItem, StackVariable, useStackInstall } from '@/hooks/useStackInstall';
 import type { TemplateTier } from '@/lib/templateTier';
@@ -48,6 +49,14 @@ interface StacksStepProps {
     installingNow: string | null;
     diagnoseProbes: DiagnoseProbe[] | null;
     diagnoseRunning: boolean;
+    /** "Install services later" affordance on the picker (#688). */
+    handleStackSkip: () => void | Promise<void>;
+    /** stacks-only mode: lets the stacks/done view render its own
+     *  "Go to Dashboard" terminus since there's no subsequent
+     *  FinishStep — installing from the sidebar entry skips the
+     *  welcome→finish wizard. */
+    stacksOnlyMode: boolean;
+    handleFinish: () => void | Promise<void>;
     SERVICE_DEPS: Record<string, ServiceDeps>;
     stackDeviceOptions: Record<string, string[]>;
     stackLoadingDevices: boolean;
@@ -71,6 +80,9 @@ export function StacksStep({
     installingNow,
     diagnoseProbes,
     diagnoseRunning,
+    handleStackSkip,
+    stacksOnlyMode,
+    handleFinish,
     SERVICE_DEPS,
     stackDeviceOptions,
     stackLoadingDevices,
@@ -141,6 +153,19 @@ export function StacksStep({
                             })}
                         </div>
                     )}
+
+                    {/* #688: "Install services later" — closes the wizard
+                        without installing anything. In stacks-only mode
+                        this also marks setup as complete. */}
+                    <div className="flex justify-start pt-2">
+                        <button
+                            type="button"
+                            onClick={() => void handleStackSkip()}
+                            className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline-offset-4 hover:underline"
+                        >
+                            Install services later
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -237,7 +262,7 @@ export function StacksStep({
                                             <div className="flex items-center gap-2 flex-wrap">
                                                 <span className={`font-bold text-sm ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-900 dark:text-gray-200'}`}>{item.name}</span>
                                                 {item.alreadyInstalled && (
-                                                    <span className="text-[10px] font-bold text-green-600 uppercase tracking-tighter">Installed</span>
+                                                    <span className="text-[10px] font-bold text-green-600 uppercase tracking-tighter">already installed</span>
                                                 )}
                                                 {item.name === 'nginx' && (
                                                     <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60">
@@ -412,10 +437,23 @@ export function StacksStep({
                                 <StackInstallSummary controller={installFlow} />
                             )}
 
-                            <DoneStepDnsCheck 
-                                domain={stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value || ''}
-                                subdomains={stackItems.filter(i => i.checked && !i.alreadyInstalled).flatMap(i => i.subdomains ?? [])}
-                            />
+                            {(() => {
+                                // Match the original (origin/main) selector: surface only
+                                // public-exposure subdomains the operator just deployed,
+                                // skip LAN-only / internal entries the AdGuard rewrite
+                                // path handles separately.
+                                const domain = stackVariables.find(v => v.name === 'PUBLIC_DOMAIN')?.value || '';
+                                const publicSubs = stackVariables.filter(
+                                    v => v.meta?.type === 'subdomain' && v.value && v.meta?.exposure === 'public',
+                                );
+                                if (!domain || publicSubs.length === 0) return null;
+                                return (
+                                    <DoneStepDnsCheck
+                                        domain={domain}
+                                        subdomains={publicSubs.map(sv => `${sv.value}.${domain}`)}
+                                    />
+                                );
+                            })()}
                             
                             <div className="soft-depth rounded-2xl p-5 space-y-4">
                                 {(() => {
@@ -464,6 +502,21 @@ export function StacksStep({
                                     compact
                                 />
                             </div>
+
+                            {/* Final affordance — in stacks-only mode the
+                                wizard terminates here (no welcome→finish
+                                chain), so the done sub-step needs its
+                                own way out. In the verbose flow this
+                                button is owned by the FinishStep. */}
+                            {stacksOnlyMode && (
+                                <div className="flex justify-end pt-2">
+                                    <Button onClick={() => void handleFinish()} className="px-8">
+                                        <CheckCircle className="w-4 h-4 mr-2" />
+                                        Go to Dashboard
+                                        <ArrowRight className="w-4 h-4 ml-2" />
+                                    </Button>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

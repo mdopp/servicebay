@@ -715,6 +715,26 @@ export default function OnboardingWizard() {
   };
 
   const handleBack = () => {
+    // Sub-step navigation within `stacks`: each services/configure step
+    // should rewind one sub-state before popping the outer wizard
+    // history. Without this the footer Back jumps all the way out to
+    // `machine`, which surprised operators in #686 (they clicked Back
+    // expecting to step one stage, got teleported to a different step).
+    if (currentStep === 'stacks') {
+      if (wizardSubStep === 'services') {
+        // services → picker
+        setSelectedStacks([]);
+        setStackItems([]);
+        setWizardSubStep('select');
+        return;
+      }
+      if (wizardSubStep === 'flow') {
+        // configure → services
+        setWizardSubStep('services');
+        return;
+      }
+      // sub-step === 'select' → fall through to the outer pop.
+    }
     const prev = stepHistory[stepHistory.length - 1];
     if (prev) {
         setStepHistory(h => h.slice(0, -1));
@@ -1012,6 +1032,21 @@ export default function OnboardingWizard() {
     await handleExpressInstall();
   };
 
+  // "Install services later" affordance on the stacks/select picker
+  // (#688 — was just "Skip", renamed to be explicit). Closes the wizard
+  // without installing any service; stacksOnlyMode completes the setup
+  // flag (operator chose to defer), the normal flow just advances.
+  const handleStackSkip = async () => {
+    if (stacksOnlyMode) {
+      await completeStackSetup();
+      clearPersistedWizardState();
+      setIsOpen(false);
+      router.refresh();
+    } else {
+      handleNext();
+    }
+  };
+
   if (!isOpen) return null;
 
   const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
@@ -1160,9 +1195,11 @@ export default function OnboardingWizard() {
 
             {(currentStep === 'machine' || currentStep === 'install-confirm') && (
               <MachineStep
+                isExpressMode={currentStep === 'install-confirm'}
                 installMode={installMode}
                 setInstallMode={setInstallMode}
                 publicDomain={publicDomain}
+                setPublicDomain={setPublicDomain}
                 operatorEmail={operatorEmail}
                 setOperatorEmail={setOperatorEmail}
                 isValidOperatorEmail={isValidOperatorEmail}
@@ -1199,6 +1236,9 @@ export default function OnboardingWizard() {
                 installingNow={installingNow}
                 diagnoseProbes={diagnoseProbes}
                 diagnoseRunning={diagnoseRunning}
+                handleStackSkip={handleStackSkip}
+                stacksOnlyMode={stacksOnlyMode}
+                handleFinish={handleFinish}
                 SERVICE_DEPS={SERVICE_DEPS}
                 stackDeviceOptions={stackDeviceOptions}
                 stackLoadingDevices={stackLoadingDevices}
