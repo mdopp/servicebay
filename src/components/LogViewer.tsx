@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Download, ChevronRight, ChevronDown, Info, Settings, Copy, Pause, Play } from 'lucide-react';
+import { RefreshCw, Download, ChevronRight, ChevronDown, Info, Settings, Copy, Pause, Play, ListFilter } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
@@ -51,6 +51,25 @@ const LEVEL_STYLES: Record<LogLevel, { label: string; accent: string; runId: str
 };
 
 const RUN_ID_PREFIX_REGEX = /^\[([A-Za-z0-9:-]+)\]\s+([\s\S]*)$/;
+
+// Lifecycle-keyword allowlist for Summary mode (#728). A log line
+// passes the summary filter if its level is warn/error OR its
+// message matches one of these patterns. The list is intentionally
+// short — the goal is "what changed?", not "everything that might
+// matter someday" — and biased toward state transitions the operator
+// can map back to a UI affordance.
+const SUMMARY_LIFECYCLE_RE = new RegExp(
+  [
+    'deployed', 'undeployed', 'restarted', 'crashed', 'started', 'stopped',
+    'created', 'removed', 'installed', 'uninstalled', 'enabled', 'disabled',
+    'pulled', 'pulling', 'downloading', 'self.?heal', 'self.?healed',
+    'reconciled', 'provisioned', 'configured', 'bootstrap', 'wizard',
+    'failure', 'aborted', 'healthy', 'unhealthy', 'login', 'logged',
+  ].join('|'),
+  'i',
+);
+
+const SUMMARY_EMOJI_RE = /[✅⚠️❌🔄ℹ️🔐]/;
 
 const stripRunIdPrefix = (message: string) => {
   const match = message.match(RUN_ID_PREFIX_REGEX);
@@ -202,6 +221,13 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
     limit: 100
   });
   const [livePaused, setLivePaused] = useState(false);
+  // Summary mode (#728): collapses the firehose to lifecycle-only
+  // events. Drops debug + info noise unless the message matches a
+  // small allowlist of meaningful state transitions (deployed /
+  // started / healthy / failed / restart / installed). Errors and
+  // warnings always pass through. The raw filter remains the default
+  // so deep debugging is one click away.
+  const [summaryMode, setSummaryMode] = useState(false);
 
   const { socket, isConnected } = useSocket();
   const { addToast } = useToast();
@@ -459,6 +485,20 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
               </Link>
 
               <button
+                onClick={() => setSummaryMode(s => !s)}
+                className={`inline-flex items-center gap-2 px-3 text-xs ${baseButtonClass} ${
+                  summaryMode ? 'border-blue-500 text-blue-600 dark:text-blue-300' : ''
+                }`}
+                title={summaryMode
+                  ? 'Summary mode: showing lifecycle events + warnings/errors only. Click to see raw logs.'
+                  : 'Switch to summary mode (lifecycle events + warnings/errors only).'}
+                aria-pressed={summaryMode}
+              >
+                <ListFilter className="w-3 h-3" />
+                <span>{summaryMode ? 'Summary' : 'Raw'}</span>
+              </button>
+
+              <button
                 onClick={handleRefresh}
                 disabled={loading || selectedDate === 'live'}
                 className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
@@ -532,7 +572,14 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
           </div>
         )}
 
-        {logs.map((log) => {
+        {logs
+          .filter((log) => {
+            if (!summaryMode) return true;
+            if (log.level === 'warn' || log.level === 'error') return true;
+            if (SUMMARY_EMOJI_RE.test(log.message)) return true;
+            return SUMMARY_LIFECYCLE_RE.test(log.message);
+          })
+          .map((log) => {
           const { runId: prefixRunId, strippedMessage } = stripRunIdPrefix(log.message);
           const jsonRunId = prefixRunId ? undefined : extractRunIdFromJson(log.message);
           const effectiveRunId = prefixRunId || jsonRunId;

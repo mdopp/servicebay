@@ -93,6 +93,14 @@ export interface UseStackInstallReturn {
   variables: StackVariable[];
   logs: string[];
   installingNow: string | null;
+  /**
+   * Names of services the runner has already deployed in this job.
+   * Driven by `JobState.progress.deployedNames` — the wizard's stack
+   * status panel diffs this against the checked `items[]` to render
+   * per-stack state (queued / installing / done) without parsing the
+   * log (#732).
+   */
+  deployedNames: string[];
   credentialsManifest: Credential[];
   npmCredPrompt: boolean;
   /** Pre-fill values for the NPM-credentials prompt — usually the
@@ -274,6 +282,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const [variables, setVariables] = useState<StackVariable[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [installingNow, setInstallingNow] = useState<string | null>(null);
+  const [deployedNames, setDeployedNames] = useState<string[]>([]);
   const [credentialsManifest, setCredentialsManifest] = useState<Credential[]>([]);
   const [npmCredPrompt, setNpmCredPrompt] = useState(false);
   const [npmCredFallback, setNpmCredFallback] = useState<{ email: string; password: string }>({ email: '', password: '' });
@@ -307,6 +316,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const applyJobState = useCallback((state: RemoteJobState) => {
     setPhase(mapPhase(state.phase));
     setInstallingNow(state.progress?.currentItem ?? null);
+    setDeployedNames(state.progress?.deployedNames ?? []);
     if (state.credentialsManifest) setCredentialsManifest(state.credentialsManifest);
     setError(state.phase === 'aborted' || state.phase === 'crashed' || state.phase === 'error'
       ? state.error ?? 'Install failed.'
@@ -325,6 +335,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     setVariables([]);
     setLogs([]);
     setInstallingNow(null);
+    setDeployedNames([]);
     setCredentialsManifest([]);
     setNpmCredPrompt(false);
     setNpmCredFallback({ email: '', password: '' });
@@ -806,6 +817,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     variables,
     logs,
     installingNow,
+    deployedNames,
     credentialsManifest,
     npmCredPrompt,
     npmCredFallback,

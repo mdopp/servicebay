@@ -22,7 +22,12 @@ export interface OnboardingStatus {
    * server flips its jobs to phase=crashed on next boot, so this never
    * stays stuck on a dead install.
    */
-  installInProgress: { jobId: string; startedAt: string; source?: string } | null;
+  /**
+   * `updatedAt` is the last time the install runner wrote to the job
+   * state (or appended a log line) — the wizard uses it to decide
+   * whether a job is making progress or has stalled (#727).
+   */
+  installInProgress: { jobId: string; startedAt: string; updatedAt: string; source?: string } | null;
   features: {
     gateway: boolean;
     ssh: boolean;
@@ -69,7 +74,12 @@ export async function checkOnboardingStatus(): Promise<OnboardingStatus> {
 
   const activeJob = await getCurrentJob();
   const installInProgress = activeJob
-    ? { jobId: activeJob.id, startedAt: activeJob.startedAt, source: activeJob.source }
+    ? {
+        jobId: activeJob.id,
+        startedAt: activeJob.startedAt,
+        updatedAt: activeJob.updatedAt,
+        source: activeJob.source,
+      }
     : null;
 
   return {
