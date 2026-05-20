@@ -35,3 +35,33 @@ export const InstallStatusResponseSchema = z.object({
   logs: z.string().optional(),
   logsOffset: z.number().optional(),
 });
+
+// ---------------------------------------------------------------------------
+// POST /api/install/generate-secret — Phase 2 (#759). Returns a fresh
+// random secret using the same alphabet/length the install flow has
+// used since #19. Optional `length` lets callers override the default
+// 32 (currently nothing does, but keeps the schema flexible).
+// ---------------------------------------------------------------------------
+
+export const GenerateSecretRequestSchema = z.object({
+  length: z.number().int().positive().max(256).optional(),
+});
+
+export const GenerateSecretResponseSchema = z.object({
+  secret: z.string(),
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/templates/parse-dependencies — Phase 2 (#759). Reads the
+// `servicebay.dependencies` annotation from a raw template.yml and
+// returns the dep names. Trivial wrapper over the server-side
+// `readManifestAnnotations` so the FE doesn't have to parse YAML.
+// ---------------------------------------------------------------------------
+
+export const ParseDependenciesRequestSchema = z.object({
+  yaml: z.string(),
+});
+
+export const ParseDependenciesResponseSchema = z.object({
+  dependencies: z.array(z.string()),
+});

@@ -2,7 +2,8 @@
 
 import { RefreshCw } from 'lucide-react';
 import type { VariableMeta } from '@/lib/registry';
-import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
+import { typedFetch } from '@/contracts/client';
+import { GenerateSecretResponseSchema } from '@/contracts/install';
 
 interface StackVariable {
   name: string;
@@ -225,7 +226,24 @@ export default function StackVariableField({
         />
         <button
           type="button"
-          onClick={() => onChange(generateRandomSecret())}
+          onClick={async () => {
+            try {
+              const { secret } = await typedFetch(
+                '/api/install/generate-secret',
+                GenerateSecretResponseSchema,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({}),
+                },
+              );
+              onChange(secret);
+            } catch {
+              // If the server is unreachable mid-edit the operator can
+              // still type a value manually; swallowing keeps the form
+              // responsive instead of throwing into React.
+            }
+          }}
           className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
           title="Regenerate"
         >

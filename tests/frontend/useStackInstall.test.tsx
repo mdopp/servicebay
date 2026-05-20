@@ -48,16 +48,33 @@ import { useStackInstall } from '@/hooks/useStackInstall';
  * handler returns either `{ ok, jsonBody }` for a plain JSON response
  * or `{ ok, streamLines }` for an NDJSON stream.
  */
+// Built-in defaults for endpoints the hook calls during configure
+// (#759 — Phase 2 moved secret generation and dep parsing server-side).
+// Tests that don't override these get the same behaviour the FE used
+// to have inline: a 32-char alnum secret + an empty deps list.
+function makeRandomSecret(): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+type FetchMockResult = {
+  ok?: boolean;
+  status?: number;
+  jsonBody?: any;
+  streamLines?: string[];
+};
+
+const PHASE2_DEFAULTS: Record<string, () => FetchMockResult> = {
+  '/api/install/generate-secret': () => ({ jsonBody: { secret: makeRandomSecret() } }),
+  '/api/templates/parse-dependencies': () => ({ jsonBody: { dependencies: [] } }),
+};
+
 function buildFetchMock(
-  handlers: Record<string, (init?: RequestInit) => {
-    ok?: boolean;
-    status?: number;
-    jsonBody?: any;
-    streamLines?: string[];
-  }>,
+  handlers: Record<string, (init?: RequestInit) => FetchMockResult>,
 ) {
+  const merged = { ...PHASE2_DEFAULTS, ...handlers };
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-    for (const [prefix, handler] of Object.entries(handlers)) {
+    for (const [prefix, handler] of Object.entries(merged)) {
       if (url.startsWith(prefix) || url.includes(prefix)) {
         const result = handler(init);
         const ok = result.ok ?? true;

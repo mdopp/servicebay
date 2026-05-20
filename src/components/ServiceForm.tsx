@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import yaml from 'js-yaml';
-import { humanizeYamlError, type HumanizedYamlError } from '@/lib/util/humanizeYamlError';
+import { type HumanizedYamlError } from '@/lib/util/humanizeYamlError';
+import { typedFetch } from '@/contracts/client';
+import { ValidateYamlResponseSchema } from '@/contracts/services';
 import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2, RefreshCw } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
@@ -215,17 +216,50 @@ WantedBy=default.target`;
     }
   };
 
+  // Server-side YAML validation. Phase 2 of the FE/BE separation
+  // (#759) — the form no longer imports `js-yaml`. Returns the parsed
+  // manifest on success and null on parse / transport failure (the
+  // error state is set as a side effect so the editor's error UI lights
+  // up either way).
+  const validateYaml = useCallback(async (content: string): Promise<KubeDoc | null> => {
+    try {
+      const result = await typedFetch(
+        '/api/services/validate-yaml',
+        ValidateYamlResponseSchema,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ yaml: content }),
+        },
+      );
+      if (result.ok) {
+        const manifest = result.manifest as KubeDoc;
+        extractInfo(manifest);
+        setYamlError(null);
+        return manifest;
+      }
+      setYamlError(result.error);
+      setExtractedPorts([]);
+      setExtractedVolumes([]);
+      return null;
+    } catch (e) {
+      setYamlError({
+        message: e instanceof Error ? e.message : 'Validation request failed',
+        raw: String(e),
+      });
+      setExtractedPorts([]);
+      setExtractedVolumes([]);
+      return null;
+    }
+  }, []);
+
   const handleYamlChange = (content: string) => {
     setYamlContent(content);
     setYamlError(null);
-
-    try {
-      const parsed = yaml.load(content) as KubeDoc;
-      extractInfo(parsed);
-      
-      if (!isEdit && parsed && parsed.metadata && parsed.metadata.name) {
+    void (async () => {
+      const parsed = await validateYaml(content);
+      if (parsed && !isEdit && parsed.metadata && parsed.metadata.name) {
         const extractedName = parsed.metadata.name;
-        
         if (!name || name === extractedName) {
           setName(extractedName);
           const newFileName = `${extractedName}.yml`;
@@ -233,21 +267,20 @@ WantedBy=default.target`;
           setKubeContent(generateKubeContent(newFileName, autoUpdate, description));
         }
       }
-    } catch (e) {
-      setYamlError(humanizeYamlError(e));
-      setExtractedPorts([]);
-      setExtractedVolumes([]);
-    }
+    })();
   };
 
   useEffect(() => {
-    if (initialData?.yamlContent) {
-        try {
-            const parsed = yaml.load(initialData.yamlContent) as KubeDoc;
-            extractInfo(parsed);
-        } catch {}
-    }
-  }, [initialData]);
+    if (!initialData?.yamlContent) return;
+    let cancelled = false;
+    void (async () => {
+      const parsed = await validateYaml(initialData.yamlContent);
+      if (cancelled || !parsed) return;
+      // extractInfo already fired inside validateYaml on the success path;
+      // nothing more to do here.
+    })();
+    return () => { cancelled = true; };
+  }, [initialData, validateYaml]);
 
   useEffect(() => {
     if (name && yamlFileName) {
@@ -740,14 +773,7 @@ WantedBy=default.target`;
                     onRestore={(content) => {
                         setYamlContent(content);
                         setActiveTab('yaml');
-                        // Trigger validation/extraction logic
-                        try {
-                            const parsed = yaml.load(content) as KubeDoc;
-                            extractInfo(parsed);
-                            setYamlError(null);
-                        } catch (e) {
-                            setYamlError(humanizeYamlError(e));
-                        }
+                        void validateYaml(content);
                     }}
                 />
             )}

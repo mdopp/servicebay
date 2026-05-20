@@ -107,16 +107,16 @@ These are enforced as depcruise rules:
 
 ### Frontend ↔ Backend boundary (#753)
 
-Three ratcheted counts pin how much server-side logic still lives in the frontend. Each one is expected to go **down** as the FE/BE split phases land — never up.
+Three ratcheted counts pin how much server-side logic still lives in the frontend. **All three are capped at 0** as of Phase 2 (#759) — every cross-boundary violation now fails CI. Phase 3 hardens this from a count into a workspace boundary.
 
-- `fe-template-lib-imports` — `js-yaml` / `mustache` imports in `src/components`, `src/hooks`, `src/dashboards`. Currently capped at 1 (the `js-yaml` import in `ServiceForm.tsx` for live editor feedback). Phase 2 routes YAML through `POST /api/services/validate-yaml`.
-- `fe-backend-imports` — imports of `@/lib/install`, `@/lib/agent`, `@/lib/diagnose` from the same dirs. **Capped at 0** as of Phase 1 (#756). The `sb/no-fe-backend-import` ESLint rule enforces the same boundary at edit-time. Phase 3 will move this from a count to a workspace boundary.
-- `fe-install-helpers` — references to `generateRandomSecret` / `parseTemplateDependencies` in the same dirs. Currently capped at 6 (across `useStackInstall.ts` + `StackVariableField.tsx`). Phase 2 moves these into `POST /api/install/configure`.
+- `fe-template-lib-imports` — `js-yaml` / `mustache` imports in `src/components`, `src/hooks`, `src/dashboards`. **Capped at 0** as of Phase 2 (#759); `ServiceForm` validates YAML via `POST /api/services/validate-yaml`.
+- `fe-backend-imports` — imports of `@/lib/install`, `@/lib/agent`, `@/lib/diagnose` from the same dirs. **Capped at 0** as of Phase 1 (#756). The `sb/no-fe-backend-import` ESLint rule enforces the same boundary at edit-time.
+- `fe-install-helpers` — references to `generateRandomSecret` / `parseTemplateDependencies` in the same dirs. **Capped at 0** as of Phase 2 (#759); `useStackInstall` + `StackVariableField` now POST to `/api/install/generate-secret` and `/api/templates/parse-dependencies`.
 
 Frontend code reaches the backend exclusively through:
-- `@/contracts/*` — typed seam. Types + zod schemas live here; `@/contracts/client.ts` wraps `fetch` with schema validation. Phase 1 (#756) stood up the seam.
+- `@/contracts/*` — typed seam. Types + zod schemas live here; `@/contracts/client.ts` wraps `fetch` with schema validation.
 - `@/app/actions/*` — server actions, already typed.
-- Direct `fetch('/api/...')` is grandfathered for the ~80 existing call sites; Phase 2 migrates them onto `typedFetch`.
+- Direct `fetch('/api/...')` is grandfathered for legacy call sites; new code uses `typedFetch`.
 
 ---
 

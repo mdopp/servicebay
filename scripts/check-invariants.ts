@@ -242,9 +242,9 @@ async function checkTwinFanIn() {
 // documented decision (#753 thread).
 // ---------------------------------------------------------------------------
 const FE_DIRS = ['components', 'hooks', 'dashboards'];
-const FE_TEMPLATE_LIB_MAX = 1;     // js-yaml + mustache imports from FE
+const FE_TEMPLATE_LIB_MAX = 0;     // js-yaml + mustache imports from FE — Phase 2 (#759) routed ServiceForm through POST /api/services/validate-yaml
 const FE_BACKEND_IMPORT_MAX = 0;   // imports of @/lib/{install,agent,diagnose} from FE — Phase 1 (#756) routed them through @/contracts; sb/no-fe-backend-import now enforces editor-time
-const FE_INSTALL_HELPER_MAX = 6;   // generateRandomSecret + parseTemplateDependencies refs from FE
+const FE_INSTALL_HELPER_MAX = 0;   // generateRandomSecret + parseTemplateDependencies refs from FE — Phase 2 (#759) routed them through /api/install/generate-secret + /api/templates/parse-dependencies
 
 const inFeDir = (file: string): boolean =>
     FE_DIRS.some(d => file.includes(`${path.sep}src${path.sep}${d}${path.sep}`));
