@@ -105,18 +105,18 @@ These are enforced as depcruise rules:
 - **One renderer** — all Mustache rendering goes through `src/lib/template/render.ts` (post-#599). `install/runner.ts` and the `stackInstall/` family still import `mustache` directly and are exempt for the moment; the next ratchet step migrates them to the shared helper too.
 - **One Digital Twin store** — singleton via `DigitalTwinStore.getInstance()`. Fan-in cap enforced by `check-invariants.ts`.
 
-### Frontend ↔ Backend boundary (Phase 0 of #753)
+### Frontend ↔ Backend boundary (#753)
 
 Three ratcheted counts pin how much server-side logic still lives in the frontend. Each one is expected to go **down** as the FE/BE split phases land — never up.
 
 - `fe-template-lib-imports` — `js-yaml` / `mustache` imports in `src/components`, `src/hooks`, `src/dashboards`. Currently capped at 1 (the `js-yaml` import in `ServiceForm.tsx` for live editor feedback). Phase 2 routes YAML through `POST /api/services/validate-yaml`.
-- `fe-backend-imports` — imports of `@/lib/install`, `@/lib/agent`, `@/lib/diagnose` from the same dirs. Currently capped at 7. Phase 1 stands up `src/contracts/` as the typed seam; Phase 3 enforces direction via workspace boundaries.
+- `fe-backend-imports` — imports of `@/lib/install`, `@/lib/agent`, `@/lib/diagnose` from the same dirs. **Capped at 0** as of Phase 1 (#756). The `sb/no-fe-backend-import` ESLint rule enforces the same boundary at edit-time. Phase 3 will move this from a count to a workspace boundary.
 - `fe-install-helpers` — references to `generateRandomSecret` / `parseTemplateDependencies` in the same dirs. Currently capped at 6 (across `useStackInstall.ts` + `StackVariableField.tsx`). Phase 2 moves these into `POST /api/install/configure`.
 
-Frontend code should reach the backend exclusively through:
-- `@/contracts/*` (once Phase 1 lands), or
-- `@/app/actions/*` (server actions — already typed), or
-- typed REST/WebSocket calls through the same contracts surface.
+Frontend code reaches the backend exclusively through:
+- `@/contracts/*` — typed seam. Types + zod schemas live here; `@/contracts/client.ts` wraps `fetch` with schema validation. Phase 1 (#756) stood up the seam.
+- `@/app/actions/*` — server actions, already typed.
+- Direct `fetch('/api/...')` is grandfathered for the ~80 existing call sites; Phase 2 migrates them onto `typedFetch`.
 
 ---
 

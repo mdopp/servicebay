@@ -6,7 +6,7 @@ import unusedImports from "eslint-plugin-unused-imports";
 // ---------------------------------------------------------------------------
 // Custom ServiceBay rules.
 //
-// Two rules, both architecture-doc-derived (see docs/ARCHITECTURE_INVARIANTS.md):
+// Three rules, all architecture-doc-derived (see docs/ARCHITECTURE_INVARIANTS.md):
 //   - `sb/no-exec-template-literal` — bans `executor.exec(`…${x}…`)` in
 //     favor of `executor.execArgv([...])`. Mirrors the semgrep rule for
 //     IDE-time feedback; the aggregate count is enforced by
@@ -15,6 +15,11 @@ import unusedImports from "eslint-plugin-unused-imports";
 //     a verb handler without using `withApiHandler` from
 //     `@/lib/api/handler`. Soft warning for new routes; the adoption
 //     ratio floor is enforced by scripts/check-invariants.ts.
+//   - `sb/no-fe-backend-import` — bans frontend files (under
+//     `src/components/**`, `src/hooks/**`, `src/dashboards/**`) from
+//     importing `@/lib/install/**`, `@/lib/agent/**`, or
+//     `@/lib/diagnose/**`. They route through `@/contracts/*` instead.
+//     Phase 1 of the FE/BE separation (#753).
 // ---------------------------------------------------------------------------
 const servicebayPlugin = {
   rules: {
@@ -137,6 +142,43 @@ const servicebayPlugin = {
         };
       },
     },
+    "no-fe-backend-import": {
+      meta: {
+        type: "problem",
+        docs: {
+          description:
+            "Frontend files must not import from server-side modules (@/lib/install, @/lib/agent, @/lib/diagnose). Go through @/contracts/* instead.",
+        },
+        schema: [],
+        messages: {
+          forbidden:
+            "Frontend files (src/components, src/hooks, src/dashboards) cannot import from {{path}}. Use @/contracts/* instead. See docs/ARCHITECTURE_INVARIANTS.md § fe-be-boundary.",
+        },
+      },
+      create(context) {
+        const filename = context.filename ?? context.getFilename();
+        if (
+          !/[\\/]src[\\/](components|hooks|dashboards)[\\/]/.test(filename)
+        ) {
+          return {};
+        }
+        return {
+          ImportDeclaration(node) {
+            const source = node.source.value;
+            if (typeof source !== "string") return;
+            if (
+              /^@\/lib\/(install|agent|diagnose)(\/|$)/.test(source)
+            ) {
+              context.report({
+                node: node.source,
+                messageId: "forbidden",
+                data: { path: source },
+              });
+            }
+          },
+        };
+      },
+    },
   },
 };
 
@@ -164,6 +206,11 @@ const eslintConfig = defineConfig([
       // Soft warning — the architecture-invariants script enforces the
       // adoption ratio. This rule nudges new authors in their editor.
       "sb/api-route-needs-handler": "warn",
+      // Phase 1 of the FE/BE separation (#753). The fe-backend-imports
+      // baseline was dropped to 0 in the same PR that lands this rule
+      // — any new violation fails CI both via the rule and via
+      // scripts/check-invariants.ts.
+      "sb/no-fe-backend-import": "error",
       // Maintainability thresholds (#724). Several core modules
       // currently exceed these — flagging them as warn (not error) so
       // CI doesn't break on legacy files while the rule still surfaces

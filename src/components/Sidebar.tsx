@@ -6,6 +6,8 @@ import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import pkg from '../../package.json';
+import { typedFetch } from '@/contracts/client';
+import { InstallStatusResponseSchema } from '@/contracts/install';
 
 export const dashboards = [
     { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },
@@ -62,18 +64,14 @@ export default function Sidebar() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const res = await fetch('/api/install/status', { cache: 'no-store' });
-        if (!res.ok) return;
-        const data = await res.json() as {
-          job: { phase?: string } | null;
-          jobIsActive?: boolean;
-          stackSetupPending?: boolean;
-        };
-        if (cancelled) return;
-        setHasActiveInstall(
-          Boolean(data.jobIsActive) || Boolean(data.stackSetupPending),
+        const data = await typedFetch(
+          '/api/install/status',
+          InstallStatusResponseSchema,
+          { cache: 'no-store' },
         );
-      } catch { /* offline / mid-redeploy — keep the previous value */ }
+        if (cancelled) return;
+        setHasActiveInstall(data.jobIsActive || data.stackSetupPending);
+      } catch { /* offline / mid-redeploy / schema drift — keep the previous value */ }
     };
     void tick();
     const handle = setInterval(tick, 5000);
