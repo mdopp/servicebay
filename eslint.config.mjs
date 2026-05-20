@@ -164,6 +164,24 @@ const eslintConfig = defineConfig([
       // Soft warning — the architecture-invariants script enforces the
       // adoption ratio. This rule nudges new authors in their editor.
       "sb/api-route-needs-handler": "warn",
+      // Maintainability thresholds (#724). Several core modules
+      // currently exceed these — flagging them as warn (not error) so
+      // CI doesn't break on legacy files while the rule still surfaces
+      // every new violation in the editor. The architecture-invariants
+      // script (scripts/check-invariants.ts) is the right place to
+      // enforce a ratchet count when we want forward-only pressure.
+      //
+      // Thresholds chosen to match the issue body:
+      //   - File:    800 lines (skipBlankLines/skipComments so doc-
+      //              dense files aren't punished)
+      //   - Function: 50 lines
+      //   - Complexity: 15
+      "max-lines": ["warn", { max: 800, skipBlankLines: true, skipComments: true }],
+      "max-lines-per-function": [
+        "warn",
+        { max: 50, skipBlankLines: true, skipComments: true, IIFEs: false },
+      ],
+      "complexity": ["warn", { max: 15 }],
     },
   },
   // All 5 ratchet-exempted files swept clean in #602 — the rule is now
