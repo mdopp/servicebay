@@ -4,7 +4,7 @@
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { EnrichedContainer } from '@/lib/agent/types';
+import type { EnrichedContainer } from '@/contracts/agent';
 
 interface ContainerItem extends Partial<EnrichedContainer> {
   // Allow partial for legacy passed props, but prefer EnrichedContainer shape

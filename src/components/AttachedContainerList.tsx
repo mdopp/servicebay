@@ -1,7 +1,7 @@
 'use client';
 
 import { Activity, MoreVertical, Terminal as TerminalIcon } from 'lucide-react';
-import { EnrichedContainer } from '@/lib/agent/types';
+import type { EnrichedContainer } from '@/contracts/agent';
 
 interface AttachedContainerListProps {
   containers?: EnrichedContainer[];

@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
 import dynamic from 'next/dynamic';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import { PortMapping, EnrichedContainer, ServiceUnit } from '@/lib/agent/types';
+import type { PortMapping, EnrichedContainer, ServiceUnit } from '@/contracts/agent';
 import { NetworkGraph } from '@/lib/network/types'; 
 import { buildServiceViewModel } from '@/lib/services/serviceViewModel';
 import type { ServiceViewModel } from '@/types/serviceView';

@@ -243,7 +243,7 @@ async function checkTwinFanIn() {
 // ---------------------------------------------------------------------------
 const FE_DIRS = ['components', 'hooks', 'dashboards'];
 const FE_TEMPLATE_LIB_MAX = 1;     // js-yaml + mustache imports from FE
-const FE_BACKEND_IMPORT_MAX = 7;   // imports of @/lib/{install,agent,diagnose} from FE
+const FE_BACKEND_IMPORT_MAX = 0;   // imports of @/lib/{install,agent,diagnose} from FE — Phase 1 (#756) routed them through @/contracts; sb/no-fe-backend-import now enforces editor-time
 const FE_INSTALL_HELPER_MAX = 6;   // generateRandomSecret + parseTemplateDependencies refs from FE
 
 const inFeDir = (file: string): boolean =>

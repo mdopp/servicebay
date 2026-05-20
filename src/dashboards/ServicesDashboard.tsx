@@ -24,7 +24,7 @@ import { buildServiceViewModel } from '@/lib/services/serviceViewModel';
 import { ServiceViewModel, ServicePort } from '@/types/serviceView';
 import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
 import type { TerminalRef } from '@/components/Terminal';
-import { EnrichedContainer } from '@/lib/agent/types';
+import type { EnrichedContainer } from '@/contracts/agent';
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.

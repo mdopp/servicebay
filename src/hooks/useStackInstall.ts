@@ -42,7 +42,7 @@ import { parseTemplateLabel } from '@/lib/templateLabel';
 import { type Credential } from '@/lib/stackInstall/credentialsManifest';
 import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { parseTemplateDependencies } from '@/lib/stackInstall/dependencies';
-import type { JobState as RemoteJobState } from '@/lib/install/jobStore';
+import type { JobState as RemoteJobState } from '@/contracts/install';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
 
