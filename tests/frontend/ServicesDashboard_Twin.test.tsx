@@ -16,8 +16,15 @@ vi.mock('../../src/providers/ToastProvider', () => ({
   useToast: () => ({ addToast: vi.fn(), updateToast: vi.fn() }),
 }));
 
-// Mock Digital Twin Hook
-const mockUseDigitalTwin = vi.fn();
+// Mock Digital Twin Hook. `isNodeSynced` is provided by default —
+// individual tests can override `mockUseDigitalTwin` to return a
+// different shape if they need to exercise the hydration gate.
+const mockUseDigitalTwin = vi.fn(() => ({
+    data: null,
+    isConnected: true,
+    lastUpdate: 0,
+    isNodeSynced: () => true,
+}));
 vi.mock('../../src/hooks/useDigitalTwin', () => ({
     useDigitalTwin: () => mockUseDigitalTwin()
 }));
@@ -90,7 +97,8 @@ describe('ServicesDashboard E2E Data Rendering', () => {
         mockUseDigitalTwin.mockReturnValue({
             data: mockSnapshot,
             isConnected: true,
-            lastUpdate: Date.now()
+            lastUpdate: Date.now(),
+            isNodeSynced: () => true,
         });
 
         render(<ServicesDashboard />);
@@ -140,11 +148,13 @@ describe('ServicesDashboard E2E Data Rendering', () => {
 
         mockUseDigitalTwin.mockReturnValue({
             data: mockSnapshot,
-            isConnected: true
+            isConnected: true,
+            lastUpdate: Date.now(),
+            isNodeSynced: () => true,
         });
 
         render(<ServicesDashboard />);
-        
+
         expect(await screen.findByText('broken-service')).toBeDefined();
         // Should not crash, maybe show "-" or empty space
         // We just ensure it renders.

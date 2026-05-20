@@ -56,7 +56,10 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
   useDigitalTwin: () => ({
     data: currentMockData,
     isConnected: true,
-    lastUpdate: Date.now()
+    lastUpdate: Date.now(),
+    // Mirrors the provider's getter; tests render past the
+    // hydration gate so we report synced.
+    isNodeSynced: () => true,
   })
 }));
 
