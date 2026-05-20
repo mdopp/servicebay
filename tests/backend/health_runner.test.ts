@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { CheckRunner } from '../../src/lib/health/runner';
-import { HealthStore } from '../../src/lib/health/store';
-import { CheckConfig } from '../../src/lib/health/types';
+import { CheckRunner } from '@/lib/health/runner';
+import { HealthStore } from '@/lib/health/store';
+import { CheckConfig } from '@/lib/health/types';
 
 // Mock dependencies
-vi.mock('../../src/lib/health/store');
-vi.mock('../../src/lib/executor', () => {
+vi.mock('@/lib/health/store');
+vi.mock('@/lib/executor', () => {
     const dispatch = (cmd: string) => {
         if (cmd.includes('failhost')) {
             throw new Error('ping: failhost: Name or service not known');
@@ -28,12 +28,12 @@ vi.mock('../../src/lib/executor', () => {
         })),
     };
 });
-vi.mock('../../src/lib/nodes');
+vi.mock('@/lib/nodes');
 
 // letsdebug client is exercised by its own unit tests; mock here so
 // CheckRunner.run('letsdebug', ...) returns a known shape without any
 // network calls.
-vi.mock('../../src/lib/letsdebug/client', () => ({
+vi.mock('@/lib/letsdebug/client', () => ({
     runLetsdebugForDomain: vi.fn(async (domain: string) => {
         if (domain === 'fatal.example.com') {
             return {

@@ -2,37 +2,37 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NetworkService } from '../../src/lib/network/service';
-import { getExecutor } from '../../src/lib/executor';
-import { getConfig } from '../../src/lib/config';
-import { listNodes } from '../../src/lib/nodes';
-import { ServiceManager } from '../../src/lib/services/ServiceManager';
+import { NetworkService } from '@/lib/network/service';
+import { getExecutor } from '@/lib/executor';
+import { getConfig } from '@/lib/config';
+import { listNodes } from '@/lib/nodes';
+import { ServiceManager } from '@/lib/services/ServiceManager';
 
 // Mock dependencies
-vi.mock('../../src/lib/executor', () => ({
+vi.mock('@/lib/executor', () => ({
     getExecutor: vi.fn(),
 }));
 
-vi.mock('../../src/lib/config', () => ({
+vi.mock('@/lib/config', () => ({
     getConfig: vi.fn(),
     saveConfig: vi.fn(),
     SSH_DIR: '/tmp',
     DATA_DIR: '/tmp'
 }));
 
-vi.mock('../../src/lib/nodes', () => ({
+vi.mock('@/lib/nodes', () => ({
     listNodes: vi.fn(),
     PodmanConnection: {}
 }));
 
-vi.mock('../../src/lib/services/ServiceManager', () => ({
+vi.mock('@/lib/services/ServiceManager', () => ({
     ServiceManager: {
         listServices: vi.fn(),
     }
 }));
 
 // Mock Monitoring Store
-vi.mock('../../src/lib/health/store', () => ({
+vi.mock('@/lib/health/store', () => ({
     HealthStore: {
         getChecks: vi.fn().mockReturnValue([]),
         getLastResult: vi.fn()

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validatePodManifest } from '../../src/lib/services/podSchema';
+import { validatePodManifest } from '@/lib/services/podSchema';
 
 const VALID = `
 apiVersion: v1

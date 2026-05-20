@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CharRingBuffer } from '../../src/lib/util/ringBuffer';
+import { CharRingBuffer } from '@/lib/util/ringBuffer';
 
 describe('CharRingBuffer', () => {
   it('accumulates short writes', () => {

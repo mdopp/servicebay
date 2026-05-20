@@ -8,31 +8,31 @@ beforeAll(() => {
 
 describe('readSessionCookie', () => {
   it('returns null for missing header', async () => {
-    const { readSessionCookie } = await import('../../src/lib/auth');
+    const { readSessionCookie } = await import('@/lib/auth');
     expect(readSessionCookie(undefined)).toBeNull();
     expect(readSessionCookie('')).toBeNull();
   });
 
   it('extracts the session cookie from a multi-cookie header', async () => {
-    const { readSessionCookie } = await import('../../src/lib/auth');
+    const { readSessionCookie } = await import('@/lib/auth');
     expect(readSessionCookie('foo=bar; session=abc.def.ghi; baz=qux'))
       .toBe('abc.def.ghi');
   });
 
   it('returns null when no session cookie present', async () => {
-    const { readSessionCookie } = await import('../../src/lib/auth');
+    const { readSessionCookie } = await import('@/lib/auth');
     expect(readSessionCookie('foo=bar; baz=qux')).toBeNull();
   });
 });
 
 describe('getSessionFromCookieHeader', () => {
   it('rejects unsigned/garbage tokens', async () => {
-    const { getSessionFromCookieHeader } = await import('../../src/lib/auth');
+    const { getSessionFromCookieHeader } = await import('@/lib/auth');
     expect(await getSessionFromCookieHeader('session=garbage')).toBeNull();
   });
 
   it('round-trips a session payload through decrypt', async () => {
-    const auth = await import('../../src/lib/auth');
+    const auth = await import('@/lib/auth');
     const { SignJWT } = await import('jose');
     const key = new Uint8Array(Buffer.from(process.env.AUTH_SECRET!, 'utf-8'));
     const token = await new SignJWT({ user: 'admin' })

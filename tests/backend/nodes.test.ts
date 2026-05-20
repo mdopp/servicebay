@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { addNode, listNodes } from '../../src/lib/nodes';
-import { verifyNodeConnection } from '../../src/lib/nodes/verify';
+import { addNode, listNodes } from '@/lib/nodes';
+import { verifyNodeConnection } from '@/lib/nodes/verify';
 import fs from 'fs/promises';
-import { getExecutor } from '../../src/lib/executor';
+import { getExecutor } from '@/lib/executor';
 
 vi.mock('fs/promises', () => ({
     default: {
@@ -15,13 +15,13 @@ vi.mock('fs/promises', () => ({
 // nodes.ts uses atomicWriteFile (#fix/nodes-race) for crash-safety;
 // for these unit tests we route it back to the existing fs.writeFile
 // mock so the existing assertions still observe the call.
-vi.mock('../../src/lib/util/atomicWrite', () => ({
+vi.mock('@/lib/util/atomicWrite', () => ({
     atomicWriteFile: vi.fn(async (...args: unknown[]) => {
         const { default: mockedFs } = await import('fs/promises');
         return (mockedFs.writeFile as unknown as (...a: unknown[]) => Promise<void>)(...args);
     }),
 }));
-vi.mock('../../src/lib/executor', () => ({
+vi.mock('@/lib/executor', () => ({
   SSHExecutor: vi.fn(),
   getExecutor: vi.fn()
 }));

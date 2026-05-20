@@ -8,8 +8,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { humanizeError } from '../../src/lib/util/humanizeError';
-import { SSHError, AgentTimeoutError } from '../../src/lib/util/domainError';
+import { humanizeError } from '@/lib/util/humanizeError';
+import { SSHError, AgentTimeoutError } from '@/lib/util/domainError';
 
 describe('humanizeError — typed DomainError path (#598)', () => {
   it('routes SSHError(auth) to the "SSH authentication failed" title regardless of message', () => {

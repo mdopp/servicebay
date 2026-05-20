@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { DigitalTwinStore } from '../../src/lib/store/twin';
+import { DigitalTwinStore } from '@/lib/store/twin';
 
 describe('End-to-End Agent Data Flow', () => {
     

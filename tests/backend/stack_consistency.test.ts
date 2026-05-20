@@ -19,7 +19,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, it, expect } from 'vitest';
-import { parseStackManifest, type StackManifest } from '../../src/lib/template/stackContract';
+import { parseStackManifest, type StackManifest } from '@/lib/template/stackContract';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const STACKS_DIR = path.join(REPO_ROOT, 'stacks');

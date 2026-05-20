@@ -107,25 +107,29 @@ These are enforced as depcruise rules:
 
 ### Frontend ↔ Backend boundary (#753)
 
-The boundary started as three numeric ratchets in `scripts/check-invariants.ts`; Phase 3 (#761) is converting them into a structural workspace boundary.
+Enforced **structurally** via the workspace layout as of Phase 3.3 (#764). The three numeric ratchets (`fe-template-lib-imports`, `fe-backend-imports`, `fe-install-helpers`) that watched specific FE→BE leakage points have retired — the workspace boundary makes a forbidden import physically unresolvable, so a count check is redundant.
 
-Current layout:
-- `packages/api-client/` — the typed seam (`@servicebay/api-client`). Types + zod schemas + `typedFetch` helper. Both halves import from this package.
-- `packages/frontend/` — `@servicebay/frontend`. UI: components, hooks, dashboards, providers, types. Lists only `@servicebay/api-client` + UI libs as deps; **zero `@/lib/*` imports**.
-- `src/lib/` + `src/app/api/` — server-side. Phase 3.3 (#764) moves these into `packages/backend/` and retires the numeric ratchets below.
+Layout:
 
-The `sb/no-fe-backend-import` ESLint rule fires on any `@/lib/*` import from `packages/frontend/**` (and the legacy `src/{components,hooks,dashboards}/**` paths, which Phase 3.3 cleans up).
+| Package | Path | Owns | Allowed imports |
+|---|---|---|---|
+| `@servicebay/api-client` | `packages/api-client/` | typed seam: shared types + zod schemas + `typedFetch` helper | `zod` only |
+| `@servicebay/frontend` | `packages/frontend/` | UI: components, hooks, dashboards, providers | `@servicebay/api-client` + UI libs |
+| `@servicebay/backend` | `packages/backend/` | server-side: agent, install, diagnose, network, store, … | `@servicebay/api-client` + runtime deps |
+| (root) | `src/app/`, `server.ts`, `src/proxy.ts` | Next.js framework root: route handlers, server actions, custom server | all three packages |
 
-Legacy numeric ratchets (still in `check-invariants.ts`, vacuous since #763 — retire in #764):
+What enforces what:
 
-- `fe-template-lib-imports` — `js-yaml` / `mustache` in the FE dirs. Capped at 0.
-- `fe-backend-imports` — `@/lib/{install,agent,diagnose}` imports. Capped at 0.
-- `fe-install-helpers` — `generateRandomSecret` / `parseTemplateDependencies` refs. Capped at 0.
+- **Workspace deps** (`package.json#dependencies`): `packages/frontend/package.json` does not list `@servicebay/backend`. A `@servicebay/backend/*` import from frontend would fail to resolve at build time.
+- **tsconfig paths**: `packages/frontend/tsconfig.json` defines a restricted `paths` block — it omits `@/lib/*`, so the legacy path also fails to resolve.
+- **`sb/no-fe-backend-import` ESLint rule**: editor-time signal + defense-in-depth. Catches `@/lib/*` and `@servicebay/backend/*` imports under `packages/frontend/**`.
+- **`depcruise`**: `lib-no-import-app`, `lib-no-import-components`, `lib-no-import-dashboards` rules forbid backend → frontend imports.
 
 Frontend reaches the backend exclusively through:
-- `@servicebay/api-client` — typed seam (default).
-- `@/app/actions/*` — server actions, already typed.
-- Direct `fetch('/api/...')` is grandfathered for legacy call sites; new code uses `typedFetch`.
+
+- `@servicebay/api-client` — typed seam (default for new code).
+- `@/app/actions/*` — server actions, already typed (legacy; new server-action surfaces go through the api-client client + a route handler instead).
+- Direct `fetch('/api/...')` — grandfathered for ~80 legacy call sites; new code uses `typedFetch`.
 
 ---
 

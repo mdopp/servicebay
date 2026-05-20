@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AgentHandler, PullProgressEvent } from '../../src/lib/agent/handler';
+import { AgentHandler, PullProgressEvent } from '@/lib/agent/handler';
 
-vi.mock('../../src/lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
     logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
 }));
 
-vi.mock('../../src/lib/config', () => ({
+vi.mock('@/lib/config', () => ({
     getConfig: vi.fn().mockResolvedValue({})
 }));
 

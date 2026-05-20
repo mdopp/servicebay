@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DigitalTwinStore } from '../../src/lib/store/twin';
+import { DigitalTwinStore } from '@/lib/store/twin';
 
 describe('DigitalTwinStore Robustness', () => {
     let store: DigitalTwinStore;

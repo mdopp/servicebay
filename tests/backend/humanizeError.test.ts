@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { humanizeError } from '../../src/lib/util/humanizeError';
+import { humanizeError } from '@/lib/util/humanizeError';
 
 describe('humanizeError', () => {
     it('returns a fallback for empty input', () => {

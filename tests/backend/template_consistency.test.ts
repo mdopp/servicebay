@@ -31,6 +31,9 @@ import { describe, it, expect } from 'vitest';
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
 const SRC_DIR = path.join(REPO_ROOT, 'src');
+// Phase 3.3 (#764): backend code moved out of src/lib into the workspace
+// package. Tests that grep for source patterns now look here.
+const BACKEND_SRC = path.join(REPO_ROOT, 'packages', 'backend', 'src');
 
 interface TemplateInfo {
   name: string;
@@ -131,7 +134,7 @@ describe('Template ↔ source-name consistency', () => {
 
   it('every template-name string in src/ resolves to an existing template', () => {
     const offenders: { file: string; pattern: string; name: string }[] = [];
-    for (const file of walkSourceFiles(SRC_DIR)) {
+    for (const file of [...walkSourceFiles(SRC_DIR), ...walkSourceFiles(BACKEND_SRC), ...walkSourceFiles(path.join(REPO_ROOT, 'packages', 'frontend', 'src'))]) {
       const content = fs.readFileSync(file, 'utf-8');
       for (const { name: pat, re } of PATTERNS) {
         re.lastIndex = 0;
@@ -194,7 +197,7 @@ describe('Template ↔ source-name consistency', () => {
     // tiers, malformed schema-versions, and the config-mount-required-
     // when-mustache-configs-present rule in one pass. Specific shape
     // violations get their own dedicated tests below.
-    const { parseTemplateManifest } = await import('../../src/lib/template/contract');
+    const { parseTemplateManifest } = await import('@/lib/template/contract');
     const offenders: string[] = [];
     for (const t of templates) {
       const result = parseTemplateManifest(t.yamlContent, {
@@ -465,7 +468,7 @@ describe('ServiceManager.STACK_MIGRATIONS map shape', () => {
   it('keys reference real templates, predecessors are no-longer-existing names', () => {
     // STACK_MIGRATIONS lives in serviceLifecycle.ts since the #589
     // split — ServiceManager.ts is now a facade that re-exports it.
-    const sm = fs.readFileSync(path.join(SRC_DIR, 'lib', 'services', 'serviceLifecycle.ts'), 'utf-8');
+    const sm = fs.readFileSync(path.join(BACKEND_SRC, 'lib', 'services', 'serviceLifecycle.ts'), 'utf-8');
     const block = sm.match(/STACK_MIGRATIONS:\s*Record<string,\s*string\[\]>\s*=\s*\{([\s\S]*?)\n\s*\};/);
     expect(block, 'STACK_MIGRATIONS block not found in serviceLifecycle.ts').toBeTruthy();
 
@@ -510,12 +513,12 @@ describe('OIDC client_id single source of truth', () => {
   // legitimately reference `client_id` as a parameter name, not duplicate
   // the literal value of one.
   const EXEMPT_FILES = new Set<string>([
-    'src/app/api/auth/oidc/route.ts',                // OIDC initiator — clientId comes from config
-    'src/app/api/auth/oidc/callback/route.ts',       // OIDC callback handler
-    'src/app/api/system/authelia/oidc-clients/route.ts', // forwards client.client_id from input
-    'src/lib/registry.ts',                           // type definition
-    'src/lib/capabilities/authelia.test.ts',         // unit tests use fixture meta to drive the handler
-    'src/lib/capabilities/credentials.test.ts',      // unit tests use fixture meta to drive the handler
+    'src/app/api/auth/oidc/route.ts',                                       // OIDC initiator — clientId comes from config
+    'src/app/api/auth/oidc/callback/route.ts',                              // OIDC callback handler
+    'src/app/api/system/authelia/oidc-clients/route.ts',                    // forwards client.client_id from input
+    'packages/backend/src/lib/registry.ts',                                 // type definition
+    'packages/backend/src/lib/capabilities/authelia.test.ts',               // unit tests use fixture meta to drive the handler
+    'packages/backend/src/lib/capabilities/credentials.test.ts',            // unit tests use fixture meta to drive the handler
   ]);
 
   it('no src/ file hardcodes a client_id / username literal that mirrors an OIDC declaration', () => {
@@ -527,7 +530,7 @@ describe('OIDC client_id single source of truth', () => {
     // and stay quiet.
     const KEYS = ['client_id', 'clientId', 'username'];
     const offenders: { file: string; line: number; key: string; clientId: string }[] = [];
-    for (const file of walkSourceFiles(SRC_DIR)) {
+    for (const file of [...walkSourceFiles(SRC_DIR), ...walkSourceFiles(BACKEND_SRC), ...walkSourceFiles(path.join(REPO_ROOT, 'packages', 'frontend', 'src'))]) {
       const rel = path.relative(REPO_ROOT, file);
       if (EXEMPT_FILES.has(rel)) continue;
       const content = fs.readFileSync(file, 'utf-8');
@@ -575,7 +578,7 @@ describe('stackInstall has no unauthorized per-template branches', () => {
   // This test fails if a new template name shows up in stackInstall/* —
   // forcing the author to either (a) extend post-deploy.py or (b) document
   // why their case can't live in a script and add it to ALLOWED below.
-  const STACKINSTALL_DIR = path.join(SRC_DIR, 'lib', 'stackInstall');
+  const STACKINSTALL_DIR = path.join(BACKEND_SRC, 'lib', 'stackInstall');
 
   /** Map of file → set of template names allowed to appear in
    *  `isSelected(...)` calls. Anything else is a violation. */
@@ -631,7 +634,7 @@ describe('Template tier classification', () => {
   const EXPECTED_INFRA = new Set(['adguard', 'auth', 'nginx']);
 
   it('exactly the platform templates are tier=infrastructure', async () => {
-    const { parseTemplateTier } = await import('../../src/lib/templateTier');
+    const { parseTemplateTier } = await import('@/lib/templateTier');
     const infraNames = templates
       .filter(t => parseTemplateTier(t.yamlContent) === 'infrastructure')
       .map(t => t.name)
@@ -684,7 +687,7 @@ describe('Template post-deploy.py syntax', () => {
 // one for ongoing monitoring (the CoreHealthBanner reads this).
 describe('Healthcheck contract', () => {
   it('every dependency target declares servicebay.healthcheck', async () => {
-    const { parseTemplateManifest } = await import('../../src/lib/template/contract');
+    const { parseTemplateManifest } = await import('@/lib/template/contract');
     const manifests = new Map<string, ReturnType<typeof parseTemplateManifest>>();
     for (const t of templates) {
       manifests.set(t.name, parseTemplateManifest(t.yamlContent, {

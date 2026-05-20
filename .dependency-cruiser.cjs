@@ -65,22 +65,22 @@ module.exports = {
                 'after #600 — runner.ts now imports getTemplate* directly from registry, ' +
                 'mcp/server.ts calls runDiagnose() in src/lib/diagnose/, and the client hook ' +
                 'useStackInstall moved out of src/lib to src/hooks/.',
-            from: { path: '^src/lib/' },
+            from: { path: '^packages/backend/src/lib/' },
             to: { path: '^src/app/' },
         },
         {
             name: 'lib-no-import-components',
             severity: 'error',
             comment: 'Same reason as lib-no-import-app: kernel must not depend on the UI layer.',
-            from: { path: '^src/lib/' },
-            to: { path: '^src/components/' },
+            from: { path: '^packages/backend/src/lib/' },
+            to: { path: '^packages/frontend/src/components/' },
         },
         {
             name: 'lib-no-import-dashboards',
             severity: 'error',
             comment: 'Kernel must not depend on dashboard components.',
-            from: { path: '^src/lib/' },
-            to: { path: '^src/dashboards/' },
+            from: { path: '^packages/backend/src/lib/' },
+            to: { path: '^packages/frontend/src/dashboards/' },
         },
         {
             name: 'service-manager-single-mutation-path',
@@ -90,9 +90,9 @@ module.exports = {
                 'funnel through ServiceManager. Direct imports of the split modules ' +
                 '(serviceLifecycle / serviceListing) from outside src/lib/services bypass the ' +
                 'facade and re-introduce the multi-path-mutation bug #589 cleaned up.',
-            from: { pathNot: '^src/lib/services/' },
+            from: { pathNot: '^packages/backend/src/lib/services/' },
             to: {
-                path: '^src/lib/services/(serviceLifecycle|serviceListing)(\\.ts)?$',
+                path: '^packages/backend/src/lib/services/(serviceLifecycle|serviceListing)(\\.ts)?$',
             },
         },
         {
@@ -105,10 +105,10 @@ module.exports = {
                 'stackInstall family will migrate to renderTemplate() in a follow-up.',
             from: {
                 pathNot: [
-                    '^src/lib/template/render\\.ts$',
-                    '^src/lib/install/runner\\.ts$',
-                    '^src/lib/install/jobStore\\.ts$',
-                    '^src/lib/stackInstall/',
+                    '^packages/backend/src/lib/template/render\\.ts$',
+                    '^packages/backend/src/lib/install/runner\\.ts$',
+                    '^packages/backend/src/lib/install/jobStore\\.ts$',
+                    '^packages/backend/src/lib/stackInstall/',
                 ],
             },
             to: { path: '^node_modules/mustache(/|$)' },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hashPassword, verifyPassword, isPasswordHash } from '../../src/lib/auth/password';
+import { hashPassword, verifyPassword, isPasswordHash } from '@/lib/auth/password';
 
 describe('password hashing', () => {
   it('round-trips a password', async () => {

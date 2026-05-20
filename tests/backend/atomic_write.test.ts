@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { atomicWriteFile } from '../../src/lib/util/atomicWrite';
+import { atomicWriteFile } from '@/lib/util/atomicWrite';
 
 const tmpDir = path.join(os.tmpdir(), 'sb-atomic-test');
 

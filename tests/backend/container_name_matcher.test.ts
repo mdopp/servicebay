@@ -10,8 +10,8 @@ import {
   buildExpectedContainerNames,
   pickContainerForService,
   type PodLikeDoc,
-} from '../../src/lib/services/containerNameMatcher';
-import type { EnrichedContainer } from '../../src/lib/agent/types';
+} from '@/lib/services/containerNameMatcher';
+import type { EnrichedContainer } from '@/lib/agent/types';
 
 describe('buildExpectedContainerNames (#589)', () => {
   it('returns the three systemd-style candidates with no YAML', () => {

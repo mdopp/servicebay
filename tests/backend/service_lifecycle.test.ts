@@ -20,11 +20,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock the agent manager before importing the module under test so the
 // static methods see the mocked ensureAgent.
 const ensureAgentMock = vi.fn();
-vi.mock('../../src/lib/agent/manager', () => ({
+vi.mock('@/lib/agent/manager', () => ({
   agentManager: { ensureAgent: (...args: unknown[]) => ensureAgentMock(...args) },
 }));
 
-import { ServiceLifecycle } from '../../src/lib/services/serviceLifecycle';
+import { ServiceLifecycle } from '@/lib/services/serviceLifecycle';
 
 describe('ServiceLifecycle (#589 follow-up)', () => {
   let agent: { sendCommand: ReturnType<typeof vi.fn> };

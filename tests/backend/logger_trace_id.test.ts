@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { logger, setTraceProvider } from '../../src/lib/logger';
+import { logger, setTraceProvider } from '@/lib/logger';
 
 describe('logger trace-provider wiring (#597)', () => {
   let originalLevel: ReturnType<typeof logger.getLogLevel>;
@@ -46,7 +46,7 @@ describe('logger trace-provider wiring (#597)', () => {
   it('LogFilter type accepts traceId (compile-time contract)', () => {
     // Pure type check — if queryLogs's LogFilter ever loses the
     // traceId option this fails to compile.
-    const filter: import('../../src/lib/logger').LogFilter = {
+    const filter: import('@/lib/logger').LogFilter = {
       traceId: 'a1b2c3d4',
       limit: 50,
     };

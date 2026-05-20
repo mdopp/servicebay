@@ -1,7 +1,7 @@
  
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AgentExecutor } from '../../src/lib/agent/executor';
+import { AgentExecutor } from '@/lib/agent/executor';
 
 // Mock Agent Manager
 const mockAgent = {
@@ -10,7 +10,7 @@ const mockAgent = {
     start: vi.fn().mockResolvedValue(undefined)
 };
 
-vi.mock('../../src/lib/agent/manager', () => ({
+vi.mock('@/lib/agent/manager', () => ({
     AgentManager: {
         getInstance: () => ({
             getAgent: vi.fn(() => mockAgent)

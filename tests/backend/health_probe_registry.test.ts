@@ -10,8 +10,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { registeredProbeTypes, getProbe } from '../../src/lib/health/probes/registry';
-import '../../src/lib/health/probes';
+import { registeredProbeTypes, getProbe } from '@/lib/health/probes/registry';
+import '@/lib/health/probes';
 import {
   LETSDEBUG_MESSAGE_PREFIX,
   LAN_IP_DRIFT_MESSAGE_PREFIX,
@@ -19,7 +19,7 @@ import {
   CERT_EXPIRY_MESSAGE_PREFIX,
   CERT_REQUEST_FAILURE_MESSAGE_PREFIX,
   DNS_ROUTING_MESSAGE_PREFIX,
-} from '../../src/lib/health/runner';
+} from '@/lib/health/runner';
 
 describe('Probe registry (#592)', () => {
   const EXPECTED_TYPES = [

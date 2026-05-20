@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DigitalTwinStore } from '../../src/lib/store/twin';
-import { EnrichedContainer, ServiceUnit } from '../../src/lib/agent/types';
+import { DigitalTwinStore } from '@/lib/store/twin';
+import { EnrichedContainer, ServiceUnit } from '@/lib/agent/types';
 
 describe('DigitalTwinStore Data Flow', () => {
   let store: DigitalTwinStore;

@@ -7,7 +7,7 @@ const emitMock = vi.fn();
 type ProgressPayload = { step: string; progress: number; message: string };
 type GlobalWithUpdater = Omit<typeof global, 'updaterIO'> & { updaterIO?: Server };
 
-vi.mock('../../src/lib/executor', () => ({
+vi.mock('@/lib/executor', () => ({
   getExecutor: vi.fn(() => ({ exec: execMock })),
 }));
 
@@ -28,7 +28,7 @@ describe('performUpdate', () => {
       .mockResolvedValueOnce({ stdout: 'pull ok\nstatus: done', stderr: '' })
       .mockResolvedValueOnce({ stdout: '', stderr: '' });
 
-    const { performUpdate } = await import('../../src/lib/updater');
+    const { performUpdate } = await import('@/lib/updater');
 
     await performUpdate('v1.2.3');
 

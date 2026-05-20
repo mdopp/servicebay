@@ -1,14 +1,14 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AgentHandler } from '../../src/lib/agent/handler';
+import { AgentHandler } from '@/lib/agent/handler';
 
 // Mocks
-vi.mock('../../src/lib/nodes', () => ({
+vi.mock('@/lib/nodes', () => ({
     listNodes: vi.fn().mockResolvedValue([])
 }));
 
-vi.mock('../../src/lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
     logger: {
         info: vi.fn(),
         error: vi.fn(),

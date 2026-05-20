@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseTemplateManifest, tryParseTemplateManifest } from '../../src/lib/template/contract';
+import { parseTemplateManifest, tryParseTemplateManifest } from '@/lib/template/contract';
 
 function fixture(annotations: Record<string, string | number>, opts: { quotes?: 'double' | 'single' | 'bare' } = {}) {
   const quotes = opts.quotes ?? 'double';

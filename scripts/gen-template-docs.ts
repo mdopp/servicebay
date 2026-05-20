@@ -17,7 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TEMPLATE_FIELDS, type TemplateFieldSpec } from '../src/lib/template/contract.js';
+import { TEMPLATE_FIELDS, type TemplateFieldSpec } from '../packages/backend/src/lib/template/contract.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

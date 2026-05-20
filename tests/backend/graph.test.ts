@@ -1,27 +1,27 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { NetworkService } from '../../src/lib/network/service';
-import { getConfig } from '../../src/lib/config';
-import { DigitalTwinStore } from '../../src/lib/store/twin';
+import { NetworkService } from '@/lib/network/service';
+import { getConfig } from '@/lib/config';
+import { DigitalTwinStore } from '@/lib/store/twin';
 
 // Mock Config
-vi.mock('../../src/lib/config', () => ({
+vi.mock('@/lib/config', () => ({
     getConfig: vi.fn(),
     ExternalLink: {}
 }));
 
-vi.mock('../../src/lib/network/dns', () => ({
+vi.mock('@/lib/network/dns', () => ({
     checkDomains: vi.fn().mockResolvedValue([])
 }));
 
 // Mock Nodes
-vi.mock('../../src/lib/nodes', () => ({
+vi.mock('@/lib/nodes', () => ({
     listNodes: vi.fn().mockResolvedValue([])
 }));
 
 // Mock Twin Store (used in logic?)
-vi.mock('../../src/lib/store/twin', () => {
+vi.mock('@/lib/store/twin', () => {
     const twinStoreMock = {
         nodes: {
             'Local': {
@@ -52,7 +52,7 @@ vi.mock('../../src/lib/store/twin', () => {
 });
 
 // Mock FritzBox
-vi.mock('../../src/lib/fritzbox/client', () => {
+vi.mock('@/lib/fritzbox/client', () => {
     class MockFritzBoxClient {
         async getStatus() {
             return {
@@ -68,7 +68,7 @@ vi.mock('../../src/lib/fritzbox/client', () => {
 });
 
 // Mock ServiceManager (avoid real FS calls)
-vi.mock('../../src/lib/services/ServiceManager', () => ({
+vi.mock('@/lib/services/ServiceManager', () => ({
     ServiceManager: {
         listServices: vi.fn().mockResolvedValue([])
     }
@@ -414,7 +414,7 @@ describe('Network Graph Generation', () => {
         // without a scheme), the catch swallowed every domain, and the nginx
         // node ended up showing all externally-verified domains even when the
         // route actually targeted a different service.
-        const dns = await import('../../src/lib/network/dns');
+        const dns = await import('@/lib/network/dns');
         (dns.checkDomains as any).mockResolvedValueOnce([
             { domain: 'photos.dopp.cloud', matches: true },
             { domain: 'nginx.dopp.cloud',  matches: true },
