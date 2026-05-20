@@ -19,7 +19,12 @@ vi.mock('../../src/providers/ToastProvider', () => ({
 // Mock Digital Twin Hook. `isNodeSynced` is provided by default —
 // individual tests can override `mockUseDigitalTwin` to return a
 // different shape if they need to exercise the hydration gate.
-const mockUseDigitalTwin = vi.fn(() => ({
+const mockUseDigitalTwin = vi.fn<() => {
+    data: DigitalTwinSnapshot | null;
+    isConnected: boolean;
+    lastUpdate: number;
+    isNodeSynced: (n?: string) => boolean;
+}>(() => ({
     data: null,
     isConnected: true,
     lastUpdate: 0,
