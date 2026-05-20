@@ -659,3 +659,74 @@ export async function updateConfig(updates: Partial<AppConfig>): Promise<AppConf
   });
 }
 
+/**
+ * Strip every secret value from `config.json` so that the next
+ * `getConfig()` can't surface stale ciphertext that the upcoming new
+ * install will be unable to decrypt (secret.key is being wiped
+ * alongside this call).
+ *
+ * Reset-flow contract (#711):
+ *   - Deletes every value still in `enc:v1:` form (raw on-disk
+ *     ciphertext — getConfig() decrypts those to plaintext, so this
+ *     reads the raw file directly).
+ *   - Drops `auth.passwordHash` + `auth.bootstrapToken` (plaintext
+ *     hashes that survive the cipher wipe — useless once secret.key
+ *     is gone).
+ *   - Preserves operator-input fields (publicDomain, lanDomain,
+ *     gateway.host, etc.) so the wizard's already-written context
+ *     survives the reset.
+ *
+ * Runs under the same `withConfigLock` queue as `updateConfig` /
+ * `saveConfig` — that's the reason it lives here and not in
+ * `performStackReset`. The pre-#711 implementation invoked a Python
+ * one-liner via the agent's shell exec, which read and wrote
+ * `config.json` outside the Node.js lock. A concurrent
+ * post-deploy that called `updateConfig({ adguard: { password }})`
+ * would land its write *between* the Python script's read and
+ * write — the python write then clobbered the post-deploy update
+ * because it persisted its older in-memory snapshot. Operators
+ * surfaced this as "adguard.password missing after install" + the
+ * wildcard DNS rewrites silently failing to provision.
+ */
+export async function scrubEncryptedConfig(): Promise<{ removedKeys: number }> {
+  return withConfigLock(async () => {
+    let removedKeys = 0;
+    let raw: unknown;
+    try {
+      const content = await fs.readFile(CONFIG_PATH, 'utf-8');
+      raw = JSON.parse(content);
+    } catch {
+      return { removedKeys };
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const walk = (obj: any): void => {
+      if (Array.isArray(obj)) {
+        for (const v of obj) walk(v);
+        return;
+      }
+      if (obj !== null && typeof obj === 'object') {
+        for (const k of Object.keys(obj)) {
+          const v = obj[k];
+          if (typeof v === 'string' && v.startsWith('enc:v1:')) {
+            delete obj[k];
+            removedKeys += 1;
+          } else if (v !== null && typeof v === 'object') {
+            walk(v);
+          }
+        }
+      }
+    };
+    walk(raw);
+    if (raw !== null && typeof raw === 'object' && 'auth' in (raw as Record<string, unknown>)) {
+      const auth = (raw as { auth?: Record<string, unknown> }).auth;
+      if (auth && typeof auth === 'object') {
+        if ('passwordHash' in auth) { delete auth.passwordHash; removedKeys += 1; }
+        if ('bootstrapToken' in auth) { delete auth.bootstrapToken; removedKeys += 1; }
+      }
+    }
+    await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
+    await atomicWriteFile(CONFIG_PATH, JSON.stringify(raw, null, 2));
+    return { removedKeys };
+  });
+}
+
