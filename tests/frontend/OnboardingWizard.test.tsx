@@ -134,6 +134,23 @@ const commitStackPicker = async () => {
   });
 };
 
+// Wait for a button to exist AND be enabled. Plain `waitFor(getByRole)`
+// will resolve the moment the button appears — but in the configure
+// pipeline, the Install Stack button renders in disabled state
+// (`stacksLoading=true`) while startConfigure still runs. On a slow
+// runner (Node 20 in CI) the test would click that disabled button
+// and silently no-op. Wait for the *enabled* button so the click
+// actually fires its onClick. Reproduced #757 deterministically once
+// we matched Node 20 locally.
+const clickWhenEnabled = async (name: RegExp) => {
+  const btn = await waitFor(() => {
+    const b = screen.getByRole('button', { name }) as HTMLButtonElement;
+    if (b.disabled) throw new Error(`${name} button still disabled`);
+    return b;
+  });
+  fireEvent.click(btn);
+};
+
 // Helper: default status with no setup needed
 const completedStatus = {
   needsSetup: false,
@@ -509,12 +526,14 @@ describe('OnboardingWizard', () => {
             await commitStackPicker();
 
             // Continue to configure
-            await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
+            await clickWhenEnabled(/Continue/i);
 
-            // Wait for configure step, then install
-            await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
+            // Wait for configure step, then install — the Install Stack
+            // button renders disabled while startConfigure resolves
+            // (typedFetch round-trips to the new Phase 2 endpoints take
+            // measurable time on slow runners). clickWhenEnabled waits
+            // for the non-disabled state.
+            await clickWhenEnabled(/Install Stack/i);
 
             // Wizard POSTs to /api/install/start, then polls /api/install/status.
             // Default mock returns phase=done immediately so the wizard transitions
@@ -540,16 +559,12 @@ describe('OnboardingWizard', () => {
             await advancePastMachineStep();
             await commitStackPicker();
 
-            await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
-
-            await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
+            await clickWhenEnabled(/Continue/i);
+            await clickWhenEnabled(/Install Stack/i);
 
             // Wizard polls /api/install/status; the default mock returns phase=done
             // so the Finish button appears once the polling effect's first tick lands.
-            await waitFor(() => screen.getByRole('button', { name: /Go to Dashboard/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Go to Dashboard/i }));
+            await clickWhenEnabled(/Go to Dashboard/i);
 
             await waitFor(() => {
                 expect(completeStackSetup).toHaveBeenCalled();
@@ -604,11 +619,8 @@ describe('OnboardingWizard', () => {
             await advancePastMachineStep();
             await commitStackPicker();
 
-            await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
-
-            await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
+            await clickWhenEnabled(/Continue/i);
+            await clickWhenEnabled(/Install Stack/i);
 
             // Polling-default mock returns phase=done; the Done step now
             // mounts the DoneStepDnsCheck component which fires
