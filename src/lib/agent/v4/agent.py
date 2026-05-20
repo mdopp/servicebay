@@ -63,6 +63,41 @@ SESSION_ID = os.getenv('SERVICEBAY_SESSION') or os.getenv('SERVICEBAY_SESSION_ID
 AGENT_CLEANUP_ON_START = os.getenv('SERVICEBAY_AGENT_CLEANUP_ON_START', 'true').lower() == 'true'
 AGENT_CLEANUP_ENABLED = os.getenv('SERVICEBAY_AGENT_CLEANUP_ENABLED', 'true').lower() == 'true'
 AGENT_CLEANUP_DRY_RUN = os.getenv('SERVICEBAY_AGENT_CLEANUP_DRY_RUN', 'false').lower() == 'true'
+
+# `safe_exec` allow-list (#722). The legacy `exec` command path
+# accepts arbitrary shell strings — a foot-gun if the backend is ever
+# compromised because the agent runs commands as the host UID. The
+# `safe_exec` command takes an explicit argv array and only runs the
+# binary if it appears below. Each entry should have a short audit
+# comment naming the consumer that requires it; do not add binaries
+# speculatively.
+SAFE_EXEC_ALLOWLIST = frozenset({
+    # State inspection — used by every diagnose probe + the agent's
+    # own initial sync.
+    'systemctl',     # service / unit state queries, --user restart
+    'podman',        # container inspection + per-row restart actions
+    'journalctl',    # log tail for the diagnose card
+    'cat',           # config / unit file reads + /proc/uptime
+    'ls',            # directory listings for data-dir probes
+    'stat',          # file metadata for cert / db freshness checks
+    'df',            # disk-usage probe
+    'du',            # "show largest dirs" diagnose action
+    'find',          # cert-archive + dangling-file enumeration
+    'echo',          # health-check + agent-ok ping
+    'hostname',      # initial-sync identity probe
+    'uptime',        # diagnose's crash-loop boot-grace gate
+    'ip',            # nodeIPs collection
+    'ss',            # listening-ports probe
+    'dig',           # DNS routing probe
+    'curl',          # external reachability probes
+    'tar',           # cert-archive snapshot
+    'rm',            # reset wipe-plan (path-validated upstream)
+    'mkdir',         # initial path provisioning
+    'touch',         # install-nginx-done marker
+    'mv',            # rename helper (callers validate paths)
+    'test',          # exists() probe in the agent executor
+    'ping',          # router-DNS probe
+})
 AGENT_CLEANUP_MAX_AGE_MINUTES = os.getenv('SERVICEBAY_AGENT_CLEANUP_MAX_AGE_MINUTES')
 try:
     AGENT_CLEANUP_MAX_AGE_MINUTES = int(AGENT_CLEANUP_MAX_AGE_MINUTES) if AGENT_CLEANUP_MAX_AGE_MINUTES else None
@@ -1841,6 +1876,43 @@ class Agent:
                     if active:
                         self.last_resource_push = 0
                 reply(result='ok')
+            elif cmd == 'safe_exec':
+                # Structured-argv exec path (#722). Callers pass an
+                # explicit argv list (no shell parsing) and the agent
+                # only accepts binaries listed in SAFE_EXEC_ALLOWLIST.
+                # This is the migration target for the legacy `exec`
+                # path below; new call sites should use this and old
+                # ones should be ported incrementally. The legacy path
+                # remains available for transitional compatibility and
+                # for the small set of operations that genuinely need
+                # shell semantics (pipelines, heredocs, redirection).
+                payload_dict = msg.get('payload', {})
+                argv = payload_dict.get('argv')
+                stdin_data = payload_dict.get('stdin')
+                raw_timeout = payload_dict.get('timeout')
+                try:
+                    timeout_val: Optional[float] = float(raw_timeout) if raw_timeout is not None else None
+                except (TypeError, ValueError):
+                    timeout_val = None
+                if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+                    reply(error="safe_exec requires payload.argv as a non-empty list of strings")
+                else:
+                    binary = argv[0]
+                    if binary not in SAFE_EXEC_ALLOWLIST:
+                        reply(error=f"safe_exec: binary '{binary}' is not on the allow-list. Add it to SAFE_EXEC_ALLOWLIST in agent.py with an audit comment, or use the legacy 'exec' path explicitly.")
+                    else:
+                        log_info(f"safe_exec: {' '.join(argv)}")
+                        stdout, stderr, returncode = _executor.execute(
+                            argv,
+                            check=False,
+                            timeout=timeout_val,
+                            stdin_data=stdin_data,
+                        )
+                        reply(result={
+                            "code": returncode,
+                            "stdout": stdout,
+                            "stderr": stderr,
+                        })
             elif cmd == 'exec':
                 payload_dict = msg.get('payload', {})
                 command_str = payload_dict.get('command')

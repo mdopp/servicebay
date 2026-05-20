@@ -51,6 +51,31 @@ export class AgentExecutor implements Executor {
     return this.exec(shellQuoteAll(argv), options);
   }
 
+  /**
+   * Structured-argv exec backed by the agent's `safe_exec` command
+   * (#722). Sends the argv list verbatim, so the agent never shell-
+   * parses the payload — there's no opportunity to inject extra
+   * commands via metacharacters even if the backend is compromised.
+   * The agent rejects the call unless argv[0] is on its
+   * SAFE_EXEC_ALLOWLIST.
+   *
+   * Use this for any new call site that doesn't need shell features
+   * (pipelines, redirection, glob expansion). The legacy `exec` /
+   * `execArgv` paths remain available for sites that genuinely need
+   * shell semantics; those are the migration target for future
+   * hardening passes.
+   */
+  async execSafe(argv: string[], options: { timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
+    if (!Array.isArray(argv) || argv.length === 0) {
+      throw new Error('execSafe requires a non-empty argv array');
+    }
+    await this.ensureConnected();
+    const truncatedCmd = argv.join(' ').slice(0, 100);
+    logger.info(`Executor:${this.agent.nodeName}`, `safe_exec: ${truncatedCmd}`);
+    const res = await this.agent.sendCommand('safe_exec', { argv }, { timeoutMs: options.timeoutMs });
+    return { stdout: res.stdout ?? '', stderr: res.stderr ?? '', code: res.code ?? -1 };
+  }
+
   async readFile(path: string): Promise<string> {
     await this.ensureConnected();
     const res = await this.agent.sendCommand('read_file', { path });
