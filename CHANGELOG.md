@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.9.0...servicebay-v4.10.0) (2026-05-20)
+
+
+### Features
+
+* **agent:** structured safe_exec dispatcher + TS execSafe ([#722](https://github.com/mdopp/servicebay/issues/722)) ([#743](https://github.com/mdopp/servicebay/issues/743)) ([a6ec7d1](https://github.com/mdopp/servicebay/commit/a6ec7d19941b43fcc5419c37c11f842d57904f6f))
+* **dashboards:** phased hydration gate for /services and /containers ([#737](https://github.com/mdopp/servicebay/issues/737)) ([#745](https://github.com/mdopp/servicebay/issues/745)) ([78fc300](https://github.com/mdopp/servicebay/commit/78fc3001c1683b8f0319041d67d311dc28d63964))
+* **wizard,ux:** observability + UX batch ([#732](https://github.com/mdopp/servicebay/issues/732) [#729](https://github.com/mdopp/servicebay/issues/729) [#728](https://github.com/mdopp/servicebay/issues/728) [#727](https://github.com/mdopp/servicebay/issues/727)) ([#740](https://github.com/mdopp/servicebay/issues/740)) ([4e4495f](https://github.com/mdopp/servicebay/commit/4e4495f7eddd29290c1fc0db47cf93209338f70d))
+* **wizard:** FRITZ!Box prerequisite + Verify connection ([#726](https://github.com/mdopp/servicebay/issues/726)) ([#742](https://github.com/mdopp/servicebay/issues/742)) ([bc2a97d](https://github.com/mdopp/servicebay/commit/bc2a97df3168e4fc3f7c19fbe2f9cd39ba0de0e0))
+
+
+### Bug Fixes
+
+* diagnose + media + install copy batch ([#736](https://github.com/mdopp/servicebay/issues/736) [#735](https://github.com/mdopp/servicebay/issues/735) [#734](https://github.com/mdopp/servicebay/issues/734) [#733](https://github.com/mdopp/servicebay/issues/733) [#725](https://github.com/mdopp/servicebay/issues/725)) ([#738](https://github.com/mdopp/servicebay/issues/738)) ([040fc15](https://github.com/mdopp/servicebay/commit/040fc158017e1ed0ed7ece578531200aa33f6952))
+* **install:** scrub config.json under the in-process lock ([#711](https://github.com/mdopp/servicebay/issues/711)) ([#739](https://github.com/mdopp/servicebay/issues/739)) ([cf4093c](https://github.com/mdopp/servicebay/commit/cf4093ce2882c6e57dfc1bd67ad25a51e4056532))
+* **wizard:** surface stacksOnlyMode in the header ([#690](https://github.com/mdopp/servicebay/issues/690)) ([#741](https://github.com/mdopp/servicebay/issues/741)) ([176778c](https://github.com/mdopp/servicebay/commit/176778ce773f26b036757ea452e6ff2ee9abdf00))
+
 ## [4.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.8.2...servicebay-v4.9.0) (2026-05-20)
 
 
