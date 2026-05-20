@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import ConfirmModal from '../../src/components/ConfirmModal';
+import ConfirmModal from '@/components/ConfirmModal';
 
 describe('ConfirmModal', () => {
     // The vitest Mock type isn't a perfect fit for `() => void` props, so cast

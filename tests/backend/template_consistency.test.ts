@@ -162,7 +162,7 @@ describe('Template ↔ source-name consistency', () => {
   it('SERVICE_DEPS keys + values reference real templates only', () => {
     // Pull the SERVICE_DEPS literal out of OnboardingWizard.tsx without TS-importing
     // a client component (which would drag in React) — string-extract from source.
-    const wizardPath = path.join(SRC_DIR, 'components', 'OnboardingWizard.tsx');
+    const wizardPath = path.join(REPO_ROOT, 'packages', 'frontend', 'src', 'components', 'OnboardingWizard.tsx');
     const content = fs.readFileSync(wizardPath, 'utf-8');
     // Match the SERVICE_DEPS object literal block.
     const block = content.match(/SERVICE_DEPS:\s*Record<string,\s*ServiceDeps>\s*=\s*\{([\s\S]*?)\n\s*\};/);

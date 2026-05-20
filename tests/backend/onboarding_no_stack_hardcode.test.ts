@@ -14,7 +14,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const WIZARD = path.join(REPO_ROOT, 'src', 'components', 'OnboardingWizard.tsx');
+const WIZARD = path.join(REPO_ROOT, 'packages', 'frontend', 'src', 'components', 'OnboardingWizard.tsx');
 
 describe('OnboardingWizard stack lookup safety (#582)', () => {
   it('every availableStacks.find(...) has a fallback within 2 lines', () => {

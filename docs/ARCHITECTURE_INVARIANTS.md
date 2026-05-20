@@ -107,14 +107,23 @@ These are enforced as depcruise rules:
 
 ### Frontend ↔ Backend boundary (#753)
 
-Three ratcheted counts pin how much server-side logic still lives in the frontend. **All three are capped at 0** as of Phase 2 (#759) — every cross-boundary violation now fails CI. Phase 3 hardens this from a count into a workspace boundary.
+The boundary started as three numeric ratchets in `scripts/check-invariants.ts`; Phase 3 (#761) is converting them into a structural workspace boundary.
 
-- `fe-template-lib-imports` — `js-yaml` / `mustache` imports in `src/components`, `src/hooks`, `src/dashboards`. **Capped at 0** as of Phase 2 (#759); `ServiceForm` validates YAML via `POST /api/services/validate-yaml`.
-- `fe-backend-imports` — imports of `@/lib/install`, `@/lib/agent`, `@/lib/diagnose` from the same dirs. **Capped at 0** as of Phase 1 (#756). The `sb/no-fe-backend-import` ESLint rule enforces the same boundary at edit-time.
-- `fe-install-helpers` — references to `generateRandomSecret` / `parseTemplateDependencies` in the same dirs. **Capped at 0** as of Phase 2 (#759); `useStackInstall` + `StackVariableField` now POST to `/api/install/generate-secret` and `/api/templates/parse-dependencies`.
+Current layout:
+- `packages/api-client/` — the typed seam (`@servicebay/api-client`). Types + zod schemas + `typedFetch` helper. Both halves import from this package.
+- `packages/frontend/` — `@servicebay/frontend`. UI: components, hooks, dashboards, providers, types. Lists only `@servicebay/api-client` + UI libs as deps; **zero `@/lib/*` imports**.
+- `src/lib/` + `src/app/api/` — server-side. Phase 3.3 (#764) moves these into `packages/backend/` and retires the numeric ratchets below.
 
-Frontend code reaches the backend exclusively through:
-- `@/contracts/*` — typed seam. Types + zod schemas live here; `@/contracts/client.ts` wraps `fetch` with schema validation.
+The `sb/no-fe-backend-import` ESLint rule fires on any `@/lib/*` import from `packages/frontend/**` (and the legacy `src/{components,hooks,dashboards}/**` paths, which Phase 3.3 cleans up).
+
+Legacy numeric ratchets (still in `check-invariants.ts`, vacuous since #763 — retire in #764):
+
+- `fe-template-lib-imports` — `js-yaml` / `mustache` in the FE dirs. Capped at 0.
+- `fe-backend-imports` — `@/lib/{install,agent,diagnose}` imports. Capped at 0.
+- `fe-install-helpers` — `generateRandomSecret` / `parseTemplateDependencies` refs. Capped at 0.
+
+Frontend reaches the backend exclusively through:
+- `@servicebay/api-client` — typed seam (default).
 - `@/app/actions/*` — server actions, already typed.
 - Direct `fetch('/api/...')` is grandfathered for legacy call sites; new code uses `typedFetch`.
 

@@ -1,6 +1,8 @@
 import type { ServiceUnit, EnrichedContainer, ProxyRoute } from '@/lib/agent/types';
 import type { NodeTwin } from '@/lib/store/twin';
-import type { ServiceViewModel, ServicePort } from '@/types/serviceView';
+// Direct sub-path import — using the barrel would create a cycle since
+// api-client/index re-exports `buildServiceViewModel` from this file.
+import type { ServiceViewModel, ServicePort } from '@servicebay/api-client/serviceView';
 
 interface BuildServiceViewModelArgs {
   unit: ServiceUnit;

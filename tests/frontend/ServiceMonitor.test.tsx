@@ -2,7 +2,7 @@
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import ServiceMonitor from '../../src/components/ServiceMonitor';
+import ServiceMonitor from '@/components/ServiceMonitor';
 
 // Mock Router
 vi.mock('next/navigation', () => ({

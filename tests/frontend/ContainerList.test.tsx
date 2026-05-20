@@ -2,7 +2,7 @@
 
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import ContainerList from '../../src/components/ContainerList';
+import ContainerList from '@/components/ContainerList';
 
 // Mock Hook
 vi.mock('@/hooks/useDigitalTwin', () => ({

@@ -11,9 +11,18 @@ export default defineConfig({
     env: {
       DATA_DIR: '/tmp/servicebay-test',
     },
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
+    alias: [
+      // Phase 3.2 (#763) — the moved FE dirs win over the bare `@/`
+      // mapping. Resolution checks longest-prefix first so `@/components`
+      // routes into packages/frontend before the catch-all `@/*` mapping
+      // into src/.
+      { find: /^@\/components\//, replacement: path.resolve(__dirname, './packages/frontend/src/components/') + '/' },
+      { find: /^@\/hooks\//, replacement: path.resolve(__dirname, './packages/frontend/src/hooks/') + '/' },
+      { find: /^@\/dashboards\//, replacement: path.resolve(__dirname, './packages/frontend/src/dashboards/') + '/' },
+      { find: /^@\/providers\//, replacement: path.resolve(__dirname, './packages/frontend/src/providers/') + '/' },
+      { find: '@servicebay/api-client', replacement: path.resolve(__dirname, './packages/api-client/src/index.ts') },
+      { find: /^@\//, replacement: path.resolve(__dirname, './src/') + '/' },
+    ],
     exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**'],
   },
 })

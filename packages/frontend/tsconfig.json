@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/components/*": ["./src/components/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@/dashboards/*": ["./src/dashboards/*"],
+      "@/providers/*": ["./src/providers/*"],
+      "@/app/*": ["../../src/app/*"],
+      "@servicebay/api-client": ["../api-client/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

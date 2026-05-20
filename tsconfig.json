@@ -21,8 +21,13 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
+      "@/components/*": ["./packages/frontend/src/components/*"],
+      "@/hooks/*": ["./packages/frontend/src/hooks/*"],
+      "@/dashboards/*": ["./packages/frontend/src/dashboards/*"],
+      "@/providers/*": ["./packages/frontend/src/providers/*"],
       "@servicebay/api-client": ["./packages/api-client/src/index.ts"],
-      "@servicebay/api-client/*": ["./packages/api-client/src/*"]
+      "@servicebay/api-client/*": ["./packages/api-client/src/*"],
+      "@servicebay/frontend/*": ["./packages/frontend/src/*"]
     }
   },
   "include": [
