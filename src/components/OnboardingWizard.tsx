@@ -1128,12 +1128,36 @@ export default function OnboardingWizard() {
         <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-br from-transparent to-blue-500/[0.02]">
           <header className="px-12 py-10 flex items-center justify-between">
             <div className="space-y-1">
-              <h1 className="text-3xl font-black tracking-tight capitalize text-white">
-                {currentStep.replace('-', ' ')}
-              </h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-3xl font-black tracking-tight capitalize text-white">
+                  {currentStep.replace('-', ' ')}
+                </h1>
+                {/*
+                  stacksOnlyMode header pill (#690). The wizard launched
+                  from the sidebar's "Install another stack" entry skips
+                  the welcome→finish setup and changes several button
+                  labels + exit behaviours; the operator previously had
+                  no signal that they were in a different mode than the
+                  original setup walk. The pill names the active mode so
+                  "Skip → exits to dashboard" and "Finish (vs Continue)"
+                  read as intentional rather than confusing copy drift.
+                */}
+                {stacksOnlyMode && (
+                  <span
+                    className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/30"
+                    title="You're adding a service to an already-set-up node. Skip / Finish exit to the dashboard instead of advancing the wizard."
+                  >
+                    Add a service
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <div className="h-1 w-12 bg-blue-500 rounded-full" />
-                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Stage {currentIndex + 1} of {displayStepCount}</p>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
+                  {stacksOnlyMode
+                    ? `Step ${currentIndex + 1} of ${displayStepCount} · add-a-service mode`
+                    : `Stage ${currentIndex + 1} of ${displayStepCount}`}
+                </p>
               </div>
             </div>
             <button
