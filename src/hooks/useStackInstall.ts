@@ -40,9 +40,12 @@ import {
 } from '@/app/actions';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { type Credential } from '@/lib/stackInstall/credentialsManifest';
-import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
-import { parseTemplateDependencies } from '@/lib/stackInstall/dependencies';
-import type { JobState as RemoteJobState } from '@/contracts/install';
+import { typedFetch } from '@/contracts/client';
+import {
+  GenerateSecretResponseSchema,
+  ParseDependenciesResponseSchema,
+  type JobState as RemoteJobState,
+} from '@/contracts/install';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
 
@@ -548,7 +551,20 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
           // Parse install-time deps from the (still un-rendered) yaml.
           // Mustache placeholders don't appear in the dependencies
           // annotation, so the raw string is fine here.
-          newItems[idx].dependencies = parseTemplateDependencies(yaml);
+          try {
+            const { dependencies } = await typedFetch(
+              '/api/templates/parse-dependencies',
+              ParseDependenciesResponseSchema,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ yaml }),
+              },
+            );
+            newItems[idx].dependencies = dependencies;
+          } catch {
+            newItems[idx].dependencies = [];
+          }
         }
 
         for (const match of yaml.matchAll(MUSTACHE_VAR_RE_OUT)) vars.add(match[1]);
@@ -586,34 +602,50 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     // values that already came from storage are already saved by definition.
     const newlyGenerated: Array<{ name: string; value: string }> = [];
 
-    const resolvedVars: StackVariable[] = Array.from(vars).map(name => {
-      const meta = allMeta[name];
-      // Caller-provided prefills (PUBLIC_DOMAIN, NGINX_ADMIN_EMAIL, ...)
-      // win over Settings; LLDAP_HOST is always 'localhost' because every
-      // template assumes the auth pod is reachable via the local stack.
-      let value = '';
-      let isGlobal = false;
-      if (Object.prototype.hasOwnProperty.call(prefilled, name) && prefilled[name]) {
-        value = prefilled[name];
-        isGlobal = true;
-      } else if (globalSettings[name]) {
-        value = globalSettings[name];
-        isGlobal = true;
-      }
-      if (name === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
-      if (!value && meta?.default) value = meta.default;
-      if (!value && meta?.type === 'secret') {
-        // On a reinstall without RESET, use the stored value if available so
-        // services with existing data volumes keep the password they know.
-        if (storedValues[name]) {
-          value = storedValues[name];
-        } else {
-          value = generateRandomSecret();
-          newlyGenerated.push({ name, value });
+    const resolvedVars: StackVariable[] = await Promise.all(
+      Array.from(vars).map(async (name): Promise<StackVariable> => {
+        const meta = allMeta[name];
+        // Caller-provided prefills (PUBLIC_DOMAIN, NGINX_ADMIN_EMAIL, ...)
+        // win over Settings; LLDAP_HOST is always 'localhost' because every
+        // template assumes the auth pod is reachable via the local stack.
+        let value = '';
+        let isGlobal = false;
+        if (Object.prototype.hasOwnProperty.call(prefilled, name) && prefilled[name]) {
+          value = prefilled[name];
+          isGlobal = true;
+        } else if (globalSettings[name]) {
+          value = globalSettings[name];
+          isGlobal = true;
         }
-      }
-      return { name, value, global: isGlobal, meta };
-    });
+        if (name === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
+        if (!value && meta?.default) value = meta.default;
+        if (!value && meta?.type === 'secret') {
+          // On a reinstall without RESET, use the stored value if available so
+          // services with existing data volumes keep the password they know.
+          if (storedValues[name]) {
+            value = storedValues[name];
+          } else {
+            try {
+              const { secret } = await typedFetch(
+                '/api/install/generate-secret',
+                GenerateSecretResponseSchema,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({}),
+                },
+              );
+              value = secret;
+              newlyGenerated.push({ name, value });
+            } catch {
+              // Server unreachable mid-configure — leave value empty and
+              // let the operator type one manually.
+            }
+          }
+        }
+        return { name, value, global: isGlobal, meta };
+      }),
+    );
 
     // RSA private keys — server-generated, PEM pre-indented for YAML block scalars.
     await Promise.all(resolvedVars.map(async v => {
