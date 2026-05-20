@@ -893,9 +893,13 @@ async function runJob(jobId: string): Promise<void> {
           variables,
           node: input.node || undefined,
           onLog: (line: string) => { void log(jobId, line); },
+          // Tells the bootstrap helper to suppress the duplicated 90 s
+          // preamble and emit a post-self-heal success line on
+          // already_using_target (#733). Also caps the server-side
+          // retry budget at 20 s — the user table is already seeded.
+          phase: 'retry',
         });
         if (retry === 'ok') {
-          await log(jobId, '✅ NPM bootstrap succeeded after self-heal.');
           bootstrapState = 'ok';
         } else {
           await log(jobId, '⚠️ NPM still rejecting credentials after data-wipe retry; falling back to the credentials prompt.');

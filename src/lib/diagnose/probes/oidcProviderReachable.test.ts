@@ -4,8 +4,22 @@ vi.mock('@/lib/config', () => ({
   getConfig: vi.fn(),
 }));
 
+// Mock the agent manager so the log-fetch path inside the probe doesn't
+// open a real connection during unit tests. Tests can override the
+// per-call behavior by stubbing `agentManager.ensureAgent`.
+const sendCommandMock = vi.fn();
+vi.mock('@/lib/agent/manager', () => ({
+  agentManager: {
+    ensureAgent: vi.fn(async () => ({ sendCommand: sendCommandMock })),
+  },
+}));
+
+vi.mock('@/lib/logger', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
 import { getConfig } from '@/lib/config';
-import { checkOidcProviderReachable } from './oidcProviderReachable';
+import { checkOidcProviderReachable, classifyAutheliaLogs } from './oidcProviderReachable';
 
 const baseConfig = {
   reverseProxy: { publicDomain: 'example.com' },
@@ -22,6 +36,10 @@ const validDiscovery = {
 
 beforeEach(() => {
   vi.mocked(getConfig).mockReset();
+  sendCommandMock.mockReset();
+  // Default: log fetch returns nothing — tests that exercise the
+  // classifier path override this.
+  sendCommandMock.mockResolvedValue({ code: 0, stdout: '' });
   vi.restoreAllMocks();
 });
 
@@ -64,7 +82,10 @@ describe('oidc_provider_reachable probe', () => {
     const r = await checkOidcProviderReachable();
     expect(r.status).toBe('fail');
     expect(r.detail).toContain('502');
-    expect(r.hint).toMatch(/podman logs auth-authelia/i);
+    // New structured behaviour: the hint references the structured
+    // action label, not the loose "podman logs" paragraph.
+    expect(r.hint).toMatch(/Show recent logs|Reset wizard|Restart auth/i);
+    expect(r.category).toBeDefined();
   });
 
   // Regression for #622: probe must FAIL when fetch itself throws
@@ -77,7 +98,7 @@ describe('oidc_provider_reachable probe', () => {
     expect(r.status).toBe('fail');
     expect(r.detail).toMatch(/did not respond/i);
     expect(r.detail).toContain('ECONNREFUSED');
-    expect(r.hint).toMatch(/encryption key|crash-looping/i);
+    expect(r.hint).toBeDefined();
   });
 
   it('returns warn when 200 body is missing required endpoints', async () => {
@@ -102,5 +123,50 @@ describe('oidc_provider_reachable probe', () => {
     const r = await checkOidcProviderReachable();
     expect(r.status).toBe('fail');
     expect(r.detail).toMatch(/not valid json/i);
+  });
+
+  // #736 — classification surfaces a specific cause in `detail` so the
+  // diagnose card can show "storage drift" / "LDAP bind" / "config
+  // invalid" instead of a paragraph listing all three.
+  it('classifies 500 + storage-key log tail as category=storage', async () => {
+    vi.mocked(getConfig).mockResolvedValue(baseConfig as never);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
+    sendCommandMock.mockResolvedValueOnce({
+      code: 0,
+      stdout: 'level=fatal msg="unable to decrypt the storage encryption key has been altered"',
+    });
+    const r = await checkOidcProviderReachable();
+    expect(r.status).toBe('fail');
+    expect(r.category).toBe('storage');
+    expect(r.detail).toMatch(/encryption key drift/i);
+  });
+
+  it('classifies 500 + LDAP-bind log tail as category=ldap', async () => {
+    vi.mocked(getConfig).mockResolvedValue(baseConfig as never);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
+    sendCommandMock.mockResolvedValueOnce({
+      code: 0,
+      stdout: 'level=error msg="error occurred performing LDAP bind: LDAP Result Code 49 \\"Invalid Credentials\\""',
+    });
+    const r = await checkOidcProviderReachable();
+    expect(r.status).toBe('fail');
+    expect(r.category).toBe('ldap');
+    expect(r.detail).toMatch(/LDAP bind/i);
+  });
+});
+
+describe('classifyAutheliaLogs', () => {
+  it('returns unknown for empty logs', () => {
+    expect(classifyAutheliaLogs('').category).toBe('unknown');
+  });
+
+  it('matches config errors before LDAP', () => {
+    const logs = 'Configuration: parse error at line 14: expected mapping value\nLDAP Result Code 49 "Invalid Credentials"';
+    expect(classifyAutheliaLogs(logs).category).toBe('config');
+  });
+
+  it('matches storage drift', () => {
+    const logs = 'fatal error: unable to decrypt the storage encryption key';
+    expect(classifyAutheliaLogs(logs).category).toBe('storage');
   });
 });

@@ -62,6 +62,17 @@ def log(msg: str) -> None:
     sys.stdout.flush()
 
 
+def render_http_code(code: int) -> str:
+    """Render a `request_json` status code in a way the operator can
+    immediately interpret. `code == 0` is our local convention for "the
+    request never reached the server" (URLError/TimeoutError/OSError);
+    "returned 0" reads like a successful exit code, so spell that case
+    out instead of leaving the operator to guess (#734)."""
+    if code == 0:
+        return "no response (connection refused / DNS / timeout)"
+    return f"HTTP {code}"
+
+
 REQUEST_TIMEOUT = 30.0
 
 
@@ -208,7 +219,7 @@ def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str
         "PreferredMetadataLanguage": "de",
     })
     if code not in (200, 204):
-        log(f"⚠️ Jellyfin: POST /Startup/Configuration returned {code} — finish setup at the web UI.")
+        log(f"⚠️ Jellyfin: POST /Startup/Configuration → {render_http_code(code)} — install-blocking. Open Dashboard → Server and finish the locale step before using Jellyfin.")
         return False
 
     # Admin user.
@@ -217,7 +228,7 @@ def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str
         "Password": admin_password,
     })
     if code not in (200, 204):
-        log(f"⚠️ Jellyfin: POST /Startup/User returned {code} — finish setup at the web UI.")
+        log(f"⚠️ Jellyfin: POST /Startup/User → {render_http_code(code)} — install-blocking. Admin '{admin_user}' was not created; finish the wizard at the web UI and set the password to the one shown in the credentials banner.")
         return False
 
     # Remote access settings: enable HTTP access from non-LAN clients
@@ -229,11 +240,11 @@ def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str
     })
     if code not in (200, 204):
         # Non-fatal — the operator can flip these in Dashboard later.
-        log(f"(note) Jellyfin: POST /Startup/RemoteAccess returned {code} — flip the remote-access toggles in Dashboard if needed.")
+        log(f"(note) Jellyfin: POST /Startup/RemoteAccess → {render_http_code(code)} — non-blocking; flip the remote-access toggles in Dashboard if Jellyfin isn't reachable from outside the LAN.")
 
     code, _ = request_json("POST", f"{base_url}/Startup/Complete", {})
     if code not in (200, 204):
-        log(f"⚠️ Jellyfin: POST /Startup/Complete returned {code} — finish setup at the web UI.")
+        log(f"⚠️ Jellyfin: POST /Startup/Complete → {render_http_code(code)} — install-blocking. Open Dashboard at the web UI and click 'Finish' on the wizard so Jellyfin leaves first-run mode.")
         return False
 
     log(f"✅ Jellyfin first-run wizard skipped; admin '{admin_user}' seeded.")
@@ -346,25 +357,47 @@ def configure_abs_oidc(
     #    Discovery values point at the *public* issuer regardless of
     #    which probe answered — clients hit those URLs from a
     #    browser, not from the host.
+    # Discovery candidate order matches the `oidc_provider_reachable`
+    # diagnose probe, which is known to succeed against the running
+    # Authelia (#735). Two prior issues with the old order:
+    #   - `localhost` resolved IPv6 first on some FCoS builds while
+    #     Authelia binds IPv4-only — every probe returned code=0 and
+    #     fell into the hardcoded-path branch.
+    #   - The public URL was attempted before DNS/proxy was ready, so
+    #     the second candidate also failed and the fallback message
+    #     ran on every install.
+    # Probe 127.0.0.1 first (loopback IPv4, matches the diagnose probe
+    # at oidcProviderReachable.ts:49), then ::1 for IPv6-only binds,
+    # then the public URL for re-runs against a settled install.
     authelia_port = env("AUTHELIA_PORT", "9091")
     discovery_candidates = [
-        f"http://localhost:{authelia_port}",
+        f"http://127.0.0.1:{authelia_port}",
+        f"http://[::1]:{authelia_port}",
         issuer_url,
     ]
     disc = None
+    last_codes: list[str] = []
     for candidate in discovery_candidates:
         code, body = request_json("GET", f"{candidate}/.well-known/openid-configuration")
         if code == 200 and isinstance(body, dict):
             disc = body
             log(f"ℹ️  Authelia OIDC discovery via {candidate}.")
             break
+        last_codes.append(f"{candidate} → {render_http_code(code)}")
     if disc is not None:
         auth_url = disc.get("authorization_endpoint", "")
         token_url = disc.get("token_endpoint", "")
         userinfo_url = disc.get("userinfo_endpoint", "")
         jwks_url = disc.get("jwks_uri", "")
     else:
-        log("ℹ️  Authelia OIDC discovery unreachable on every candidate — falling back to known Authelia 4.x paths.")
+        # If we ever land here the install will still complete (the
+        # hardcoded Authelia-4.x paths match the discovery doc verbatim),
+        # but the diagnose probe at the same endpoint is known to work,
+        # so seeing this branch on a successful install means something
+        # changed about how the post-deploy reaches Authelia. Log every
+        # candidate's outcome so the next operator can compare against
+        # the diagnose probe instead of re-discovering this.
+        log(f"ℹ️  Authelia OIDC discovery unreachable on every candidate — falling back to known Authelia 4.x paths. Candidates: {'; '.join(last_codes)}.")
         auth_url = f"{issuer_url}/api/oidc/authorization"
         token_url = f"{issuer_url}/api/oidc/token"
         userinfo_url = f"{issuer_url}/api/oidc/userinfo"

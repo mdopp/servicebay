@@ -161,8 +161,16 @@ export async function POST(request: Request) {
       email?: string;
       password?: string;
       fullName?: string;
+      /**
+       * Set true by the install runner's self-heal retry path (#733).
+       * The retry happens immediately after a data-dir wipe + nginx
+       * restart, so the user table seeds in seconds — the default 90 s
+       * budget would just stall the install with a second long wait
+       * for no extra coverage. Caps the retry budget at 20 s instead.
+       */
+      quickRetry?: boolean;
     };
-    const { node, email, password, fullName } = body;
+    const { node, email, password, fullName, quickRetry } = body;
 
     if (typeof email !== 'string' || !email || typeof password !== 'string' || !password) {
       return NextResponse.json({ ok: false, error: 'email and password are required' }, { status: 400 });
@@ -184,7 +192,7 @@ export async function POST(request: Request) {
     // The defaults fallback below remains as a safety net for older NPM
     // versions that ignored the INITIAL_ADMIN_* env vars, or for installs
     // that somehow lost them.
-    const TARGET_RETRY_BUDGET_MS = 90_000;
+    const TARGET_RETRY_BUDGET_MS = quickRetry ? 20_000 : 90_000;
     const RETRY_INTERVAL_MS = 3_000;
     const start = Date.now();
     let targetToken: string | null = null;
