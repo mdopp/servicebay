@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.10.0...servicebay-v4.11.0) (2026-05-20)
+
+
+### Features
+
+* **wizard:** mobile-responsive layout ([#718](https://github.com/mdopp/servicebay/issues/718)) ([#751](https://github.com/mdopp/servicebay/issues/751)) ([dfd4b4a](https://github.com/mdopp/servicebay/commit/dfd4b4aac4c4e2966501526524731f3907a4be7a))
+
 ## [4.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.9.0...servicebay-v4.10.0) (2026-05-20)
 
 
