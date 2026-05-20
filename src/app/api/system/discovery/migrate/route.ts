@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { migrateService, DiscoveredService } from '@/lib/discovery';
+import { migrateService, type DiscoveredService } from '@/lib/migration';
 import { listNodes } from '@/lib/nodes';
 import { apiError } from '@/lib/api/errors';
 

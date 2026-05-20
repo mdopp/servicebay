@@ -1,7 +1,7 @@
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { mergeServices, DiscoveredService } from '@/lib/discovery';
+import { mergeServices, type DiscoveredService } from '@/lib/migration';
 import { listNodes } from '@/lib/nodes';
 import { decrypt } from '@/lib/auth';
 import { apiError } from '@/lib/api/errors';
