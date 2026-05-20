@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.8.2...servicebay-v4.9.0) (2026-05-20)
+
+
+### Features
+
+* wizard split + stability batch ([#693](https://github.com/mdopp/servicebay/issues/693) [#686](https://github.com/mdopp/servicebay/issues/686) [#694](https://github.com/mdopp/servicebay/issues/694) [#696](https://github.com/mdopp/servicebay/issues/696) [#714](https://github.com/mdopp/servicebay/issues/714) [#715](https://github.com/mdopp/servicebay/issues/715) [#716](https://github.com/mdopp/servicebay/issues/716) [#717](https://github.com/mdopp/servicebay/issues/717) [#730](https://github.com/mdopp/servicebay/issues/730)) ([#731](https://github.com/mdopp/servicebay/issues/731)) ([8b7641c](https://github.com/mdopp/servicebay/commit/8b7641cb9c5493177e9591e7a4773b9b39f16ef3))
+
+
+### Bug Fixes
+
+* **hermes:** use args: gateway run, not command: nor empty ([#706](https://github.com/mdopp/servicebay/issues/706) followup) ([#712](https://github.com/mdopp/servicebay/issues/712)) ([0b0a905](https://github.com/mdopp/servicebay/commit/0b0a9051fbc5c7ccfb0fae1a8ac7ffcf6dd76884))
+* **install:** abort cleanInstall when reset call fails ([#710](https://github.com/mdopp/servicebay/issues/710)) ([a7310ff](https://github.com/mdopp/servicebay/commit/a7310ffe98a6477be16e9fc1572697415d2139b7))
+
 ## [4.8.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.8.1...servicebay-v4.8.2) (2026-05-19)
 
 
