@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import SectionLoading from '@/components/SectionLoading';
+import DashboardHydrationGate, { type HydrationPhase } from '@/components/DashboardHydrationGate';
 import { Box, Terminal as TerminalIcon, MoreVertical, X, Activity, Search, RefreshCw, Eraser } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -261,10 +261,16 @@ export default function ContainersDashboard() {
                     </PageHeader>
 
             <div className="flex-1 overflow-y-auto p-4">
-                {loading ? (
-                        <SectionLoading message="Connecting to Agent..." />
-                    ) : waitingForSync ? (
-                        <SectionLoading message="Synchronizing state..." />
+                {loading || waitingForSync ? (
+                        <DashboardHydrationGate
+                            // `loading` flips when the socket transport is
+                            // still connecting (no `isConnected` yet);
+                            // `waitingForSync` flips when the agent is
+                            // streaming the first inventory broadcast. Render
+                            // never reaches this block — the dataset is
+                            // already attached by the time we leave it.
+                            phase={(loading ? 'socket' : 'sync') as HydrationPhase}
+                        />
                     ) : filteredContainers.length === 0 ? (
                         <div className="text-center text-gray-500 dark:text-gray-400 mt-10">
                             {containers.length > 0 ? 'No containers match your filters.' : 'No active containers found.'}
