@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, HelpCircle, Layers, Loader2, Trash2 } from 'lucide-react';
 
 import type { StackManifest } from '@/lib/template/stackContract';
-import type { StackHealth, ChildHealthState } from '@/contracts/install';
+import type { StackHealth, ChildHealthState } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
 
 /**

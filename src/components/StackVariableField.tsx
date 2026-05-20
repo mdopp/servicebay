@@ -2,8 +2,7 @@
 
 import { RefreshCw } from 'lucide-react';
 import type { VariableMeta } from '@/lib/registry';
-import { typedFetch } from '@/contracts/client';
-import { GenerateSecretResponseSchema } from '@/contracts/install';
+import { typedFetch, GenerateSecretResponseSchema } from '@servicebay/api-client';
 
 interface StackVariable {
   name: string;

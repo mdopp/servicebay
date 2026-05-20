@@ -5,7 +5,7 @@ import { RefreshCw, Terminal, Activity, Box, ArrowLeft, FileJson } from 'lucide-
 import { useRouter, useSearchParams } from 'next/navigation';
 import { logger } from '@/lib/logger';
 import ContainerList from './ContainerList';
-import type { EnrichedContainer } from '@/contracts/agent';
+import type { EnrichedContainer } from '@servicebay/api-client';
 
 interface ServiceMonitorProps {
     serviceName: string;

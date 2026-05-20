@@ -40,12 +40,12 @@ import {
 } from '@/app/actions';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { type Credential } from '@/lib/stackInstall/credentialsManifest';
-import { typedFetch } from '@/contracts/client';
 import {
+  typedFetch,
   GenerateSecretResponseSchema,
   ParseDependenciesResponseSchema,
   type JobState as RemoteJobState,
-} from '@/contracts/install';
+} from '@servicebay/api-client';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
 

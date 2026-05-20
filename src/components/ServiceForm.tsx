@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type HumanizedYamlError } from '@/lib/util/humanizeYamlError';
-import { typedFetch } from '@/contracts/client';
-import { ValidateYamlResponseSchema } from '@/contracts/services';
+import { typedFetch, ValidateYamlResponseSchema } from '@servicebay/api-client';
 import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2, RefreshCw } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
