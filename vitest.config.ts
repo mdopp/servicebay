@@ -7,12 +7,6 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    // Vitest's default `testTimeout` is 5 s. The OnboardingWizard
-    // install pipeline (the file driving #757) takes ~2.5 s locally
-    // and routinely 4–6 s on GitHub-hosted runners. Raise the per-test
-    // budget so the longer waitFor floor from tests/setup.ts is
-    // actually reachable.
-    testTimeout: 30_000,
     setupFiles: ['./tests/setup.ts'],
     env: {
       DATA_DIR: '/tmp/servicebay-test',
