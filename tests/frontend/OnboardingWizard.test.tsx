@@ -121,6 +121,17 @@ const commitStackPicker = async () => {
   // Continue. Pick Continue specifically.
   const continues = screen.getAllByRole('button', { name: /Continue/i });
   fireEvent.click(continues[continues.length - 1]);
+  // handleSelectStack runs async (fetchReadme per stack) before the
+  // services step's items array is populated. Wait for the parsed
+  // service rows to appear so the test's next Continue click doesn't
+  // race against the still-loading + disabled Continue button on
+  // services. Without this the test passes locally (fast microtasks)
+  // but flakes in CI (#691). `getAllByText` because the SelectedStacks
+  // panel and the checklist can both render the same service name.
+  await waitFor(() => {
+    const matches = screen.queryAllByText(/nginx-web|redis-cache/);
+    if (matches.length === 0) throw new Error('Service rows have not rendered yet');
+  });
 };
 
 // Helper: default status with no setup needed
@@ -573,7 +584,12 @@ describe('OnboardingWizard', () => {
             });
         });
 
-        it('runs DNS verification on Done step when subdomains were deployed', async () => {
+        // 10 s timeout (vs the 5 s default) — this test walks the whole
+        // install pipeline (machine → stacks/select → stacks/services →
+        // stacks/configure → install → done) plus the DoneStepDnsCheck
+        // POST. Locally it finishes in ~2.5 s, but CI's slower microtask
+        // scheduler frequently lands just over the default budget.
+        it('runs DNS verification on Done step when subdomains were deployed', { timeout: 10_000 }, async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
             // Return variables with subdomain type
             (fetchTemplateVariables as any).mockResolvedValue({
@@ -607,7 +623,7 @@ describe('OnboardingWizard', () => {
                     expect.stringContaining('/api/system/dns/verify'),
                     expect.objectContaining({ method: 'POST' }),
                 );
-            }, { timeout: 5000 });
+            }, { timeout: 9_000 });
         });
 
         // TODO(#flaky-test): the post-retry waitFor for "1. Configure DNS"
