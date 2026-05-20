@@ -99,17 +99,16 @@ const optOutOfDomain = () => {
   if (!radios[0].checked) fireEvent.click(radios[0]);
 };
 
-// stacksOnlyMode now lands on the express 'install-confirm' screen.
-// The existing stack-picker tests want the verbose wizard, so this
-// helper picks internal-only (state is shared with the machine step),
-// clicks Edit details to drop into the wizard, then clicks Continue on
-// the machine step — ending up on the stack picker.
+// stacksOnlyMode lands on the canonical install-confirm screen.
+// The existing stack-picker tests want the stack picker, so this
+// helper picks internal-only (releases the Continue gate) and then
+// clicks "Pick stacks" to drop into the picker directly. The former
+// 'machine' step was collapsed into install-confirm in #689, so
+// there's no separate Continue step in between anymore.
 const advancePastMachineStep = async () => {
   await waitFor(() => screen.getAllByRole('radio', { name: /No, internal only/i }));
   optOutOfDomain();
-  fireEvent.click(screen.getByRole('button', { name: /Edit details/i }));
-  await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-  fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Pick stacks/i }));
 };
 
 // Pre-#682 the picker was click-a-tile-to-pick; now it's a multi-
@@ -559,18 +558,15 @@ describe('OnboardingWizard', () => {
             });
         });
 
-        it('shows domain prompt on machine step', async () => {
+        it('shows domain prompt on install-confirm step', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
 
             render(<OnboardingWizard />);
 
-            // Domain prompt is on the machine step. Pre-#685 the
-            // install-confirm step *also* had an editable text input
-            // (operator-visible duplicate); now it's a read-only
-            // display. Navigate explicitly to machine to find the
-            // input.
-            await waitFor(() => screen.getByRole('button', { name: /Edit details/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Edit details/i }));
+            // #689: machine + install-confirm collapsed into the same
+            // canonical confirm step. The domain prompt + reachability
+            // picker render on install-confirm directly — no second
+            // step to drop into.
             await waitFor(() => {
                 expect(screen.getAllByPlaceholderText('example.com').length).toBeGreaterThan(0);
                 expect(screen.getAllByRole('radio', { name: /No, internal only/i }).length).toBeGreaterThan(0);
