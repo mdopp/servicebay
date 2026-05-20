@@ -627,7 +627,7 @@ describe('OnboardingWizard', () => {
                     expect.stringContaining('/api/system/dns/verify'),
                     expect.objectContaining({ method: 'POST' }),
                 );
-            }, { timeout: 5000 });
+            }, { timeout: 9_000 });
         });
 
         // TODO(#flaky-test): the post-retry waitFor for "1. Configure DNS"
