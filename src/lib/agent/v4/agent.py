@@ -1898,16 +1898,27 @@ class Agent:
                             bufsize=1,  # line-buffered
                         )
                         stdout_lines = []
-                        for line in proc.stdout:
-                            line = line.rstrip("\n")
-                            stdout_lines.append(line)
-                            chunk = {
-                                'type': 'exec:chunk',
-                                'payload': {'id': req_id, 'line': line},
-                            }
-                            with self.io_lock:
-                                sys.stdout.write(json.dumps(chunk) + "\0")
-                                sys.stdout.flush()
+                        while True:
+                            # Read in smaller chunks to catch partial lines/progress bars
+                            chunk_data = proc.stdout.read(128)
+                            if not chunk_data:
+                                break
+                            
+                            for line in chunk_data.splitlines(True):
+                                # If it's a full line, strip the newline and send it.
+                                # If it's a partial line, we send it as is.
+                                # Note: the runner log() appends \n, so partials will
+                                # unfortunately still be split by newlines on the UI for now,
+                                # but at least they'll appear sooner.
+                                send_line = line.rstrip("\n")
+                                stdout_lines.append(send_line)
+                                chunk = {
+                                    'type': 'exec:chunk',
+                                    'payload': {'id': req_id, 'line': send_line},
+                                }
+                                with self.io_lock:
+                                    sys.stdout.write(json.dumps(chunk) + "\0")
+                                    sys.stdout.flush()
                         proc.wait()
                         reply(result={
                             "code": proc.returncode,

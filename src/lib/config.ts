@@ -557,18 +557,22 @@ function transformConfig(obj: any, keysToTransform: string[], transformFn: (val:
 const SENSITIVE_KEYS = ['password', 'secret', 'token', 'key', 'apiKey'];
 
 export async function getConfig(): Promise<AppConfig> {
+  let rawConfig: unknown = {};
   try {
     const content = await fs.readFile(CONFIG_PATH, 'utf-8');
-    const rawConfig = JSON.parse(content);
-    // Decrypt sensitive fields
-    const config = transformConfig(rawConfig, SENSITIVE_KEYS, decrypt) as AppConfig;
-    const merged = { ...DEFAULT_CONFIG, ...config };
-    merged.templateSettings = normalizeTemplateSettingsKeys(merged.templateSettings) || {};
-    merged.externalLinks = normalizeExternalLinks(merged.externalLinks);
-    return merged;
+    rawConfig = JSON.parse(content);
   } catch {
+    // If file is missing or corrupt, return defaults
     return DEFAULT_CONFIG;
   }
+
+  // Decrypt sensitive fields. transformConfig uses decrypt which
+  // catches its own errors per-key, so this call should be safe.
+  const decrypted = transformConfig(rawConfig, SENSITIVE_KEYS, decrypt) as AppConfig;
+  const merged = { ...DEFAULT_CONFIG, ...decrypted };
+  merged.templateSettings = normalizeTemplateSettingsKeys(merged.templateSettings) || {};
+  merged.externalLinks = normalizeExternalLinks(merged.externalLinks);
+  return merged;
 }
 
 /**

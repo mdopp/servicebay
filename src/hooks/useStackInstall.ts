@@ -359,7 +359,10 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     jobIdRef.current = jobId;
     if (phase !== 'installing') return;
     let cancelled = false;
+    let polling = false;
     const tick = async () => {
+      if (polling) return;
+      polling = true;
       try {
         // Primary: the cookie-gated /status endpoint (full data).
         // Fallback (#663 — S1): /progress is jobId-gated and returns
@@ -388,8 +391,17 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         if (typeof data.logsOffset === 'number') {
           logsOffsetRef.current = data.logsOffset;
         }
-        if (data.job) applyJobState(data.job);
+        if (data.job) {
+           applyJobState(data.job);
+           // If the job just finished, this was our last scheduled tick.
+           // The interval will be cleared by the useEffect cleanup, but
+           // we've already updated the logs and state from the terminal
+           // response.
+        }
       } catch { /* network blip — try again next tick */ }
+      finally {
+        polling = false;
+      }
     };
     void tick();
     const id = setInterval(() => { void tick(); }, 2000);

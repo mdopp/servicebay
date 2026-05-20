@@ -60,8 +60,12 @@ const isTestFile = (p: string) => /\.test\.(ts|tsx)$/.test(p) || p.includes('/te
 // Ratchet target: 1,500 once the three 2k dashboards + NetworkService
 // + OnboardingWizard are split into per-step files (see audit doc
 // ARCH follow-ups).
+// Step taken: OnboardingWizard split into wizard/steps/* in #693, file
+// dropped from 2,672 → ~1,300 LOC. Next-biggest survivor is
+// NetworkDashboard.tsx at 2,114 — held at 2,200 here until that split
+// lands so the ratchet keeps pressure on the remaining four files.
 // ---------------------------------------------------------------------------
-const MAX_FILE_LOC = 2_800;
+const MAX_FILE_LOC = 2_200;
 
 async function checkFileSize() {
     const files = await walk(SRC, isTs);

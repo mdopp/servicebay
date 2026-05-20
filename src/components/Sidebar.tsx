@@ -125,22 +125,36 @@ export default function Sidebar() {
             </button>
         )}
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
-            {hasActiveInstall && (() => {
+            {/* Always-visible Setup entry (#696). Pulse + tinted background
+                only when there's an active or pending install, otherwise
+                a plain dashboards-style row so operators can re-open the
+                wizard later (install another stack, reconfigure gateway,
+                etc.) without knowing the /setup URL. */}
+            {(() => {
                 const isActive = pathname?.startsWith('/setup') ?? false;
+                const baseClass = `w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${isCollapsed ? 'justify-center' : 'gap-3'} `;
+                const tone = isActive
+                    ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
+                    : hasActiveInstall
+                    ? 'bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300'
+                    : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400';
+                const iconColor = isActive
+                    ? 'text-blue-500 dark:text-blue-400'
+                    : hasActiveInstall
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-gray-500 dark:text-gray-500';
                 return (
                     <button
                         type="button"
                         onClick={() => router.push('/setup')}
-                        className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${
-                            isActive
-                            ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
-                            : 'bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300'
-                        } ${isCollapsed ? 'justify-center' : 'gap-3'}`}
-                        title={isCollapsed ? 'Setup in progress' : ''}
+                        className={baseClass + tone}
+                        title={isCollapsed ? (hasActiveInstall ? 'Setup in progress' : 'Setup') : ''}
                     >
                         <div className="relative shrink-0">
-                            <Wrench size={20} className={isActive ? 'text-blue-500 dark:text-blue-400' : 'text-blue-600 dark:text-blue-400'} />
-                            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                            <Wrench size={20} className={`shrink-0 ${iconColor}`} />
+                            {hasActiveInstall && (
+                                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                            )}
                         </div>
                         {!isCollapsed && <span className="font-medium whitespace-nowrap overflow-hidden">Setup</span>}
                     </button>
