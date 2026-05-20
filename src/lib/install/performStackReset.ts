@@ -8,7 +8,7 @@
  */
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { agentManager } from '@/lib/agent/manager';
-import { getConfig } from '@/lib/config';
+import { getConfig, scrubEncryptedConfig } from '@/lib/config';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { logger } from '@/lib/logger';
 import { RESET_GROUPS, DEFAULT_PRESERVE, isAlwaysWipe, type ResetGroup } from './resetGroups';
@@ -188,37 +188,23 @@ export async function performStackReset(
   //     publicDomain, lanDomain, gateway.host (see #702)
   //   - cert-archive/ → preserved
   if (!preserve.includes('secrets')) {
-    // 1) Scrub config.json in place (Python one-liner: drop every
-    //    enc:v1:* value, drop auth.passwordHash, drop the encrypted
-    //    .password subkeys; keep everything else).
-    const scrubConfig = `python3 -c '
-import json, os, sys
-p = "/var/mnt/data/servicebay/config.json"
-if not os.path.exists(p):
-    sys.exit(0)
-with open(p) as f:
-    d = json.load(f)
-def scrub(obj):
-    if isinstance(obj, dict):
-        for k in list(obj.keys()):
-            v = obj[k]
-            if isinstance(v, str) and v.startswith("enc:v1:"):
-                del obj[k]
-            elif isinstance(v, (dict, list)):
-                scrub(v)
-    elif isinstance(obj, list):
-        for v in obj:
-            scrub(v)
-scrub(d)
-auth = d.get("auth", {})
-auth.pop("passwordHash", None)
-auth.pop("bootstrapToken", None)
-tmp = p + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(d, f, indent=2)
-os.replace(tmp, p)
-' 2>&1 || true`;
-    await agent.sendCommand('exec', { command: scrubConfig });
+    // 1) Scrub config.json via the Node.js side under the same
+    //    `withConfigLock` queue as `updateConfig` / `saveConfig`
+    //    (#711). The pre-fix implementation ran a Python one-liner
+    //    via `agent.sendCommand('exec')` — that read + wrote
+    //    config.json directly on the host, bypassing the in-process
+    //    lock. A concurrent post-deploy that called
+    //    `updateConfig({ adguard: { password }})` landed its write
+    //    *between* the Python script's read and write; the script's
+    //    older snapshot then clobbered the new credential, surfacing
+    //    as "adguard.password missing after install" + wildcard DNS
+    //    rewrites failing to provision.
+    try {
+      const { removedKeys } = await scrubEncryptedConfig();
+      logger.info('StackReset', `Scrubbed config.json — removed ${removedKeys} encrypted/auth key(s).`);
+    } catch (e) {
+      logger.warn('StackReset', `scrubEncryptedConfig failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     // 2) Wipe everything else under /var/mnt/data/servicebay/ except
     //    the preserved subdirs + the just-scrubbed config.json.
