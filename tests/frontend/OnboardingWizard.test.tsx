@@ -588,7 +588,12 @@ describe('OnboardingWizard', () => {
             });
         });
 
-        it('runs DNS verification on Done step when subdomains were deployed', async () => {
+        // 10 s timeout (vs the 5 s default) — this test walks the whole
+        // install pipeline (machine → stacks/select → stacks/services →
+        // stacks/configure → install → done) plus the DoneStepDnsCheck
+        // POST. Locally it finishes in ~2.5 s, but CI's slower microtask
+        // scheduler frequently lands just over the default budget.
+        it('runs DNS verification on Done step when subdomains were deployed', { timeout: 10_000 }, async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
             // Return variables with subdomain type
             (fetchTemplateVariables as any).mockResolvedValue({
