@@ -18,7 +18,7 @@ let nextTarError: Error | null = null;
 const listNodesMock = vi.fn(async () => []);
 const getConnectionMock = vi.fn();
 
-vi.mock('../../src/lib/dirs', () => ({
+vi.mock('@/lib/dirs', () => ({
   get DATA_DIR() {
     return mockPaths.dataDir;
   },
@@ -30,7 +30,7 @@ vi.mock('../../src/lib/dirs', () => ({
 
 const loggerWarn = vi.fn();
 
-vi.mock('../../src/lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     warn: loggerWarn,
     info: vi.fn(),
@@ -39,11 +39,11 @@ vi.mock('../../src/lib/logger', () => ({
   }
 }));
 
-vi.mock('../../src/lib/nodes', () => ({
+vi.mock('@/lib/nodes', () => ({
   listNodes: () => listNodesMock()
 }));
 
-vi.mock('../../src/lib/ssh/pool', () => ({
+vi.mock('@/lib/ssh/pool', () => ({
   SSHConnectionPool: {
     getInstance: () => ({
       getConnection: getConnectionMock
@@ -121,7 +121,7 @@ describe('systemBackup', () => {
     await fs.writeFile(path.join(mockPaths.dataDir, 'checks.json'), '[]');
     await fs.writeFile(path.join(mockPaths.systemdDir, 'demo.kube'), 'kind: Pod');
 
-    const { createSystemBackup } = await import('../../src/lib/systemBackup');
+    const { createSystemBackup } = await import('@/lib/systemBackup');
     const result = await createSystemBackup();
 
     expect(result.entry.fileName).toMatch(/^servicebay-full-/);
@@ -134,7 +134,7 @@ describe('systemBackup', () => {
   });
 
   it('restores an archive and triggers systemd reload', async () => {
-    const { restoreSystemBackup } = await import('../../src/lib/systemBackup');
+    const { restoreSystemBackup } = await import('@/lib/systemBackup');
     const fileName = 'servicebay-full-test.tar.gz';
     await fs.mkdir(mockPaths.backupDir, { recursive: true });
     await fs.writeFile(path.join(mockPaths.backupDir, fileName), 'existing-archive');
@@ -149,7 +149,7 @@ describe('systemBackup', () => {
   });
 
   it('deletes an archive', async () => {
-    const { deleteSystemBackup } = await import('../../src/lib/systemBackup');
+    const { deleteSystemBackup } = await import('@/lib/systemBackup');
     const fileName = 'servicebay-full-old.tar.gz';
     await fs.mkdir(mockPaths.backupDir, { recursive: true });
     await fs.writeFile(path.join(mockPaths.backupDir, fileName), 'old');
@@ -160,7 +160,7 @@ describe('systemBackup', () => {
   });
 
   it('rejects invalid backup names', async () => {
-    const { getBackupFileMeta } = await import('../../src/lib/systemBackup');
+    const { getBackupFileMeta } = await import('@/lib/systemBackup');
     await expect(getBackupFileMeta('evil.tar.gz')).rejects.toThrow('Invalid backup name');
   });
 });

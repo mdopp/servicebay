@@ -19,7 +19,7 @@ vi.mock('@/lib/config', () => ({
   getConfig: vi.fn(() => Promise.resolve(mockConfig)),
 }));
 
-import { getLldapUserDeepLink } from '../../src/lib/lldap/client';
+import { getLldapUserDeepLink } from '@/lib/lldap/client';
 
 describe('getLldapUserDeepLink', () => {
   beforeEach(() => {

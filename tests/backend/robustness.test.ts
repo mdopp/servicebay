@@ -1,18 +1,18 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AgentExecutor } from '../../src/lib/agent/executor';
-import { AgentManager } from '../../src/lib/agent/manager';
-import { NginxParser } from '../../src/lib/nginx/parser';
-import { NetworkService } from '../../src/lib/network/service';
-import { Executor } from '../../src/lib/interfaces';
+import { AgentExecutor } from '@/lib/agent/executor';
+import { AgentManager } from '@/lib/agent/manager';
+import { NginxParser } from '@/lib/nginx/parser';
+import { NetworkService } from '@/lib/network/service';
+import { Executor } from '@/lib/interfaces';
 import { Readable } from 'stream';
 
 // Mock dependnecies
-vi.mock('../../src/lib/agent/manager');
+vi.mock('@/lib/agent/manager');
 vi.mock('fs/promises');
 // Partial mock for network service to avoid mocking everything
-vi.mock('../../src/lib/config', () => ({
+vi.mock('@/lib/config', () => ({
     DATA_DIR: '/tmp',
     getConfig: vi.fn().mockResolvedValue({})
 }));

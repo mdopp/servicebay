@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { ServiceManager } from '../../src/lib/services/ServiceManager';
+import { ServiceManager } from '@/lib/services/ServiceManager';
 
 describe('extractHostPorts', () => {
   it('returns numeric host ports from a kube YAML', () => {

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { runWithTrace, currentTraceId, newTraceId } from '../../src/lib/util/traceContext';
+import { runWithTrace, currentTraceId, newTraceId } from '@/lib/util/traceContext';
 
 describe('traceContext (#594)', () => {
   it('newTraceId() returns an 8-char hex string each call', () => {

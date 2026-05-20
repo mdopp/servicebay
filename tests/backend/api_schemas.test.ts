@@ -7,7 +7,7 @@ import {
   HealthCheckTarget,
   BackupFileName,
   CheckIdString,
-} from '../../src/lib/api/schemas';
+} from '@/lib/api/schemas';
 
 describe('ContainerId', () => {
   it('accepts well-formed names', () => {

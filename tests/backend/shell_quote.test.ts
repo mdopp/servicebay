@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shellQuote, shellQuoteAll } from '../../src/lib/util/shellQuote';
+import { shellQuote, shellQuoteAll } from '@/lib/util/shellQuote';
 
 describe('shellQuote', () => {
   it('passes through safe identifiers unchanged', () => {

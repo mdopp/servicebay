@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { assertValidFritzBoxHost } from '../../src/lib/fritzbox/client';
+import { assertValidFritzBoxHost } from '@/lib/fritzbox/client';
 
 describe('assertValidFritzBoxHost', () => {
   it('accepts the default fritz.box mDNS hostname', () => {

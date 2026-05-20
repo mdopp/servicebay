@@ -1,7 +1,7 @@
  
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { DigitalTwinStore } from '../../src/lib/store/twin';
+import { DigitalTwinStore } from '@/lib/store/twin';
 
 describe('DigitalTwinStore', () => {
     let store: DigitalTwinStore;

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getEnrichedContainers } from '../../src/lib/manager';
-import { getExecutor } from '../../src/lib/executor';
-import { PodmanConnection } from '../../src/lib/nodes';
+import { getEnrichedContainers } from '@/lib/manager';
+import { getExecutor } from '@/lib/executor';
+import { PodmanConnection } from '@/lib/nodes';
 
 // Mock executor module
-vi.mock('../../src/lib/executor', () => ({
+vi.mock('@/lib/executor', () => ({
   getExecutor: vi.fn()
 }));
 

@@ -157,11 +157,12 @@ const servicebayPlugin = {
       },
       create(context) {
         const filename = context.filename ?? context.getFilename();
-        // Phase 3.2 (#763) moved the FE dirs into packages/frontend/.
-        // Match both the old location (transitional — drops to zero
-        // matches once Phase 3.3 cleans up) and the new package path.
+        // Phase 3.3 (#764): the FE dirs left src/ entirely — they
+        // live in packages/frontend/ now. The structural workspace
+        // boundary makes a `@/lib/*` import unresolvable from the
+        // frontend's tsconfig; this rule stays on as a quicker
+        // editor-time signal + defense-in-depth.
         if (
-          !/[\\/]src[\\/](components|hooks|dashboards)[\\/]/.test(filename) &&
           !/[\\/]packages[\\/]frontend[\\/]src[\\/]/.test(filename)
         ) {
           return {};
@@ -170,11 +171,13 @@ const servicebayPlugin = {
           ImportDeclaration(node) {
             const source = node.source.value;
             if (typeof source !== "string") return;
-            // Phase 3.2: broaden from the original install/agent/diagnose
-            // trio to ALL of @/lib/* (the FE has no legitimate reason to
-            // reach into any server-side module).
+            // The FE has no legitimate reason to reach into any
+            // server-side module (`@/lib/**`) or to import directly
+            // from `@servicebay/backend/**`. Go through
+            // `@servicebay/api-client` instead.
             if (
-              /^@\/lib\//.test(source)
+              /^@\/lib\//.test(source) ||
+              /^@servicebay\/backend(\/|$)/.test(source)
             ) {
               context.report({
                 node: node.source,

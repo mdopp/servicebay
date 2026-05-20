@@ -64,7 +64,9 @@ await build({
   external,
   // Resolve the `@/*` alias used inside src/**/*.ts and the
   // `@servicebay/api-client` workspace package (#762 — Phase 3.1).
+  // Phase 3.3 (#764) moved `@/lib/*` into packages/backend/.
   alias: {
+    '@/lib': path.join(repoRoot, 'packages', 'backend', 'src', 'lib'),
     '@': path.join(repoRoot, 'src'),
     '@servicebay/api-client': path.join(repoRoot, 'packages', 'api-client', 'src', 'index.ts'),
   },

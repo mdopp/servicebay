@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { assertValidOidcIssuer } from '../../src/lib/auth/oidcIssuer';
+import { assertValidOidcIssuer } from '@/lib/auth/oidcIssuer';
 
 describe('assertValidOidcIssuer', () => {
   it('accepts a normal https hostname', () => {

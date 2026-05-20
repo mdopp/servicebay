@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DigitalTwinStore } from '../../src/lib/store/twin';
+import { DigitalTwinStore } from '@/lib/store/twin';
 
 beforeEach(() => {
   // Reset the singleton so each test sees a clean slate.

@@ -6,7 +6,7 @@ import {
   clearAttempts,
   clientKeyFromHeaders,
   _resetForTests,
-} from '../../src/lib/auth/rateLimit';
+} from '@/lib/auth/rateLimit';
 
 beforeEach(() => _resetForTests());
 

@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseTemplateManifest, tryParseTemplateManifest } from '../../src/lib/template/contract';
-import { assertApiCompat, SUPPORTED_API_VERSIONS } from '../../src/lib/template/apiVersions';
+import { parseTemplateManifest, tryParseTemplateManifest } from '@/lib/template/contract';
+import { assertApiCompat, SUPPORTED_API_VERSIONS } from '@/lib/template/apiVersions';
 
 const baseYaml = (extraAnnotations: string) => `
 apiVersion: v1

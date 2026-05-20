@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AppConfigPartialSchema, formatConfigErrors } from '../../src/lib/config/schema';
+import { AppConfigPartialSchema, formatConfigErrors } from '@/lib/config/schema';
 
 describe('AppConfigPartialSchema (#595)', () => {
   it('accepts a partial valid config (the common UI save-section case)', () => {
