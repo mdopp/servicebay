@@ -36,17 +36,31 @@ export function WelcomeStep({ selection, setSelection }: WelcomeStepProps) {
             </div>
             
             <div className="space-y-3">
+                {/*
+                  Gateway sits in its own section above the rest of the
+                  selection because device discovery + WoL + port-forward
+                  management all rely on it (#726). The verify-connection
+                  affordance lives in NetworkStep; this is the toggle that
+                  decides whether NetworkStep renders the FRITZ!Box block
+                  at all. Operator can still skip it, but the
+                  "Prerequisites" framing makes the impact explicit
+                  rather than hiding it among optional toggles.
+                */}
                 <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest ml-1">
+                    Prerequisites
+                </p>
+                <Toggle
+                    checked={selection.gateway}
+                    onChange={(v: boolean) => setSelection(s => ({...s, gateway: v}))}
+                    icon={Network}
+                    color="text-purple-500"
+                    title="FRITZ!Box gateway"
+                    desc="Required for device discovery, Wake-on-LAN and port-forward management — you'll verify the connection on the next step."
+                />
+
+                <p className="pt-3 text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest ml-1">
                     Recommended Setup
                 </p>
-                <Toggle 
-                    checked={selection.gateway} 
-                    onChange={(v: boolean) => setSelection(s => ({...s, gateway: v}))}
-                    icon={Network} 
-                    color="text-purple-500"
-                    title="Internet Gateway" 
-                    desc="Connect FRITZ!Box for device discovery"
-                />
                 <Toggle 
                     checked={selection.ssh} 
                     onChange={(v: boolean) => setSelection(s => ({...s, ssh: v}))}
