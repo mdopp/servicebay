@@ -57,18 +57,20 @@ function makeRandomSecret(): string {
   return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
-const PHASE2_DEFAULTS: Record<string, () => { jsonBody: any }> = {
+type FetchMockResult = {
+  ok?: boolean;
+  status?: number;
+  jsonBody?: any;
+  streamLines?: string[];
+};
+
+const PHASE2_DEFAULTS: Record<string, () => FetchMockResult> = {
   '/api/install/generate-secret': () => ({ jsonBody: { secret: makeRandomSecret() } }),
   '/api/templates/parse-dependencies': () => ({ jsonBody: { dependencies: [] } }),
 };
 
 function buildFetchMock(
-  handlers: Record<string, (init?: RequestInit) => {
-    ok?: boolean;
-    status?: number;
-    jsonBody?: any;
-    streamLines?: string[];
-  }>,
+  handlers: Record<string, (init?: RequestInit) => FetchMockResult>,
 ) {
   const merged = { ...PHASE2_DEFAULTS, ...handlers };
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
