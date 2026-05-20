@@ -220,6 +220,81 @@ async function checkTwinFanIn() {
 }
 
 // ---------------------------------------------------------------------------
+// 6. Frontend ↔ Backend boundary (Phase 0 of #753).
+//
+// The frontend (src/components, src/hooks, src/dashboards) should not pull
+// in server-side primitives. Today there's some leakage; the counts are
+// pinned to the current state so any *new* offender fails CI. Each count
+// is expected to go DOWN as the split phases land (#753 children).
+//
+// Buckets:
+//   - js-yaml / mustache imports — template grammar belongs server-side.
+//     #729 already moved YAML parsing into a shared util but ServiceForm
+//     still calls yaml.load directly for live editor feedback (1 file).
+//   - @/lib/install, @/lib/agent, @/lib/diagnose imports — these reach
+//     into backend-only modules. Frontend should consume their results
+//     via @/contracts (Phase 1) or @/app/actions, never the raw libs.
+//   - generateRandomSecret / parseTemplateDependencies references — these
+//     are the install-pipeline helpers that should move server-side in
+//     Phase 2 along with the configure endpoint.
+//
+// Lower these numbers as the split progresses. Raise them only via a
+// documented decision (#753 thread).
+// ---------------------------------------------------------------------------
+const FE_DIRS = ['components', 'hooks', 'dashboards'];
+const FE_TEMPLATE_LIB_MAX = 1;     // js-yaml + mustache imports from FE
+const FE_BACKEND_IMPORT_MAX = 7;   // imports of @/lib/{install,agent,diagnose} from FE
+const FE_INSTALL_HELPER_MAX = 6;   // generateRandomSecret + parseTemplateDependencies refs from FE
+
+const inFeDir = (file: string): boolean =>
+    FE_DIRS.some(d => file.includes(`${path.sep}src${path.sep}${d}${path.sep}`));
+
+async function checkFeBeBoundary() {
+    const allTs = await walk(SRC, isTs);
+    const feFiles = allTs.filter(f => inFeDir(f) && !isTestFile(f));
+
+    const templateLibRe = /from\s+['"](?:js-yaml|mustache)['"]/g;
+    const backendImportRe = /from\s+['"]@\/lib\/(?:install|agent|diagnose)(?:\/|['"])/g;
+    const installHelperRe = /\b(?:generateRandomSecret|parseTemplateDependencies)\b/g;
+
+    let templateLibHits = 0;
+    let backendImportHits = 0;
+    let installHelperHits = 0;
+    const templateOffenders: string[] = [];
+    const backendOffenders: string[] = [];
+    const helperOffenders: string[] = [];
+
+    for (const file of feFiles) {
+        const content = await readFile(file, 'utf-8');
+        const tl = content.match(templateLibRe)?.length ?? 0;
+        const bi = content.match(backendImportRe)?.length ?? 0;
+        const ih = content.match(installHelperRe)?.length ?? 0;
+        if (tl > 0) { templateLibHits += tl; templateOffenders.push(`${path.relative(REPO_ROOT, file)} (${tl})`); }
+        if (bi > 0) { backendImportHits += bi; backendOffenders.push(`${path.relative(REPO_ROOT, file)} (${bi})`); }
+        if (ih > 0) { installHelperHits += ih; helperOffenders.push(`${path.relative(REPO_ROOT, file)} (${ih})`); }
+    }
+
+    if (templateLibHits > FE_TEMPLATE_LIB_MAX) {
+        violations.push({
+            check: 'fe-template-lib-imports',
+            detail: `${templateLibHits} js-yaml/mustache imports in src/{${FE_DIRS.join(',')}}/** (max ${FE_TEMPLATE_LIB_MAX}). Template grammar belongs server-side; route the call through @/contracts. Offenders: ${templateOffenders.join(', ')}`,
+        });
+    }
+    if (backendImportHits > FE_BACKEND_IMPORT_MAX) {
+        violations.push({
+            check: 'fe-backend-imports',
+            detail: `${backendImportHits} imports of @/lib/{install,agent,diagnose} from src/{${FE_DIRS.join(',')}}/** (max ${FE_BACKEND_IMPORT_MAX}). Frontend should consume backend results via @/contracts or @/app/actions. Offenders: ${backendOffenders.join(', ')}`,
+        });
+    }
+    if (installHelperHits > FE_INSTALL_HELPER_MAX) {
+        violations.push({
+            check: 'fe-install-helpers',
+            detail: `${installHelperHits} generateRandomSecret/parseTemplateDependencies refs in src/{${FE_DIRS.join(',')}}/** (max ${FE_INSTALL_HELPER_MAX}). Move into POST /api/install/configure. Offenders: ${helperOffenders.join(', ')}`,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Driver.
 // ---------------------------------------------------------------------------
 async function main() {
@@ -229,6 +304,7 @@ async function main() {
         checkExecTemplateLiterals(),
         checkWithApiHandlerAdoption(),
         checkTwinFanIn(),
+        checkFeBeBoundary(),
     ]);
 
     if (violations.length === 0) {
