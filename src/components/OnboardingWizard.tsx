@@ -1072,10 +1072,42 @@ export default function OnboardingWizard() {
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 md:p-10 animate-in fade-in duration-500">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setIsOpen(false)} />
       
-      <div className="relative w-full max-w-6xl h-[85vh] flex bg-white dark:bg-[#0a0a0b] rounded-[2.5rem] shadow-2xl overflow-hidden border border-white/5 soft-depth">
-        
-        {/* Navigation Sidebar */}
-        <aside className="w-72 border-r border-white/5 bg-white/[0.02] backdrop-blur-3xl p-10 flex flex-col justify-between shrink-0">
+      <div className="relative w-full max-w-6xl h-[85vh] flex flex-col md:flex-row bg-white dark:bg-[#0a0a0b] rounded-[2.5rem] shadow-2xl overflow-hidden border border-white/5 soft-depth">
+
+        {/*
+          Mobile step indicator (#718). The full sidebar (288 px) eats
+          more than half the viewport on phones, so swap it for a
+          compact dot-row above the main content. The full sidebar
+          continues to render on md+ screens for the navigation
+          breadcrumb experience.
+        */}
+        <div className="md:hidden flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/[0.02] backdrop-blur-3xl">
+          <div className="flex items-center gap-2 text-white">
+            <Monitor className="w-5 h-5 text-blue-500" />
+            <span className="text-sm font-bold tracking-tight">ServiceBay</span>
+          </div>
+          <div className="flex items-center gap-1.5" aria-label="Setup progress">
+            {activeSteps.map((step, idx) => {
+              const isActive = step === currentStep;
+              const isCompleted = activeSteps.indexOf(currentStep) > idx;
+              return (
+                <div
+                  key={step}
+                  aria-current={isActive ? 'step' : undefined}
+                  className={[
+                    'h-1.5 rounded-full transition-all',
+                    isActive ? 'w-6 bg-blue-500' : '',
+                    isCompleted ? 'w-1.5 bg-emerald-500' : '',
+                    !isActive && !isCompleted ? 'w-1.5 bg-gray-700' : '',
+                  ].join(' ')}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Navigation Sidebar (desktop) */}
+        <aside className="hidden md:flex w-72 border-r border-white/5 bg-white/[0.02] backdrop-blur-3xl p-10 flex-col justify-between shrink-0">
           <div className="space-y-10">
             <div className="flex items-center gap-4">
               <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/20 shadow-inner">
@@ -1125,10 +1157,10 @@ export default function OnboardingWizard() {
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-br from-transparent to-blue-500/[0.02]">
-          <header className="px-12 py-10 flex items-center justify-between">
-            <div className="space-y-1">
+          <header className="px-6 sm:px-8 md:px-12 py-6 md:py-10 flex items-center justify-between">
+            <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-3">
-                <h1 className="text-3xl font-black tracking-tight capitalize text-white">
+                <h1 className="text-2xl md:text-3xl font-black tracking-tight capitalize text-white truncate">
                   {currentStep.replace('-', ' ')}
                 </h1>
                 {/*
@@ -1168,7 +1200,7 @@ export default function OnboardingWizard() {
             </button>
           </header>
 
-          <main className="flex-1 overflow-y-auto px-12 pb-12 scrollbar-thin">
+          <main className="flex-1 overflow-y-auto px-6 sm:px-8 md:px-12 pb-8 md:pb-12 scrollbar-thin">
             {status?.installInProgress && stackInstallStep !== 'installing' && (() => {
               // Stalled-detection (#727): if the runner hasn't touched
               // the job state for STALL_THRESHOLD_MS we treat it as a
@@ -1318,7 +1350,7 @@ export default function OnboardingWizard() {
           </main>
 
           {/* Navigation Footer */}
-          <footer className="px-12 py-8 border-t border-white/5 flex items-center justify-between bg-white/[0.01] backdrop-blur-sm">
+          <footer className="px-6 sm:px-8 md:px-12 py-5 md:py-8 border-t border-white/5 flex items-center justify-between bg-white/[0.01] backdrop-blur-sm flex-wrap gap-3">
              <Button 
                 variant="ghost" 
                 onClick={handleBack} 
