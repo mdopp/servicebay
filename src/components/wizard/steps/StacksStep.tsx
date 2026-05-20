@@ -30,6 +30,7 @@ import { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 import { StackInstallProgress, StackInstallSummary } from '../../StackInstallFlow';
 import DiagnoseProbeList from '../../DiagnoseProbeList';
 import { DoneStepDnsCheck } from '../../DoneStepDnsCheck';
+import SelectedStacksPanel from '../SelectedStacksPanel';
 
 type InstallFlow = ReturnType<typeof useStackInstall>;
 
@@ -413,6 +414,12 @@ export function StacksStep({
 
             {(stackInstallStep === 'installing' || stackInstallStep === 'done') && (
                 <div className="space-y-6 animate-in fade-in duration-700">
+                    <SelectedStacksPanel
+                        items={stackItems}
+                        installingNow={installingNow}
+                        deployedNames={installFlow.deployedNames}
+                        phase={installFlow.phase}
+                    />
                     <StackInstallProgress
                         controller={installFlow}
                         beforeLog={

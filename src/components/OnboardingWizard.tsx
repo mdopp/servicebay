@@ -1146,27 +1146,72 @@ export default function OnboardingWizard() {
           </header>
 
           <main className="flex-1 overflow-y-auto px-12 pb-12 scrollbar-thin">
-            {status?.installInProgress && stackInstallStep !== 'installing' && (
-               <div className="mb-10 p-6 rounded-[2rem] border border-amber-500/20 bg-amber-500/5 backdrop-blur-md animate-in slide-in-from-top-4 duration-700">
+            {status?.installInProgress && stackInstallStep !== 'installing' && (() => {
+              // Stalled-detection (#727): if the runner hasn't touched
+              // the job state for STALL_THRESHOLD_MS we treat it as a
+              // ghost lock left behind by a crashed session, and offer
+              // resume / start-fresh affordances instead of the
+              // ambiguous force-clear-or-switch-tab copy.
+              const STALL_THRESHOLD_MS = 5 * 60_000;
+              const updatedAt = status.installInProgress.updatedAt;
+              const inactiveMs = updatedAt
+                ? Date.now() - new Date(updatedAt).getTime()
+                : 0;
+              const stalled = inactiveMs >= STALL_THRESHOLD_MS;
+              const inactiveMin = Math.floor(inactiveMs / 60_000);
+              return (
+                <div className="mb-10 p-6 rounded-[2rem] border border-amber-500/20 bg-amber-500/5 backdrop-blur-md animate-in slide-in-from-top-4 duration-700">
                   <div className="flex items-center gap-3 text-amber-500 mb-3">
                     <div className="p-2 bg-amber-500/10 rounded-xl">
                         <AlertTriangle size={20} />
                     </div>
-                    <h4 className="font-bold text-base">Concurrent Pipeline Active</h4>
+                    <h4 className="font-bold text-base">
+                      {stalled ? 'Previous install appears stalled' : 'Concurrent Pipeline Active'}
+                    </h4>
                   </div>
                   <p className="text-sm text-amber-200/70 leading-relaxed mb-6">
-                    Another session is currently driving an installation. Racing two pipelines will corrupt the system state. Switch to the active tab or force-clear if it&apos;s a ghost lock.
+                    {stalled
+                      ? `The install runner hasn't written to the job log in ~${inactiveMin} min, which usually means the previous session crashed before the run could finish. You can resume from where it left off, or clear the lock and start fresh.`
+                      : 'Another session is currently driving an installation. Racing two pipelines will corrupt the system state. Switch to the active tab or force-clear if it’s a ghost lock.'}
                   </p>
-                  <Button variant="outline" className="!py-2 !px-4 !text-xs !border-amber-500/30 hover:!bg-amber-500/10 text-amber-500" onClick={async () => {
-                    if (!confirm('Force-clear the install lock?')) return;
-                    await forceClearInstallLock();
-                    const fresh = await checkOnboardingStatus();
-                    setStatus(fresh);
-                  }}>
-                    Force-clear lock
-                  </Button>
-               </div>
-            )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {stalled && (
+                      <Button
+                        variant="outline"
+                        className="!py-2 !px-4 !text-xs !border-blue-500/40 hover:!bg-blue-500/10 text-blue-500"
+                        onClick={async () => {
+                          // Resume = attach this tab to the existing
+                          // job. The runner is still the source of
+                          // truth — we just re-subscribe to its log /
+                          // progress stream.
+                          await installFlow.attachToJob(status.installInProgress!.jobId);
+                          // attachToJob hydrates installFlow.phase from
+                          // the server's JobState — phase=running
+                          // drives stackInstallStep='installing' via
+                          // the derived union above.
+                          setCurrentStep('stacks');
+                        }}
+                      >
+                        Resume install
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      className="!py-2 !px-4 !text-xs !border-amber-500/30 hover:!bg-amber-500/10 text-amber-500"
+                      onClick={async () => {
+                        const verb = stalled ? 'Clear the stalled install and start fresh?' : 'Force-clear the install lock?';
+                        if (!confirm(verb)) return;
+                        await forceClearInstallLock();
+                        const fresh = await checkOnboardingStatus();
+                        setStatus(fresh);
+                      }}
+                    >
+                      {stalled ? 'Start fresh' : 'Force-clear lock'}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {currentStep === 'welcome' && (
               <WelcomeStep selection={selection} setSelection={setSelection} />

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import yaml from 'js-yaml';
+import { humanizeYamlError, type HumanizedYamlError } from '@/lib/util/humanizeYamlError';
 import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2, RefreshCw } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
@@ -76,7 +77,7 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
   const [yamlFileName, setYamlFileName] = useState(initialData?.yamlFileName || 'pod.yml');
   const [serviceContent] = useState(initialData?.serviceContent || '');
   const [description, setDescription] = useState('');
-  const [yamlError, setYamlError] = useState<string | null>(null);
+  const [yamlError, setYamlError] = useState<HumanizedYamlError | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [extractedPorts, setExtractedPorts] = useState<{ host?: string; container: string }[]>([]);
   const [extractedVolumes, setExtractedVolumes] = useState<{ host: string; container: string }[]>([]);
@@ -233,8 +234,7 @@ WantedBy=default.target`;
         }
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setYamlError(msg);
+      setYamlError(humanizeYamlError(e));
       setExtractedPorts([]);
       setExtractedVolumes([]);
     }
@@ -746,8 +746,7 @@ WantedBy=default.target`;
                             extractInfo(parsed);
                             setYamlError(null);
                         } catch (e) {
-                            const msg = e instanceof Error ? e.message : String(e);
-                            setYamlError(msg);
+                            setYamlError(humanizeYamlError(e));
                         }
                     }}
                 />
@@ -779,7 +778,15 @@ WantedBy=default.target`;
         {yamlError && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-200 rounded-md shadow-sm flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
                 <AlertCircle size={20} className="mt-0.5 shrink-0 text-red-500 dark:text-red-400" />
-                <div className="text-sm font-mono whitespace-pre-wrap">{yamlError}</div>
+                <div className="flex-1 min-w-0">
+                    <div className="text-sm">{yamlError.message}</div>
+                    {yamlError.raw && yamlError.raw !== yamlError.message && (
+                        <details className="mt-1">
+                            <summary className="text-[11px] uppercase tracking-wider font-bold cursor-pointer text-red-500/80 dark:text-red-300/70">Parser details</summary>
+                            <pre className="text-[11px] mt-1 font-mono whitespace-pre-wrap break-words text-red-600/80 dark:text-red-300/80">{yamlError.raw}</pre>
+                        </details>
+                    )}
+                </div>
             </div>
         )}
       </div>
