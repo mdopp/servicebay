@@ -6,8 +6,7 @@ import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import pkg from '../../package.json';
-import { typedFetch } from '@/contracts/client';
-import { InstallStatusResponseSchema } from '@/contracts/install';
+import { typedFetch, InstallStatusResponseSchema } from '@servicebay/api-client';
 
 export const dashboards = [
     { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },

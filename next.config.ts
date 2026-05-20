@@ -14,6 +14,10 @@ import type { NextConfig } from "next";
 //   undefined. Avoided entirely by running compiled CJS through node.
 const nextConfig: NextConfig = {
   serverExternalPackages: ['socket.io', 'node-pty', 'ssh2', 'better-sqlite3'],
+  // Compile workspace packages from TypeScript source. #762 (Phase 3.1)
+  // extracted @servicebay/api-client; without this Next would try to
+  // load its "main" as JS at runtime.
+  transpilePackages: ['@servicebay/api-client'],
   // The dev-only "Issues" indicator defaults to bottom-left, where it overlaps
   // the sidebar's GitHub link. Move it to bottom-right so it sits in empty
   // canvas space. Production builds never render the indicator.

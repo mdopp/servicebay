@@ -5,7 +5,7 @@ import { humanizeYamlError } from '@/lib/util/humanizeYamlError';
 import {
   ValidateYamlRequestSchema,
   type KubeDocSchema,
-} from '@/contracts/services';
+} from '@servicebay/api-client';
 import type { z } from 'zod';
 
 export const dynamic = 'force-dynamic';

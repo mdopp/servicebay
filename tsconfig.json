@@ -20,7 +20,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@servicebay/api-client": ["./packages/api-client/src/index.ts"],
+      "@servicebay/api-client/*": ["./packages/api-client/src/*"]
     }
   },
   "include": [
@@ -29,7 +31,8 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    "**/*.mts",
+    "packages/*/src/**/*.ts"
   ],
   "exclude": ["node_modules", "scratch"]
 }

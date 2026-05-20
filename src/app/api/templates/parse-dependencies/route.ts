@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withApiHandler } from '@/lib/api/handler';
 import { parseTemplateDependencies } from '@/lib/stackInstall/dependencies';
-import { ParseDependenciesRequestSchema } from '@/contracts/install';
+import { ParseDependenciesRequestSchema } from '@servicebay/api-client';
 
 export const dynamic = 'force-dynamic';
 

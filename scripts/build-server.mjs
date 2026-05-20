@@ -62,9 +62,11 @@ await build({
   target: 'node20',
   outfile: path.join(repoRoot, 'dist-server', 'server.cjs'),
   external,
-  // Resolve the @/* alias used inside src/**/*.ts.
+  // Resolve the `@/*` alias used inside src/**/*.ts and the
+  // `@servicebay/api-client` workspace package (#762 — Phase 3.1).
   alias: {
     '@': path.join(repoRoot, 'src'),
+    '@servicebay/api-client': path.join(repoRoot, 'packages', 'api-client', 'src', 'index.ts'),
   },
   // Emit reasonable error messages from rejected promises etc.
   sourcemap: 'inline',

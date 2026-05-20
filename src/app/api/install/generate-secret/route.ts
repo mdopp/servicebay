@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withApiHandler } from '@/lib/api/handler';
 import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
-import { GenerateSecretRequestSchema } from '@/contracts/install';
+import { GenerateSecretRequestSchema } from '@servicebay/api-client';
 
 export const dynamic = 'force-dynamic';
 
