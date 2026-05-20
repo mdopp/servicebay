@@ -207,9 +207,21 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
               </button>
             )}
             <button
-              onClick={onClose}
+              onClick={() => {
+                // While the action is still running, treat the X like
+                // "Run in background" — closing this modal aborts the
+                // SSE stream and breaks completion notification, even
+                // though the host-side systemctl operation keeps going
+                // (#725). Surface the same toast affordance instead.
+                if (status === 'running') {
+                  setMinimized(true);
+                } else {
+                  onClose();
+                }
+              }}
               className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded transition-colors"
-              aria-label="Close"
+              aria-label={status === 'running' ? 'Run in background' : 'Close'}
+              title={status === 'running' ? 'Run in background' : 'Close'}
             >
               <X size={20} />
             </button>
@@ -218,7 +230,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
         
         <div className="p-4 bg-[#1e1e1e] border-b border-gray-800">
           <div className="p-3 bg-blue-900/20 border border-blue-900/50 rounded text-blue-200 text-xs">
-             <p>Note: This operation may take several minutes. Please do not close this window.</p>
+             <p>Operation in progress. You can safely minimize this window to keep working &mdash; we&apos;ll notify you when it finishes. Closing this modal keeps the task running in the background.</p>
           </div>
         </div>
 

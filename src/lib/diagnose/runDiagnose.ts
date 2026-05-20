@@ -677,7 +677,7 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
   //     the post-reinstall config; every OIDC-gated service was
   //     surfacing 502 to the operator while diagnose said all green.
   try {
-    const oidc = await checkOidcProviderReachable();
+    const oidc = await checkOidcProviderReachable(nodeName);
     probes.push({
       id: 'oidc_provider_reachable',
       label: 'OIDC provider (Authelia)',

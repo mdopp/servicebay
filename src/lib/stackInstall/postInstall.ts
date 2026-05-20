@@ -171,25 +171,42 @@ export async function bootstrapNpmAdmin(opts: {
   variables: StackVariable[];
   node?: string;
   onLog: (msg: string) => void;
+  /**
+   * Distinguishes the initial bootstrap call from a post-self-heal retry
+   * (#733). On retry the data dir has just been wiped + nginx restarted,
+   * so the user table seeds within ~10s — there's no need to display
+   * the same "up to 90s" preamble, and the success log line for an
+   * `already_using_target` outcome is misleading (the previous bootstrap
+   * *did* do work; only this call short-circuited). Use `'retry'` from
+   * the install runner's self-heal branch.
+   */
+  phase?: 'initial' | 'retry';
 }): Promise<'ok' | 'needs_credentials' | 'skipped'> {
   const email = opts.variables.find(v => v.name === 'NGINX_ADMIN_EMAIL')?.value;
   const password = opts.variables.find(v => v.name === 'NGINX_ADMIN_PASSWORD')?.value;
   const fullName = opts.variables.find(v => v.name === 'NGINX_ADMIN_NAME')?.value;
   if (!email || !password) return 'skipped';
 
+  const isRetry = opts.phase === 'retry';
+
   // The pod template sets INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD env
   // vars, so on first init NPM seeds the user table with these exact
   // credentials — but the seed step lands ~30-60 s after `/status` reports
   // the API is up. The bootstrap endpoint retries the target-creds login
-  // for 90 s server-side; preview that to the operator so the wait isn't
-  // a black box.
-  opts.onLog('Verifying NPM admin credentials (waiting up to 90s for the user table to seed)...');
+  // for ~90 s on the initial call, ~20 s on a self-heal retry (#733):
+  // by the time we get to the retry the data dir has been wiped + nginx
+  // was restarted ~30 s ago, so the seed should land within seconds.
+  if (isRetry) {
+    opts.onLog('Re-verifying NPM admin credentials after self-heal (waiting up to 20s)...');
+  } else {
+    opts.onLog('Verifying NPM admin credentials (waiting up to 90s for the user table to seed)...');
+  }
 
   try {
     const res = await apiFetch('/api/system/nginx/bootstrap', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, fullName, node: opts.node }),
+      body: JSON.stringify({ email, password, fullName, node: opts.node, quickRetry: isRetry }),
     });
     const data = await res.json().catch(() => ({} as Record<string, unknown>));
 
@@ -198,7 +215,15 @@ export async function bootstrapNpmAdmin(opts: {
       return 'ok';
     }
     if (res.ok && data.ok && data.reason === 'already_using_target') {
-      opts.onLog('✅ NPM admin already on the wizard credentials — nothing to do.');
+      // After a self-heal the data dir was just freshly seeded — the
+      // "nothing to do" framing reads like the retry no-op'd, which is
+      // confusing immediately after the "Wiping NPM data/" log line.
+      // Phrase the same outcome in terms of what just happened (#733).
+      if (isRetry) {
+        opts.onLog(`✅ NPM bootstrap fresh on wizard credentials (${email}).`);
+      } else {
+        opts.onLog('✅ NPM admin already on the wizard credentials — nothing to do.');
+      }
       return 'ok';
     }
     if (res.ok && data.ok && data.reason === 'using_saved') {

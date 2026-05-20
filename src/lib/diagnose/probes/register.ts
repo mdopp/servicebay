@@ -28,5 +28,6 @@ import './adguardRewritesMissing';
 import './domainExternalReachability';
 import './domainUnreachable';
 import './lanIpChanged';
+import './oidcProviderReachable';
 
 export {};
