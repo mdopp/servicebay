@@ -6,7 +6,7 @@ import type { Template } from '@/lib/registry';
 import { Input, Button } from '../WizardUI';
 import CleanInstallPanel from '../../CleanInstallPanel';
 
-type WizardStep = 'welcome' | 'network' | 'email' | 'install-confirm' | 'machine' | 'stacks' | 'finish';
+type WizardStep = 'welcome' | 'network' | 'email' | 'install-confirm' | 'stacks' | 'finish';
 
 interface DetectedDrive {
     name: string;
@@ -48,11 +48,6 @@ interface MachineStepProps {
     navigateTo: (step: WizardStep) => void;
     detectedDrives: DetectedDrive[];
     stackLoadingDevices: boolean;
-    /** True when the operator landed on the express install-confirm
-     *  screen (vs the verbose machine step). Surfaces the "Edit details"
-     *  drop-into-verbose-flow button + the express banner so the
-     *  express landing has its own copy. */
-    isExpressMode?: boolean;
 }
 
 export function MachineStep({
@@ -76,7 +71,6 @@ export function MachineStep({
     navigateTo,
     detectedDrives,
     stackLoadingDevices,
-    isExpressMode,
 }: MachineStepProps) {
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -88,22 +82,18 @@ export function MachineStep({
                     <h3 className="font-bold text-lg leading-none">Machine & Review</h3>
                     <p className="text-xs text-gray-500 mt-1">Finalize host configuration and storage</p>
                 </div>
-                {isExpressMode && (
-                    <Button
-                        variant="outline"
-                        onClick={() => navigateTo('machine')}
-                        className="!py-1.5 !px-3 !text-xs"
-                    >
-                        Edit details
-                    </Button>
-                )}
+                <Button
+                    variant="outline"
+                    onClick={() => navigateTo('stacks')}
+                    className="!py-1.5 !px-3 !text-xs"
+                >
+                    Pick stacks
+                </Button>
             </div>
 
-            {isExpressMode && (
-                <p className="text-sm text-gray-500 leading-relaxed">
-                    We&apos;ll install the recommended stack with sensible defaults. Adjust the two questions below or click <em>Edit details</em> for the full wizard.
-                </p>
-            )}
+            <p className="text-sm text-gray-500 leading-relaxed">
+                We&apos;ll install the recommended stack with sensible defaults. Adjust the questions below, or click <em>Pick stacks</em> to choose individual services.
+            </p>
 
             {!publicDomain.trim() && installMode === 'public' && (
                 <div className="flex items-start gap-4 p-4 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 shadow-sm">

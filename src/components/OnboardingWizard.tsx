@@ -39,22 +39,21 @@ import { FinishStep } from './wizard/steps/FinishStep';
 //   welcome         → pick which features to configure
 //   network         → gateway + SSH (if selected on welcome)
 //   email           → SMTP (if selected on welcome)
-//   install-confirm → compact "express install" summary: domain + clean
-//                     install + auto-mount + preselected full-stack.
-//                     Default landing for stacksOnlyMode and the next
-//                     step after email in fresh setup. Click Install
-//                     and the wizard runs the whole install with
-//                     sensible defaults; click Edit on a row to fall
-//                     through into the explicit machine + stacks steps
-//                     below.
-//   machine         → host-side prep: domain choice, drive detection
-//                     / RAID mount, optional clean-install reset.
-//                     Reached via Edit from install-confirm.
-//   stacks          → stack picker + per-service selection + per-
-//                     service config. Reached via Edit from install-
-//                     confirm OR by Continue from machine.
+//   install-confirm → canonical "confirm install" screen: domain + clean
+//                     install + auto-mount + storage layout. Either kick
+//                     off the express full-stack install via the primary
+//                     button OR navigate into the stacks picker for
+//                     manual selection. Default landing for stacksOnlyMode
+//                     and the next step after email in fresh setup.
+//                     #689 collapsed the former duplicate `machine` step
+//                     into this one — the two used to render the same
+//                     MachineStep component with isExpressMode toggling
+//                     copy + ordering.
+//   stacks          → stack picker + per-service selection + per-service
+//                     config. Reached via "Pick stacks" from install-
+//                     confirm.
 //   finish          → summary
-type WizardStep = 'welcome' | 'network' | 'email' | 'install-confirm' | 'machine' | 'stacks' | 'finish';
+type WizardStep = 'welcome' | 'network' | 'email' | 'install-confirm' | 'stacks' | 'finish';
 
 interface ConfigFile {
   filename: string;
@@ -539,12 +538,12 @@ export default function OnboardingWizard() {
       setCommittedStepCount(null);
       return;
     }
-    if (currentStep === 'machine' || currentStep === 'stacks') return;
-    const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
+    if (currentStep === 'stacks') return;
+    const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'stacks', 'finish'];
     const active = order.filter(step => {
       if (step === 'welcome' || step === 'finish' || step === 'network') return true;
       if (step === 'install-confirm') return selection.stacks;
-      if (step === 'machine' || step === 'stacks') return false;
+      if (step === 'stacks') return false;
       return selection[step as keyof typeof selection];
     });
     setCommittedStepCount(active.length);
@@ -652,7 +651,7 @@ export default function OnboardingWizard() {
     // and for the explicit stack picker. loadStacks() also seeds
     // stackSelectedNode for single-node setups.
     if (
-        (currentStep === 'stacks' || currentStep === 'machine' || currentStep === 'install-confirm')
+        (currentStep === 'stacks' || currentStep === 'install-confirm')
         && availableStacks.length === 0
         && !stacksLoading
     ) {
@@ -743,24 +742,24 @@ export default function OnboardingWizard() {
   };
 
   const getNextStep = (current: WizardStep): WizardStep => {
-      const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
+      const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'stacks', 'finish'];
 
-      // Two paths through the install region of the wizard:
+      // Two paths through the install region of the wizard (#689):
       //   express mode  → welcome → network → email → install-confirm → finish
-      //   edit mode     → welcome → network → email → machine → stacks → finish
-      // Edit mode is entered when the operator clicks "Edit details"
-      // on the confirm screen (jumps to 'machine'). Once they're in
-      // either machine or stacks, we treat them as committed to the
-      // verbose flow — install-confirm drops out of the activeSteps
-      // and the existing machine → stacks → finish chain takes over.
-      const inEditMode = current === 'machine' || current === 'stacks';
+      //   edit mode     → welcome → network → email → install-confirm → stacks → finish
+      // Edit mode is entered when the operator clicks "Pick stacks"
+      // on install-confirm. Once they're in stacks, the picker drives
+      // the rest of the flow until 'finish'. install-confirm remains
+      // visible in the sidebar in both paths so the operator can walk
+      // back to the confirm screen without losing their place.
+      const inEditMode = current === 'stacks';
       const activeSteps = order.filter(step => {
          if (step === 'welcome' || step === 'finish') return true;
          // network step is always active now — captures publicDomain
          // (#662) in addition to optional gateway/SSH config.
          if (step === 'network') return true;
-         if (step === 'install-confirm') return selection.stacks && !inEditMode;
-         if (step === 'machine' || step === 'stacks') return inEditMode;
+         if (step === 'install-confirm') return selection.stacks;
+         if (step === 'stacks') return inEditMode;
          return selection[step as keyof typeof selection];
       });
 
@@ -1049,13 +1048,13 @@ export default function OnboardingWizard() {
 
   if (!isOpen) return null;
 
-  const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'machine', 'stacks', 'finish'];
-  const inEditMode = currentStep === 'machine' || currentStep === 'stacks';
+  const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'stacks', 'finish'];
+  const inEditMode = currentStep === 'stacks';
   const activeSteps = order.filter(step => {
     if (step === 'welcome' || step === 'finish') return true;
     if (step === 'network') return true;
-    if (step === 'install-confirm') return selection.stacks && !inEditMode;
-    if (step === 'machine' || step === 'stacks') return inEditMode;
+    if (step === 'install-confirm') return selection.stacks;
+    if (step === 'stacks') return inEditMode;
     return selection[step as keyof typeof selection];
   });
   const currentIndex = activeSteps.indexOf(currentStep);
@@ -1262,9 +1261,8 @@ export default function OnboardingWizard() {
               <EmailStep emailConfig={emailConfig} setEmailConfig={setEmailConfig} />
             )}
 
-            {(currentStep === 'machine' || currentStep === 'install-confirm') && (
+            {currentStep === 'install-confirm' && (
               <MachineStep
-                isExpressMode={currentStep === 'install-confirm'}
                 installMode={installMode}
                 setInstallMode={setInstallMode}
                 publicDomain={publicDomain}
@@ -1346,17 +1344,13 @@ export default function OnboardingWizard() {
                       {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>}
                    </Button>
                 )}
-                {(currentStep === 'machine' || currentStep === 'install-confirm') && (
-                   <Button 
-                      onClick={currentStep === 'install-confirm' ? handleStartExpressInstall : handleNext} 
-                      disabled={loading || (currentStep === 'install-confirm' && cleanInstall && !cleanInstallConfirm)} 
+                {currentStep === 'install-confirm' && (
+                   <Button
+                      onClick={handleStartExpressInstall}
+                      disabled={loading || (cleanInstall && !cleanInstallConfirm)}
                       className="px-10 py-4 text-base shadow-xl shadow-blue-500/20"
                    >
-                      {currentStep === 'install-confirm' ? (
-                         <span className="flex items-center gap-2"><Layers className="w-5 h-5" /> Install Now</span>
-                      ) : (
-                         <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>
-                      )}
+                      <span className="flex items-center gap-2"><Layers className="w-5 h-5" /> Install Now</span>
                    </Button>
                 )}
                 {currentStep === 'stacks' && (
