@@ -2,7 +2,7 @@
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import GatewayConfig from '../../src/components/GatewayConfig';
+import GatewayConfig from '@/components/GatewayConfig';
 
 // Mock Toast securely to be stable across renders
 vi.mock('@/providers/ToastProvider', () => {

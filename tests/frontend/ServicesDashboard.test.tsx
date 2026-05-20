@@ -1,7 +1,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import ServicesDashboard from '../../src/dashboards/ServicesDashboard';
+import ServicesDashboard from '@/dashboards/ServicesDashboard';
 
 // 1. Define a mutable mock object
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,8 +1,8 @@
 
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MobileTopBar, MobileBottomBar } from '../../src/components/MobileNav';
-import { ToastProvider } from '../../src/providers/ToastProvider';
+import { MobileTopBar, MobileBottomBar } from '@/components/MobileNav';
+import { ToastProvider } from '@/providers/ToastProvider';
 
 const mockPush = vi.fn();
 let currentNode: string | null = null;

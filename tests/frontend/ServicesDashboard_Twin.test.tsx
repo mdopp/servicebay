@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { render, screen } from '@testing-library/react';
-import ServicesDashboard from '../../src/dashboards/ServicesDashboard';
+import ServicesDashboard from '@/dashboards/ServicesDashboard';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { DigitalTwinSnapshot } from '../../src/providers/DigitalTwinProvider';
+import { DigitalTwinSnapshot } from '@/providers/DigitalTwinProvider';
 
 // Mocks
 vi.mock('next/navigation', () => ({
@@ -12,7 +12,7 @@ vi.mock('next/navigation', () => ({
     useSearchParams: () => new URLSearchParams()
 }));
 
-vi.mock('../../src/providers/ToastProvider', () => ({
+vi.mock('@/providers/ToastProvider', () => ({
   useToast: () => ({ addToast: vi.fn(), updateToast: vi.fn() }),
 }));
 
@@ -30,16 +30,16 @@ const mockUseDigitalTwin = vi.fn<() => {
     lastUpdate: 0,
     isNodeSynced: () => true,
 }));
-vi.mock('../../src/hooks/useDigitalTwin', () => ({
+vi.mock('@/hooks/useDigitalTwin', () => ({
     useDigitalTwin: () => mockUseDigitalTwin()
 }));
 
 // Components Mocks to focus on Data Logic
-vi.mock('../../src/components/SectionLoading', () => ({ default: () => <div>Loading...</div> }));
-vi.mock('../../src/components/PageHeader', () => ({ default: ({ title }: any) => <div>{title}</div> }));
-vi.mock('../../src/components/ExternalLinkModal', () => ({ default: () => <div>LinkModal</div> }));
-vi.mock('../../src/components/ActionProgressModal', () => ({ default: () => <div>ActionModal</div> }));
-vi.mock('../../src/components/ConfirmModal', () => ({ default: () => <div>ConfirmModal</div> }));
+vi.mock('@/components/SectionLoading', () => ({ default: () => <div>Loading...</div> }));
+vi.mock('@/components/PageHeader', () => ({ default: ({ title }: any) => <div>{title}</div> }));
+vi.mock('@/components/ExternalLinkModal', () => ({ default: () => <div>LinkModal</div> }));
+vi.mock('@/components/ActionProgressModal', () => ({ default: () => <div>ActionModal</div> }));
+vi.mock('@/components/ConfirmModal', () => ({ default: () => <div>ConfirmModal</div> }));
 
 describe('ServicesDashboard E2E Data Rendering', () => {
 

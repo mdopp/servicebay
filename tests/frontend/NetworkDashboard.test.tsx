@@ -84,7 +84,7 @@ Object.defineProperty(global, 'EventSource', {
 });
 
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import NetworkDashboard from '../../src/dashboards/NetworkDashboard';
+import NetworkDashboard from '@/dashboards/NetworkDashboard';
 
 const originalFetch = global.fetch;
 

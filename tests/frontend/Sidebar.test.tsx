@@ -1,7 +1,7 @@
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import Sidebar from '../../src/components/Sidebar';
+import Sidebar from '@/components/Sidebar';
 
 // Mock Next Navigation
 const mockPush = vi.fn();

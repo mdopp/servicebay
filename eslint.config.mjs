@@ -157,8 +157,12 @@ const servicebayPlugin = {
       },
       create(context) {
         const filename = context.filename ?? context.getFilename();
+        // Phase 3.2 (#763) moved the FE dirs into packages/frontend/.
+        // Match both the old location (transitional — drops to zero
+        // matches once Phase 3.3 cleans up) and the new package path.
         if (
-          !/[\\/]src[\\/](components|hooks|dashboards)[\\/]/.test(filename)
+          !/[\\/]src[\\/](components|hooks|dashboards)[\\/]/.test(filename) &&
+          !/[\\/]packages[\\/]frontend[\\/]src[\\/]/.test(filename)
         ) {
           return {};
         }
@@ -166,8 +170,11 @@ const servicebayPlugin = {
           ImportDeclaration(node) {
             const source = node.source.value;
             if (typeof source !== "string") return;
+            // Phase 3.2: broaden from the original install/agent/diagnose
+            // trio to ALL of @/lib/* (the FE has no legitimate reason to
+            // reach into any server-side module).
             if (
-              /^@\/lib\/(install|agent|diagnose)(\/|$)/.test(source)
+              /^@\/lib\//.test(source)
             ) {
               context.report({
                 node: node.source,

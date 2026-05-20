@@ -1,0 +1,21 @@
+{
+  "name": "@servicebay/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ServiceBay UI surface — components, hooks, dashboards, providers. Phase 3.2 of #753.",
+  "dependencies": {
+    "@servicebay/api-client": "*",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xyflow/react": "^12.10.0",
+    "diff": "^8.0.2",
+    "lucide-react": "^0.562.0",
+    "next": "16.2.4",
+    "prismjs": "^1.30.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
+    "react-simple-code-editor": "^0.14.1",
+    "socket.io-client": "^4.8.3"
+  }
+}

@@ -1,0 +1,901 @@
+'use client';
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Plus, RefreshCw, X, Search } from 'lucide-react';
+import { useToast, ToastType } from '@/providers/ToastProvider';
+import { useSocket } from '@/hooks/useSocket';
+import PageHeader from '@/components/PageHeader';
+import { Autocomplete } from '@/components/Autocomplete';
+import ConfirmModal from '@/components/ConfirmModal';
+import LogViewer from '@/components/LogViewer';
+import HealthChecks from '@/components/HealthChecks';
+import { CheckConfig, CheckType, Check } from '@servicebay/api-client';
+import { getNodes } from '@/app/actions/nodes';
+import { PodmanConnection } from '@servicebay/api-client';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
+import SelfDiagnoseSection from '@/app/(dashboard)/settings/_lib/sections/SelfDiagnoseSection';
+
+interface Container {
+  Id: string;
+  Names: string[];
+  Image: string;
+}
+
+interface HistoryItem {
+  status: 'ok' | 'fail';
+  latency: number;
+  timestamp: string;
+  message?: string;
+}
+
+type HealthTab = 'checks' | 'diagnose' | 'logs' | 'system';
+
+export default function HealthDashboard() {
+  const [checks, setChecks] = useState<Check[]>([]);
+  const [containers, setContainers] = useState<Container[]>([]);
+  const [systemServices, setSystemServices] = useState<string[]>([]);
+  const [managedServices, setManagedServices] = useState<string[]>([]);
+  // const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [checkToDelete, setCheckToDelete] = useState<string | null>(null);
+  const [editingCheck, setEditingCheck] = useState<CheckConfig | null>(null);
+  const [historyCheck, setHistoryCheck] = useState<Check | null>(null);
+  const [historyData, setHistoryData] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [timeRange, setTimeRange] = useState<'1h' | '24h' | '3d' | '2w'>('24h');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'fail' | 'unknown'>('all');
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  const [resourcesLoading, setResourcesLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<HealthTab>('checks');
+  const isFetchingRef = useRef(false);
+  const { addToast, updateToast } = useToast();
+  const { socket } = useSocket();
+  const router = useRouter();
+  const pathname = usePathname() || '';
+  const searchParams = useSearchParams();
+  const searchString = searchParams?.toString() ?? '';
+  const tabParam = searchParams?.get('tab');
+  const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' || tabParam === 'diagnose' ? (tabParam as HealthTab) : null;
+
+  const closeOverlaysOnEscape = useCallback(() => {
+    if (isDeleteModalOpen) return;
+    if (historyCheck) {
+      setHistoryCheck(null);
+      setHistoryData([]);
+      setHistoryLoading(false);
+      return;
+    }
+    if (isModalOpen) {
+      setIsModalOpen(false);
+    }
+  }, [historyCheck, isModalOpen, isDeleteModalOpen]);
+
+  useEscapeKey(closeOverlaysOnEscape, Boolean(historyCheck || isModalOpen));
+
+  useEffect(() => {
+    if (!normalizedTab) return;
+    setActiveTab(prev => (prev === normalizedTab ? prev : normalizedTab));
+  }, [normalizedTab]);
+
+  const handleTabChange = useCallback((nextTab: HealthTab) => {
+    if (nextTab === activeTab) return;
+    setActiveTab(nextTab);
+    const params = new URLSearchParams(searchString);
+    if (nextTab === 'checks') {
+      params.delete('tab');
+    } else {
+      params.set('tab', nextTab);
+    }
+    const nextQuery = params.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }, [activeTab, pathname, router, searchString]);
+  // Using Digital Twin hook to trigger re-fetches when state changes?
+  // Health-check data is stored in `data/checks.json` in backend, NOT in twin directly.
+  // HOWEVER, the backend runs the checks and emits events.
+  // The original implementation used sockets directly.
+  // 
+  // Let's keep the manual `fetchData` but trigger it on 'health:update' socket event which is still valid.
+  // The user asked to remove "Updating data" notifications and refresh buttons.
+  
+  // Clean up socket listener logic to use the global socket hook if possible? 
+  // Or just remove the toasts.
+
+  // Still fetch from API because checks are server-side config
+  const fetchData = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    
+    // Check cache (15s) unless forced
+    // if (Date.now() - lastFetch < 15000) return; // disabled cache for now
+    isFetchingRef.current = true;
+    // if (!silent) setLoading(true); // Only show spinner on initial load
+    
+    try {
+      const [checksRes, nodeList] = await Promise.all([
+        fetch('/api/health/checks'),
+        getNodes()
+      ]);
+      
+      if (checksRes.ok) setChecks(await checksRes.json());
+      setNodes(nodeList);
+    } catch (error) {
+      console.error('Failed to fetch data', error);
+      // addToast('error', 'Failed to fetch health data'); // Suppress error toast on bg sync?
+    } finally {
+      // if (!silent) setLoading(false);
+      isFetchingRef.current = false;
+    }
+  }, []); // Dependencies removed
+
+
+  // Form state (restored)
+  const [formData, setFormData] = useState<Partial<CheckConfig>>({
+    name: '',
+    type: 'http',
+    target: '',
+    interval: 60,
+    enabled: true,
+    nodeName: ''
+  });
+
+  // Fetch resources when node changes in form
+  useEffect(() => {
+    const fetchResources = async () => {
+        if (!isModalOpen || !formData.nodeName) {
+            setContainers([]);
+            setManagedServices([]);
+            setSystemServices([]);
+            return;
+        }
+
+        setResourcesLoading(true);
+        try {
+            const query = `?node=${formData.nodeName}`;
+            const [containersRes, servicesRes, systemRes] = await Promise.all([
+                fetch(`/api/containers${query}`),
+                fetch(`/api/services${query}`),
+                fetch(`/api/system/services${query}`)
+            ]);
+
+            if (containersRes.ok) setContainers(await containersRes.json());
+            if (servicesRes.ok) {
+                const services = await servicesRes.json();
+                setManagedServices(services.map((s: { name: string }) => s.name));
+            }
+            if (systemRes.ok) {
+                const system = await systemRes.json();
+                setSystemServices(system.map((s: { unit: string }) => s.unit));
+            }
+        } catch (e) {
+            console.error('Failed to fetch node resources', e);
+        } finally {
+            setResourcesLoading(false);
+        }
+    };
+
+    fetchResources();
+  }, [isModalOpen, formData.nodeName]);
+
+  useEffect(() => {
+    fetchData(); // Initial load (not silent)
+
+    // Request notification permission
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+
+    if (!socket) return;
+
+    const onAlert = (data: { title: string, message: string, type: string }) => {
+        addToast(data.type as ToastType, data.title, data.message);
+        
+        // Only show native notification if page is hidden
+        if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification(data.title, { body: data.message });
+        }
+        
+        // Refresh data on alert
+        fetchData();
+    };
+
+    const onUpdate = () => {
+        // Silent update
+        fetchData();
+    };
+
+    socket.on('health:alert', onAlert);
+    socket.on('health:update', onUpdate);
+
+    return () => {
+        socket.off('health:alert', onAlert);
+        socket.off('health:update', onUpdate);
+    };
+  }, [fetchData, addToast, socket]);
+
+  const handleOpenModal = (check?: Check) => {
+    if (check) {
+      setEditingCheck(check);
+      setFormData({
+        name: check.name,
+        type: check.type,
+        target: check.target,
+        interval: check.interval,
+        enabled: check.enabled,
+        nodeName: check.nodeName || '',
+        httpConfig: check.httpConfig || { expectedStatus: 200, bodyMatchType: 'contains' }
+      });
+    } else {
+      setEditingCheck(null);
+      setFormData({
+        name: '',
+        type: 'http',
+        target: '',
+        interval: 60,
+        enabled: true,
+        nodeName: '',
+        httpConfig: { expectedStatus: 200, bodyMatchType: 'contains' }
+      });
+    }
+    setIsModalOpen(true);
+  };
+  
+  const isSystemCheck = (type?: CheckType) => {
+      const t = type || formData.type;
+      return t === 'agent' || t === 'node';
+  };
+
+  const handleSave = async () => {
+    try {
+      const url = '/api/health/checks';
+      // const method = editingCheck ? 'PUT' : 'POST'; // Note: PUT not implemented in API yet, need to fix that
+      const body = editingCheck ? { ...formData, id: editingCheck.id } : formData;
+
+      // For now, POST handles both create and update in our simple store implementation if ID is present
+      // But let's stick to POST for create. We need to update the API to handle updates properly.
+      // Actually, the store.ts saveCheck handles updates if ID exists.
+      // So we just need to make sure the API passes the ID through.
+      
+      const res = await fetch(url, {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) throw new Error('Failed to save check');
+
+      addToast('success', `Check ${editingCheck ? 'updated' : 'created'} successfully`);
+      setIsModalOpen(false);
+      fetchData();
+    } catch (error) {
+      console.error(error);
+      addToast('error', 'Failed to save check');
+    }
+  };
+
+  const handleDelete = (id: string) => {
+    setCheckToDelete(id);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!checkToDelete) return;
+    
+    try {
+        // We need a DELETE endpoint
+        const res = await fetch(`/api/health/checks?id=${checkToDelete}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete');
+        addToast('success', 'Check deleted');
+        fetchData();
+    } catch {
+        addToast('error', 'Failed to delete check');
+    } finally {
+        setIsDeleteModalOpen(false);
+        setCheckToDelete(null);
+    }
+  };
+
+  const handleRun = async (id: string) => {
+    const toastId = addToast('loading', 'Running check...', 'Executing check immediately', 0);
+    try {
+        const res = await fetch(`/api/health/checks/${id}/run`, { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to run check');
+        const result = await res.json();
+        
+        updateToast(toastId, result.status === 'ok' ? 'success' : 'error', 
+            `Check ${result.status === 'ok' ? 'Passed' : 'Failed'}`, 
+            result.message || `Latency: ${result.latency}ms`
+        );
+        fetchData();
+    } catch {
+        updateToast(toastId, 'error', 'Failed to run check', 'An unexpected error occurred');
+    }
+  };
+
+    const handleShowHistory = async (check: Check) => {
+    setHistoryCheck(check);
+    setHistoryData([]);
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/health/checks/${check.id}/history`);
+      if (res.ok) {
+        setHistoryData(await res.json());
+      }
+    } catch (error) {
+      console.error('Failed to fetch history', error);
+      addToast('error', 'Failed to fetch history');
+    } finally {
+      setHistoryLoading(false);
+    }
+    };
+
+
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="shrink-0">
+      <PageHeader
+        title="Health"
+        showBack={false}
+        helpId="health"
+        actions={activeTab === 'checks' ? (
+            <div className="flex gap-2 shrink-0">
+                <button
+                    onClick={() => handleOpenModal()}
+                    className="flex items-center gap-2 p-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm transition-colors font-medium"
+                    title="Add Check"
+                >
+                    <Plus className="w-4 h-4" />
+                </button>
+            </div>
+        ) : undefined}
+      >
+        {activeTab !== 'system' && (
+        <div className="relative flex-1 max-w-md min-w-[100px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+                type="text"
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+            />
+        </div>
+        )}
+      </PageHeader>
+      </div>
+
+      {/* Tab Navigation */}
+      <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 px-2 shrink-0 overflow-x-auto">
+        {([
+          { id: 'checks' as const, label: 'Checks' },
+          { id: 'diagnose' as const, label: 'Self-Diagnose' },
+          { id: 'logs' as const, label: 'Logs' },
+          { id: 'system' as const, label: 'System' },
+        ]).map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => handleTabChange(tab.id)}
+            className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === tab.id
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto space-y-6 pb-6">
+      {activeTab === 'checks' && (
+        <HealthChecks
+          checks={checks}
+          containers={containers}
+          searchQuery={searchQuery}
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+          handleRun={handleRun}
+          handleOpenModal={handleOpenModal}
+          handleOpenDeleteModal={handleDelete}
+          handleViewHistory={handleShowHistory}
+        />
+      )}
+
+      {activeTab === 'diagnose' && (
+        <div className="px-2">
+          <SelfDiagnoseSection />
+        </div>
+      )}
+
+      {activeTab === 'logs' && (
+        <div className="px-2">
+          <LogViewer searchQuery={searchQuery} />
+        </div>
+      )}
+
+      {activeTab === 'system' && (
+        <SystemInfoContent />
+      )}
+      </div>
+
+
+
+      {/* History Modal */}
+      {historyCheck && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+          <div className="w-full sm:max-w-3xl h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col shadow-2xl animate-in slide-in-from-right-10">
+            <div className="flex flex-col gap-4 p-5 border-b border-gray-200 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">History Drawer</p>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white truncate">{historyCheck.name}</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 font-mono truncate">{historyCheck.target}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex bg-slate-100 dark:bg-gray-800 rounded-lg p-1">
+                    {(['1h', '24h', '3d', '2w'] as const).map(range => (
+                        <button
+                            key={range}
+                            onClick={() => setTimeRange(range)}
+                            className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                                timeRange === range 
+                                    ? 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-300 shadow-sm' 
+                                    : 'text-gray-500 dark:text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-300'
+                            }`}
+                        >
+                            {range}
+                        </button>
+                    ))}
+                </div>
+                <button 
+                    onClick={() => historyCheck && handleShowHistory(historyCheck)}
+                    className="p-2 text-gray-500 hover:text-emerald-500 dark:text-gray-300 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
+                    title="Refresh history"
+                >
+                    <RefreshCw size={18} className={historyLoading ? 'animate-spin' : ''} />
+                </button>
+                <button 
+                  onClick={() => {
+                    setHistoryCheck(null);
+                    setHistoryData([]);
+                    setHistoryLoading(false);
+                  }} 
+                  className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
+                  title="Close drawer"
+                >
+                    <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+                {historyLoading && historyData.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-slate-500 dark:text-slate-300 gap-3">
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span>Loading history…</span>
+                    </div>
+                ) : (
+                <div className="space-y-6">
+                <div className="h-64 bg-slate-50 dark:bg-gray-900/40 rounded-xl p-4 border border-slate-200 dark:border-gray-800 shadow-inner">
+                    {historyData.length > 0 ? (
+                        (() => {
+                            const now = new Date().getTime();
+                            const ranges = {
+                                '1h': 60 * 60 * 1000,
+                                '24h': 24 * 60 * 60 * 1000,
+                                '3d': 3 * 24 * 60 * 60 * 1000,
+                                '2w': 14 * 24 * 60 * 60 * 1000
+                            };
+                            const rangeMs = ranges[timeRange];
+                            const targetBuckets = 60;
+                            const bucketSize = rangeMs / targetBuckets;
+
+                            // Align the end time to the next bucket boundary to stabilize the graph
+                            // This prevents the bars from "sliding" every second
+                            const alignedEndTime = Math.ceil(now / bucketSize) * bucketSize;
+                            const cutoff = alignedEndTime - rangeMs;
+                            
+                            // Filter data based on range
+                            const filteredData = historyData.filter(h => new Date(h.timestamp).getTime() > cutoff);
+                            
+                            const buckets: { timestamp: number; latencySum: number; count: number; status: 'ok' | 'fail' }[] = [];
+                            
+                            // Initialize buckets
+                            for (let i = 0; i < targetBuckets; i++) {
+                                buckets.push({
+                                    timestamp: cutoff + (i * bucketSize),
+                                    latencySum: 0,
+                                    count: 0,
+                                    status: 'ok'
+                                });
+                            }
+
+                            // Fill buckets
+                            filteredData.forEach(h => {
+                                const time = new Date(h.timestamp).getTime();
+                                const bucketIndex = Math.floor((time - cutoff) / bucketSize);
+                                if (bucketIndex >= 0 && bucketIndex < targetBuckets) {
+                                    buckets[bucketIndex].latencySum += (h.latency || 0);
+                                    buckets[bucketIndex].count++;
+                                    if (h.status === 'fail') buckets[bucketIndex].status = 'fail';
+                                }
+                            });
+
+                            // Convert to chart data
+                            const chartData = buckets.map(b => ({
+                                timestamp: new Date(b.timestamp).toISOString(),
+                                latency: b.count > 0 ? Math.round(b.latencySum / b.count) : 0,
+                                status: b.status,
+                                hasData: b.count > 0
+                            }));
+
+                            const maxLatency = Math.max(...chartData.map(h => h.latency || 0), 100);
+
+                            const formatLabel = (ts: number) => {
+                                const d = new Date(ts);
+                                if (timeRange === '1h' || timeRange === '24h') {
+                                    return d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                                }
+                                return d.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                            };
+                            
+                            return (
+                                <div className="w-full h-full flex flex-row">
+                                    {/* Y-Axis */}
+                                    <div className="flex flex-col justify-between text-[10px] text-gray-400 py-1 pr-2 text-right h-full pb-6 border-r border-gray-200 dark:border-gray-700 min-w-[50px]">
+                                        <div className="flex flex-col items-end">
+                                            <span className="font-medium text-gray-500 dark:text-gray-300 mb-1">Latency</span>
+                                            <span>{maxLatency}ms</span>
+                                        </div>
+                                        <span>0ms</span>
+                                    </div>
+
+                                    <div className="flex-1 flex flex-col h-full pl-2">
+                                        <div className="flex-1 flex items-end gap-0.5 relative">
+                                            {chartData.map((h, i) => (
+                                                <div 
+                                                    key={i}
+                                                    className={`flex-1 min-w-[2px] rounded-t-sm hover:opacity-80 transition-opacity relative group ${
+                                                      !h.hasData ? 'bg-transparent' :
+                                                      h.status === 'ok' ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-emerald-900 dark:bg-emerald-700'
+                                                    }`}
+                                                    style={{ height: h.hasData ? `${Math.max(5, ((h.latency || 0) / maxLatency) * 100)}%` : '0%' }}
+                                                >
+                                                    {h.hasData && (
+                                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 text-white text-xs p-2 rounded whitespace-nowrap z-10 shadow-lg">
+                                                            {new Date(h.timestamp).toLocaleString()}<br/>
+                                                            Avg Latency: {h.latency}ms<br/>
+                                                            Status: {h.status}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                        
+                                        {/* X-Axis Labels */}
+                                        <div className="flex justify-between text-[10px] text-gray-500 dark:text-gray-400 pt-2 border-t border-gray-200 dark:border-gray-700">
+                                            <span>{formatLabel(cutoff)}</span>
+                                            <span>{formatLabel(alignedEndTime)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()
+                    ) : (
+                                <div className="w-full h-full flex items-center justify-center text-gray-400">
+                            No history data available
+                        </div>
+                    )}
+                </div>
+
+                {/* Table */}
+                            <table className="w-full text-left text-sm border border-slate-200 dark:border-gray-800 rounded-xl overflow-hidden">
+                              <thead className="bg-slate-100 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300">
+                        <tr>
+                                  <th className="p-3 font-semibold">Time</th>
+                                  <th className="p-3 font-semibold">Status</th>
+                                  <th className="p-3 font-semibold">Latency</th>
+                                  <th className="p-3 font-semibold">Message</th>
+                        </tr>
+                    </thead>
+                              <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                        {historyData.map((h, i) => (
+                                  <tr key={i} className="hover:bg-slate-50 dark:hover:bg-gray-800/40">
+                                    <td className="p-3 text-gray-900 dark:text-white whitespace-nowrap">
+                                    {new Date(h.timestamp).toLocaleString()}
+                                </td>
+                                <td className="p-3">
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                                        h.status === 'ok'
+                                            ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                            : 'bg-rose-100 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                                    }`}>
+                                        {h.status.toUpperCase()}
+                                    </span>
+                                </td>
+                                    <td className="p-3 text-gray-600 dark:text-gray-300 font-mono">
+                                    {h.latency}ms
+                                </td>
+                                    <td className="p-3 text-gray-500 dark:text-gray-400 align-top">
+                                        {h.message
+                                            ? (h.message.length > 140
+                                                ? (
+                                                    <details className="group">
+                                                        <summary className="cursor-pointer list-none break-words whitespace-pre-wrap">
+                                                            <span className="group-open:hidden">{h.message.slice(0, 140)}…</span>
+                                                            <span className="hidden group-open:inline whitespace-pre-wrap break-words">{h.message}</span>
+                                                            <span className="ml-1 text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 group-open:hidden">show more</span>
+                                                            <span className="ml-1 text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 hidden group-open:inline">show less</span>
+                                                        </summary>
+                                                    </details>
+                                                )
+                                                : <span className="whitespace-pre-wrap break-words">{h.message}</span>)
+                                            : '-'}
+                                    </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                            </div>
+                            )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit/Create Drawer */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+          <div className="w-full sm:max-w-xl h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col shadow-2xl animate-in slide-in-from-right-10">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+              <div>
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">{editingCheck ? (isSystemCheck() ? 'View Check' : 'Edit Check') : 'New Check'}</p>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                  {editingCheck ? editingCheck.name : 'Create Health Check'}
+                </h3>
+              </div>
+              <button onClick={() => setIsModalOpen(false)} className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
+                <input 
+                  type="text" 
+                  value={formData.name}
+                  onChange={e => setFormData({...formData, name: e.target.value})}
+                  disabled={isSystemCheck()}
+                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  placeholder="e.g. Production API"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
+                <select 
+                  value={formData.type}
+                  onChange={e => setFormData({...formData, type: e.target.value as CheckType})}
+                  disabled={isSystemCheck()}
+                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                >
+                  <option value="http">HTTP Request</option>
+                  <option value="ping">Ping</option>
+                  <option value="podman">Podman Container</option>
+                  <option value="service">Managed Service</option>
+                  <option value="systemd">System Service</option>
+                  <option value="agent">Agent Health</option>
+                  <option value="script">Custom Script (JS)</option>
+                  <option value="fritzbox">Fritz!Box Internet</option>
+                </select>
+                
+                {/* Type Hint */}
+                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-2 rounded border border-gray-200 dark:border-gray-700">
+                    {formData.type === 'http' && (
+                        <p>Checks an HTTP/HTTPS endpoint. Verifies the status code (default 200) and optionally the response body. Fails if the request times out or returns an unexpected status.</p>
+                    )}
+                    {formData.type === 'ping' && (
+                        <p>Sends ICMP Echo Requests (ping) to the target host. Verifies network reachability. Fails if the host is unreachable or packet loss occurs.</p>
+                    )}
+                    {formData.type === 'podman' && (
+                        <p>Inspects a specific Podman container. Verifies that the container state is &apos;running&apos; and (if configured) the health check status is &apos;healthy&apos;. Fails if the container is stopped or unhealthy.</p>
+                    )}
+                    {formData.type === 'service' && (
+                        <p>Checks a systemd user service (managed by ServiceBay). Verifies that the unit is &apos;active&apos;. Fails if the service is inactive, failed, or not found.</p>
+                    )}
+                    {formData.type === 'systemd' && (
+                        <p>Checks a system-wide systemd unit (e.g., sshd, docker). Verifies that the unit is &apos;active&apos;. Fails if the unit is inactive or failed.</p>
+                    )}
+                    {formData.type === 'agent' && (
+                        <p>Monitors the ServiceBay Agent on a node. Verifies connection status, heartbeat, and error rates. Fails if the agent disconnects or stops reporting.</p>
+                    )}
+                    {formData.type === 'script' && (
+                        <p>Executes a custom JavaScript snippet in a sandboxed environment. Use <code>fetch()</code> for custom logic. Throw an error to fail the check.</p>
+                    )}
+                    {formData.type === 'fritzbox' && (
+                        <p>Queries a Fritz!Box router via UPnP (TR-064) to check internet connectivity status. Fails if the router reports &apos;Disconnected&apos; or is unreachable.</p>
+                    )}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Node</label>
+                <select 
+                  value={formData.nodeName || ''}
+                  onChange={e => setFormData({...formData, nodeName: e.target.value})}
+                  disabled={isSystemCheck()}
+                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                >
+                  <option value="">Local (ServiceBay Host)</option>
+                  {nodes.map(node => (
+                    <option key={node.Name} value={node.Name}>{node.Name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Select the node where this check should run.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
+                </label>
+                {formData.type === 'script' ? (
+                    <textarea
+                        value={formData.target}
+                        onChange={e => setFormData({...formData, target: e.target.value})}
+                        disabled={isSystemCheck()}
+                        className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm h-32 ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        placeholder="if (1 !== 1) throw new Error('Math broken')"
+                    />
+                ) : formData.type === 'podman' ? (
+                    <div className="relative">
+                        <select
+                            value={formData.target}
+                            onChange={e => setFormData({...formData, target: e.target.value})}
+                            disabled={resourcesLoading || isSystemCheck()}
+                            className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${resourcesLoading || isSystemCheck() ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            <option value="">{resourcesLoading ? 'Loading containers...' : 'Select a container...'}</option>
+                            {!resourcesLoading && containers.map((c) => (
+                                <option key={c.Id} value={c.Names[0]}>
+                                    {c.Names[0]} ({c.Image})
+                                </option>
+                            ))}
+                        </select>
+                        {resourcesLoading && (
+                            <div className="absolute right-8 top-2.5">
+                                <div className="animate-spin h-5 w-5 border-2 border-blue-500 rounded-full border-t-transparent"></div>
+                            </div>
+                        )}
+                    </div>
+                ) : formData.type === 'service' ? (
+                    <Autocomplete
+                        options={managedServices}
+                        value={formData.target || ''}
+                        onChange={val => setFormData({...formData, target: val})}
+                        placeholder="Select a managed service..."
+                        loading={resourcesLoading}
+                        disabled={resourcesLoading || isSystemCheck()}
+                    />
+                ) : formData.type === 'systemd' ? (
+                    <Autocomplete
+                        options={systemServices}
+                        value={formData.target || ''}
+                        onChange={val => setFormData({...formData, target: val})}
+                        placeholder="Search system services..."
+                        loading={resourcesLoading}
+                        disabled={resourcesLoading || isSystemCheck()}
+                    />
+                ) : (
+                    <input 
+                      type="text" 
+                      value={formData.target}
+                      onChange={e => setFormData({...formData, target: e.target.value})}
+                      disabled={isSystemCheck()}
+                      className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      placeholder={
+                        formData.type === 'http' ? 'https://example.com' : 
+                        formData.type === 'fritzbox' ? 'fritz.box' :
+                        '192.168.1.1'
+                      }
+                    />
+                )}
+              </div>
+
+              {formData.type === 'fritzbox' && (
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 text-sm text-blue-800 dark:text-blue-200">
+                    <p className="font-medium mb-1">Configuration Note</p>
+                    <p className="text-xs opacity-80">Ensure &quot;Status information over UPnP&quot; is enabled in your Fritz!Box settings (Home Network &gt; Network &gt; Network Settings).</p>
+                </div>
+              )}
+
+              {formData.type === 'http' && (
+                <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <h4 className="text-sm font-medium text-gray-900 dark:text-white">HTTP Options</h4>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Expected Status Code</label>
+                        <input 
+                            type="number" 
+                            value={formData.httpConfig?.expectedStatus || 200}
+                            onChange={e => setFormData({
+                                ...formData, 
+                                httpConfig: { ...formData.httpConfig, expectedStatus: parseInt(e.target.value) }
+                            })}
+                            disabled={isSystemCheck()}
+                            className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Body Match (Optional)</label>
+                        <div className="flex gap-2 mb-2">
+                            <select
+                                value={formData.httpConfig?.bodyMatchType || 'contains'}
+                                onChange={e => setFormData({
+                                    ...formData, 
+                                    httpConfig: { ...formData.httpConfig, bodyMatchType: e.target.value as 'contains' | 'regex' }
+                                })}
+                                disabled={isSystemCheck()}
+                                className={`p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            >
+                                <option value="contains">Contains</option>
+                                <option value="regex">Regex</option>
+                            </select>
+                            <input 
+                                type="text" 
+                                value={formData.httpConfig?.bodyMatch || ''}
+                                onChange={e => setFormData({
+                                    ...formData, 
+                                    httpConfig: { ...formData.httpConfig, bodyMatch: e.target.value }
+                                })}
+                                disabled={isSystemCheck()}
+                                className={`flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                placeholder={formData.httpConfig?.bodyMatchType === 'regex' ? '^Hello.*World$' : 'Success'}
+                            />
+                        </div>
+                    </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Interval (seconds)</label>
+                <input 
+                  type="number" 
+                  value={formData.interval}
+                  onChange={e => setFormData({...formData, interval: parseInt(e.target.value)})}
+                  disabled={isSystemCheck()}
+                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  min="10"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                {isSystemCheck() ? 'Close' : 'Cancel'}
+              </button>
+              {!isSystemCheck() && (
+              <button 
+                onClick={handleSave}
+                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium"
+              >
+                Save Check
+              </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        isOpen={isDeleteModalOpen}
+        title="Delete Check"
+        message="Are you sure you want to delete this health check? This action cannot be undone."
+        confirmText="Delete"
+        isDestructive={true}
+        onConfirm={confirmDelete}
+        onCancel={() => setIsDeleteModalOpen(false)}
+      />
+
+    </div>
+  );
+}

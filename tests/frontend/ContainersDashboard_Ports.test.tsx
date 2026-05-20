@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { render, screen } from '@testing-library/react';
-import ContainersDashboard from '../../src/dashboards/ContainersDashboard';
+import ContainersDashboard from '@/dashboards/ContainersDashboard';
 import { vi, describe, it, expect } from 'vitest';
-import { DigitalTwinSnapshot } from '../../src/providers/DigitalTwinProvider';
+import { DigitalTwinSnapshot } from '@/providers/DigitalTwinProvider';
 
 // Mocks
 const mockUseRouter = vi.fn(() => ({ push: vi.fn() }));
@@ -12,22 +12,22 @@ vi.mock('next/navigation', () => ({
     useSearchParams: () => new URLSearchParams()
 }));
 
-vi.mock('../../src/providers/ToastProvider', () => ({
+vi.mock('@/providers/ToastProvider', () => ({
   useToast: () => ({ addToast: vi.fn(), updateToast: vi.fn() }),
 }));
 
 // Mock Digital Twin Hook
 const mockUseDigitalTwin = vi.fn();
-vi.mock('../../src/hooks/useDigitalTwin', () => ({
+vi.mock('@/hooks/useDigitalTwin', () => ({
     useDigitalTwin: () => mockUseDigitalTwin()
 }));
 
 // Mock Components
-vi.mock('../../src/components/SectionLoading', () => ({ default: () => <div>Loading...</div> }));
-vi.mock('../../src/components/PageHeader', () => ({ 
+vi.mock('@/components/SectionLoading', () => ({ default: () => <div>Loading...</div> }));
+vi.mock('@/components/PageHeader', () => ({ 
     default: ({ title, children }: any) => <div><h1>{title}</h1>{children}</div> 
 }));
-vi.mock('../../src/components/ConfirmModal', () => ({ default: () => null }));
+vi.mock('@/components/ConfirmModal', () => ({ default: () => null }));
 
 describe('ContainersDashboard Port Rendering', () => {
 

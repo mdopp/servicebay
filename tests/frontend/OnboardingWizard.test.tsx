@@ -2,7 +2,7 @@
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import OnboardingWizard from '../../src/components/OnboardingWizard';
+import OnboardingWizard from '@/components/OnboardingWizard';
 
 // 1. Mock Server Actions
 vi.mock('@/app/actions/onboarding', () => ({
