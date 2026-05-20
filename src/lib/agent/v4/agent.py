@@ -1500,55 +1500,18 @@ def get_sys_resources():
     ))
 
 # --- Proxy Inspector ---
-
-INSPECTOR_SCRIPT = r"""
-#!/bin/sh
-# Nginx Inspector Script v2
-# Outputs JSON array of {host, targetService, targetPort, ssl}
-echo "["
-FIRST=1
-# Broaden search paths
-SEARCH_PATHS="/etc/nginx/conf.d/*.conf /data/nginx/proxy_host/*.conf /etc/nginx/sites-enabled/* /config/nginx/proxy-confs/*.subdomain.conf"
-
-for file in $SEARCH_PATHS; do
-    [ -e "$file" ] || continue
-    if [ -d "$file" ]; then continue; fi
-    
-    SERVER_NAME=$(grep -m1 "server_name" "$file" | awk '{print $2}' | sed 's/;//' | head -n 1)
-    
-    NPM_SERVER=$(grep "set \$server" "$file" | awk '{print $3}' | sed 's/"//g' | sed 's/;//' | head -n 1)
-    NPM_PORT=$(grep "set \$port" "$file" | awk '{print $3}' | sed 's/"//g' | sed 's/;//' | head -n 1)
-    
-    if [ ! -z "$NPM_SERVER" ] && [ ! -z "$NPM_PORT" ]; then
-        PROXY_PASS="$NPM_SERVER:$NPM_PORT"
-    else
-        PROXY_PASS=$(grep "proxy_pass" "$file" | grep -v '^\s*#' | head -n 1 | awk '{print $2}' | sed 's/;//' | sed 's/http:\/\///' | sed 's/https:\/\///')
-    fi
-    
-    if [ ! -z "$SERVER_NAME" ] && [ ! -z "$PROXY_PASS" ]; then
-        if [ "$FIRST" -eq 0 ]; then echo ","; fi
-        TARGET=$(echo "$PROXY_PASS" | sed 's/\/$//')
-        
-        # Extract Port
-        PORT=80
-        if echo "$TARGET" | grep -q ":"; then
-             PORT=$(echo "$TARGET" | awk -F: '{print $NF}' | sed 's/[^0-9]*//g')
-        fi
-        [ -z "$PORT" ] && PORT=80
-        
-        LISTEN_SSL=$(grep -q "listen 443" "$file" && echo "true" || echo "false")
-
-        echo "  {"
-        echo "    \"host\": \"$SERVER_NAME\","
-        echo "    \"targetService\": \"$TARGET\","
-        echo "    \"targetPort\": $PORT," 
-        echo "    \"ssl\": $LISTEN_SSL"
-        echo "  }"
-        FIRST=0
-    fi
-done
-echo "]"
-"""
+#
+# The Nginx inspector shell script (#723) lives in
+# `scripts/nginx_inspector.sh` so editors highlight it correctly and
+# tools like shellcheck can inspect it. The TypeScript-side delivery
+# (`agent/handler.ts:loadAgentScript`) substitutes the file contents
+# into the @@NGINX_INSPECTOR_SCRIPT@@ sentinel below at deploy time,
+# so the agent that lands on the host still has the script inline —
+# no second file to ship.
+#
+# The sentinel must be on its own line so the substitution doesn't
+# corrupt surrounding Python.
+INSPECTOR_SCRIPT = r"""@@NGINX_INSPECTOR_SCRIPT@@"""
 
 def fetch_proxy_routes():
     # 1. Search for Nginx Container (Label priority, then Names)

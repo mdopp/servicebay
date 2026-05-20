@@ -39,6 +39,39 @@ const loggerMethods: AgentLogger = {
 // Updated: Force reload 2
 let AGENT_SCRIPT_B64: string = '';
 
+/**
+ * Inline-script sentinels that the bundler substitutes when reading
+ * the agent source. Each entry pairs the `@@NAME@@` placeholder used
+ * inside agent.py with the relative path to the file whose contents
+ * should replace it (#723).
+ *
+ * Add a new entry whenever a shell or sub-script gets extracted into
+ * `src/lib/agent/v4/scripts/`. The sentinel keeps the embedded script
+ * editable + lintable as a real file while preserving the single-
+ * file delivery contract (we still ship one Python blob; the inlining
+ * happens once at server startup before base64-encoding).
+ */
+const AGENT_SCRIPT_INLINES: Array<{ sentinel: string; relativePath: string }> = [
+  { sentinel: '@@NGINX_INSPECTOR_SCRIPT@@', relativePath: 'src/lib/agent/v4/scripts/nginx_inspector.sh' },
+];
+
+function inlineAgentScripts(agentSource: string): string {
+  let out = agentSource;
+  for (const { sentinel, relativePath } of AGENT_SCRIPT_INLINES) {
+    if (!out.includes(sentinel)) continue;
+    const scriptPath = path.join(process.cwd(), relativePath);
+    const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
+    // `replaceAll(string, string)` interprets `$&` / `$$` / `$<n>`
+    // in the replacement — shell scripts contain `$1`, `$file`,
+    // `$(...)` everywhere, so we'd corrupt the contents. The
+    // callback form bypasses that substitution: the inserted text
+    // is verbatim regardless of `$` characters in it.
+    const pattern = new RegExp(sentinel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+    out = out.replace(pattern, () => scriptContent);
+  }
+  return out;
+}
+
 function getAgentScript() {
   if (!AGENT_SCRIPT_B64) {
     // Determine path. In Next.js prod, this might need adjustment or bundling.
@@ -46,7 +79,8 @@ function getAgentScript() {
     // V4 Update: Point to new agent script
     const p = path.join(process.cwd(), 'src/lib/agent/v4/agent.py');
     const content = fs.readFileSync(p, 'utf-8');
-    AGENT_SCRIPT_B64 = Buffer.from(content).toString('base64');
+    const inlined = inlineAgentScripts(content);
+    AGENT_SCRIPT_B64 = Buffer.from(inlined).toString('base64');
   }
   return AGENT_SCRIPT_B64;
 }
