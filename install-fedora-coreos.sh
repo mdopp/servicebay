@@ -1343,8 +1343,9 @@ prompt_secret() {
   # passwords via the gitignored install-settings.env, which gets
   # sourced at script start. The validation below still runs so an
   # invalid pre-seeded password is rejected the same way an interactive
-  # one would be.
-  if [[ -n "${!var_name}" ]]; then
+  # one would be. Uses `${!var_name-}` (with default) because the
+  # script runs under `set -u` and undefined indirect-expansions abort.
+  if [[ -n "${!var_name-}" ]]; then
     value="${!var_name}"
     if [[ "$value" == *$'\n'* || "$value" == *'"'* || "$value" == *'\'* || "$value" == *'$'* || "$value" == *'`'* ]]; then
       echo "Pre-seeded $var_name contains characters that break the install pipeline (newline, quote, backslash, \$ or backtick)." >&2
@@ -1385,8 +1386,9 @@ prompt_optional_secret() {
   local value
   # Same env-var pre-seed pattern as `prompt_secret` — lets the gitignored
   # install-settings.env carry tokens for unattended/debug runs without
-  # ever putting them in source control.
-  if [[ -n "${!var_name}" ]]; then
+  # ever putting them in source control. `${!var_name-}` guards against
+  # `set -u` aborting on undefined indirect expansion.
+  if [[ -n "${!var_name-}" ]]; then
     echo "Using pre-seeded $var_name from environment."
     return
   fi
