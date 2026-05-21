@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.13.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.13.0...servicebay-v4.13.1) (2026-05-21)
+
+
+### Reverts
+
+* **frontend:** drop Storybook integration; keep mock-layer ([#753](https://github.com/mdopp/servicebay/issues/753)) ([#794](https://github.com/mdopp/servicebay/issues/794)) ([03cb7f0](https://github.com/mdopp/servicebay/commit/03cb7f0ce3da5ee5898845aee574da1dc8cb450e))
+
 ## [4.13.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.12.0...servicebay-v4.13.0) (2026-05-21)
 
 
