@@ -841,6 +841,47 @@ ${SERVICEBAY_SSH_PRIV}
           if __name__ == "__main__":
               sys.exit(main())
 
+    # secret.key init — companion to .auth-secret.env. Same first-boot-
+    # only semantics: write 32 random bytes only when the file is
+    # missing, leave any pre-existing key untouched. Without this, a
+    # re-install would regenerate the symmetric key used by
+    # `secrets.ts:encrypt/decrypt` for `SENSITIVE_KEYS` in config.json
+    # — every `enc:v1:…` value already on disk would fail GCM auth-tag
+    # verification, the previous fallback returned the literal
+    # ciphertext as plaintext, and downstream services adopted that
+    # ciphertext as their actual admin password. See #780.
+    - path: /etc/systemd/system/servicebay-secret-key-init.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Initialise persistent secret.key for ServiceBay (#780)
+          DefaultDependencies=no
+          After=var-mnt-data.mount local-fs.target
+          RequiresMountsFor=/var/mnt/data
+          Before=user@1000.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          # `openssl rand 32` writes raw bytes (not hex) — matches the
+          # 32-byte format expected by aes-256-gcm in secrets.ts.
+          # umask 0177 → mode 0600 on creation; chmod after for safety.
+          ExecStart=/usr/bin/sh -c '\
+            install -d -m 0755 -o ${HOST_USER} -g ${HOST_USER} /var/mnt/data/servicebay; \
+            if [ ! -s /var/mnt/data/servicebay/secret.key ]; then \
+              umask 0177; \
+              /usr/bin/openssl rand 32 > /var/mnt/data/servicebay/secret.key; \
+              chmod 0600 /var/mnt/data/servicebay/secret.key; \
+              chown ${HOST_USER}:${HOST_USER} /var/mnt/data/servicebay/secret.key; \
+              echo "secret.key written (fresh install or first migration)"; \
+            else \
+              echo "secret.key preserved from previous install"; \
+            fi'
+
+          [Install]
+          WantedBy=multi-user.target
+
     # AUTH_SECRET init — generates a fresh secret on first boot if no
     # persistent one exists yet. Re-installs find the existing file and
     # leave it alone so encrypted values in config.json keep decrypting.
@@ -895,7 +936,7 @@ ${SERVICEBAY_SSH_PRIV}
           [Unit]
           Description=Merge re-install ISO config into existing config.json (#331)
           ConditionPathExists=/var/mnt/data/servicebay/config.iso.json
-          After=install-python.service var-mnt-data.mount servicebay-auth-secret-init.service
+          After=install-python.service var-mnt-data.mount servicebay-auth-secret-init.service servicebay-secret-key-init.service
           Requires=install-python.service var-mnt-data.mount
           # No `Before=servicebay.service` — that unit is in the user
           # systemd instance (Quadlet under ~/.config/containers/systemd)
@@ -1141,6 +1182,12 @@ ${SERVICEBAY_SSH_PRIV}
     # time, matching how every other system-level oneshot here is wired.
     - path: /etc/systemd/system/multi-user.target.wants/servicebay-auth-secret-init.service
       target: /etc/systemd/system/servicebay-auth-secret-init.service
+
+    # Enable secret.key init on first boot (#780). Same wiring story as
+    # the AUTH_SECRET symlink above — Ignition needs the wants/ entry
+    # to actually activate the oneshot.
+    - path: /etc/systemd/system/multi-user.target.wants/servicebay-secret-key-init.service
+      target: /etc/systemd/system/servicebay-secret-key-init.service
 
     # Enable setup-config-merge on first boot (#331). Without this
     # symlink, Ignition drops the unit file at /etc/systemd/system/
