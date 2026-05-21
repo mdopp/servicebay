@@ -116,4 +116,75 @@ describe('topoSortByDependencies', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.ordered.map(i => i.name)).toEqual(['auth', 'adguard']);
   });
+
+  // #796 — infrastructure-tier items must precede every feature-tier
+  // item in the result, regardless of input order, because a feature
+  // that registers against e.g. NPM before its credentials are
+  // verified can lose its registration to a late infrastructure-level
+  // self-heal.
+  describe('tier-implicit edges (#796)', () => {
+    it('puts all infrastructure items before any feature item', () => {
+      // Reproduces the bug timeline: ollama+hermes (feature) appear
+      // first in the input, but should run AFTER nginx/auth/adguard
+      // (infrastructure) regardless.
+      const result = topoSortByDependencies([
+        { name: 'ollama', dependencies: [], tier: 'feature' },
+        { name: 'hermes', dependencies: [], tier: 'feature' },
+        { name: 'nginx', dependencies: [], tier: 'infrastructure' },
+        { name: 'auth', dependencies: [], tier: 'infrastructure' },
+        { name: 'adguard', dependencies: ['nginx', 'auth'], tier: 'infrastructure' },
+        { name: 'vaultwarden', dependencies: [], tier: 'feature' },
+      ]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const order = result.ordered.map(i => i.name);
+      const lastInfra = Math.max(
+        order.indexOf('nginx'),
+        order.indexOf('auth'),
+        order.indexOf('adguard'),
+      );
+      const firstFeature = Math.min(
+        order.indexOf('ollama'),
+        order.indexOf('hermes'),
+        order.indexOf('vaultwarden'),
+      );
+      expect(lastInfra).toBeLessThan(firstFeature);
+    });
+
+    it('still respects explicit deps within the infrastructure tier', () => {
+      // adguard explicitly depends on nginx+auth; that ordering must
+      // hold inside the infra block even with the implicit cross-tier
+      // edge.
+      const result = topoSortByDependencies([
+        { name: 'adguard', dependencies: ['nginx', 'auth'], tier: 'infrastructure' },
+        { name: 'nginx', dependencies: [], tier: 'infrastructure' },
+        { name: 'auth', dependencies: [], tier: 'infrastructure' },
+      ]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const order = result.ordered.map(i => i.name);
+      expect(order.indexOf('nginx')).toBeLessThan(order.indexOf('adguard'));
+      expect(order.indexOf('auth')).toBeLessThan(order.indexOf('adguard'));
+    });
+
+    it('handles a set with no infrastructure (feature-only)', () => {
+      const result = topoSortByDependencies([
+        { name: 'a', dependencies: [], tier: 'feature' },
+        { name: 'b', dependencies: ['a'], tier: 'feature' },
+      ]);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.ordered.map(i => i.name)).toEqual(['a', 'b']);
+    });
+
+    it('defaults to feature tier when omitted (back-compat)', () => {
+      // Existing callers that don't set `tier` should behave exactly
+      // as before — sort by declared deps only.
+      const result = topoSortByDependencies([
+        { name: 'b', dependencies: ['a'] },
+        { name: 'a', dependencies: [] },
+      ]);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.ordered.map(i => i.name)).toEqual(['a', 'b']);
+    });
+  });
 });

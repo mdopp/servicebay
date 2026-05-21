@@ -24,6 +24,7 @@
  */
 
 import { readManifestAnnotations } from '../template/contract';
+import type { TemplateTier } from '../templateTier';
 
 /** Parse `servicebay.dependencies` from a rendered template.yml.
  *  Returns the list of dep template names, trimmed, or an empty array
@@ -39,6 +40,15 @@ export interface DependencyAwareItem {
   name: string;
   /** Names this item depends on. Resolved against the candidate set. */
   dependencies: string[];
+  /** Install-tier classification — `infrastructure` items get an
+   *  implicit edge from every `feature` item so the entire infra
+   *  block lands before any feature deploy starts. Without this
+   *  gate, a feature can register itself against an infrastructure
+   *  service (NPM, Authelia) that isn't fully verified yet — and any
+   *  late repair to the infra (NPM credentials self-heal, LLDAP
+   *  re-seed) loses every prior registration. See #796. Default
+   *  when omitted: `feature`. */
+  tier?: TemplateTier;
 }
 
 export type TopoSortResult<T> =
@@ -76,6 +86,29 @@ export function topoSortByDependencies<T extends DependencyAwareItem>(
     }
   }
 
+  // Compute the effective dependency edges:
+  // - each item's declared `servicebay.dependencies`
+  // - PLUS implicit "every feature depends on every infra in this set"
+  //   so the topological order surfaces all infrastructure before any
+  //   feature. Without this, an unrelated feature (`ollama`, `hermes`)
+  //   that declares no deps can sneak in front of nginx/auth and
+  //   register subdomain proxy hosts against NPM data that the
+  //   install runner is about to wipe and recreate (#796).
+  const infraNames = items
+    .filter(it => it.tier === 'infrastructure')
+    .map(it => it.name);
+  const effectiveDeps = new Map<string, string[]>();
+  for (const it of items) {
+    const tier = it.tier ?? 'feature';
+    const explicit = it.dependencies.filter(d => namesInSet.has(d));
+    if (tier === 'infrastructure') {
+      effectiveDeps.set(it.name, explicit);
+    } else {
+      const implicit = infraNames.filter(n => n !== it.name);
+      effectiveDeps.set(it.name, [...new Set([...explicit, ...implicit])]);
+    }
+  }
+
   // Kahn's algorithm with a stable tiebreaker (input order).
   const indeg = new Map<string, number>();
   const byName = new Map<string, T>();
@@ -83,7 +116,7 @@ export function topoSortByDependencies<T extends DependencyAwareItem>(
   items.forEach((it, i) => {
     byName.set(it.name, it);
     inputOrder.set(it.name, i);
-    indeg.set(it.name, it.dependencies.filter(d => namesInSet.has(d)).length);
+    indeg.set(it.name, (effectiveDeps.get(it.name) ?? []).length);
   });
 
   const ready: T[] = items.filter(it => (indeg.get(it.name) ?? 0) === 0);
@@ -96,7 +129,7 @@ export function topoSortByDependencies<T extends DependencyAwareItem>(
     const next = ready.shift()!;
     ordered.push(next);
     for (const other of items) {
-      if (other.dependencies.includes(next.name)) {
+      if ((effectiveDeps.get(other.name) ?? []).includes(next.name)) {
         const newDeg = (indeg.get(other.name) ?? 0) - 1;
         indeg.set(other.name, newDeg);
         if (newDeg === 0 && !ordered.includes(other) && !ready.includes(other)) {
