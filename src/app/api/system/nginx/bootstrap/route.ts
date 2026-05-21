@@ -4,7 +4,7 @@ import { DigitalTwinStore } from '@/lib/store/twin';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { agentManager } from '@/lib/agent/manager';
 import { logger } from '@/lib/logger';
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 
 /** Touch the install-nginx-done marker so the FCoS first-boot
@@ -151,10 +151,7 @@ async function npmUpdatePassword(baseUrl: string, token: string, current: string
   }
 }
 
-export async function POST(request: Request) {
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
     const body = await request.json() as {
       node?: string;
@@ -279,4 +276,4 @@ export async function POST(request: Request) {
   } catch (e) {
     return apiError(e, { tag: 'api:system:nginx:bootstrap', status: 500 });
   }
-}
+});

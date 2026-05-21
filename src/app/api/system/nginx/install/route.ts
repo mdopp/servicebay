@@ -5,13 +5,9 @@ import { getConfig } from '@/lib/config';
 import { listNodes } from '@/lib/nodes';
 import { getExecutor } from '@/lib/executor';
 import { logger } from '@/lib/logger';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async () => {
     try {
         // 1. Get the template content
         const templateContent = await getTemplateYaml('nginx');
@@ -60,7 +56,7 @@ WantedBy=default.target
         logger.error('api:nginx:install', 'Failed to install nginx container', error);
         return NextResponse.json({ error: 'Failed to install nginx container' }, { status: 500 });
     }
-}
+});
 
 /**
  * Remove the install-nginx oneshot service left behind by the CoreOS install script.

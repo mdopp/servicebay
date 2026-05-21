@@ -1,18 +1,21 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getExecutor } from '@/lib/executor';
 import { findNginxConfDir } from '@/lib/nginx/confDir';
 import { extractNginxConfFromBackup } from '@/lib/nginx/backupExtract';
 import { logger } from '@/lib/logger';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
+const Query = z.object({ node: z.string().optional() });
 
+// Body is parsed inline: this route accepts either a JSON `{ files }`
+// payload or a multipart backup upload, so it can't use the wrapper's
+// JSON-only `body:` slot.
+export const POST = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ request, query }) => {
     try {
-        const { searchParams } = new URL(request.url);
-        const nodeParam = searchParams.get('node');
+        const nodeParam = query.node;
 
         const contentType = request.headers.get('content-type') || '';
         let files: Record<string, string>;
@@ -86,4 +89,5 @@ export async function POST(request: Request) {
         logger.error('api:nginx:import', 'Failed to import nginx config', error);
         return NextResponse.json({ error: 'Failed to import nginx config' }, { status: 500 });
     }
-}
+  },
+);

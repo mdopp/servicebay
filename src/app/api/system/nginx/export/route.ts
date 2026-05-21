@@ -1,14 +1,19 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getExecutor } from '@/lib/executor';
 import { findNginxConfDir } from '@/lib/nginx/confDir';
 import { logger } from '@/lib/logger';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+const Query = z.object({ node: z.string().optional() });
+
+export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ query }) => {
     try {
-        const { searchParams } = new URL(request.url);
-        const nodeParam = searchParams.get('node');
+        const nodeParam = query.node;
 
         const result = await findNginxConfDir();
         const debug = result?.debug || ['findNginxConfDir returned null'];
@@ -63,4 +68,5 @@ export async function GET(request: Request) {
         logger.error('api:nginx:export', 'Failed to export nginx config', error);
         return NextResponse.json({ error: 'Failed to export nginx config' }, { status: 500 });
     }
-}
+  },
+);
