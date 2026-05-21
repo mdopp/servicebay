@@ -1,4 +1,9 @@
 import type { StorybookConfig } from '@storybook/nextjs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve as resolvePath } from 'node:path';
+
+// ESM-safe equivalent of CJS `__dirname`.
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Storybook config for ServiceBay's frontend (Phase 4 of #753).
@@ -43,6 +48,110 @@ const config: StorybookConfig = {
     // ergonomics; stories that need richer arg types can declare
     // them explicitly via the meta `argTypes` field.
     reactDocgen: 'react-docgen',
+  },
+  // Dashboards transitively reach into Next.js server actions and
+  // type-only re-exports from `@servicebay/api-client → @/lib/store/twin`
+  // — both chains pull `packages/backend/**` and Node-only built-ins
+  // (`child_process`, `async_hooks`, `fs`, …) into the import graph
+  // even though the values are never *called* in stories. Webpack's
+  // client bundler refuses to resolve those. The fixes here:
+  //
+  //   1. Stub every Node built-in to `false` so the import chain
+  //      compiles. Any story that actually *invokes* one of these at
+  //      runtime would throw — that's the desired failure mode
+  //      (stories should never trigger server-only code paths).
+  //   2. Alias the backend workspace to a single empty module. The
+  //      api-client's `lib-types.ts` legacy `export type { NodeTwin }
+  //      from '@/lib/store/twin'` is type-only (erased at compile
+  //      time) but webpack tries to resolve it anyway — pointing it
+  //      at an empty file satisfies the resolver without bundling
+  //      ~50 backend files.
+  webpackFinal: async (config) => {
+    config.resolve = config.resolve ?? {};
+    config.resolve.fallback = {
+      ...(config.resolve.fallback ?? {}),
+      child_process: false,
+      fs: false,
+      'fs/promises': false,
+      'node:child_process': false,
+      'node:fs': false,
+      'node:fs/promises': false,
+      'node:util': false,
+      net: false,
+      'node:net': false,
+      tls: false,
+      'node:tls': false,
+      async_hooks: false,
+      'node:async_hooks': false,
+      crypto: false,
+      'node:crypto': false,
+      os: false,
+      'node:os': false,
+      path: false,
+      'node:path': false,
+      stream: false,
+      'node:stream': false,
+      perf_hooks: false,
+      'node:perf_hooks': false,
+      worker_threads: false,
+      'node:worker_threads': false,
+    };
+    // Backend workspace + the @/lib/* alias both resolve to the same
+    // empty stub from Storybook's POV. Same for backend-only deps
+    // that show up in `lib-types`'s transitive graph — ssh2, sqlite,
+    // etc. don't run in the browser bundle either way.
+    const emptyStub = resolvePath(HERE, './stubs/empty.js');
+    config.resolve.alias = {
+      ...(config.resolve.alias ?? {}),
+      '@servicebay/backend': emptyStub,
+      // Path-based alias to swallow `@/lib/...` imports from the
+      // api-client's legacy type re-exports. Frontend code that
+      // actually needs `@/lib/api/handler` etc. shouldn't be in a
+      // story's import graph in the first place.
+      '@/lib': emptyStub,
+      // Backend-only runtime deps. Each is needed because the
+      // type-only re-exports from `lib-types.ts` chain through the
+      // backend's `agent/`, `executor`, and `installer` modules.
+      ssh2: emptyStub,
+      'better-sqlite3': emptyStub,
+      'node-pty': emptyStub,
+      bonjour: emptyStub,
+      'socket.io': emptyStub,
+      'js-yaml': emptyStub,
+      mustache: emptyStub,
+    };
+    // Last-resort: anything else under `dns`, `dgram`, `crypto` we
+    // haven't fallback'd above shouldn't be a hard failure.
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      dns: false,
+      'dns/promises': false,
+      'node:dns': false,
+      'node:dns/promises': false,
+      dgram: false,
+      'node:dgram': false,
+      readline: false,
+      'node:readline': false,
+      url: false,
+      'node:url': false,
+      buffer: false,
+      'node:buffer': false,
+      events: false,
+      'node:events': false,
+      http: false,
+      'node:http': false,
+      https: false,
+      'node:https': false,
+      zlib: false,
+      'node:zlib': false,
+      vm: false,
+      'node:vm': false,
+      module: false,
+      'node:module': false,
+      assert: false,
+      'node:assert': false,
+    };
+    return config;
   },
 };
 

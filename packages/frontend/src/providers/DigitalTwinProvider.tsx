@@ -19,7 +19,10 @@ interface DigitalTwinContextType {
     isNodeSynced: (nodeName?: string) => boolean;
 }
 
-const DigitalTwinContext = createContext<DigitalTwinContextType | undefined>(undefined);
+// Exported so Storybook decorators / tests can inject a fixed snapshot
+// via the same context the real provider populates. Production code
+// should always go through `useDigitalTwinContext` (or `useDigitalTwin`).
+export const DigitalTwinContext = createContext<DigitalTwinContextType | undefined>(undefined);
 
 // Intercept 401 responses from API calls and redirect to login.
 // This handles session expiry gracefully instead of showing JSON parse errors.

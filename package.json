@@ -95,7 +95,8 @@
     ],
     "ignore": [
       "scripts/check-invariants.ts",
-      "packages/frontend/public/mockServiceWorker.js"
+      "packages/frontend/public/mockServiceWorker.js",
+      ".storybook/stubs/empty.js"
     ],
     "ignoreExportsUsedInFile": true,
     "workspaces": {

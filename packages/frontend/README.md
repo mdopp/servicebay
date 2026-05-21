@@ -91,15 +91,41 @@ A handler set you declare in a story takes priority over the default ones in `sr
 
 | File | What it covers |
 |---|---|
-| `components/Sidebar.stories.tsx` | `Default` / `ActiveInstall` (install in flight, "Setup" chip showing) / `OnNetworkRoute` (active-tab highlight) |
-| `components/wizard/steps/WelcomeStep.stories.tsx` | `Default` (mixed selection) / `AllOn` / `StacksOnly` |
+| `components/Sidebar.stories.tsx` | `Default` / `ActiveInstall` (install in flight, "Setup" chip showing) / `OnNetworkRoute` |
+| `components/OnboardingWizard.stories.tsx` | `PopulatedTwin` / `EmptyTwin` — full end-to-end wizard render |
+| `components/wizard/steps/WelcomeStep.stories.tsx` | `Default` / `AllOn` / `StacksOnly` |
+| `components/wizard/steps/NetworkStep.stories.tsx` | `Empty` / `Prefilled` / `GeneratingKey` |
 | `components/wizard/steps/EmailStep.stories.tsx` | `Empty` / `GmailPrefilled` |
-| `components/wizard/steps/NetworkStep.stories.tsx` | `Empty` / `Prefilled` / `GeneratingKey` (loading state) |
+| `components/wizard/steps/MachineStep.stories.tsx` | `PublicMode` / `LanMode` / `NoRaidDetected` / `LoadingDevices` |
+| `components/wizard/steps/FinishStep.stories.tsx` | `Default` |
+| `dashboards/NetworkDashboard.stories.tsx` | `PopulatedTwin` / `EmptyTwin` / `Disconnected` |
+| `dashboards/ServicesDashboard.stories.tsx` | `PopulatedTwin` / `EmptyTwin` |
+
+### Twin fixtures + the `MockDigitalTwinProvider`
+
+`src/mocks/twin.ts` exports two ready-made `DigitalTwinSnapshot` fixtures (`mockTwinSnapshot` with three services + a populated proxy state; `emptyTwinSnapshot` for first-boot states). `src/mocks/MockDigitalTwinProvider.tsx` wraps them in the same React context the production `DigitalTwinProvider` populates, so any story that needs twin data wraps its `decorators` array with:
+
+```tsx
+import { MockDigitalTwinProvider } from '../mocks/MockDigitalTwinProvider';
+import { mockTwinSnapshot } from '../mocks/twin';
+
+decorators: [
+  (Story) => <MockDigitalTwinProvider snapshot={mockTwinSnapshot}><Story /></MockDigitalTwinProvider>,
+],
+```
+
+Override `snapshot` per-story for variant data, pass `isConnected={false}` to simulate the socket dropping.
+
+### Why server-action imports compile under Storybook
+
+The wizard and dashboards transitively import `@/app/actions/*` (Next.js server actions) and pull `@servicebay/backend/**` through the api-client's legacy type re-exports. Storybook's webpack bundles for the browser, where those modules can't resolve — Node built-ins (`child_process`, `async_hooks`, `fs`, …) aren't available, and `ssh2` / `better-sqlite3` / `node-pty` aren't either. `.storybook/main.ts:webpackFinal`:
+- Stubs every Node built-in to `false` (resolves to an empty module).
+- Aliases `@servicebay/backend`, `@/lib`, `ssh2`, `better-sqlite3`, `node-pty`, etc. to `.storybook/stubs/empty.js`.
+
+The aliased imports are only *referenced* in the import graph, never *called* in story render paths — a story that triggers one at runtime would throw, which is the desired failure mode (stories should never run server-only code).
 
 ### Pending (follow-up PRs)
 
-- `OnboardingWizard` end-to-end story — needs mocks for `@/app/actions/onboarding`, `@/app/actions/ssh`, `@/app/actions`, `@/app/actions/system`, the `DigitalTwinProvider`, and the `useStackInstall` hook. Worth it once those mock shapes settle; per-step stories above cover most of the value with one-tenth of the surface.
-- Top-level dashboard stories (`NetworkDashboard`, `ServicesDashboard`, `HealthDashboard`) — need a stubbed `DigitalTwinProvider` exposing fixture twin data. The cleanest path is a `MockDigitalTwinProvider` decorator imported by every dashboard story.
-- Remaining wizard sub-steps (`StacksStep`, `MachineStep`, `FinishStep`) — same shape as the three already covered.
-
-The roadmap matches `project_fe_be_separation.md` in auto-memory; ticking those when each lands updates the meta issue (#753).
+- `StacksStep` sub-step story — needs ~12 mock props (template list, picker state, install flow, diagnose probes, …). Deferred until the stack-install shape stabilises; the per-step pattern from MachineStep/NetworkStep applies.
+- `HealthDashboard` story — same shape as the two existing dashboard stories.
+- Visual regression tests via Storybook's test-runner + Playwright — gates merge on rendering regressions.
