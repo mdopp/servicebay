@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.11.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.0...servicebay-v4.11.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* **docker:** point agent COPY at new package + ship scripts dir ([#770](https://github.com/mdopp/servicebay/issues/770)) ([b832039](https://github.com/mdopp/servicebay/commit/b8320391e976b5d42663dee1ab438ae9dc458eec))
+* **test:** bump RTL asyncUtilTimeout to 10s ([#757](https://github.com/mdopp/servicebay/issues/757)) ([#768](https://github.com/mdopp/servicebay/issues/768)) ([5f02376](https://github.com/mdopp/servicebay/commit/5f0237629526accd07367f494af672b97938dad8))
+
 ## [4.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.10.0...servicebay-v4.11.0) (2026-05-20)
 
 
