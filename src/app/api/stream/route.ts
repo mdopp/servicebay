@@ -1,12 +1,13 @@
 
 import { NextResponse } from 'next/server';
 import watcher from '@/lib/watcher';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export const GET = withApiHandler({}, async () => {
   const encoder = new TextEncoder();
-  
+
   let cleanup: (() => void) | null = null;
 
   const stream = new ReadableStream({
@@ -53,4 +54,4 @@ export async function GET() {
       'Connection': 'keep-alive',
     },
   });
-}
+});
