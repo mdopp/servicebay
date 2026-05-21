@@ -101,10 +101,8 @@
     "ignore": [
       "scripts/check-invariants.ts",
       "packages/frontend/public/mockServiceWorker.js",
-      ".storybook/stubs/empty.js"
-    ],
-    "ignoreDependencies": [
-      "webpack"
+      ".storybook/stubs/empty.js",
+      ".storybook/stubs/empty-loader.cjs"
     ],
     "ignoreExportsUsedInFile": true,
     "workspaces": {
