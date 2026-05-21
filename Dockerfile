@@ -93,13 +93,18 @@ COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
 # server.ts is folded into dist-server/server.cjs by scripts/build-server.mjs.
 COPY --from=builder /app/dist-server ./dist-server
 
-# Python agent script — streamed over SSH to each managed node and executed
-# there. Read at runtime by src/lib/agent/handler.ts (path resolved with
-# `process.cwd() + 'src/lib/agent/v4/agent.py'`), so it must exist at that
-# exact path inside the runner image. Not bundled into dist-server because
-# it's Python, not JS, and not invoked locally.
-COPY --from=builder /app/src/lib/agent/v4/agent.py ./src/lib/agent/v4/agent.py
-COPY --from=builder /app/src/lib/agent/v4/quadlet_parser.py ./src/lib/agent/v4/quadlet_parser.py
+# Python agent + shell scripts streamed over SSH to each managed node.
+# Read at runtime by packages/backend/src/lib/agent/handler.ts with paths
+# resolved via `process.cwd() + 'src/lib/agent/v4/...'`, so the container-
+# internal destination stays as `/app/src/lib/agent/v4/` even though the
+# source moved into the backend workspace in #767. Scripts dir is part of
+# the same fix that adds `nginx_inspector.sh` (extracted from inline JS in
+# #750 — never made it into the Docker image until now, which is why
+# `SSH agent startup failed: ENOENT … nginx_inspector.sh` shows up at
+# agent boot).
+COPY --from=builder /app/packages/backend/src/lib/agent/v4/agent.py ./src/lib/agent/v4/agent.py
+COPY --from=builder /app/packages/backend/src/lib/agent/v4/quadlet_parser.py ./src/lib/agent/v4/quadlet_parser.py
+COPY --from=builder /app/packages/backend/src/lib/agent/v4/scripts ./src/lib/agent/v4/scripts
 
 # Copy production node_modules (with built native modules)
 COPY --from=prod-deps /app/node_modules ./node_modules
