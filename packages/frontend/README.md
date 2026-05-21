@@ -61,45 +61,8 @@ Currently mocked endpoints (Phase 2):
 
 Other endpoints fall through to the real network — set `onUnhandledRequest: 'bypass'` in `init.ts` so an unmocked endpoint produces a real 404/500 instead of a console warning. If you find yourself hitting a lot of unmocked endpoints while iterating on a screen, that's a signal to widen this handler list.
 
-## Storybook
+## Note on Storybook
 
-```bash
-# From the repo root:
-npm run storybook         # interactive UI on http://localhost:6006
-npm run build-storybook   # static export to /storybook-static
-```
+A Storybook integration was scoped, partially landed (PR #790 in 4.13.0), and then **rolled back** — the cost-benefit didn't make sense for the team shape (solo dev). Storybook's main value is team collaboration (designers without backend, FE hires without onboarding); the bulk of the "iterate on UI without the backend" value is already covered by `npm run dev:frontend` above. The webpack stubbing required to keep backend code out of the browser bundle was fragile against Storybook + Next 16 + the api-client's `export type * from '@/lib/...'` re-export chain, and rendering bugs kept slipping past the build.
 
-Storybook runs on port **6006**. It uses `@storybook/nextjs` so App-Router hooks (`useRouter`, `usePathname`) and `next/font` resolve the same way Next.js dev does. Stories are co-located with their components — `Sidebar.stories.tsx` sits next to `Sidebar.tsx`. Config lives at `.storybook/main.ts` + `.storybook/preview.tsx` at the repo root.
-
-### Story → mock layer integration
-
-Stories share the same MSW handlers + fixtures `npm run dev:frontend` uses. The `preview.tsx` calls `initialize(...)` on Storybook startup and adds `mswLoader` to every story; per-story handler overrides go through Storybook's `parameters.msw.handlers`:
-
-```tsx
-export const Default: Story = {
-  parameters: {
-    msw: {
-      handlers: [http.get('/api/install/status', () => HttpResponse.json(idleInstallStatus))],
-    },
-  },
-};
-```
-
-A handler set you declare in a story takes priority over the default ones in `src/mocks/handlers.ts`, so per-screen variants ("loading", "errored", "active install") only need to override the endpoints they care about.
-
-### Stories that ship today
-
-| File | What it covers |
-|---|---|
-| `components/Sidebar.stories.tsx` | `Default` / `ActiveInstall` (install in flight, "Setup" chip showing) / `OnNetworkRoute` (active-tab highlight) |
-| `components/wizard/steps/WelcomeStep.stories.tsx` | `Default` (mixed selection) / `AllOn` / `StacksOnly` |
-| `components/wizard/steps/EmailStep.stories.tsx` | `Empty` / `GmailPrefilled` |
-| `components/wizard/steps/NetworkStep.stories.tsx` | `Empty` / `Prefilled` / `GeneratingKey` (loading state) |
-
-### Pending (follow-up PRs)
-
-- `OnboardingWizard` end-to-end story — needs mocks for `@/app/actions/onboarding`, `@/app/actions/ssh`, `@/app/actions`, `@/app/actions/system`, the `DigitalTwinProvider`, and the `useStackInstall` hook. Worth it once those mock shapes settle; per-step stories above cover most of the value with one-tenth of the surface.
-- Top-level dashboard stories (`NetworkDashboard`, `ServicesDashboard`, `HealthDashboard`) — need a stubbed `DigitalTwinProvider` exposing fixture twin data. The cleanest path is a `MockDigitalTwinProvider` decorator imported by every dashboard story.
-- Remaining wizard sub-steps (`StacksStep`, `MachineStep`, `FinishStep`) — same shape as the three already covered.
-
-The roadmap matches `project_fe_be_separation.md` in auto-memory; ticking those when each lands updates the meta issue (#753).
+If a future team scale brings a FE-focused contributor, Storybook can be re-introduced; in the meantime, the mock-layer foundation in `src/mocks/` is the supported FE-only dev path.
