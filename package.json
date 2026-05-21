@@ -103,6 +103,9 @@
       "packages/frontend/public/mockServiceWorker.js",
       ".storybook/stubs/empty.js"
     ],
+    "ignoreDependencies": [
+      "webpack"
+    ],
     "ignoreExportsUsedInFile": true,
     "workspaces": {
       ".": {

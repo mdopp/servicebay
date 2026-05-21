@@ -67,6 +67,7 @@ const config: StorybookConfig = {
   //      at an empty file satisfies the resolver without bundling
   //      ~50 backend files.
   webpackFinal: async (config) => {
+    const webpack = (await import('webpack')).default;
     config.resolve = config.resolve ?? {};
     config.resolve.fallback = {
       ...(config.resolve.fallback ?? {}),
@@ -151,6 +152,25 @@ const config: StorybookConfig = {
       assert: false,
       'node:assert': false,
     };
+    // Belt + suspenders: the alias above redirects `@servicebay/backend`
+    // and `@/lib` at the module-specifier level, but `lib-types.ts`'s
+    // `export type { … } from '@/lib/...'` re-exports get pulled in by
+    // the api-client's `export * from './lib-types'` — babel's TS
+    // transform can't fully erase them because `export *` doesn't
+    // preserve type-only info. The NormalModuleReplacementPlugin
+    // catches any resolved request whose final path lands inside
+    // `packages/backend/src/lib/**` and swaps it for the empty stub.
+    // This is the real moat — pure module-graph isolation, no
+    // dependence on whose alias fires first.
+    config.plugins = config.plugins ?? [];
+    config.plugins.push(
+      new webpack.NormalModuleReplacementPlugin(
+        /packages\/backend\/src\/lib\//,
+        (resource: { request: string }) => {
+          resource.request = emptyStub;
+        },
+      ),
+    );
     return config;
   },
 };
