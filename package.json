@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "fuser -k 3000/tcp || true && tsx server.ts",
+    "dev:frontend": "fuser -k 3001/tcp || true && NEXT_PUBLIC_USE_MOCKS=1 next dev --port 3001",
     "build": "next build --webpack && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
     "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "eslint",
@@ -75,6 +76,7 @@
     "jsdom": "^27.4.0",
     "knip": "^5.81.0",
     "lint-staged": "^16.2.7",
+    "msw": "^2.14.6",
     "postcss": "^8.5.10",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
@@ -87,7 +89,8 @@
       "python3"
     ],
     "ignore": [
-      "scripts/check-invariants.ts"
+      "scripts/check-invariants.ts",
+      "packages/frontend/public/mockServiceWorker.js"
     ],
     "ignoreExportsUsedInFile": true,
     "workspaces": {
@@ -120,5 +123,10 @@
       "react": "$react"
     },
     "postcss": "^8.5.10"
+  },
+  "msw": {
+    "workerDirectory": [
+      "packages/frontend/public"
+    ]
   }
 }
