@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { agentManager } from '@/lib/agent/manager';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
 interface RaidArray {
@@ -90,13 +91,12 @@ const mapNode = (raw: RawLsblkNode): DetectedDrive => {
  *     way to tell from the install log whether all expected disks were
  *     even visible.
  */
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node');
+const GetQuery = z.object({ node: z.string().min(1) });
 
-  if (!nodeName) {
-    return NextResponse.json({ error: 'Missing node parameter' }, { status: 400 });
-  }
+export const GET = withApiHandler<undefined, z.infer<typeof GetQuery>>(
+  { query: GetQuery },
+  async ({ query, request }) => {
+  const nodeName = query.node;
 
   try {
     const agent = await agentManager.ensureAgent(nodeName);
@@ -202,32 +202,23 @@ export async function GET(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:system:storage:get', status: 500 });
   }
-}
+  },
+);
+
+const PostBody = z.object({
+  device: z.string().min(1),
+  mountpoint: z.string().min(1),
+  label: z.string().optional(),
+  fstype: z.string().optional(),
+});
+const PostQuery = z.object({ node: z.string().min(1) });
 
 /** Mount a RAID array and create persistent systemd units. */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
-  const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node');
-
-  if (!nodeName) {
-    return NextResponse.json({ error: 'Missing node parameter' }, { status: 400 });
-  }
-
-  const body = await request.json();
-  const { device, mountpoint, label, fstype } = body as {
-    device: string;
-    mountpoint: string;
-    label?: string;
-    fstype?: string;
-  };
-
-  if (!device || !mountpoint) {
-    return NextResponse.json({ error: 'Missing device or mountpoint' }, { status: 400 });
-  }
+export const POST = withApiHandler<z.infer<typeof PostBody>, z.infer<typeof PostQuery>>(
+  { body: PostBody, query: PostQuery },
+  async ({ body, query }) => {
+  const nodeName = query.node;
+  const { device, mountpoint, label, fstype } = body;
 
   // Sanitize inputs to prevent command injection
   const safeDevice = device.replace(/[^a-zA-Z0-9/_.-]/g, '');
@@ -313,4 +304,5 @@ UNIT`
   } catch (error) {
     return apiError(error, { tag: 'api:system:storage:post', status: 500 });
   }
-}
+  },
+);
