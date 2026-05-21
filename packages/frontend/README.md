@@ -97,9 +97,11 @@ A handler set you declare in a story takes priority over the default ones in `sr
 | `components/wizard/steps/NetworkStep.stories.tsx` | `Empty` / `Prefilled` / `GeneratingKey` |
 | `components/wizard/steps/EmailStep.stories.tsx` | `Empty` / `GmailPrefilled` |
 | `components/wizard/steps/MachineStep.stories.tsx` | `PublicMode` / `LanMode` / `NoRaidDetected` / `LoadingDevices` |
+| `components/wizard/steps/StacksStep.stories.tsx` | `PickerSelect` / `Configure` / `Installing` / `Done` / `Loading` |
 | `components/wizard/steps/FinishStep.stories.tsx` | `Default` |
 | `dashboards/NetworkDashboard.stories.tsx` | `PopulatedTwin` / `EmptyTwin` / `Disconnected` |
 | `dashboards/ServicesDashboard.stories.tsx` | `PopulatedTwin` / `EmptyTwin` |
+| `dashboards/HealthDashboard.stories.tsx` | `MixedHealth` / `AllPassing` / `NoChecks` |
 
 ### Twin fixtures + the `MockDigitalTwinProvider`
 
@@ -124,8 +126,22 @@ The wizard and dashboards transitively import `@/app/actions/*` (Next.js server 
 
 The aliased imports are only *referenced* in the import graph, never *called* in story render paths — a story that triggers one at runtime would throw, which is the desired failure mode (stories should never run server-only code).
 
-### Pending (follow-up PRs)
+### CI gate — every story renders
 
-- `StacksStep` sub-step story — needs ~12 mock props (template list, picker state, install flow, diagnose probes, …). Deferred until the stack-install shape stabilises; the per-step pattern from MachineStep/NetworkStep applies.
-- `HealthDashboard` story — same shape as the two existing dashboard stories.
-- Visual regression tests via Storybook's test-runner + Playwright — gates merge on rendering regressions.
+`.github/workflows/storybook.yml` builds the static Storybook, serves it via `http-server`, and runs `@storybook/test-runner` (Playwright + headless chromium) against every story declared under `stories[]` in `.storybook/main.ts`. The pass criterion is mount-without-error — no thrown errors, no caught render warnings. A story that breaks because a component changed shape fails the build immediately.
+
+Run locally:
+
+```bash
+npm run build-storybook              # build static export
+npx http-server storybook-static --port 6006 --silent &
+npx wait-on tcp:6006
+npm run test-storybook               # runs against the localhost server
+```
+
+Note: locally requires Playwright's chromium system deps (`libnspr4`, `libnss3`, …). CI installs them via `npx playwright install chromium --with-deps`. Devs without root can skip the test-runner pass locally — the build alone catches most regressions.
+
+### Pending (further polish)
+
+- Per-story interaction tests via `play()` functions — currently the test-runner only validates the mount path; adding `play()` lets it click buttons / fill inputs / assert visible text per variant. Worth doing once the first regression slips through mount-only.
+- Visual-regression diffs via Chromatic or `@storybook/test-runner` screenshot mode — orthogonal to mount-pass, would catch CSS drift.
