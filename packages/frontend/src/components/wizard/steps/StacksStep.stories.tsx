@@ -32,9 +32,16 @@ function noopInstallFlow(overrides: Partial<InstallFlow> = {}): InstallFlow {
     logs: [],
     installingNow: null,
     deployedNames: [],
-    credentialsManifest: null,
+    // `StackInstallSummary` reads `.length` off this — `null` would
+    // crash the Done variant. Empty array means "no credentials to
+    // surface" which renders the empty-state copy.
+    credentialsManifest: [],
     npmCredPrompt: null,
-    npmCredFallback: null,
+    // `StackInstallProgress` reads `.email` / `.password` off this
+    // unconditionally — a null here is what made the Installing /
+    // Done variants crash on mount. Empty strings keep the input
+    // fields rendered with placeholder text.
+    npmCredFallback: { email: '', password: '' },
     error: null,
     cleanInstall: false,
     cleanInstallConfirm: '',

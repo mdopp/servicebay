@@ -1,5 +1,6 @@
 import type { Preview } from '@storybook/nextjs';
 import { initialize, mswLoader } from 'msw-storybook-addon';
+import { ToastProvider } from '../packages/frontend/src/providers/ToastProvider';
 
 // Load the same global CSS Next.js loads. Tailwind utilities, dark-
 // mode tokens, and any custom CSS variables are defined here.
@@ -39,6 +40,18 @@ const preview: Preview = {
     },
   },
   loaders: [mswLoader],
+  // Global decorators applied to every story. The ToastProvider is
+  // load-bearing — many components (Sidebar, dashboards, the wizard
+  // sub-steps via WizardUI) call `useToast()` which throws without
+  // a provider. Wrapping globally avoids per-story duplication and
+  // keeps the story file focused on its own state.
+  decorators: [
+    (Story) => (
+      <ToastProvider>
+        <Story />
+      </ToastProvider>
+    ),
+  ],
 };
 
 export default preview;
