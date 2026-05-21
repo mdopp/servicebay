@@ -34,6 +34,14 @@ FROM base AS prod-deps
 WORKDIR /app
 # Base image already has python3 make g++
 COPY package.json package-lock.json* ./
+# Workspace package manifests — `npm ci` against a workspace root needs
+# each member's package.json present so it can resolve their deps too.
+# Without these copies, runtime modules listed in packages/*/package.json
+# (ssh2, better-sqlite3, node-pty, etc. after #767) silently drop out of
+# the runner image and the custom server crashes on first import.
+COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backend/package.json ./packages/backend/package.json
+COPY packages/frontend/package.json ./packages/frontend/package.json
 # Install prod deps (builds native modules). tsx/typescript are no longer
 # needed at runtime because the custom server is pre-bundled to CJS.
 RUN npm ci --omit=dev
