@@ -115,7 +115,7 @@ describe('PATCH /api/system/access-requests/[id]', () => {
       { id: 'r1', requestedAt: '2026-01-01', name: 'A', email: 'a@b.c', status: 'pending' },
     ];
     const res = await PATCH(
-      new Request('http://test/api/system/access-requests/r1', { method: 'PATCH' }),
+      new NextRequest('http://test/api/system/access-requests/r1', { method: 'PATCH' }),
       { params: Promise.resolve({ id: 'r1' }) },
     );
     expect(res.status).toBe(200);
@@ -125,7 +125,7 @@ describe('PATCH /api/system/access-requests/[id]', () => {
 
   it('returns 404 when id not found', async () => {
     const res = await PATCH(
-      new Request('http://test/api/system/access-requests/nope', { method: 'PATCH' }),
+      new NextRequest('http://test/api/system/access-requests/nope', { method: 'PATCH' }),
       { params: Promise.resolve({ id: 'nope' }) },
     );
     expect(res.status).toBe(404);
@@ -139,7 +139,7 @@ describe('DELETE /api/system/access-requests/[id]', () => {
       { id: 'r2', requestedAt: '2026-01-02', name: 'B', email: 'b@b.c', status: 'pending' },
     ];
     const res = await DELETE(
-      new Request('http://test/api/system/access-requests/r1', { method: 'DELETE' }),
+      new NextRequest('http://test/api/system/access-requests/r1', { method: 'DELETE' }),
       { params: Promise.resolve({ id: 'r1' }) },
     );
     expect(res.status).toBe(200);
