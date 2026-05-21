@@ -62,13 +62,23 @@ function inlineAgentScripts(agentSource: string): string {
     if (!out.includes(sentinel)) continue;
     const scriptPath = path.join(process.cwd(), relativePath);
     const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
-    // `replaceAll(string, string)` interprets `$&` / `$$` / `$<n>`
+    // Match the full `r"""<sentinel>"""` Python wrapper, not the
+    // bare sentinel. The bare token shows up in comments too
+    // (e.g. `# substitutes into the @@SENTINEL@@ below…`), and a
+    // bare-string replace would inline the script there as well —
+    // turning the comment's remainder into raw shell that crashes
+    // Python with `SyntaxError: invalid syntax`. Matching
+    // `r"""…"""` means we only ever substitute inside the actual
+    // string literal.
+    //
+    // `replaceAll(string, string)` would interpret `$&` / `$$` / `$<n>`
     // in the replacement — shell scripts contain `$1`, `$file`,
     // `$(...)` everywhere, so we'd corrupt the contents. The
     // callback form bypasses that substitution: the inserted text
     // is verbatim regardless of `$` characters in it.
-    const pattern = new RegExp(sentinel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-    out = out.replace(pattern, () => scriptContent);
+    const escaped = sentinel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`r"""${escaped}"""`, 'g');
+    out = out.replace(pattern, () => `r"""${scriptContent}"""`);
   }
   return out;
 }
