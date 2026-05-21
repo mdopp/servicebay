@@ -73,18 +73,62 @@ function buildDiscoveryUrl(): string {
   return `http://127.0.0.1:${effective}/.well-known/openid-configuration`;
 }
 
+/** Headers that make the local-loopback probe look like real
+ *  proxied traffic. Authelia derives its effective issuer from
+ *  Host + X-Forwarded-Proto; without these it returns HTTP 500
+ *  with "invalid X-Forwarded-Proto header value 'http'" even on
+ *  a perfectly healthy install. The `publicDomain` argument is
+ *  the wizard-configured apex (e.g. `dopp.cloud`); the issuer
+ *  template in `configuration.yml.mustache` is always
+ *  `https://auth.<publicDomain>`. */
+function buildDiscoveryHeaders(publicDomain: string): Record<string, string> {
+  return {
+    Accept: 'application/json',
+    Host: `auth.${publicDomain}`,
+    'X-Forwarded-Proto': 'https',
+    'X-Forwarded-Host': `auth.${publicDomain}`,
+  };
+}
+
+/** Authelia prints exactly one banner per process start that names
+ *  the version and "is starting" — keep the regex narrow so a log
+ *  line mentioning the word "starting" elsewhere doesn't get
+ *  treated as a banner. */
+const STARTUP_BANNER_RE = /Authelia v[\d.]+\s+is starting/i;
+
+/** Trim `logs` to only the lines emitted since the most recent
+ *  Authelia startup banner. If no banner is present (truncated
+ *  tail), return the original logs unchanged — better to classify
+ *  on stale data than to classify on nothing. */
+export function trimToCurrentStartup(logs: string): string {
+  const lines = logs.split('\n');
+  let lastBanner = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (STARTUP_BANNER_RE.test(lines[i])) {
+      lastBanner = i;
+      break;
+    }
+  }
+  if (lastBanner < 0) return logs;
+  return lines.slice(lastBanner).join('\n');
+}
+
 /** Pattern-match Authelia log tail into a category. The first match
  *  wins; storage/config patterns are checked before LDAP because LDAP
  *  errors often appear as side-effects of a broken config (the bind
- *  string never gets evaluated). */
+ *  string never gets evaluated). The classifier scopes itself to log
+ *  lines since the most-recent startup banner — pre-restart errors
+ *  (e.g. a stale "Invalid Credentials" from before a wipe) must not
+ *  outvote the current process's actual state. */
 export function classifyAutheliaLogs(logs: string): {
   category: OidcFailCategory;
   summary: string;
 } {
-  const trimmed = logs.trim();
-  if (!trimmed) {
+  const scoped = trimToCurrentStartup(logs).trim();
+  if (!scoped) {
     return { category: 'unknown', summary: 'Authelia logs were empty' };
   }
+  const trimmed = scoped;
   // Storage / encryption key drift — single most painful failure
   // mode (preserved DB + new install = decrypt failure on every
   // boot). Authelia logs this as a fatal-level error referencing
@@ -163,11 +207,12 @@ export async function checkOidcProviderReachable(nodeName: string = 'Local'): Pr
   }
 
   const url = buildDiscoveryUrl();
+  const headers = buildDiscoveryHeaders(cfg.reverseProxy.publicDomain);
   let response: Response;
   try {
     response = await fetch(url, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers,
       signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
     });
   } catch (e) {

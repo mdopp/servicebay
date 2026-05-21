@@ -19,7 +19,7 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 import { getConfig } from '@/lib/config';
-import { checkOidcProviderReachable, classifyAutheliaLogs } from './oidcProviderReachable';
+import { checkOidcProviderReachable, classifyAutheliaLogs, trimToCurrentStartup } from './oidcProviderReachable';
 
 const baseConfig = {
   reverseProxy: { publicDomain: 'example.com' },
@@ -72,6 +72,28 @@ describe('oidc_provider_reachable probe', () => {
     })));
     const r = await checkOidcProviderReachable();
     expect(r.status).toBe('ok');
+  });
+
+  // #781 — Authelia derives its effective issuer from Host +
+  // X-Forwarded-Proto. Without those, a healthy install answers
+  // HTTP 500 to a plain `127.0.0.1` GET. The probe must look like
+  // proxied traffic.
+  it('sends X-Forwarded-Proto: https and Host: auth.<publicDomain>', async () => {
+    vi.mocked(getConfig).mockResolvedValue(baseConfig as never);
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      new Response(JSON.stringify(validDiscovery), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await checkOidcProviderReachable();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Forwarded-Proto']).toBe('https');
+    expect(headers['Host']).toBe('auth.example.com');
+    expect(headers['X-Forwarded-Host']).toBe('auth.example.com');
   });
 
   // Regression for #622: probe must FAIL when Authelia returns 502 —
@@ -168,5 +190,56 @@ describe('classifyAutheliaLogs', () => {
   it('matches storage drift', () => {
     const logs = 'fatal error: unable to decrypt the storage encryption key';
     expect(classifyAutheliaLogs(logs).category).toBe('storage');
+  });
+
+  // #781 — stale errors from a previous process must not outvote
+  // the current process's actual state. A startup banner resets the
+  // classification window.
+  it('ignores LDAP errors that precede the most recent startup banner', () => {
+    const logs = [
+      'time="2026-05-20T10:00:00Z" level=error msg="LDAP Result Code 49 Invalid Credentials"',
+      'time="2026-05-21T08:00:00Z" level=info msg="Authelia v4.39.19 is starting"',
+      'time="2026-05-21T08:00:01Z" level=info msg="Listening on 0.0.0.0:9091"',
+    ].join('\n');
+    expect(classifyAutheliaLogs(logs).category).toBe('unknown');
+  });
+
+  it('still classifies errors that appear after the startup banner', () => {
+    const logs = [
+      'time="2026-05-21T08:00:00Z" level=info msg="Authelia v4.39.19 is starting"',
+      'time="2026-05-21T08:00:01Z" level=error msg="LDAP Result Code 49 Invalid Credentials"',
+    ].join('\n');
+    expect(classifyAutheliaLogs(logs).category).toBe('ldap');
+  });
+});
+
+describe('trimToCurrentStartup', () => {
+  it('returns input unchanged when no banner is present', () => {
+    const logs = 'level=error msg="something broke"\nlevel=warn msg="another thing"';
+    expect(trimToCurrentStartup(logs)).toBe(logs);
+  });
+
+  it('trims everything before the banner when one is present', () => {
+    const logs = [
+      'level=error msg="old failure"',
+      'level=info msg="Authelia v4.39.19 is starting"',
+      'level=info msg="ready"',
+    ].join('\n');
+    const trimmed = trimToCurrentStartup(logs);
+    expect(trimmed).not.toContain('old failure');
+    expect(trimmed).toContain('is starting');
+    expect(trimmed).toContain('ready');
+  });
+
+  it('uses the LAST banner when several are present (process restarts)', () => {
+    const logs = [
+      'level=info msg="Authelia v4.39.18 is starting"',
+      'level=error msg="first-boot error"',
+      'level=info msg="Authelia v4.39.19 is starting"',
+      'level=info msg="post-restart line"',
+    ].join('\n');
+    const trimmed = trimToCurrentStartup(logs);
+    expect(trimmed).not.toContain('first-boot error');
+    expect(trimmed).toContain('post-restart line');
   });
 });
