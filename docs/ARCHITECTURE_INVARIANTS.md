@@ -4,6 +4,8 @@ The rubric that defines "ServiceBay's architecture is still good."
 
 Each invariant below is **mechanically enforced** by one of three tools running in CI. A passing build means the rubric holds. A failure means a specific line crossed a defined boundary — not a subjective "feels off."
 
+Decisions that **can't** be mechanically enforced — operator-facing UX choices, incident-driven safety cascades, the user's deliberate config quirks — live in [UX_DECISIONS.md](UX_DECISIONS.md). Read both before changing anything that looks weird.
+
 This document is the *intent* layer; the configs are the *enforcement* layer:
 
 | Tool | Config | Catches |

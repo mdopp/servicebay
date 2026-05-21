@@ -240,6 +240,9 @@ Settings → System → Check for Updates → Update. Your service containers ar
 | Document | Content |
 |----------|---------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flow, API reference, testing strategy, frontend design |
+| [docs/ARCHITECTURE_INVARIANTS.md](docs/ARCHITECTURE_INVARIANTS.md) | CI-enforced invariants — what the build refuses to merge |
+| [docs/UX_PHILOSOPHY.md](docs/UX_PHILOSOPHY.md) | Self-heal first / diagnose with structured actions / hide expert knobs |
+| [docs/UX_DECISIONS.md](docs/UX_DECISIONS.md) | Specific load-bearing decisions — read before "fixing" something weird |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md) | Build pipeline, startup procedure, first-boot sequence, system modifications |
 | [docs/MCP.md](docs/MCP.md) | Connect Claude Code / Claude Desktop / any MCP client to your ServiceBay instance |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
