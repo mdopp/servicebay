@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.13.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.12.0...servicebay-v4.13.0) (2026-05-21)
+
+
+### Features
+
+* **frontend:** Phase 4 — Storybook + node: prefix sweep ([#753](https://github.com/mdopp/servicebay/issues/753)) ([#790](https://github.com/mdopp/servicebay/issues/790)) ([4e0261f](https://github.com/mdopp/servicebay/commit/4e0261f8ea60246e0aa7638525c2b40f55378d94))
+
 ## [4.12.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.4...servicebay-v4.12.0) (2026-05-21)
 
 
