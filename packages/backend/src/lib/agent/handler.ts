@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { SSHConnectionPool } from '../ssh/pool';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 import { ClientChannel } from 'ssh2';
 import { logger } from '@/lib/logger';
 import { getConfig } from '@/lib/config';
@@ -80,7 +81,17 @@ function getAgentScript() {
     const p = path.join(process.cwd(), 'src/lib/agent/v4/agent.py');
     const content = fs.readFileSync(p, 'utf-8');
     const inlined = inlineAgentScripts(content);
-    AGENT_SCRIPT_B64 = Buffer.from(inlined).toString('base64');
+    // gzip-then-base64 before stuffing into the SSH command. The agent
+    // script is ~100 kB; raw base64 is ~132 kB which exceeds Linux's
+    // `MAX_ARG_STRLEN` (PAGE_SIZE * 32 = 128 kB per single argv string)
+    // and the remote `/bin/bash -c "<cmd>"` invocation dies with
+    // `Argument list too long` before the agent ever runs. Adding
+    // `nginx_inspector.sh` inline in #750 was what pushed us over the
+    // edge. Gzip brings the wire payload to ~36 kB. Decompressed
+    // server-side by the Python `gzip.decompress` matching the
+    // `python3 -u -c 'import gzip,base64; exec(gzip.decompress(
+    // base64.b64decode("…")))'` in `startSSH`.
+    AGENT_SCRIPT_B64 = zlib.gzipSync(Buffer.from(inlined)).toString('base64');
   }
   return AGENT_SCRIPT_B64;
 }
@@ -294,7 +305,12 @@ export class AgentHandler extends EventEmitter {
         'i=0; while ! command -v python3 >/dev/null 2>&1; do i=$((i+1)); ' +
         '[ $i -ge 90 ] && { echo "python3 not available after 90s" >&2; exit 127; }; ' +
         'sleep 1; done';
-      const cmd = `${envSetup}; ${waitForPython}; python3 -u -c 'import base64, sys; exec(base64.b64decode("${script}"))'${sessionArg}`;
+      // Decompress + decode server-side. Script is gzip+base64'd by
+      // `getAgentScript()` to dodge Linux's 128 kB single-argv limit
+      // (`MAX_ARG_STRLEN`). The historical `exec(base64.b64decode(…))`
+      // worked while the script stayed under ~96 kB raw; #750 inlining
+      // nginx_inspector.sh pushed it past the threshold.
+      const cmd = `${envSetup}; ${waitForPython}; python3 -u -c 'import base64, gzip; exec(gzip.decompress(base64.b64decode("${script}")))'${sessionArg}`;
 
       return new Promise<void>((resolve, reject) => {
         conn.exec(cmd, (err, stream) => {
