@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { spawn } from 'child_process';
+import { spawn } from 'node:child_process';
 import path from 'path';
 
 describe('Python Agent V4', () => {

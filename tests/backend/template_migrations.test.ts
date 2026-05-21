@@ -19,7 +19,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
+import { spawnSync } from 'node:child_process';
 import { describe, it, expect } from 'vitest';
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 

@@ -53,7 +53,7 @@ vi.mock('@/lib/ssh/pool', () => ({
 
 const encodeNodeFolder = (name: string) => Buffer.from(name, 'utf8').toString('base64url');
 
-vi.mock('child_process', () => {
+vi.mock('node:child_process', () => {
   const execFile = (cmd: string, args: string[], callback: (error: NodeJS.ErrnoException | null, stdout: string, stderr: string) => void) => {
     const argList = Array.isArray(args) ? [...args] : [];
     execCalls.push({ cmd, args: argList });

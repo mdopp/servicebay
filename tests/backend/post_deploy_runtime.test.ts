@@ -14,7 +14,7 @@
  * Skipped if python3 isn't available on the runner.
  */
 
-import { execSync, spawnSync } from 'child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import path from 'path';
 import { describe, it, expect } from 'vitest';
 

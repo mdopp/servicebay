@@ -1,7 +1,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import { exec, execFile } from 'child_process';
+import { exec, execFile } from 'node:child_process';
 import { promisify } from 'util';
 import { getConfig, RegistryConfig } from './config';
 import { readManifestAnnotations } from './template/contract';
