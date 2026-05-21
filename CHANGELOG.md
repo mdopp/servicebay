@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.11.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.2...servicebay-v4.11.3) (2026-05-21)
+
+
+### Bug Fixes
+
+* **install:** guard indirect expansion against set -u ([#773](https://github.com/mdopp/servicebay/issues/773)) ([cb2a2f8](https://github.com/mdopp/servicebay/commit/cb2a2f83eac9ad6e420c9f4925411f30f375c23b))
+
 ## [4.11.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.1...servicebay-v4.11.2) (2026-05-21)
 
 
