@@ -497,6 +497,14 @@ storage:
           [Unit]
           Description=ServiceBay Rootless Management Interface
           After=network-online.target
+          # Boot splash sidecar (#775) binds :${SERVICEBAY_PORT} during the
+          # cold-boot window so the operator sees "starting up" instead of
+          # connection refused while podman pulls + Next.js prepares. The
+          # Conflicts= directive tells systemd to stop the splash unit
+          # before activating this one — splash releases the port, podman
+          # binds it. There's a sub-second port-release window; the splash
+          # page has a meta-refresh that retries through it.
+          Conflicts=servicebay-splash.service
           # Deliberately NO Requires=/After=servicebay-auth-secret-init.service.
           # That unit is in the system instance and is invisible to user
           # systemd here (a user unit referencing it by name fails to start
@@ -525,6 +533,105 @@ storage:
           # Retry restart if it fails (e.g. socket not ready)
           Restart=always
           RestartSec=5
+
+          [Install]
+          WantedBy=default.target
+
+    # Boot splash sidecar (#775). Tiny busybox httpd serves a single
+    # "ServiceBay is starting…" page on ${SERVICEBAY_PORT} during the
+    # cold-boot window. Ordered Before=servicebay.service so it grabs
+    # the port first; Conflicts on the real Quadlet (see above) means
+    # starting the real server stops the splash. The page meta-
+    # refreshes every 4 s so a held-open browser tab transparently
+    # picks up the real ServiceBay UI as soon as it binds the port.
+    - path: /var/home/${HOST_USER}/.config/containers/splash/index.html
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta http-equiv="refresh" content="4" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>ServiceBay is starting up</title>
+              <style>
+                :root { color-scheme: dark light; }
+                html, body { margin: 0; height: 100%; }
+                body {
+                  display: flex; align-items: center; justify-content: center;
+                  background: #0f1115; color: #e6e6e6;
+                  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                }
+                main {
+                  max-width: 32rem; padding: 2rem 2.5rem;
+                  background: #181b22; border: 1px solid #2a2f3a;
+                  border-radius: 14px; text-align: center;
+                }
+                h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+                p  { color: #a9b0bc; margin: .25rem 0; }
+                .spinner {
+                  width: 28px; height: 28px; margin: 1rem auto;
+                  border: 3px solid #2a2f3a; border-top-color: #6aa6ff;
+                  border-radius: 50%; animation: spin 1s linear infinite;
+                }
+                @keyframes spin { to { transform: rotate(360deg); } }
+                code { color: #8fb3ff; }
+              </style>
+            </head>
+            <body>
+              <main>
+                <div class="spinner" aria-hidden="true"></div>
+                <h1>ServiceBay is starting up</h1>
+                <p>This can take a few minutes after a reboot — usually under one.</p>
+                <p>This page auto-refreshes; the real UI will appear when the server binds <code>:${SERVICEBAY_PORT}</code>.</p>
+              </main>
+            </body>
+          </html>
+
+    # Splash Quadlet — runs the busybox httpd as a rootless container
+    # under the same `core` user as the real servicebay.container so
+    # both share the same image store (saving a duplicate pull). The
+    # `Image=docker.io/library/busybox:stable` is small (~2 MiB) so
+    # even a first-boot pull resolves quickly; once cached, every
+    # subsequent boot starts the splash within a second of linger.
+    - path: /var/home/${HOST_USER}/.config/containers/systemd/servicebay-splash.container
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          [Unit]
+          Description=ServiceBay boot-time splash page (#775)
+          After=network-online.target
+          # Stop ourselves as soon as the real ServiceBay is ready to
+          # bind the port — the Conflicts= on servicebay.container
+          # makes that handoff atomic from systemd's perspective.
+          Before=servicebay.service
+
+          [Container]
+          Image=docker.io/library/busybox:stable
+          ContainerName=servicebay-splash
+          Network=host
+          Volume=/var/home/${HOST_USER}/.config/containers/splash:/splash:ro,Z
+          # `-f` keeps httpd in the foreground so podman/systemd sees
+          # process exits accurately. Default port mapping isn't used
+          # because Network=host means the container shares the host
+          # network namespace directly.
+          Exec=httpd -f -v -p ${SERVICEBAY_PORT} -h /splash
+          SecurityLabelDisable=true
+
+          [Service]
+          # Don't restart on exit — when servicebay.container stops us
+          # via Conflicts=, the SIGTERM is intentional and we want to
+          # stay down.
+          Restart=no
 
           [Install]
           WantedBy=default.target
