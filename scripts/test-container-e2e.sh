@@ -207,7 +207,7 @@ probe POST /api/services/validate-yaml '{"yaml":"apiVersion: v1\nkind: Pod\nmeta
 #    indicate a real bug.
 # -----------------------------------------------------------------------------
 echo "→ scanning late logs for regression signatures"
-LATE_SIGS='Argument list too long|MODULE_NOT_FOUND|Failed to decrypt secret'
+LATE_SIGS='Argument list too long|MODULE_NOT_FOUND|Failed to decrypt secret|SyntaxError: invalid syntax|Agent Closed\. Code: 1'
 if podman logs "$CONTAINER" 2>&1 | grep -qE "$LATE_SIGS"; then
   podman logs "$CONTAINER" 2>&1 | grep -E "$LATE_SIGS" | head -5
   fail "regression signatures in late logs (see above)" 3
