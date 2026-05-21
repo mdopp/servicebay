@@ -52,6 +52,9 @@ module.exports = {
                     '^src/app/(page|layout|loading|error|not-found|globals\\.css)\\.tsx?$',
                     '^src/app/.*/(page|layout|loading|error|not-found)\\.tsx?$',
                     '^src/app/api/.*/route\\.ts$',
+                    // public/ files are loaded by the browser at runtime
+                    // (service workers, favicons), not imported from JS.
+                    '(^|/)public/',
                 ],
             },
             to: {},
