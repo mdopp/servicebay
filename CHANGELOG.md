@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.11.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.1...servicebay-v4.11.2) (2026-05-21)
+
+
+### Bug Fixes
+
+* **docker:** install workspace prod deps + allow pre-seeded install secrets ([#771](https://github.com/mdopp/servicebay/issues/771)) ([cacef33](https://github.com/mdopp/servicebay/commit/cacef33c1088a441b2c88c1a20c9adeabdbfca5f))
+
 ## [4.11.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.0...servicebay-v4.11.1) (2026-05-21)
 
 
