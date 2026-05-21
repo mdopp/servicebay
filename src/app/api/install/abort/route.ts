@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { abortJob } from '@/lib/install/runner';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
+
+const Body = z.object({ jobId: z.string().min(1) });
 
 /**
  * Abort a running install. Sets the in-memory abort flag the runner
@@ -12,19 +15,14 @@ export const dynamic = 'force-dynamic';
  * `aborted` cleanly. Idempotent — calling on an already-aborted job
  * is a no-op.
  */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
-  try {
-    const body = (await request.json()) as { jobId?: string };
-    if (!body.jobId) {
-      return NextResponse.json({ error: 'jobId required' }, { status: 400 });
+export const POST = withApiHandler<z.infer<typeof Body>>(
+  { body: Body },
+  async ({ body }) => {
+    try {
+      abortJob(body.jobId);
+      return NextResponse.json({ ok: true });
+    } catch (error) {
+      return apiError(error, { tag: 'api:install:abort', status: 500 });
     }
-    abortJob(body.jobId);
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    return apiError(error, { tag: 'api:install:abort', status: 500 });
-  }
-}
+  },
+);

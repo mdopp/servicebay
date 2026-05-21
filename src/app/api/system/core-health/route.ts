@@ -9,20 +9,17 @@
  * healthy (banner stays hidden, feature-stack installs are allowed).
  */
 import { NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
 import { getDegradedCoreSummary } from '@/lib/install/stackHealth';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
-
+export const GET = withApiHandler({}, async () => {
   try {
     const degraded = await getDegradedCoreSummary();
     return NextResponse.json({ degraded });
   } catch (e) {
     return apiError(e, { tag: 'api:system:core-health', status: 500 });
   }
-}
+});

@@ -1,18 +1,21 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { NetworkService } from '@/lib/network/service';
 import { logger } from '@/lib/logger';
+import { withApiHandler } from '@/lib/api/handler';
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const node = searchParams.get('node');
+const Query = z.object({ node: z.string().optional() });
 
-  try {
-    const service = new NetworkService();
-    // Pass node parameter to getGraph
-    const graph = await service.getGraph(node || undefined);
-    return NextResponse.json(graph);
-  } catch (e) {
-    logger.error('api:network:graph', 'Network graph error', e);
-    return NextResponse.json({ error: 'Failed to generate network graph' }, { status: 500 });
-  }
-}
+export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ query }) => {
+    try {
+      const service = new NetworkService();
+      const graph = await service.getGraph(query.node);
+      return NextResponse.json(graph);
+    } catch (e) {
+      logger.error('api:network:graph', 'Network graph error', e);
+      return NextResponse.json({ error: 'Failed to generate network graph' }, { status: 500 });
+    }
+  },
+);
