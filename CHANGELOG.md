@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.11.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.3...servicebay-v4.11.4) (2026-05-21)
+
+
+### Bug Fixes
+
+* **agent:** only replace sentinel inside `r\"\"\"…\"\"\"`, not in comments ([#777](https://github.com/mdopp/servicebay/issues/777)) ([77de987](https://github.com/mdopp/servicebay/commit/77de987dcb0407f010fd9c408a41d47e3a07aab9))
+
 ## [4.11.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.2...servicebay-v4.11.3) (2026-05-21)
 
 
