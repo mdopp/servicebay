@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.12.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.4...servicebay-v4.12.0) (2026-05-21)
+
+
+### Features
+
+* **frontend:** Phase 4 foundation — MSW mock layer + dev:frontend script ([#753](https://github.com/mdopp/servicebay/issues/753)) ([#787](https://github.com/mdopp/servicebay/issues/787)) ([f90cfc5](https://github.com/mdopp/servicebay/commit/f90cfc5e0220457555e7c3cd5390cb2f12cc13a7))
+* **install:** boot-time splash page so cold-boot windows aren't silent ([#775](https://github.com/mdopp/servicebay/issues/775)) ([#784](https://github.com/mdopp/servicebay/issues/784)) ([e65f33a](https://github.com/mdopp/servicebay/commit/e65f33a000c3ca76d67dadd5b36def1368e830d4))
+
+
+### Bug Fixes
+
+* **diagnose:** make OIDC probe send proxied-traffic headers + scope log classifier to current process ([#781](https://github.com/mdopp/servicebay/issues/781)) ([#782](https://github.com/mdopp/servicebay/issues/782)) ([f8fad5e](https://github.com/mdopp/servicebay/commit/f8fad5e632f28f1431af6b402b6871df12d56cd7))
+* **install,secrets:** preserve secret.key across reinstalls + fail-loud on key mismatch ([#780](https://github.com/mdopp/servicebay/issues/780)) ([#783](https://github.com/mdopp/servicebay/issues/783)) ([eaf42a3](https://github.com/mdopp/servicebay/commit/eaf42a394ad08a60414b01ea422de8030e5998a1))
+
 ## [4.11.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.11.3...servicebay-v4.11.4) (2026-05-21)
 
 
