@@ -33,6 +33,20 @@ function getKey(): Buffer {
   return CACHED_KEY;
 }
 
+/** Per-process flag — once a decrypt fails because the loaded
+ *  `secret.key` can't validate an `enc:v1:…` value, future failures
+ *  stay quiet so a config full of stale ciphertexts doesn't drown
+ *  the log. The first failure still logs a single WARN. */
+let DECRYPT_MISMATCH_WARNED = false;
+
+/** True iff any decrypt() call in this process saw GCM auth-tag
+ *  failure on a well-formed `enc:v1:…` string. Read by diagnose to
+ *  surface the underlying problem (#780). Reset is deliberately not
+ *  exported — once mismatch is detected it stays sticky. */
+export function hasDecryptMismatch(): boolean {
+  return DECRYPT_MISMATCH_WARNED;
+}
+
 /**
  * Encrypts a plain text string.
  * Format: enc:v1:IV:AUTH_TAG:CIPHERTEXT
@@ -45,10 +59,10 @@ export function encrypt(text: string): string {
   const key = getKey();
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-  
+
   let encrypted = cipher.update(text, 'utf8', 'hex');
   encrypted += cipher.final('hex');
-  
+
   const authTag = cipher.getAuthTag().toString('hex');
   const ivHex = iv.toString('hex');
 
@@ -58,31 +72,46 @@ export function encrypt(text: string): string {
 /**
  * Decrypts a cipher text string.
  * Expects format: enc:v1:IV:AUTH_TAG:CIPHERTEXT
+ *
+ * Returns '' on decryption failure of a well-formed `enc:v1:` value.
+ * This is the key-mismatch path — under a previous design the function
+ * returned the ciphertext-as-plaintext, which silently leaked `enc:v1:…`
+ * strings into config fields and made downstream services adopt the
+ * ciphertext as their actual admin password (#780). Empty-string lets
+ * the install path treat the value as "secret unknown, regenerate" via
+ * the normal saved-secrets fallback chain.
  */
 export function decrypt(text: string): string {
   if (!text) return text;
   if (!text.startsWith(PREFIX)) return text; // Not encrypted
 
+  const parts = text.split(':');
+  if (parts.length !== 5) return text; // Invalid format — preserve verbatim
+
   try {
-    const parts = text.split(':');
-    if (parts.length !== 5) return text; // Invalid format
-    
     // parts[0] = enc
     // parts[1] = v1
     const iv = Buffer.from(parts[2], 'hex');
     const authTag = Buffer.from(parts[3], 'hex');
     const encrypted = parts[4];
-    
+
     const key = getKey();
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
     decipher.setAuthTag(authTag);
-    
+
     let decrypted = decipher.update(encrypted, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
-    
+
     return decrypted;
   } catch (e) {
-    console.error('Failed to decrypt secret:', e);
-    return text; // Fallback to raw (though usually useless if encrypted)
+    if (!DECRYPT_MISMATCH_WARNED) {
+      DECRYPT_MISMATCH_WARNED = true;
+      console.warn(
+        '[secrets] decrypt failed — secret.key likely regenerated since this value was sealed. ' +
+        'Affected fields are returning empty; saved-secrets cache will be refreshed by the next install. ' +
+        `Underlying error: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    return '';
   }
 }
