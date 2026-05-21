@@ -1,6 +1,6 @@
 {
   "name": "servicebay",
-  "version": "4.11.0",
+  "version": "4.11.1",
   "private": true,
   "workspaces": [
     "packages/*"
@@ -103,10 +103,14 @@
         ]
       },
       "packages/frontend": {
-        "entry": ["src/**/*.{ts,tsx}"]
+        "entry": [
+          "src/**/*.{ts,tsx}"
+        ]
       },
       "packages/backend": {
-        "entry": ["src/**/*.ts"]
+        "entry": [
+          "src/**/*.ts"
+        ]
       }
     }
   },
