@@ -166,10 +166,12 @@ async function checkExecTemplateLiterals() {
 // Routes that hand-roll their own try/catch + envelope drift apart. The
 // abstraction in src/lib/api/handler.ts is the SoT. Should monotonically
 // increase; ratchet up after each cluster migration so any regression
-// fails CI immediately. Current run: 36/108 routes (~33%) after the
-// access-requests + storage + action-stream cluster landed.
+// fails CI immediately. Current run: 59/108 routes (~55%) after the
+// small-cluster sweep (auth/oidc, health/run+history, logs/query,
+// network/graph, system/{discovery,mcp-audit,version,services,keys,
+// core-health,portal/provision}, install/abort).
 // ---------------------------------------------------------------------------
-const MIN_WITH_API_HANDLER_RATIO = 0.30;
+const MIN_WITH_API_HANDLER_RATIO = 0.50;
 
 async function checkWithApiHandlerAdoption() {
     const routeFiles = await walk(path.join(SRC, 'app', 'api'), p => p.endsWith('/route.ts'));

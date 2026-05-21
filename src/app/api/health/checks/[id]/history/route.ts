@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server';
 import { HealthStore } from '@/lib/health/store';
 import { CheckIdString } from '@/lib/api/schemas';
-import { parseRouteParam } from '@/lib/api/validate';
+import { withApiHandlerParams } from '@/lib/api/handler';
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const parsed = await parseRouteParam(params, 'id', CheckIdString);
-  if (!parsed.ok) return parsed.response;
-  const results = HealthStore.getResults(parsed.value);
-  return NextResponse.json(results);
-}
+type Params = { id: string };
+
+export const GET = withApiHandlerParams<undefined, undefined, Params>(
+  {},
+  async ({ params }) => {
+    const check = CheckIdString.safeParse(params.id);
+    if (!check.success) {
+      return NextResponse.json({ error: 'invalid id' }, { status: 400 });
+    }
+    const results = HealthStore.getResults(check.data);
+    return NextResponse.json(results);
+  },
+);
