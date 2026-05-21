@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // Mock config module
 const mockConfig = {
@@ -16,6 +17,8 @@ vi.mock('@/lib/config', () => ({
 
 import { GET } from '../../src/app/api/auth/lldap-url/route';
 
+const req = () => new NextRequest('http://test/api/auth/lldap-url');
+
 describe('GET /api/auth/lldap-url', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -27,7 +30,7 @@ describe('GET /api/auth/lldap-url', () => {
       { domain: 'ldap.example.com', service: 'lldap', forwardPort: 17170, created: true },
     ];
 
-    const res = await GET();
+    const res = await GET(req());
     const data = await res.json();
 
     expect(data.url).toBe('https://ldap.example.com');
@@ -38,7 +41,7 @@ describe('GET /api/auth/lldap-url', () => {
       { domain: 'ldap.example.com', service: 'lldap', forwardPort: 17170, created: false },
     ];
 
-    const res = await GET();
+    const res = await GET(req());
     const data = await res.json();
 
     expect(data.url).toBeNull();
@@ -49,7 +52,7 @@ describe('GET /api/auth/lldap-url', () => {
       { domain: 'vault.example.com', service: 'vaultwarden', forwardPort: 8080, created: true },
     ];
 
-    const res = await GET();
+    const res = await GET(req());
     const data = await res.json();
 
     expect(data.url).toBeNull();
@@ -58,7 +61,7 @@ describe('GET /api/auth/lldap-url', () => {
   it('returns null when hosts array is empty', async () => {
     mockConfig.reverseProxy.hosts = [];
 
-    const res = await GET();
+    const res = await GET(req());
     const data = await res.json();
 
     expect(data.url).toBeNull();
@@ -67,7 +70,7 @@ describe('GET /api/auth/lldap-url', () => {
   it('returns null when reverseProxy config is missing', async () => {
     (mockConfig as any).reverseProxy = undefined;
 
-    const res = await GET();
+    const res = await GET(req());
     const data = await res.json();
 
     expect(data.url).toBeNull();
