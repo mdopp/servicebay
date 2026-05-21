@@ -34,6 +34,7 @@ import {
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import { parseTemplateManifest } from '@/lib/template/contract';
 import { topoSortByDependencies } from '@/lib/stackInstall/dependencies';
+import { parseTemplateTier } from '@/lib/templateTier';
 import { selectMigrationChain } from '@/lib/stackInstall/migrations';
 import {
   bootstrapNpmAdmin,
@@ -562,7 +563,14 @@ async function runJob(jobId: string): Promise<void> {
     return;
   }
 
-  // Topo-sort by install-time dependencies.
+  // Topo-sort by install-time dependencies. We also tag each item
+  // with its `servicebay.tier` so the sort adds an implicit edge from
+  // every feature to every infrastructure item — guaranteeing the
+  // whole infra block (nginx, auth, adguard, …) is fully deployed
+  // before any feature can register against it (#796). Without that
+  // gate, an unrelated feature with no declared deps (ollama, hermes)
+  // races nginx and ends up registering NPM proxy hosts that the
+  // late-running NPM credentials self-heal then wipes.
   const sortResult = topoSortByDependencies(
     checked.map(i => ({
       name: i.name,
@@ -571,6 +579,7 @@ async function runJob(jobId: string): Promise<void> {
       yaml: i.yaml,
       configFiles: i.configFiles,
       dependencies: i.dependencies ?? [],
+      tier: i.yaml ? parseTemplateTier(i.yaml) : 'feature',
     })),
     { alreadyInstalled: new Set(input.items.filter(i => i.alreadyInstalled).map(i => i.name)) },
   );
