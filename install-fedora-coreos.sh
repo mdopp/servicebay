@@ -16,6 +16,29 @@ IGNITION_OUT="$BUILD_DIR/install.ign"
 
 mkdir -p "$BUILD_DIR"
 
+# Pre-seed env vars from the gitignored settings file so any secrets
+# the operator (or a debug workflow) stored there land in the
+# environment before `prompt_secret` / `prompt_optional_secret`
+# decide whether to ask. We can't `source` the file because values
+# routinely contain spaces (e.g. SSH_AUTHORIZED_KEY = "ssh-rsa AAAA…
+# user@host"); a plain `source` would treat the trailing tokens as
+# commands. Read the file KEY=VALUE-line by line instead — the value
+# after the first `=` is preserved verbatim with no shell expansion.
+# The file is in `.gitignore` (entry `/build`) so its contents — pwds,
+# tokens, etc — never reach source control. Downstream `prompt`s still
+# fire normally for anything not pre-seeded.
+if [[ -f "$BUILD_DIR/install-settings.env" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ -z "$key" ]] && continue
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < "$BUILD_DIR/install-settings.env"
+  unset key value line
+fi
+
 # Embedded Butane Template
 cat <<'EOF' > "$TEMPLATE"
 variant: fcos
@@ -1315,6 +1338,21 @@ prompt_secret() {
   local var_name="$1"; shift
   local prompt_text="$1"; shift
   local value value_confirm
+  # Skip the interactive prompt if the variable is already non-empty in
+  # the environment — lets operators (and debug workflows) pre-seed
+  # passwords via the gitignored install-settings.env, which gets
+  # sourced at script start. The validation below still runs so an
+  # invalid pre-seeded password is rejected the same way an interactive
+  # one would be.
+  if [[ -n "${!var_name}" ]]; then
+    value="${!var_name}"
+    if [[ "$value" == *$'\n'* || "$value" == *'"'* || "$value" == *'\'* || "$value" == *'$'* || "$value" == *'`'* ]]; then
+      echo "Pre-seeded $var_name contains characters that break the install pipeline (newline, quote, backslash, \$ or backtick)." >&2
+      exit 1
+    fi
+    echo "Using pre-seeded $var_name from environment."
+    return
+  fi
   while true; do
     read -r -s -p "$prompt_text: " value || true
     echo
@@ -1345,6 +1383,13 @@ prompt_optional_secret() {
   local var_name="$1"; shift
   local prompt_text="$1"; shift
   local value
+  # Same env-var pre-seed pattern as `prompt_secret` — lets the gitignored
+  # install-settings.env carry tokens for unattended/debug runs without
+  # ever putting them in source control.
+  if [[ -n "${!var_name}" ]]; then
+    echo "Using pre-seeded $var_name from environment."
+    return
+  fi
   read -r -s -p "$prompt_text: " value || true
   echo
   printf -v "$var_name" '%s' "$value"
