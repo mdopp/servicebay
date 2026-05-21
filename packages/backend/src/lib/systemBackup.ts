@@ -1,8 +1,16 @@
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+// `node:` prefix so the import always resolves to the real built-in.
+// Without it, a stray browser-polyfill stack leaking into Vite's SSR
+// module graph (e.g. via @storybook/nextjs's webpack resolution) can
+// shadow `child_process` with `node-libs-browser`'s no-op stub —
+// execFile then returns undefined stdout, every tar listing comes
+// back empty, and the safeTarExtract security gates collapse without
+// the test suite noticing. The prefix is the marker Node's resolver
+// treats as "built-in, do not redirect."
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { Client, SFTPWrapper } from 'ssh2';
 import { DATA_DIR, SERVICEBAY_BACKUP_DIR, getLocalSystemdDir } from './dirs';
 import { logger } from './logger';

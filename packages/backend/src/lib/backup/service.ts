@@ -1,5 +1,5 @@
 // src/lib/backup/service.ts
-import { execFile } from 'child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';

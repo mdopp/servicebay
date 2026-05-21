@@ -2,7 +2,7 @@ import * as pty from 'node-pty';
 import * as net from 'net';
 import * as fs from 'fs';
 import * as path from 'path';
-import { exec } from 'child_process';
+import { exec } from 'node:child_process';
 import { promisify } from 'util';
 import { SSH_DIR } from './dirs';
 

@@ -63,4 +63,43 @@ Other endpoints fall through to the real network — set `onUnhandledRequest: 'b
 
 ## Storybook
 
-Not yet present — landing in a follow-up PR. The fixture layout above is designed so each story imports a fixture from `src/mocks/fixtures.ts` directly, then layers a per-story override on top via MSW's `worker.use(...)`. No separate mock layer for stories.
+```bash
+# From the repo root:
+npm run storybook         # interactive UI on http://localhost:6006
+npm run build-storybook   # static export to /storybook-static
+```
+
+Storybook runs on port **6006**. It uses `@storybook/nextjs` so App-Router hooks (`useRouter`, `usePathname`) and `next/font` resolve the same way Next.js dev does. Stories are co-located with their components — `Sidebar.stories.tsx` sits next to `Sidebar.tsx`. Config lives at `.storybook/main.ts` + `.storybook/preview.tsx` at the repo root.
+
+### Story → mock layer integration
+
+Stories share the same MSW handlers + fixtures `npm run dev:frontend` uses. The `preview.tsx` calls `initialize(...)` on Storybook startup and adds `mswLoader` to every story; per-story handler overrides go through Storybook's `parameters.msw.handlers`:
+
+```tsx
+export const Default: Story = {
+  parameters: {
+    msw: {
+      handlers: [http.get('/api/install/status', () => HttpResponse.json(idleInstallStatus))],
+    },
+  },
+};
+```
+
+A handler set you declare in a story takes priority over the default ones in `src/mocks/handlers.ts`, so per-screen variants ("loading", "errored", "active install") only need to override the endpoints they care about.
+
+### Stories that ship today
+
+| File | What it covers |
+|---|---|
+| `components/Sidebar.stories.tsx` | `Default` / `ActiveInstall` (install in flight, "Setup" chip showing) / `OnNetworkRoute` (active-tab highlight) |
+| `components/wizard/steps/WelcomeStep.stories.tsx` | `Default` (mixed selection) / `AllOn` / `StacksOnly` |
+| `components/wizard/steps/EmailStep.stories.tsx` | `Empty` / `GmailPrefilled` |
+| `components/wizard/steps/NetworkStep.stories.tsx` | `Empty` / `Prefilled` / `GeneratingKey` (loading state) |
+
+### Pending (follow-up PRs)
+
+- `OnboardingWizard` end-to-end story — needs mocks for `@/app/actions/onboarding`, `@/app/actions/ssh`, `@/app/actions`, `@/app/actions/system`, the `DigitalTwinProvider`, and the `useStackInstall` hook. Worth it once those mock shapes settle; per-step stories above cover most of the value with one-tenth of the surface.
+- Top-level dashboard stories (`NetworkDashboard`, `ServicesDashboard`, `HealthDashboard`) — need a stubbed `DigitalTwinProvider` exposing fixture twin data. The cleanest path is a `MockDigitalTwinProvider` decorator imported by every dashboard story.
+- Remaining wizard sub-steps (`StacksStep`, `MachineStep`, `FinishStep`) — same shape as the three already covered.
+
+The roadmap matches `project_fe_be_separation.md` in auto-memory; ticking those when each lands updates the meta issue (#753).

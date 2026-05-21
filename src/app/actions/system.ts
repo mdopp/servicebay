@@ -1,6 +1,6 @@
 'use server';
 
-import { exec } from 'child_process';
+import { exec } from 'node:child_process';
 import { promisify } from 'util';
 import { getExecutor } from '@/lib/executor';
 import { listNodes, PodmanConnection } from '@/lib/nodes';

@@ -23,6 +23,9 @@
 # custom-server CJS bundle (produced by scripts/build-server.mjs)
 /dist-server/
 
+# Storybook static build (artifact of `npm run build-storybook`)
+/storybook-static/
+
 # misc
 .DS_Store
 *.pem

@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { NginxConfig, NginxServerBlock, NginxLocation } from './types';
-import { exec } from 'child_process';
+import { exec } from 'node:child_process';
 import { promisify } from 'util';
 import { Executor } from '../executor';
 
