@@ -24,9 +24,10 @@ ServiceBay pod that:
   Default `http://127.0.0.1:11434/v1` (the `ollama` template).
 - `HERMES_LLM_MODEL` — model tag for the LLM provider. Default
   `gemma3:4b`.
-- `HERMES_DASHBOARD_PORT` — leave blank to skip the dashboard
-  (default); set to a port to enable, gated behind Authelia
-  forward-auth.
+- `HERMES_DASHBOARD_PORT` — host loopback port for the web
+  dashboard. Default `9119`.
+- `HERMES_SUBDOMAIN` — subdomain for the dashboard. Default
+  `hermes`; internal exposure, behind Authelia forward-auth.
 
 ## What `post-deploy.py` does
 
@@ -106,22 +107,20 @@ applies to other messaging platforms (Telegram bot-token paste,
 Discord OAuth, etc.) — those have a one-time interactive setup
 before the bot is paired with a chat account.
 
-## Dashboard (optional)
+## Dashboard
 
-Setting `HERMES_DASHBOARD_PORT` to e.g. `9119` enables the in-browser
-dashboard on 127.0.0.1:9119. To make it reachable remotely with
-SSO:
+The Hermes web dashboard (config, API keys, sessions) runs in its own
+`hermes-dashboard` container and is on by default. It is a separate
+`hermes dashboard` process — `hermes gateway run` does not start it, and
+the `HERMES_DASHBOARD*` env vars are not read — so it cannot share the
+gateway container. Both containers share the `/opt/data` Hermes home.
 
-1. Add an NPM proxy host for `hermes.<PUBLIC_DOMAIN>` → `http://127.0.0.1:9119`.
-2. In Advanced → Custom Nginx Configuration, paste the
-   `__authelia_forward_auth__` sentinel (or use the AdGuard /
-   Syncthing admin pages as a copy-paste source — see
-   `src/lib/stackInstall/forwardAuth.ts`).
-3. Add the resulting subdomain to Authelia's access-control rules.
-
-A future template version may collapse this into a `subdomain`-typed
-variable that auto-registers the proxy host with forward-auth, once
-the dashboard's TLS+auth assumptions are validated end-to-end.
+It binds `127.0.0.1:HERMES_DASHBOARD_PORT` (default `9119`) and is
+reached at `https://<HERMES_SUBDOMAIN>.<PUBLIC_DOMAIN>` (default
+`hermes.<domain>`): the `HERMES_SUBDOMAIN` variable auto-registers an
+internal-exposure NPM proxy host behind Authelia forward-auth, so the
+dashboard is LAN-only and SSO-gated. Because it surfaces API keys it is
+never bound to a LAN-reachable address (no `--insecure`).
 
 ## Storage
 

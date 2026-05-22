@@ -6,8 +6,8 @@ metadata:
     app: hermes
   annotations:
     servicebay.label: "Hermes Agent"
-    servicebay.schema-version: "1"
-    servicebay.ports: "{{HERMES_API_PORT}}/tcp"
+    servicebay.schema-version: "2"
+    servicebay.ports: "{{HERMES_API_PORT}}/tcp,{{HERMES_DASHBOARD_PORT}}/tcp"
     # Hermes' default LLM_PROVIDER_URL points at the `ollama` template's
     # default port. The wizard topo-sorts based on this annotation so
     # ollama lands first and the http://127.0.0.1:11434 target resolves
@@ -31,8 +31,8 @@ spec:
   #      that loopback-cross-pod call work.
   #   2. OSCAR's `oscar-household` pod (also hostNetwork) can reach
   #      Hermes' API at 127.0.0.1:{{HERMES_API_PORT}}.
-  #   3. NPM (also hostNetwork) can proxy the optional dashboard from
-  #      the same host loopback, behind Authelia forward-auth.
+  #   3. NPM (also hostNetwork) proxies the dashboard container from the
+  #      same host loopback, behind Authelia forward-auth.
   hostNetwork: true
   containers:
   - name: hermes
@@ -72,25 +72,35 @@ spec:
       value: "{{HERMES_API_KEY}}"
     - name: API_SERVER_CORS_ORIGINS
       value: "*"
-    # Dashboard — opt-in. Empty HERMES_DASHBOARD_PORT keeps the
-    # dashboard off entirely; setting it (e.g. to 9119) renders the
-    # block below and Hermes' entrypoint launches the dashboard on
-    # 127.0.0.1:<port>. Remote access goes through NPM forward-auth
-    # → Authelia (see README — there is no LAN-exposed dashboard
-    # path on purpose).
-    {{#HERMES_DASHBOARD_PORT}}
-    - name: HERMES_DASHBOARD
-      value: "1"
-    - name: HERMES_DASHBOARD_HOST
-      value: "127.0.0.1"
-    - name: HERMES_DASHBOARD_PORT
-      value: "{{HERMES_DASHBOARD_PORT}}"
-    {{/HERMES_DASHBOARD_PORT}}
     ports:
     - containerPort: {{HERMES_API_PORT}}
-    {{#HERMES_DASHBOARD_PORT}}
+    volumeMounts:
+    - mountPath: /opt/data
+      name: hermes-data
+
+  # The Hermes web dashboard (config / API-key / session UI) runs as its
+  # own `hermes dashboard` process — the HERMES_DASHBOARD* env vars are
+  # NOT read by `hermes gateway run`, so it cannot share the gateway
+  # container. Both containers share the hermes-data volume (one Hermes
+  # home); upstream supports running the gateway and dashboard together.
+  #   - `hermes dashboard` binds 127.0.0.1:{{HERMES_DASHBOARD_PORT}} (its
+  #     default host). The pod is hostNetwork, so NPM — also hostNetwork —
+  #     proxies hermes.{{PUBLIC_DOMAIN}} to that loopback address behind
+  #     Authelia forward-auth. The dashboard surfaces API keys, so it is
+  #     never bound to a LAN-reachable address (no `--insecure`).
+  #   - `--skip-build` serves the web UI dist bundled in the image
+  #     (/opt/hermes/hermes_cli/web_dist); `--no-open` suppresses the
+  #     browser launch, which is meaningless in a container.
+  - name: hermes-dashboard
+    image: docker.io/nousresearch/hermes-agent:latest
+    args:
+    - dashboard
+    - --port
+    - "{{HERMES_DASHBOARD_PORT}}"
+    - --no-open
+    - --skip-build
+    ports:
     - containerPort: {{HERMES_DASHBOARD_PORT}}
-    {{/HERMES_DASHBOARD_PORT}}
     volumeMounts:
     - mountPath: /opt/data
       name: hermes-data
