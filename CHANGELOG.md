@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.16.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.16.0...servicebay-v4.16.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **security:** reach host services via host.containers.internal, not LAN_IP ([#837](https://github.com/mdopp/servicebay/issues/837)) ([68406e1](https://github.com/mdopp/servicebay/commit/68406e1ba8f3ead5b601d49c98204fbe9ff624e1))
+
 ## [4.16.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.15.1...servicebay-v4.16.0) (2026-05-22)
 
 
