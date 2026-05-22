@@ -3,6 +3,7 @@ import { NodeFactory } from './factory';
 import { listNodes, PodmanConnection } from '../nodes';
 import { getConfig } from '../config';
 import { NetworkStore } from './store';
+import { getActiveEdges } from './flowsStore';
 import { checkDomains } from './dns';
 import watcher from '../watcher';
 import { DigitalTwinStore } from '../store/twin'; // Import Twin Store
@@ -1964,6 +1965,39 @@ export class NetworkService {
             });
         }
     });
+
+    // #505 — observed service↔service edges from the socket-flow
+    // sampler. Appended after the structural-edge merge so they stay
+    // visually distinct (`kind: 'observed'`) instead of being folded
+    // into a proxy/container edge for the same pair. Best-effort: a
+    // store read failure must never break the graph.
+    try {
+      const observed = await getActiveEdges();
+      if (observed.length > 0) {
+        const nodeIds = new Set(nodes.map(n => n.id));
+        for (const f of observed) {
+          const source = prefix(`service-${f.srcService}`);
+          const target = prefix(`service-${f.dstService}`);
+          // Only draw an edge between service nodes that exist in this
+          // node's graph.
+          if (!nodeIds.has(source) || !nodeIds.has(target)) continue;
+          mergedEdges.push({
+            id: `observed-${source}-${target}-${f.dstPort}`,
+            source,
+            target,
+            label: `${f.dstPort}`,
+            protocol: 'tcp',
+            port: f.dstPort,
+            state: 'active',
+            kind: 'observed',
+            lastSeen: f.lastSeen,
+            observedCount: f.count,
+          });
+        }
+      }
+    } catch (e) {
+      logger.warn('NetworkService', `observed-edge synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     return { nodes, edges: mergedEdges };
   }

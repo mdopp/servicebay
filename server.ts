@@ -31,6 +31,7 @@ import { AgentEvent } from './packages/backend/src/lib/agent/handler';
 import { DigitalTwinStore, NodeTwin } from './packages/backend/src/lib/store/twin';
 import { AgentMessage } from './packages/backend/src/lib/agent/types';
 import { GatewayPoller } from './packages/backend/src/lib/gateway/poller';
+import { startFlowSampler } from './packages/backend/src/lib/network/flowSampler';
 import { logger } from './packages/backend/src/lib/logger';
 import { migrateConfig, getConfig, updateConfig } from './packages/backend/src/lib/config';
 import { syncRegistries } from './packages/backend/src/lib/registry';
@@ -445,6 +446,10 @@ app.prepare().then(() => {
   GatewayPoller.getInstance().start().catch(err => {
       logger.error('Server', 'Failed to start Gateway Poller:', err);
   });
+
+  // #505 — periodic service↔service socket-flow sampler. Feeds the
+  // network map's `observed` edges; self-contained + best-effort.
+  startFlowSampler();
 
     // Schedule agent restarts based on config
     scheduleAgentRestart();
