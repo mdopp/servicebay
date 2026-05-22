@@ -1933,28 +1933,39 @@ class Agent:
                             bufsize=1,  # line-buffered
                         )
                         stdout_lines = []
+                        line_buf = ''
                         while True:
-                            # Read in smaller chunks to catch partial lines/progress bars
+                            # Read in smaller chunks so output appears promptly.
                             chunk_data = proc.stdout.read(128)
                             if not chunk_data:
                                 break
-                            
-                            for line in chunk_data.splitlines(True):
-                                # If it's a full line, strip the newline and send it.
-                                # If it's a partial line, we send it as is.
-                                # Note: the runner log() appends \n, so partials will
-                                # unfortunately still be split by newlines on the UI for now,
-                                # but at least they'll appear sooner.
-                                send_line = line.rstrip("\n")
+                            # Buffer until a newline and emit only COMPLETE
+                            # lines. A 128-byte read splits long lines
+                            # mid-content; a split `__SB_CREDENTIAL__ {json}`
+                            # marker fails the runner's JSON.parse and the
+                            # credential is silently dropped (the wizard's
+                            # post-install banner then misses it). Partial
+                            # lines must never be sent on their own.
+                            line_buf += chunk_data
+                            while '\n' in line_buf:
+                                send_line, line_buf = line_buf.split('\n', 1)
                                 stdout_lines.append(send_line)
-                                chunk = {
-                                    'type': 'exec:chunk',
-                                    'payload': {'id': req_id, 'line': send_line},
-                                }
                                 with self.io_lock:
-                                    sys.stdout.write(json.dumps(chunk) + "\0")
+                                    sys.stdout.write(json.dumps({
+                                        'type': 'exec:chunk',
+                                        'payload': {'id': req_id, 'line': send_line},
+                                    }) + "\0")
                                     sys.stdout.flush()
                         proc.wait()
+                        # Flush a trailing line that had no final newline.
+                        if line_buf:
+                            stdout_lines.append(line_buf)
+                            with self.io_lock:
+                                sys.stdout.write(json.dumps({
+                                    'type': 'exec:chunk',
+                                    'payload': {'id': req_id, 'line': line_buf},
+                                }) + "\0")
+                                sys.stdout.flush()
                         reply(result={
                             "code": proc.returncode,
                             "stdout": "\n".join(stdout_lines),
