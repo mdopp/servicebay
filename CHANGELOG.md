@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.15.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.14.1...servicebay-v4.15.0) (2026-05-22)
+
+
+### Features
+
+* **network:** discover observed service↔service edges via ss ([#505](https://github.com/mdopp/servicebay/issues/505)) ([#823](https://github.com/mdopp/servicebay/issues/823)) ([b29043a](https://github.com/mdopp/servicebay/commit/b29043ad9fe9ec847388b09c68acbc342aec2f50))
+
 ## [4.14.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.14.0...servicebay-v4.14.1) (2026-05-22)
 
 
