@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.15.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.15.0...servicebay-v4.15.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **install:** emit only complete lines from exec_stream ([#828](https://github.com/mdopp/servicebay/issues/828)) ([431779a](https://github.com/mdopp/servicebay/commit/431779a9069f492d484f244e124153d0034d6650))
+
 ## [4.15.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.14.1...servicebay-v4.15.0) (2026-05-22)
 
 
