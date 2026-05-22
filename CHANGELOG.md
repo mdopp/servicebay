@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.13.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.13.1...servicebay-v4.13.2) (2026-05-22)
+
+
+### Bug Fixes
+
+* **install:** topo-sort installs all infrastructure tier before any feature ([#796](https://github.com/mdopp/servicebay/issues/796)) ([#797](https://github.com/mdopp/servicebay/issues/797)) ([d0e1e0b](https://github.com/mdopp/servicebay/commit/d0e1e0bf86c1ff48a3976a880be0dfebd48ef930))
+
 ## [4.13.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.13.0...servicebay-v4.13.1) (2026-05-21)
 
 
