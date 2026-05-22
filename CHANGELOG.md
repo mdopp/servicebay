@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.14.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.14.0...servicebay-v4.14.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **ui:** redirect to /login when the realtime socket is rejected as unauthorized ([#820](https://github.com/mdopp/servicebay/issues/820)) ([dce4e8a](https://github.com/mdopp/servicebay/commit/dce4e8a8da98eda619edf13877d7ac3f4dc3661e))
+
 ## [4.14.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.13.2...servicebay-v4.14.0) (2026-05-22)
 
 
