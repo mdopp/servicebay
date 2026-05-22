@@ -18,27 +18,29 @@ metadata:
       timeout: 5s
       startup_timeout: 5m
 spec:
-  # v2 (#410): hostNetwork is required so Immich can fetch
-  # https://auth.<PUBLIC_DOMAIN>/.well-known/openid-configuration for
-  # OIDC discovery. Under bridge networking the container resolves the
-  # public auth subdomain to the router's WAN IP and the request fails
-  # (most home routers don't hairpin NAT). Under hostNetwork Immich
-  # inherits the host resolver and AdGuard rewrites *.<PUBLIC_DOMAIN>
-  # to the LAN IP — same pattern Vaultwarden uses (#408).
-  #
-  # Side-effect for the sidecars: redis + postgres now share the host
-  # network namespace. The args overrides below pin both to 127.0.0.1
-  # so they stay reachable for immich-server / machine-learning via
-  # loopback without being exposed on the LAN.
-  hostNetwork: true
+  # #817: Immich runs in its own network namespace (no hostNetwork).
+  #   - Only `immich-server` is published to the host, via `hostPort`
+  #     below. redis / postgres / machine-learning stay pod-internal —
+  #     the four containers share the pod's netns, so the `127.0.0.1`
+  #     references between them (DB_HOSTNAME, REDIS_HOSTNAME,
+  #     IMMICH_MACHINE_LEARNING_URL) keep working unchanged, and the
+  #     loopback binds below mean the sidecars are never LAN-reachable.
+  #   - Immich does *server-side* OIDC discovery against
+  #     https://auth.<PUBLIC_DOMAIN>; an isolated container's resolver
+  #     doesn't apply AdGuard's `*.PUBLIC_DOMAIN → LAN IP` rewrite
+  #     (#408/#410), so the `hostAliases` entry pins that name to the
+  #     LAN IP — request flows container → LAN IP → NPM → Authelia.
+  #     {{LAN_IP}} is filled in by the install runner at deploy time.
+  hostAliases:
+    - ip: "{{LAN_IP}}"
+      hostnames:
+        - "auth.{{PUBLIC_DOMAIN}}"
   containers:
     - name: immich-server
       image: ghcr.io/immich-app/immich-server:release
       env:
-        # Under hostNetwork `hostPort:` is invalid — IMMICH_PORT here
-        # makes the server bind {{IMMICH_PORT}} directly on the host;
-        # the servicebay.ports annotation documents it for the UI /
-        # network graph.
+        # immich-server binds {{IMMICH_PORT}} inside the pod netns;
+        # the `hostPort` on the container port below publishes it.
         - name: IMMICH_PORT
           value: "{{IMMICH_PORT}}"
         - name: DB_HOSTNAME
@@ -55,6 +57,7 @@ spec:
           value: "http://127.0.0.1:3003"
       ports:
         - containerPort: {{IMMICH_PORT}}
+          hostPort: {{IMMICH_PORT}}
       volumeMounts:
         - mountPath: /usr/src/app/upload
           name: immich-upload
@@ -67,14 +70,12 @@ spec:
 
     - name: redis
       image: docker.io/redis:6.2-alpine
-      # Pin redis to loopback so hostNetwork doesn't accidentally
-      # expose it on the LAN. immich-server reaches it via 127.0.0.1.
+      # Bind redis to the pod loopback — immich-server reaches it via
+      # 127.0.0.1 (same pod netns); never LAN-reachable. No `ports:` —
+      # redis is pod-internal, so it's published nowhere on the host
+      # (#817: a declared port with no hostPort is now a consistency
+      # error, and a hostPort would wrongly LAN-expose it).
       args: ["--bind", "127.0.0.1", "--protected-mode", "yes"]
-      # Declared so the digital twin attributes 127.0.0.1:6379 to this
-      # container — without it the diagnose ports probe flags 6379 as
-      # "unknown" even though it's the immich pod's redis sidecar.
-      ports:
-        - containerPort: 6379
 
     - name: database
       image: docker.io/tensorchord/pgvecto-rs:pg14-v0.2.0
@@ -98,11 +99,8 @@ spec:
           value: "postgres"
         - name: POSTGRES_DB
           value: "immich"
-      # Declared so the digital twin attributes 127.0.0.1:5432 to this
-      # container — without it the diagnose ports probe flags 5432 as
-      # "unknown" even though it's the immich pod's postgres sidecar.
-      ports:
-        - containerPort: 5432
+      # No `ports:` — postgres is pod-internal (immich-server reaches
+      # it on the pod loopback), published nowhere on the host (#817).
       volumeMounts:
         - mountPath: /var/lib/postgresql/data
           name: pgdata
