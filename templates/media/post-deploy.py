@@ -75,6 +75,11 @@ def render_http_code(code: int) -> str:
 
 REQUEST_TIMEOUT = 30.0
 
+# Jellyfin first-run readiness gate (#809). Module-level so the test
+# suite can shrink the budget.
+JELLYFIN_READY_TIMEOUT = 5 * 60
+JELLYFIN_READY_INTERVAL = 5
+
 
 def request_json(
     method: str,
@@ -192,11 +197,32 @@ JELLYFIN_AUTH_HEADER = (
 )
 
 
-# Jellyfin's readiness is now declared in servicebay.readiness on this
-# template's template.yml (#613). The install runner blocks on
-# /Startup/FirstUser → 200 *before* invoking this script, replacing the
-# previous in-script jellyfin_wait_ready + jellyfin_wait_default_user
-# helpers (both polled the same surface from inside post-deploy.py).
+def jellyfin_wait_default_user(base_url: str) -> bool:
+    """Poll `GET /Startup/FirstUser` until it returns 200.
+
+    That endpoint runs the UserManager's async init pass — which creates
+    Jellyfin's default user — *before* responding. A successful GET
+    therefore both confirms Jellyfin is up AND guarantees the default
+    user exists. `POST /Startup/User` does NOT initialize the
+    UserManager; it just calls `GetFirstUser()` and returns 404
+    ("NotFound") when no user exists yet. So without this wait the admin
+    seed races first-run init and Jellyfin answers 404.
+
+    Phase 3C retired the install runner's per-template readiness probe
+    that used to do this wait, so it has to live back in this script
+    (#809). Returns True once ready, False if the deadline passes."""
+    started = time.time()
+    last_beat = 0.0
+    while time.time() - started < JELLYFIN_READY_TIMEOUT:
+        code, _ = request_json("GET", f"{base_url}/Startup/FirstUser", timeout=10)
+        if code == 200:
+            return True
+        elapsed = time.time() - started
+        if elapsed - last_beat >= 10:
+            log(f"Waiting for Jellyfin to finish first-run init ({int(elapsed)}s elapsed)...")
+            last_beat = elapsed
+        time.sleep(JELLYFIN_READY_INTERVAL)
+    return False
 
 
 def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str, tz: str) -> bool:
@@ -210,6 +236,13 @@ def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str
     if code == 200 and isinstance(info, dict) and info.get("StartupWizardCompleted"):
         log("ℹ️ Jellyfin startup wizard already completed — leaving the existing admin.")
         return True
+
+    # Wait for Jellyfin's UserManager to finish initializing before
+    # touching any /Startup/* endpoint (#809) — POST /Startup/User 404s
+    # until the default user exists.
+    if not jellyfin_wait_default_user(base_url):
+        log(f"⚠️ Jellyfin: /Startup/FirstUser never returned 200 within {JELLYFIN_READY_TIMEOUT // 60} min — install-blocking. Open the Jellyfin web UI and finish the setup wizard manually.")
+        return False
 
     # Locale + metadata language. German default to match the home;
     # operator can change in Settings → Server later.
@@ -471,10 +504,8 @@ def main() -> int:
     seed_audiobookshelf(abs_port, abs_user, abs_password)
 
     # ── Jellyfin first-run + Quick Connect + Music library ───────────
-    # The install runner's readiness probe (servicebay.readiness, #613)
-    # already blocked on /Startup/FirstUser → 200, so the UserManager has
-    # finished its async init pass and the default user exists. No
-    # in-script wait needed.
+    # `jellyfin_run_first_setup` waits for the UserManager's async init
+    # (via GET /Startup/FirstUser) before seeding the admin — see #809.
     if jf_password:
         jellyfin_base = f"http://127.0.0.1:{jf_port}"
         ready = jellyfin_run_first_setup(
