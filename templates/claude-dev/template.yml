@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: claude-dev
+  labels:
+    app: claude-dev
+  annotations:
+    servicebay.label: "Claude Dev (Claude Code CLI + toolchain)"
+    servicebay.schema-version: "1"
+    servicebay.ports: "{{CLAUDE_DEV_SSH_PORT}}/tcp"
+    # Continuous health probe (#628). A raw TCP connect to the SSH port
+    # proves sshd accepted the listener — a dev box has no
+    # unauthenticated HTTP surface to probe.
+    servicebay.healthcheck: |
+      kind: tcp
+      host: 127.0.0.1
+      port: "{{CLAUDE_DEV_SSH_PORT}}"
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
+spec:
+  # hostNetwork so sshd binds {{CLAUDE_DEV_SSH_PORT}} directly on the
+  # host — the operator port-maps that on the FritzBox (or reaches it
+  # over the LAN) to drive a Claude Code session from the mobile app.
+  hostNetwork: true
+  containers:
+  # Built from templates/claude-dev/Dockerfile and published by
+  # .github/workflows/claude-dev-image.yml. The image carries Node 20,
+  # npm, @anthropic-ai/claude-code, git, the GitHub CLI, the native-
+  # module build deps (make/gcc/python3), the podman client, and an SSH
+  # server. We do NOT override command:/args: — the image's entrypoint
+  # wires SSH auth from the env vars below and hands off to sshd.
+  - name: claude-dev
+    image: ghcr.io/mdopp/servicebay-claude-dev:latest
+    env:
+      - name: CLAUDE_DEV_SSH_PORT
+        value: "{{CLAUDE_DEV_SSH_PORT}}"
+      - name: CLAUDE_DEV_SSH_PASSWORD
+        value: "{{CLAUDE_DEV_SSH_PASSWORD}}"
+      - name: CLAUDE_DEV_SSH_AUTHORIZED_KEY
+        value: "{{CLAUDE_DEV_SSH_AUTHORIZED_KEY}}"
+    ports:
+      - containerPort: {{CLAUDE_DEV_SSH_PORT}}
+    volumeMounts:
+      # Persistent home for the `dev` user: git checkouts, Claude Code
+      # session history (~/.claude), gh auth and SSH host keys all live
+      # here and survive a container restart.
+      - mountPath: /workspace
+        name: claude-dev-workspace
+  volumes:
+  - name: claude-dev-workspace
+    hostPath:
+      path: {{DATA_DIR}}/claude-dev/workspace
+      type: DirectoryOrCreate
