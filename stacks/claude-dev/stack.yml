@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: claude-dev
+  annotations:
+    servicebay.label: "Claude Dev (containerised Claude Code CLI)"
+    servicebay.tier: "feature"
+spec:
+  # Single-template stack: a long-lived dev container so a coding
+  # session against this repo can be driven from the Claude Code mobile
+  # app without keeping a laptop awake. No depends-on-stacks — the dev
+  # box is self-contained and needs neither the reverse proxy nor SSO.
+  templates: [claude-dev]

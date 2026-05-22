@@ -1,0 +1,16 @@
+{
+  "CLAUDE_DEV_SSH_PORT": {
+    "type": "text",
+    "description": "Host port the dev container's SSH server listens on. The operator port-forwards this on the FritzBox (or reaches it over the LAN) to attach the Claude Code mobile app. Default 2222 so it stays clear of the host's own sshd on 22.",
+    "default": "2222"
+  },
+  "CLAUDE_DEV_SSH_PASSWORD": {
+    "type": "secret",
+    "description": "Password for the `dev` SSH user. Auto-generated and surfaced as a credential after install. Used to attach over SSH when no public key is supplied. Regenerate from the wizard if it leaks."
+  },
+  "CLAUDE_DEV_SSH_AUTHORIZED_KEY": {
+    "type": "text",
+    "description": "Optional SSH public key (one line, e.g. `ssh-ed25519 AAAA... you@phone`). When set, key-based login is enabled for the `dev` user — recommended over the password for a box reachable from outside the LAN. Leave blank to use the password only.",
+    "default": ""
+  }
+}

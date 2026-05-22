@@ -681,5 +681,39 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertIn("/auth/oidc/welcome answered", out)
 
 
+class ClaudeDevScript(unittest.TestCase):
+    def test_emits_ssh_credential_when_password_set(self):
+        m = load_script("claude-dev")
+        env = {
+            "HOST": "192.168.1.10",
+            "CLAUDE_DEV_SSH_PORT": "2222",
+            "CLAUDE_DEV_SSH_PASSWORD": "s3cr3t-ssh",
+        }
+        with run_with_env(env):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        creds = parse_credentials(out)
+        self.assertEqual(len(creds), 1)
+        self.assertEqual(creds[0]["service"], "Claude Dev (SSH)")
+        self.assertEqual(creds[0]["username"], "dev")
+        self.assertEqual(creds[0]["password"], "s3cr3t-ssh")
+        self.assertEqual(creds[0]["url"], "ssh://dev@192.168.1.10:2222")
+        # The SSH password must NOT leak into user-visible log lines —
+        # it only travels via the __SB_CREDENTIAL__ JSON marker (#321).
+        log_only = "\n".join(
+            line for line in out.splitlines()
+            if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("s3cr3t-ssh", log_only)
+        self.assertIn("git clone", out)
+
+    def test_no_password_emits_no_credential(self):
+        m = load_script("claude-dev")
+        with run_with_env({"HOST": "h", "CLAUDE_DEV_SSH_PORT": "2222"}):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertEqual(parse_credentials(out), [])
+
+
 if __name__ == "__main__":
     unittest.main()
