@@ -221,6 +221,18 @@ describe('OnboardingWizard', () => {
             if (url.includes('/api/services') && opts?.method === 'POST') {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
             }
+            if (url.includes('/api/install/assemble')) {
+                // #800 — the wizard's configure step now POSTs here
+                // instead of assembling the manifest client-side. Tests
+                // that need subdomain variables override this per-spec.
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                    items: [{ name: 'nginx-web', checked: true, yaml: 'apiVersion: v1\nkind: Pod' }],
+                    variables: [{
+                        name: 'SERVICE_NAME', value: 'my-service', global: false,
+                        meta: { type: 'text', default: 'my-service', description: 'Service name', templateName: 'nginx-web' },
+                    }],
+                }) });
+            }
             if (url.includes('/api/install/start')) {
                 return Promise.resolve({ ok: true, json: () => Promise.resolve({ jobId: 'test-job-1' }) });
             }
@@ -507,8 +519,12 @@ describe('OnboardingWizard', () => {
             fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 
             await waitFor(() => {
-                expect(fetchTemplateYaml).toHaveBeenCalled();
-                expect(fetchTemplateVariables).toHaveBeenCalled();
+                // #800 — manifest assembly moved server-side; the
+                // wizard's configure step POSTs to /api/install/assemble.
+                expect(global.fetch).toHaveBeenCalledWith(
+                    expect.stringContaining('/api/install/assemble'),
+                    expect.objectContaining({ method: 'POST' }),
+                );
                 // Should show variable input
                 expect(screen.getByText('SERVICE_NAME')).toBeDefined();
             });
@@ -606,11 +622,23 @@ describe('OnboardingWizard', () => {
         // scheduler frequently lands just over the default budget.
         it('runs DNS verification on Done step when subdomains were deployed', { timeout: 10_000 }, async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
-            // Return variables with subdomain type
-            (fetchTemplateVariables as any).mockResolvedValue({
-                SERVICE_NAME: { type: 'text', default: 'my-service' },
-                PUBLIC_DOMAIN: { type: 'text', default: 'example.com' },
-                TEST_SUBDOMAIN: { type: 'subdomain', default: 'test', proxyPort: '8080', exposure: 'public' },
+            // #800 — manifest assembly runs server-side. Override the
+            // /api/install/assemble response with a subdomain-typed
+            // variable so the Done step's DNS check has a domain to
+            // verify; every other request delegates to the beforeEach mock.
+            const baseFetch = global.fetch;
+            global.fetch = vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
+                if (typeof url === 'string' && url.includes('/api/install/assemble')) {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                        items: [{ name: 'nginx-web', checked: true, yaml: 'apiVersion: v1\nkind: Pod' }],
+                        variables: [
+                            { name: 'SERVICE_NAME', value: 'my-service', global: false, meta: { type: 'text', templateName: 'nginx-web' } },
+                            { name: 'PUBLIC_DOMAIN', value: 'example.com', global: true, meta: { type: 'text', templateName: 'nginx-web' } },
+                            { name: 'TEST_SUBDOMAIN', value: 'test', global: false, meta: { type: 'subdomain', proxyPort: '8080', exposure: 'public', templateName: 'nginx-web' } },
+                        ],
+                    }) });
+                }
+                return (baseFetch as any)(url, opts);
             });
 
             render(<OnboardingWizard />);
@@ -656,6 +684,17 @@ describe('OnboardingWizard', () => {
             global.fetch = vi.fn().mockImplementation((url: string, opts?: { method?: string; body?: string }) => {
                 if (url.includes('/api/settings')) {
                     return Promise.resolve({ ok: true, json: () => Promise.resolve({ templateSettings: {} }) });
+                }
+                if (url.includes('/api/install/assemble')) {
+                    // #800 — configure step assembles the manifest server-side.
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+                        items: [{ name: 'nginx-web', checked: true, yaml: 'apiVersion: v1\nkind: Pod' }],
+                        variables: [
+                            { name: 'SERVICE_NAME', value: 'my-service', global: false, meta: { type: 'text', templateName: 'nginx-web' } },
+                            { name: 'PUBLIC_DOMAIN', value: 'example.com', global: true, meta: { type: 'text', templateName: 'nginx-web' } },
+                            { name: 'TEST_SUBDOMAIN', value: 'test', global: false, meta: { type: 'subdomain', proxyPort: '8080', exposure: 'public', templateName: 'nginx-web' } },
+                        ],
+                    }) });
                 }
                 if (url.includes('/api/services') && (!opts || opts.method !== 'POST')) {
                     return Promise.resolve({ ok: true, json: () => Promise.resolve([

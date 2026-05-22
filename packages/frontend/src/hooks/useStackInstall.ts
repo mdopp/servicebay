@@ -32,20 +32,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VariableMeta } from '@servicebay/api-client';
-import {
-  fetchTemplateYaml,
-  fetchTemplateVariables,
-  fetchTemplateConfigFiles,
-  fetchStoredVariableValues,
-} from '@/app/actions';
-import { parseTemplateLabel } from '@servicebay/api-client';
 import { type Credential } from '@servicebay/api-client';
-import {
-  typedFetch,
-  GenerateSecretResponseSchema,
-  ParseDependenciesResponseSchema,
-  type JobState as RemoteJobState,
-} from '@servicebay/api-client';
+import { type JobState as RemoteJobState } from '@servicebay/api-client';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
 
@@ -81,9 +69,9 @@ export interface StackItemInput {
 }
 
 export interface UseStackInstallOptions {
-  /** Template source for `fetchTemplateYaml` / `fetchTemplateVariables` /
-   *  `fetchTemplateConfigFiles` / `fetchTemplatePostDeployScript`.
-   *  Usually `'Built-in'` (wizard) or the registry source URL (modal). */
+  /** Template source passed to the backend manifest assembler
+   *  (`POST /api/install/assemble`). Usually `'Built-in'` (wizard) or
+   *  the registry source URL (modal). */
   templateSource: string;
   /** Free-form tag that lands on the JobState so the install-in-progress
    *  banner can show "wizard" vs "modal" to the operator. */
@@ -187,76 +175,6 @@ export interface UseStackInstallReturn {
    *  Exposed so the wizard can render the "another tab is running this
    *  install" banner with the right job context. */
   jobId: string | null;
-}
-
-/** Strip Mustache section tags (`{{#NAME}}` / `{{/NAME}}` / `{{^NAME}}`)
- *  so the sentinel-encoded YAML still parses. Section tokens slip past
- *  the bare `{{VAR}}` sentinel and trip js-yaml with "missed comma
- *  between flow collection entries"; the volume map then stays empty
- *  and any `.mustache` config file fails to map a hostPath. Stripping
- *  is safe because we only need the unconditional volumes/mounts to
- *  discover the config-mount hostPath. */
-const MUSTACHE_SECTION_RE = /\{\{\s*[#^/]\s*[\w\d_]+\s*\}\}/g;
-const MUSTACHE_VAR_RE_OUT = /\{\{\s*([\w\d_]+)\s*\}\}/g;
-const SBVAR_SENTINEL_IN = /__SBVAR_([\w\d_]+)__/g;
-
-/** Resolve config-file targetPath by parsing the YAML pod spec for
- *  volumes / volumeMounts. Mirrors the live-debugged behaviour from
- *  OnboardingWizard.handleStackFetchVars and InstallerModal
- *  .fetchYamlsAndExtractVars — see those for the war stories about
- *  the previous regex-based version (one of which silently wrote
- *  config files to `~/0/` for ~24 hours). */
-async function resolveConfigFilePaths(yaml: string, cfgFiles: ConfigFile[]): Promise<void> {
-  if (cfgFiles.length === 0) return;
-  const safeYaml = yaml
-    .replace(MUSTACHE_SECTION_RE, '')
-    .replace(MUSTACHE_VAR_RE_OUT, (_m, n) => `__SBVAR_${n}__`);
-  const restorePlaceholders = (s: string): string =>
-    s.replace(SBVAR_SENTINEL_IN, (_m, n) => `{{${n}}}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let docs: any[] = [];
-  try {
-    docs = (await import('js-yaml')).loadAll(safeYaml);
-  } catch {
-    docs = [];
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const doc = docs.find((d: any) => d?.kind === 'Pod') ?? docs[0];
-  const nameToHostPath = new Map<string, string>();
-  const mountPathToHostPath = new Map<string, string>();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const v of ((doc?.spec?.volumes ?? []) as any[])) {
-    if (typeof v?.name === 'string' && typeof v?.hostPath?.path === 'string') {
-      nameToHostPath.set(v.name, restorePlaceholders(v.hostPath.path));
-    }
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const c of ((doc?.spec?.containers ?? []) as any[])) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const m of ((c?.volumeMounts ?? []) as any[])) {
-      if (typeof m?.mountPath === 'string' && typeof m?.name === 'string') {
-        const hp = nameToHostPath.get(m.name);
-        if (hp && !mountPathToHostPath.has(m.mountPath)) {
-          mountPathToHostPath.set(m.mountPath, hp);
-        }
-      }
-    }
-  }
-  const annotations: Record<string, string> = doc?.metadata?.annotations ?? {};
-  const explicitMount = annotations['servicebay.config-mount'];
-  for (const cf of cfgFiles) {
-    let hp: string | undefined;
-    if (explicitMount) hp = mountPathToHostPath.get(explicitMount);
-    if (!hp) {
-      for (const [mp, h] of mountPathToHostPath.entries()) {
-        if (mp === '/config' || mp.endsWith('/config') || mp.endsWith('/conf')) {
-          hp = h;
-          break;
-        }
-      }
-    }
-    if (hp) cf.targetPath = `${hp}/${cf.filename}`;
-  }
 }
 
 // provisionPortalWithRetries lives in ./portalProvision (server-only).
@@ -509,225 +427,46 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     setError(null);
     if (opts?.node !== undefined) nodeRef.current = opts.node;
 
-    const newItems: StackItem[] = inputItems.map(i => ({
-      name: i.name,
-      checked: i.checked,
-      alreadyInstalled: i.alreadyInstalled,
-    }));
-    const selected = newItems.filter(i => i.checked && !i.alreadyInstalled);
-    const vars = new Set<string>();
-    const allMeta: Record<string, VariableMeta> = {};
-
-    // Global template settings (DATA_DIR + anything else the operator
-    // pinned in Settings → Template Settings). Fetched once per
-    // startConfigure call.
-    let globalSettings: Record<string, string> = {};
+    // Manifest assembly — variable resolution, secret / RSA / bcrypt
+    // generation, config-file targetPath resolution — runs server-side
+    // now (#800). The wizard's screens and flow are unchanged; it just
+    // calls the backend assembler instead of building the manifest
+    // itself. The same `/api/install/assemble` endpoint is what a
+    // headless / ISO-driven first-boot setup uses to turn baked
+    // `config.json` defaults into an installable manifest.
     try {
-      const res = await fetch('/api/settings');
-      if (res.ok) {
-        const settings = await res.json();
-        globalSettings = settings.templateSettings || {};
+      const res = await fetch('/api/install/assemble', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: inputItems.map(i => ({
+            name: i.name,
+            checked: i.checked,
+            alreadyInstalled: i.alreadyInstalled,
+          })),
+          prefilled,
+          templateSource,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
       }
-    } catch { /* empty defaults are fine */ }
-
-    // Pre-fill the wizard with the operator's existing passwords so they
-    // see the actual values their services have on disk rather than
-    // freshly-regenerated ones (#615). The server-side install runner
-    // applies the same reuse logic defensively based on the operator's
-    // `preserve` flags at the Reset step — by then we know which groups
-    // they chose to keep. Loading here unconditionally is safe: clean-
-    // install + secrets-wiped will write fresh values back at install
-    // end, so the next install sees the post-wipe state.
-    let storedValues: Record<string, string> = {};
-    try { storedValues = await fetchStoredVariableValues(); } catch { /* best-effort */ }
-
-    for (const item of selected) {
-      try {
-        const yaml = await fetchTemplateYaml(item.name, templateSource);
-        if (!yaml) continue;
-        const idx = newItems.findIndex(i => i.name === item.name);
-        if (idx !== -1) {
-          newItems[idx].yaml = yaml;
-          // Parse install-time deps from the (still un-rendered) yaml.
-          // Mustache placeholders don't appear in the dependencies
-          // annotation, so the raw string is fine here.
-          try {
-            const { dependencies } = await typedFetch(
-              '/api/templates/parse-dependencies',
-              ParseDependenciesResponseSchema,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ yaml }),
-              },
-            );
-            newItems[idx].dependencies = dependencies;
-          } catch {
-            newItems[idx].dependencies = [];
-          }
-        }
-
-        for (const match of yaml.matchAll(MUSTACHE_VAR_RE_OUT)) vars.add(match[1]);
-
-        const meta = await fetchTemplateVariables(item.name, templateSource);
-        const templateLabel = parseTemplateLabel(yaml);
-        if (meta) {
-          // First template that declares a variable owns it for grouping
-          // (shared vars like LLDAP_HOST live under the originator).
-          for (const [key, value] of Object.entries(meta)) {
-            if (!allMeta[key]) {
-              allMeta[key] = { ...value, templateName: item.name, templateLabel };
-            }
-          }
-        }
-
-        const cfgFiles = await fetchTemplateConfigFiles(item.name, templateSource);
-        if (cfgFiles.length > 0) {
-          await resolveConfigFilePaths(yaml, cfgFiles);
-          for (const cf of cfgFiles) {
-            for (const m of cf.content.matchAll(MUSTACHE_VAR_RE_OUT)) vars.add(m[1]);
-          }
-          if (idx !== -1) newItems[idx].configFiles = cfgFiles;
-        }
-      } catch { /* skip — install loop will surface a clearer error if a deploy fails */ }
+      const data = await res.json() as { items?: StackItem[]; variables?: StackVariable[] };
+      const newItems = data.items ?? [];
+      const resolvedVars = data.variables ?? [];
+      setItems(newItems);
+      setVariables(resolvedVars);
+      return { items: newItems, variables: resolvedVars };
+    } catch (e) {
+      // Callers (OnboardingWizard, InstallerModal) await this inside a
+      // try/finally with no catch — surface the failure via the hook's
+      // `error`/`phase` state and return empty rather than throwing.
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Could not prepare the install: ${msg}`);
+      setPhase('error');
+      return { items: [], variables: [] };
     }
-
-    // Include variables declared via metadata but not referenced in YAML
-    // (e.g. subdomain vars used only for proxy configuration).
-    for (const key of Object.keys(allMeta)) vars.add(key);
-
-    // Tracks variables whose value came from a fresh generation in *this*
-    // Configure run (not from storage / prefill / Settings). These are the
-    // ones we have to persist to `config.installedSecrets` right now —
-    // values that already came from storage are already saved by definition.
-    const newlyGenerated: Array<{ name: string; value: string }> = [];
-
-    const resolvedVars: StackVariable[] = await Promise.all(
-      Array.from(vars).map(async (name): Promise<StackVariable> => {
-        const meta = allMeta[name];
-        // Caller-provided prefills (PUBLIC_DOMAIN, NGINX_ADMIN_EMAIL, ...)
-        // win over Settings; LLDAP_HOST is always 'localhost' because every
-        // template assumes the auth pod is reachable via the local stack.
-        let value = '';
-        let isGlobal = false;
-        if (Object.prototype.hasOwnProperty.call(prefilled, name) && prefilled[name]) {
-          value = prefilled[name];
-          isGlobal = true;
-        } else if (globalSettings[name]) {
-          value = globalSettings[name];
-          isGlobal = true;
-        }
-        if (name === 'LLDAP_HOST') { value = 'localhost'; isGlobal = true; }
-        if (!value && meta?.default) value = meta.default;
-        if (!value && meta?.type === 'secret') {
-          // On a reinstall without RESET, use the stored value if available so
-          // services with existing data volumes keep the password they know.
-          if (storedValues[name]) {
-            value = storedValues[name];
-          } else {
-            try {
-              const { secret } = await typedFetch(
-                '/api/install/generate-secret',
-                GenerateSecretResponseSchema,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({}),
-                },
-              );
-              value = secret;
-              newlyGenerated.push({ name, value });
-            } catch {
-              // Server unreachable mid-configure — leave value empty and
-              // let the operator type one manually.
-            }
-          }
-        }
-        return { name, value, global: isGlobal, meta };
-      }),
-    );
-
-    // RSA private keys — server-generated, PEM pre-indented for YAML block scalars.
-    await Promise.all(resolvedVars.map(async v => {
-      if (v.value || v.meta?.type !== 'rsa-private') return;
-      // Reuse a stored RSA key over generating a new one — Authelia's OIDC
-      // tokens issued under the prior key would be rejected by clients
-      // pinned to it.
-      if (storedValues[v.name]) {
-        v.value = storedValues[v.name];
-        return;
-      }
-      try {
-        const res = await fetch('/api/system/keys/rsa');
-        if (res.ok) {
-          const data = await res.json();
-          if (typeof data.pem === 'string') {
-            v.value = data.pem.trimEnd().split('\n').map((l: string) => '          ' + l).join('\n');
-            newlyGenerated.push({ name: v.name, value: v.value });
-          }
-        }
-      } catch { /* install will fail with a clearer error if it matters */ }
-    }));
-
-    // Bcrypt hashes derive from another variable's plaintext. Runs after
-    // the secret pass so the source value is already populated.
-    await Promise.all(resolvedVars.map(async v => {
-      if (v.value || v.meta?.type !== 'bcrypt') return;
-      if (storedValues[v.name]) {
-        v.value = storedValues[v.name];
-        return;
-      }
-      const sourceName = v.meta?.bcryptSource;
-      if (!sourceName) return;
-      const source = resolvedVars.find(x => x.name === sourceName);
-      if (!source?.value) return;
-      try {
-        const res = await fetch('/api/system/keys/bcrypt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: source.value }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (typeof data.hash === 'string') {
-            v.value = data.hash;
-            newlyGenerated.push({ name: v.name, value: data.hash });
-          }
-        }
-      } catch { /* leave empty */ }
-    }));
-
-    // Persist every newly-generated secret-typed value BEFORE returning, so
-    // a mid-install failure (or the operator closing the wizard) doesn't
-    // strand values that exist only in browser state. The server endpoint
-    // is idempotent; if the same name+value already lives in
-    // `config.installedSecrets` the write is a no-op. #622.
-    if (newlyGenerated.length > 0) {
-      await Promise.all(newlyGenerated.map(async ({ name, value }) => {
-        try {
-          await fetch('/api/system/install/persist-secret', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ varName: name, value }),
-          });
-        } catch { /* server-side persistInstalledSecrets at install end is the safety net */ }
-      }));
-    }
-
-    // VAULTWARDEN_DOMAIN derives from SUBDOMAIN + PUBLIC_DOMAIN.
-    const pubDomain = resolvedVars.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
-    const vwSub = resolvedVars.find(v => v.name === 'VAULTWARDEN_SUBDOMAIN')?.value;
-    if (pubDomain && vwSub) {
-      const vwDomain = resolvedVars.find(v => v.name === 'VAULTWARDEN_DOMAIN');
-      if (vwDomain) {
-        vwDomain.value = `https://${vwSub}.${pubDomain}`;
-        vwDomain.global = true;
-      }
-    }
-
-    setItems(newItems);
-    setVariables(resolvedVars);
-    return { items: newItems, variables: resolvedVars };
   }, [templateSource]);
 
   /** Build the JobInput payload from the wizards resolved state and POST

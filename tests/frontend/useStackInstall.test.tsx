@@ -2,107 +2,29 @@
 
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// Mock the server-action layer the hook calls into. Each test overrides
-// these per scenario.
-vi.mock('@/app/actions', () => ({
-  fetchTemplateYaml: vi.fn(),
-  fetchTemplateVariables: vi.fn(),
-  fetchTemplateConfigFiles: vi.fn(),
-  fetchTemplatePostDeployScript: vi.fn(),
-}));
-
-vi.mock('@/lib/templateLabel', () => ({
-  parseTemplateLabel: (yaml: string) => {
-    const m = yaml.match(/servicebay\.label["']?:\s*["']?([^"'\n]+)["']?/);
-    return m ? m[1].trim() : undefined;
-  },
-}));
-
-// The streaming install loop renders YAML/config via Mustache. Tests
-// don't care about real template substitution — a naive replace is
-// enough to verify the deploy POST body shape.
-vi.mock('mustache', () => ({
-  default: {
-    render: (tmpl: string, view: Record<string, string>) => {
-      let out = tmpl;
-      for (const [k, v] of Object.entries(view)) {
-        out = out.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, 'g'), v);
-      }
-      return out;
-    },
-    escape: (s: string) => s,
-  },
-}));
-
-import {
-  fetchTemplateYaml,
-  fetchTemplateVariables,
-  fetchTemplateConfigFiles,
-  fetchTemplatePostDeployScript,
-} from '@/app/actions';
 import { useStackInstall } from '@/hooks/useStackInstall';
 
 /**
- * Build a `fetch` mock that resolves URL-prefixed handlers. Each
- * handler returns either `{ ok, jsonBody }` for a plain JSON response
- * or `{ ok, streamLines }` for an NDJSON stream.
+ * `useStackInstall` tests.
+ *
+ * Manifest assembly moved server-side (#800): `startConfigure` is now a
+ * thin client over `POST /api/install/assemble`. Variable-resolution
+ * coverage (defaults, secrets, VAULTWARDEN_DOMAIN derivation,
+ * config-file path resolution) lives in
+ * `packages/backend/src/lib/install/manifestAssembler.test.ts`. These
+ * tests cover the hook's own behaviour: that it calls the assembler,
+ * applies the response to hook state, and the local state setters.
  */
-// Built-in defaults for endpoints the hook calls during configure
-// (#759 — Phase 2 moved secret generation and dep parsing server-side).
-// Tests that don't override these get the same behaviour the FE used
-// to have inline: a 32-char alnum secret + an empty deps list.
-function makeRandomSecret(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
 
-type FetchMockResult = {
-  ok?: boolean;
-  status?: number;
-  jsonBody?: any;
-  streamLines?: string[];
-};
-
-const PHASE2_DEFAULTS: Record<string, () => FetchMockResult> = {
-  '/api/install/generate-secret': () => ({ jsonBody: { secret: makeRandomSecret() } }),
-  '/api/templates/parse-dependencies': () => ({ jsonBody: { dependencies: [] } }),
-};
-
-function buildFetchMock(
-  handlers: Record<string, (init?: RequestInit) => FetchMockResult>,
+/** A `fetch` mock that resolves the `/api/install/assemble` call with a
+ *  caller-supplied payload and answers everything else with `{}`. */
+function assembleFetchMock(
+  payload: { items: any[]; variables: any[] } | { error: string },
+  ok = true,
 ) {
-  const merged = { ...PHASE2_DEFAULTS, ...handlers };
-  return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-    for (const [prefix, handler] of Object.entries(merged)) {
-      if (url.startsWith(prefix) || url.includes(prefix)) {
-        const result = handler(init);
-        const ok = result.ok ?? true;
-        const status = result.status ?? (ok ? 200 : 500);
-        if (result.streamLines !== undefined) {
-          const encoded = new TextEncoder().encode(result.streamLines.join('\n') + '\n');
-          let consumed = false;
-          return Promise.resolve({
-            ok,
-            status,
-            body: {
-              getReader: () => ({
-                read: () => {
-                  if (consumed) return Promise.resolve({ done: true, value: undefined });
-                  consumed = true;
-                  return Promise.resolve({ done: false, value: encoded });
-                },
-              }),
-            },
-            json: () => Promise.resolve(result.jsonBody ?? {}),
-          });
-        }
-        return Promise.resolve({
-          ok,
-          status,
-          json: () => Promise.resolve(result.jsonBody ?? {}),
-        });
-      }
+  return vi.fn().mockImplementation((url: string) => {
+    if (url.includes('/api/install/assemble')) {
+      return Promise.resolve({ ok, status: ok ? 200 : 500, json: () => Promise.resolve(payload) });
     }
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
   });
@@ -113,136 +35,58 @@ describe('useStackInstall', () => {
     vi.clearAllMocks();
   });
 
-  describe('startConfigure — variable resolution', () => {
-    it('resolves defaults, secrets, and caller-prefilled globals', async () => {
-      (fetchTemplateYaml as any).mockResolvedValue(
-        'apiVersion: v1\nkind: Pod\nmetadata:\n  name: web\nspec:\n  containers:\n  - name: web\n    env:\n    - name: DOMAIN\n      value: "{{PUBLIC_DOMAIN}}"\n    - name: SECRET\n      value: "{{API_SECRET}}"\n    - name: LDAP\n      value: "{{LLDAP_HOST}}"',
-      );
-      (fetchTemplateVariables as any).mockResolvedValue({
-        PUBLIC_DOMAIN: { type: 'text', description: 'Public domain' },
-        API_SECRET: { type: 'secret', description: 'API secret' },
-        LLDAP_HOST: { type: 'text', description: 'LDAP host' },
+  describe('startConfigure', () => {
+    it('posts the selection to /api/install/assemble and applies the response', async () => {
+      const fetchMock = assembleFetchMock({
+        items: [{ name: 'web', checked: true, yaml: 'apiVersion: v1' }],
+        variables: [
+          { name: 'PUBLIC_DOMAIN', value: 'example.com', global: true, meta: { type: 'text' } },
+          { name: 'API_SECRET', value: 'generated-secret-value', global: false, meta: { type: 'secret' } },
+        ],
       });
-      (fetchTemplateConfigFiles as any).mockResolvedValue([]);
-      global.fetch = buildFetchMock({
-        '/api/settings': () => ({ jsonBody: { templateSettings: {} } }),
-      });
+      global.fetch = fetchMock;
 
-      const { result } = renderHook(() =>
-        useStackInstall({ templateSource: 'Built-in' }),
-      );
+      const { result } = renderHook(() => useStackInstall({ templateSource: 'Built-in' }));
 
+      let returned: { items: unknown[]; variables: unknown[] } | undefined;
       await act(async () => {
-        await result.current.startConfigure(
+        returned = await result.current.startConfigure(
           [{ name: 'web', checked: true }],
           { PUBLIC_DOMAIN: 'example.com' },
         );
       });
 
+      // The hook calls the backend assembler...
+      const assembleCall = fetchMock.mock.calls.find(c => String(c[0]).includes('/api/install/assemble'));
+      expect(assembleCall).toBeDefined();
+      expect(assembleCall![1]).toMatchObject({ method: 'POST' });
+      const body = JSON.parse(String(assembleCall![1].body));
+      expect(body.items).toEqual([{ name: 'web', checked: true, alreadyInstalled: undefined }]);
+      expect(body.prefilled).toEqual({ PUBLIC_DOMAIN: 'example.com' });
+      expect(body.templateSource).toBe('Built-in');
+
+      // ...and applies the assembled manifest to hook state.
       expect(result.current.phase).toBe('configure');
-      const pubDomain = result.current.variables.find(v => v.name === 'PUBLIC_DOMAIN');
-      expect(pubDomain?.value).toBe('example.com');
-      expect(pubDomain?.global).toBe(true);
-      const lldap = result.current.variables.find(v => v.name === 'LLDAP_HOST');
-      expect(lldap?.value).toBe('localhost');
-      expect(lldap?.global).toBe(true);
-      const apiSecret = result.current.variables.find(v => v.name === 'API_SECRET');
-      // Secret was auto-generated. Length should match the
-      // generateRandomSecret default of 32 alnum chars.
-      expect(apiSecret?.value).toMatch(/^[A-Za-z0-9]{32}$/);
+      expect(result.current.variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value).toBe('example.com');
+      expect(result.current.variables.find(v => v.name === 'API_SECRET')?.value).toBe('generated-secret-value');
+      expect(returned?.variables).toHaveLength(2);
     });
 
-    it('derives VAULTWARDEN_DOMAIN from subdomain + public domain', async () => {
-      (fetchTemplateYaml as any).mockResolvedValue(
-        'apiVersion: v1\nkind: Pod\nmetadata:\n  name: vw\nspec:\n  containers:\n  - name: vw\n    env:\n    - name: PUBLIC_DOMAIN\n      value: "{{PUBLIC_DOMAIN}}"\n    - name: SUB\n      value: "{{VAULTWARDEN_SUBDOMAIN}}"\n    - name: DOMAIN\n      value: "{{VAULTWARDEN_DOMAIN}}"',
-      );
-      (fetchTemplateVariables as any).mockResolvedValue({
-        PUBLIC_DOMAIN: { type: 'text' },
-        VAULTWARDEN_SUBDOMAIN: { type: 'subdomain', default: 'vault' },
-        VAULTWARDEN_DOMAIN: { type: 'text' },
-      });
-      (fetchTemplateConfigFiles as any).mockResolvedValue([]);
-      global.fetch = buildFetchMock({
-        '/api/settings': () => ({ jsonBody: { templateSettings: {} } }),
-      });
+    it('surfaces an assembler failure as the error phase', async () => {
+      global.fetch = assembleFetchMock({ error: 'template not found' }, false);
 
-      const { result } = renderHook(() =>
-        useStackInstall({ templateSource: 'Built-in' }),
-      );
+      const { result } = renderHook(() => useStackInstall({ templateSource: 'Built-in' }));
       await act(async () => {
-        await result.current.startConfigure(
-          [{ name: 'vw', checked: true }],
-          { PUBLIC_DOMAIN: 'example.com' },
-        );
+        await result.current.startConfigure([{ name: 'ghost', checked: true }], {});
       });
 
-      const vw = result.current.variables.find(v => v.name === 'VAULTWARDEN_DOMAIN');
-      expect(vw?.value).toBe('https://vault.example.com');
-      expect(vw?.global).toBe(true);
-    });
-
-    it('strips mustache section tags before resolving config file paths', async () => {
-      // A YAML with section tags would normally crash js-yaml. The hook
-      // strips `{{#OPT}} ... {{/OPT}}` before parsing so volumes still
-      // resolve and the `.mustache` config file lands in /config.
-      (fetchTemplateYaml as any).mockResolvedValue(
-        `apiVersion: v1
-kind: Pod
-metadata:
-  name: hass
-spec:
-  containers:
-  - name: hass
-    volumeMounts:
-    - mountPath: /config
-      name: cfg
-    {{#TRUSTED_PROXIES}}
-    - mountPath: /extra
-      name: extra
-    {{/TRUSTED_PROXIES}}
-  volumes:
-  - name: cfg
-    hostPath:
-      path: /mnt/data/stacks/hass/config
-  - name: extra
-    hostPath:
-      path: /mnt/data/stacks/hass/extra
-`,
-      );
-      (fetchTemplateVariables as any).mockResolvedValue({
-        TRUSTED_PROXIES: { type: 'text' },
-      });
-      (fetchTemplateConfigFiles as any).mockResolvedValue([
-        { filename: 'configuration.yaml', content: 'something: {{TRUSTED_PROXIES}}' },
-      ]);
-      global.fetch = buildFetchMock({
-        '/api/settings': () => ({ jsonBody: { templateSettings: {} } }),
-      });
-
-      const { result } = renderHook(() =>
-        useStackInstall({ templateSource: 'Built-in' }),
-      );
-      await act(async () => {
-        await result.current.startConfigure(
-          [{ name: 'hass', checked: true }],
-          {},
-        );
-      });
-
-      // Config file should have its targetPath resolved despite the section
-      // tags. If section-stripping regressed, the volume map would be
-      // empty and targetPath would be undefined.
-      expect(result.current.items[0].configFiles?.[0].targetPath).toBe(
-        '/mnt/data/stacks/hass/config/configuration.yaml',
-      );
+      expect(result.current.phase).toBe('error');
+      expect(result.current.error).toMatch(/template not found/);
     });
   });
 
-
-
-
   describe('reset', () => {
-    it('returns the hook to idle with empty state', async () => {
+    it('returns the hook to idle with empty state', () => {
       const { result } = renderHook(() =>
         useStackInstall({ templateSource: 'Built-in' }),
       );
@@ -263,19 +107,11 @@ spec:
   describe('referential stability — no-op writes preserve array reference', () => {
     // Regression guard for the wizard device-poll runaway loop. The
     // OnboardingWizard's "fetch USB devices" effect depends on
-    // `stackVariables` (the hook's `variables`). Pre-refactor (v3.19.1)
-    // the wizard owned variables state and used `prev.map → changed ? next : prev`
-    // so no-op writes returned the same array reference. The v3.19.2
-    // refactor moved state into this hook but the new setter always
-    // allocated a new array, which made the effect re-fire on every
-    // render and hammered `/api/system/devices` at ~90Hz during install
-    // — saturating the browser HTTP pool and causing intermittent
-    // `Failed to fetch` on the streaming `/api/services` POST.
-    //
-    // The contract: `setVariableValue(name, sameValue)` and
-    // `setItemChecked(name, sameChecked)` MUST NOT change the array
-    // reference. Any future refactor that breaks this regresses the
-    // wizard's install reliability.
+    // `variables`; a setter that allocates a new array on a no-op write
+    // makes the effect re-fire every render and hammers
+    // `/api/system/devices`. The contract: `setVariableValue(name,
+    // sameValue)` / `setItemChecked(name, sameChecked)` MUST NOT change
+    // the array reference.
     it('setItemChecked keeps the same items reference when checked is unchanged', () => {
       const { result } = renderHook(() =>
         useStackInstall({ templateSource: 'Built-in' }),
@@ -297,26 +133,16 @@ spec:
     });
 
     it('setVariableValue keeps the same variables reference when value is unchanged', async () => {
-      (fetchTemplateYaml as any).mockResolvedValue(
-        'apiVersion: v1\nkind: Pod\nmetadata:\n  name: x\nspec:\n  containers:\n  - name: x\n    env:\n    - name: FOO\n      value: "{{FOO}}"',
-      );
-      (fetchTemplateVariables as any).mockResolvedValue({
-        FOO: { type: 'text', default: 'bar' },
-      });
-      (fetchTemplateConfigFiles as any).mockResolvedValue([]);
-      (fetchTemplatePostDeployScript as any).mockResolvedValue(null);
-      global.fetch = buildFetchMock({
-        '/api/settings': () => ({ jsonBody: { templateSettings: {} } }),
+      global.fetch = assembleFetchMock({
+        items: [{ name: 'x', checked: true }],
+        variables: [{ name: 'FOO', value: 'bar', global: false, meta: { type: 'text' } }],
       });
 
       const { result } = renderHook(() =>
         useStackInstall({ templateSource: 'Built-in' }),
       );
       await act(async () => {
-        await result.current.startConfigure(
-          [{ name: 'x', checked: true }],
-          {},
-        );
+        await result.current.startConfigure([{ name: 'x', checked: true }], {});
       });
       expect(result.current.variables.find(v => v.name === 'FOO')?.value).toBe('bar');
 
@@ -333,17 +159,12 @@ spec:
 
   describe('setVariableExposure', () => {
     it('overrides exposure on subdomain variables and is a no-op on others', async () => {
-      (fetchTemplateYaml as any).mockResolvedValue(
-        'apiVersion: v1\nkind: Pod\nmetadata:\n  name: vw',
-      );
-      (fetchTemplateVariables as any).mockResolvedValue({
-        VW_SUBDOMAIN: { type: 'subdomain', default: 'vault', exposure: 'public', proxyPort: '8222' },
-        VW_PORT: { type: 'text', default: '8222' },
-      });
-      (fetchTemplateConfigFiles as any).mockResolvedValue([]);
-      (fetchTemplatePostDeployScript as any).mockResolvedValue(null);
-      global.fetch = buildFetchMock({
-        '/api/settings': () => ({ jsonBody: { templateSettings: {} } }),
+      global.fetch = assembleFetchMock({
+        items: [{ name: 'vw', checked: true }],
+        variables: [
+          { name: 'VW_SUBDOMAIN', value: 'vault', global: false, meta: { type: 'subdomain', default: 'vault', exposure: 'public', proxyPort: '8222' } },
+          { name: 'VW_PORT', value: '8222', global: false, meta: { type: 'text', default: '8222' } },
+        ],
       });
 
       const { result } = renderHook(() => useStackInstall({ templateSource: 'Built-in' }));
@@ -366,5 +187,4 @@ spec:
       expect(result.current.variables).toBe(before);
     });
   });
-
 });
