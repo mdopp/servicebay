@@ -68,6 +68,19 @@ const SETTLE_TIMEOUT_MS = 3 * 60_000;
 const SETTLE_POLL_MS = 5_000;
 const SETTLE_HEARTBEAT_MS = 15_000;
 
+/** Inter-template dependency-readiness gate (#810). The topo-sort
+ *  guarantees a template deploys *after* its `servicebay.dependencies`,
+ *  but ordering is not readiness — the deploy loop fires each template's
+ *  post-deploy script back-to-back, so a script that talks to a
+ *  dependency's API (e.g. `media` post-deploy → Authelia OIDC discovery)
+ *  can run while that dependency is still booting. Before deploying an
+ *  item we block until every declared dependency reports health-ready in
+ *  the twin. Same 3-minute cap as the settle-wait — long enough for a
+ *  cold-start image pull, then proceed and let diagnose surface a real
+ *  failure rather than hanging the install forever. */
+const DEP_READY_TIMEOUT_MS = 3 * 60_000;
+const DEP_READY_POLL_MS = 3_000;
+
 /** Set by `abortJob`. Checked at top of every deploy-loop iteration and
  *  before each retry attempt so the loop bails out as soon as possible. */
 const abortFlags = new Map<string, boolean>();
@@ -164,6 +177,23 @@ async function waitForCredentials(
   });
 }
 
+/** True when `name` reports ready in the twin's service list. Prefers
+ *  the unified health signal (#627) — set by the service-health poller
+ *  when the template ships a `servicebay.healthcheck` annotation — and
+ *  falls back to the systemd-active flag for templates that don't ship
+ *  one yet. `degraded: true` still counts as ready (the operator sees
+ *  the soft-fail banner; gating doesn't hang on it). */
+export function isServiceReady(
+  services: ReadonlyArray<{ name: string; active?: boolean; health?: { ready: boolean } }>,
+  name: string,
+): boolean {
+  return services.some(s => {
+    if (s.name !== name && s.name !== `${name}.service`) return false;
+    if (s.health) return s.health.ready === true;
+    return s.active === true;
+  });
+}
+
 /** Settle-wait: poll the digital twin in-process until every newly
  *  deployed service is ready.
  *
@@ -195,17 +225,7 @@ async function settleWait(
     const snapshot = twin.getSnapshot();
     const twinNode = snapshot.nodes?.[node];
     const services = twinNode?.services ?? [];
-    const ready = expected.filter(name =>
-      services.some(s => {
-        if (s.name !== name && s.name !== `${name}.service`) return false;
-        // Prefer the unified health signal when the poller has populated
-        // it. `degraded: true` still counts as ready for settle purposes —
-        // the operator sees the soft-fail in the UI banner, but the install
-        // doesn't get stuck on it.
-        if (s.health) return s.health.ready === true;
-        return s.active === true;
-      }),
-    ).length;
+    const ready = expected.filter(name => isServiceReady(services, name)).length;
     const now = Date.now();
     if (ready !== lastReady) {
       await log(jobId, `Waiting for services to become active... (${ready}/${expected.length} up)`);
@@ -224,6 +244,61 @@ async function settleWait(
     await log(jobId, `✅ All ${expected.length} services active after ${elapsed}s.`);
   } else {
     await log(jobId, `⚠️ ${lastReady}/${expected.length} services active after ${elapsed}s — slow image pulls or a real failure. Self-diagnose below will tell you which.`);
+  }
+}
+
+/** Block until every declared dependency of `item` reports health-ready
+ *  in the twin (#810). Called before the item deploys — its post-deploy
+ *  script runs as part of the same `/api/services` POST, so the
+ *  dependency must be responsive *before* the deploy fires, not just
+ *  ordered ahead of it.
+ *
+ *  Best-effort by design: on timeout we log a warning and proceed. The
+ *  post-deploy may then report errors, but those surface through the
+ *  normal diagnose path — far better than wedging the whole install on
+ *  one slow dependency. `bootstrapServiceHealth` is invoked first so the
+ *  poller is already probing every just-deployed dependency; without
+ *  that the gate would only ever see the coarse systemd-active flag. */
+export async function waitForDependencies(
+  jobId: string,
+  item: { name: string; dependencies?: string[] },
+  node: string,
+): Promise<void> {
+  const deps = item.dependencies ?? [];
+  if (deps.length === 0) return;
+
+  // Register every deployed-so-far service with the health poller so the
+  // dependencies we're about to wait on have a live `health` signal.
+  try {
+    const { bootstrapServiceHealth } = await import('@/lib/health/serviceHealthBootstrap');
+    await bootstrapServiceHealth(node);
+  } catch { /* fall back to the systemd-active signal */ }
+
+  const twin = DigitalTwinStore.getInstance();
+  const startedAt = Date.now();
+  let lastLogAt = startedAt;
+  const pending = new Set(deps);
+  await log(jobId, `Waiting for ${item.name}'s dependencies to become healthy: ${deps.join(', ')}...`);
+  while (pending.size > 0 && Date.now() - startedAt < DEP_READY_TIMEOUT_MS) {
+    if (abortFlags.get(jobId)) return;
+    const services = twin.getSnapshot().nodes?.[node]?.services ?? [];
+    for (const dep of [...pending]) {
+      if (isServiceReady(services, dep)) pending.delete(dep);
+    }
+    if (pending.size === 0) break;
+    const now = Date.now();
+    if (now - lastLogAt >= SETTLE_HEARTBEAT_MS) {
+      const elapsed = Math.floor((now - startedAt) / 1000);
+      await log(jobId, `Still waiting for ${[...pending].join(', ')} to be healthy (${elapsed}s elapsed)...`);
+      lastLogAt = now;
+    }
+    await new Promise(r => setTimeout(r, DEP_READY_POLL_MS));
+  }
+  if (pending.size === 0) {
+    await log(jobId, `✅ ${item.name}'s dependencies are healthy.`);
+  } else {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    await log(jobId, `⚠️ ${item.name}'s dependencies not healthy after ${elapsed}s (${[...pending].join(', ')}). Continuing anyway — its post-deploy may report errors; self-diagnose below will tell you what's stuck.`);
   }
 }
 
@@ -831,6 +906,20 @@ async function runJob(jobId: string): Promise<void> {
       await log(jobId, `✅ ${item.name} already installed, skipping.`);
       ctx.deployed.push({ name: item.name });
       continue;
+    }
+    // #810 — gate on dependency readiness before deploying. The item's
+    // post-deploy script runs inside `deployItem`, so a dependency that
+    // is merely ordered ahead (not yet healthy) would otherwise be hit
+    // mid-boot.
+    await waitForDependencies(jobId, item, input.node || 'Local');
+    if (abortFlags.get(jobId)) {
+      await patchJob(jobId, {
+        phase: 'aborted',
+        endedAt: new Date().toISOString(),
+        error: 'Installation aborted by user.',
+      });
+      await log(jobId, '⛔ Install aborted by user.');
+      return;
     }
     try {
       const ok = await deployItem(ctx, item);
