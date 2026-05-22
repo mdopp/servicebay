@@ -15,12 +15,15 @@ metadata:
     servicebay.dependencies: "nginx,auth"
     servicebay.ports: "{{ADGUARD_ADMIN_PORT}}/tcp,53/udp,53/tcp"
     servicebay.config-mount: /opt/adguardhome/conf
-    # Continuous health probe (#626). `/control/status` is AdGuard's
-    # built-in JSON status endpoint — unauthenticated, returns `running`
-    # + DNS query counters. Cheap 200 that confirms the admin listener
-    # is alive.
+    # Continuous health probe (#626). AdGuard's `/control/*` API requires
+    # authentication once the admin password is set — and the post-deploy
+    # sets it — so `/control/status` returns 401 to the unauthenticated
+    # poller and can never go ready (#827: it was one of the two services
+    # that left settle-wait stuck at 10/12). `/login.html` is the static
+    # login page AdGuard always serves unauthenticated; a 200 there
+    # confirms the admin listener is alive.
     servicebay.healthcheck: |
-      url: http://localhost:{{ADGUARD_ADMIN_PORT}}/control/status
+      url: http://localhost:{{ADGUARD_ADMIN_PORT}}/login.html
       interval: 30s
       timeout: 5s
       startup_timeout: 5m
