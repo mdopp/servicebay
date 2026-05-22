@@ -4,11 +4,6 @@
     "description": "Radicale CalDAV/CardDAV port",
     "default": "5232"
   },
-  "LLDAP_HOST": {
-    "type": "text",
-    "description": "LLDAP host (localhost when both run on the same node)",
-    "default": "localhost"
-  },
   "LLDAP_LDAP_PORT": {
     "type": "text",
     "description": "LLDAP LDAP-protocol port",

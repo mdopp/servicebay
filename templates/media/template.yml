@@ -23,7 +23,24 @@ metadata:
       timeout: 5s
       startup_timeout: 5m
 spec:
-  hostNetwork: true
+  # #817: Media runs in its own network namespace (no hostNetwork) so a
+  # compromised audiobookshelf/jellyfin container can't reach the host's
+  # other service ports or the ServiceBay control API.
+  #   - Both apps are published to the host via `hostPort` on their
+  #     container ports below; nothing else in the pod is LAN-reachable.
+  #   - Audiobookshelf does *server-side* OIDC discovery against
+  #     https://auth.<PUBLIC_DOMAIN>. An isolated container's resolver
+  #     doesn't apply AdGuard's `*.PUBLIC_DOMAIN → LAN IP` rewrite, so
+  #     the `hostAliases` entry pins that name to the LAN IP — the
+  #     request then flows container → LAN IP → NPM → Authelia.
+  #     {{LAN_IP}} is filled in by the install runner at deploy time.
+  #   - post-deploy.py runs in the host netns (not the pod), so its
+  #     `127.0.0.1:9091` Authelia probe and `127.0.0.1:<ABS_PORT>`
+  #     audiobookshelf probe keep working — the latter via the hostPort.
+  hostAliases:
+    - ip: "{{LAN_IP}}"
+      hostnames:
+        - "auth.{{PUBLIC_DOMAIN}}"
   containers:
   # 1. Audiobookshelf — Audiobooks + podcasts library + listening apps.
   #    Authentication: native OIDC against Authelia (configured by
@@ -37,6 +54,7 @@ spec:
         value: "{{TZ}}"
     ports:
       - containerPort: {{ABS_PORT}}
+        hostPort: {{ABS_PORT}}
     volumeMounts:
       - mountPath: /config
         name: abs-config
@@ -67,6 +85,7 @@ spec:
       # nginx-style restart logic; we manage the unit via Quadlet.
     ports:
       - containerPort: {{JELLYFIN_PORT}}
+        hostPort: {{JELLYFIN_PORT}}
     volumeMounts:
       - mountPath: /config
         name: jellyfin-config

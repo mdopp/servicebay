@@ -18,7 +18,17 @@ metadata:
       timeout: 5s
       startup_timeout: 5m
 spec:
-  hostNetwork: true
+  # #817: Radicale runs in its own network namespace (no hostNetwork) so
+  # a compromised container can't reach the host's other service ports
+  # or the ServiceBay control API.
+  #   - Radicale's HTTP port is published to the host via `hostPort` on
+  #     the container port below.
+  #   - Radicale binds LLDAP for user lookup over LDAP. LLDAP lives in
+  #     the `auth` pod (still hostNetwork), so it listens on the host —
+  #     an isolated Radicale pod can't reach it on 127.0.0.1, so the
+  #     `ldap_uri` below targets {{LAN_IP}} (filled in by the install
+  #     runner at deploy time). Radicale does no OIDC, so no
+  #     auth.<domain> hostAliases entry is needed.
   initContainers:
   # Seed /config/config in-pod, every deploy. Earlier versions wrote a
   # config.mustache to the host bind-mount during the wizard's deploy
@@ -45,7 +55,7 @@ spec:
 
         [auth]
         type = ldap
-        ldap_uri = ldap://{{LLDAP_HOST}}:{{LLDAP_LDAP_PORT}}
+        ldap_uri = ldap://{{LAN_IP}}:{{LLDAP_LDAP_PORT}}
         ldap_base = ou=people,{{LLDAP_BASE_DN}}
         ldap_reader_dn = uid=admin,ou=people,{{LLDAP_BASE_DN}}
         ldap_secret = {{LLDAP_ADMIN_PASSWORD}}
@@ -88,6 +98,7 @@ spec:
         value: /config/config
     ports:
       - containerPort: {{RADICALE_PORT}}
+        hostPort: {{RADICALE_PORT}}
     volumeMounts:
       - mountPath: /data
         name: radicale-data
