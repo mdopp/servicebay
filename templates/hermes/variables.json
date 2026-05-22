@@ -20,7 +20,20 @@
   },
   "HERMES_DASHBOARD_PORT": {
     "type": "text",
-    "description": "Optional: host port for Hermes' web dashboard. Leave blank to skip the dashboard entirely (Phase-0 chat-via-Signal doesn't need it). Set to a port (e.g. 9119) to enable; bound to 127.0.0.1 only — remote access goes through NPM + Authelia forward-auth, see README. The dashboard is opt-in because it's a debugging surface, not an operator portal.",
-    "default": ""
+    "description": "Host loopback port for Hermes' web dashboard (config, API keys, sessions). Bound to 127.0.0.1 only — reached through NPM + Authelia forward-auth at https://<HERMES_SUBDOMAIN>.<domain>, never directly on the LAN.",
+    "default": "9119"
+  },
+  "HERMES_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for the Hermes web dashboard. Internal exposure — it gets a real LE cert (Authelia forward-auth needs https) but NPM binds the LAN-only access list, so it isn't reachable from outside the LAN. Authelia forward-auth gates it on top of that, because the dashboard surfaces Hermes' API keys.",
+    "default": "hermes",
+    "exposure": "internal",
+    "proxyPort": "HERMES_DASHBOARD_PORT",
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
+    }
   }
 }
