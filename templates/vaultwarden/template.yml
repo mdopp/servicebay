@@ -30,13 +30,16 @@ spec:
   #   2. Vaultwarden does *server-side* OIDC discovery against
   #      https://auth.<PUBLIC_DOMAIN>. An isolated container's resolver
   #      doesn't apply AdGuard's `*.PUBLIC_DOMAIN → LAN IP` rewrite
-  #      (#408), so the `hostAliases` entry pins that one name to the
-  #      LAN IP. The request then flows container → LAN IP → NPM →
-  #      Authelia — the only path Authelia accepts (it validates the
-  #      canonical https issuer and the X-Forwarded headers NPM sets).
-  #      {{LAN_IP}} is filled in by the install runner at deploy time.
+  #      (#408), so the `hostAliases` entry pins that one name to a
+  #      host-reachable IP — HOST_GATEWAY_IP, podman's
+  #      `host.containers.internal`. It must NOT be the host's LAN IP:
+  #      a rootless-podman pod can't reach the host's own LAN IP (#817).
+  #      The request flows container → host → NPM → Authelia — the only
+  #      path Authelia accepts (it validates the canonical https issuer,
+  #      kept intact by reusing the `auth.<PUBLIC_DOMAIN>` name, and the
+  #      X-Forwarded headers NPM sets).
   hostAliases:
-    - ip: "{{LAN_IP}}"
+    - ip: "{{HOST_GATEWAY_IP}}"
       hostnames:
         - "auth.{{PUBLIC_DOMAIN}}"
   containers:

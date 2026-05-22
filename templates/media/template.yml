@@ -31,14 +31,15 @@ spec:
   #   - Audiobookshelf does *server-side* OIDC discovery against
   #     https://auth.<PUBLIC_DOMAIN>. An isolated container's resolver
   #     doesn't apply AdGuard's `*.PUBLIC_DOMAIN → LAN IP` rewrite, so
-  #     the `hostAliases` entry pins that name to the LAN IP — the
-  #     request then flows container → LAN IP → NPM → Authelia.
-  #     {{LAN_IP}} is filled in by the install runner at deploy time.
+  #     the `hostAliases` entry pins that name to HOST_GATEWAY_IP —
+  #     podman's `host.containers.internal`. It must NOT be the host's
+  #     LAN IP: a rootless-podman pod can't reach the host's own LAN IP
+  #     (#817). The request flows container → host → NPM → Authelia.
   #   - post-deploy.py runs in the host netns (not the pod), so its
   #     `127.0.0.1:9091` Authelia probe and `127.0.0.1:<ABS_PORT>`
   #     audiobookshelf probe keep working — the latter via the hostPort.
   hostAliases:
-    - ip: "{{LAN_IP}}"
+    - ip: "{{HOST_GATEWAY_IP}}"
       hostnames:
         - "auth.{{PUBLIC_DOMAIN}}"
   containers:

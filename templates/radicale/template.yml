@@ -25,10 +25,11 @@ spec:
   #     the container port below.
   #   - Radicale binds LLDAP for user lookup over LDAP. LLDAP lives in
   #     the `auth` pod (still hostNetwork), so it listens on the host —
-  #     an isolated Radicale pod can't reach it on 127.0.0.1, so the
-  #     `ldap_uri` below targets {{LAN_IP}} (filled in by the install
-  #     runner at deploy time). Radicale does no OIDC, so no
-  #     auth.<domain> hostAliases entry is needed.
+  #     an isolated Radicale pod can't reach it on 127.0.0.1, nor on the
+  #     host's own LAN IP (rootless podman refuses both). It reaches the
+  #     host via `host.containers.internal`, the name podman puts in
+  #     every container's /etc/hosts — that's the `ldap_uri` target
+  #     below. Radicale does no OIDC, so no auth.<domain> hostAliases.
   initContainers:
   # Seed /config/config in-pod, every deploy. Earlier versions wrote a
   # config.mustache to the host bind-mount during the wizard's deploy
@@ -55,7 +56,7 @@ spec:
 
         [auth]
         type = ldap
-        ldap_uri = ldap://{{LAN_IP}}:{{LLDAP_LDAP_PORT}}
+        ldap_uri = ldap://host.containers.internal:{{LLDAP_LDAP_PORT}}
         ldap_base = ou=people,{{LLDAP_BASE_DN}}
         ldap_reader_dn = uid=admin,ou=people,{{LLDAP_BASE_DN}}
         ldap_secret = {{LLDAP_ADMIN_PASSWORD}}
