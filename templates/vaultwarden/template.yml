@@ -21,15 +21,24 @@ metadata:
       timeout: 5s
       startup_timeout: 5m
 spec:
-  # v2 (#408): hostNetwork is required so Vaultwarden can reach
-  # https://auth.<PUBLIC_DOMAIN>/.well-known/openid-configuration for
-  # OIDC discovery. Under bridge networking the container resolves the
-  # public auth subdomain to the router's WAN IP and the request fails
-  # (most home routers don't hairpin NAT). Under hostNetwork the
-  # container inherits the host's resolver, which AdGuard rewrites
-  # *.PUBLIC_DOMAIN to the LAN IP — so the OIDC discovery request goes
-  # NPM → Authelia → success.
-  hostNetwork: true
+  # #817: Vaultwarden runs in its own network namespace (no
+  # hostNetwork), so a compromised container can't reach the host's
+  # other service ports or the ServiceBay control API. Two consequences
+  # the config handles:
+  #   1. The port is published to the host explicitly via `hostPort`
+  #      on the container port below.
+  #   2. Vaultwarden does *server-side* OIDC discovery against
+  #      https://auth.<PUBLIC_DOMAIN>. An isolated container's resolver
+  #      doesn't apply AdGuard's `*.PUBLIC_DOMAIN → LAN IP` rewrite
+  #      (#408), so the `hostAliases` entry pins that one name to the
+  #      LAN IP. The request then flows container → LAN IP → NPM →
+  #      Authelia — the only path Authelia accepts (it validates the
+  #      canonical https issuer and the X-Forwarded headers NPM sets).
+  #      {{LAN_IP}} is filled in by the install runner at deploy time.
+  hostAliases:
+    - ip: "{{LAN_IP}}"
+      hostnames:
+        - "auth.{{PUBLIC_DOMAIN}}"
   containers:
   - name: vaultwarden
     image: docker.io/vaultwarden/server:latest
@@ -53,18 +62,15 @@ spec:
       value: "{{VAULTWARDEN_SSO_SECRET}}"
     - name: SSO_SCOPES
       value: "email profile"
-    # Vaultwarden listens on port 80 by default. Under hostNetwork that
-    # collides with NPM's HTTP listener — point Rocket at the operator's
-    # configured port so it binds directly there on the host.
+    # Rocket binds {{VAULTWARDEN_PORT}} on 0.0.0.0 inside the pod
+    # netns (Vaultwarden's default ROCKET_ADDRESS); `hostPort` below
+    # publishes it on the host. Bridge networking means there's no
+    # collision with NPM's :80 — they're in separate namespaces.
     - name: ROCKET_PORT
       value: "{{VAULTWARDEN_PORT}}"
-    # `hostPort:` is invalid under hostNetwork (podman rejects with
-    # "PortMappings can only be used with Bridge, slirp4netns, or pasta
-    # networking"). The servicebay.ports annotation above carries the
-    # port for the UI / network graph; the container now binds
-    # {{VAULTWARDEN_PORT}} directly on the host.
     ports:
     - containerPort: {{VAULTWARDEN_PORT}}
+      hostPort: {{VAULTWARDEN_PORT}}
     volumeMounts:
     - mountPath: /data
       name: vaultwarden-data

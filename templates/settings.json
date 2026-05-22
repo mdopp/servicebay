@@ -16,6 +16,10 @@
     "LLDAP_BASE_DN": {
       "default": "dc=dopp,dc=cloud",
       "description": "LDAP base distinguished name"
+    },
+    "LAN_IP": {
+      "default": "",
+      "description": "Host LAN IP. Auto-detected and filled in by ServiceBay at install time (#817) — leave blank; the installer overrides it. Used by isolated-network templates for a hostAliases entry that points the public auth subdomain at the LAN."
     }
   },
   "notes": [

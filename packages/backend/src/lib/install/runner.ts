@@ -674,6 +674,15 @@ async function runJob(jobId: string): Promise<void> {
     const ip = await reconcileLanIp(node);
     if (ip) {
       await log(jobId, `Captured LAN IP: ${ip}`);
+      // Expose LAN_IP to template rendering (#817). Templates that drop
+      // `hostNetwork` need it for a `hostAliases` entry that resolves
+      // the public auth subdomain to the LAN. `LAN_IP` is declared as a
+      // global in templates/settings.json (blank default); the wizard
+      // can't know the host IP, so the runner fills it in here — every
+      // `{{LAN_IP}}` in a rendered template.yml resolves to this value.
+      const lanVar = input.variables.find(v => v.name === 'LAN_IP');
+      if (lanVar) lanVar.value = ip;
+      else input.variables.push({ name: 'LAN_IP', value: ip, global: true });
     } else {
       await log(jobId, '⚠️ Could not detect LAN IP (agent returned no `ip route get` result); diagnose probes that depend on it will degrade.');
     }
