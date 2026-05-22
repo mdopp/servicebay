@@ -41,12 +41,12 @@ import {
   buildProxyHosts,
   type StackVariable,
 } from '@/lib/stackInstall/postInstall';
-import { buildCredentialsManifest, type Credential } from '@/lib/stackInstall/credentialsManifest';
+import { buildCredentialsManifest, mergeCredentials, type Credential } from '@/lib/stackInstall/credentialsManifest';
 import { provisionPortalWithRetries } from '@/lib/stackInstall/portalProvision';
 import { getCapabilityBus } from '@/lib/capabilities/bus';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
-import { getConfig, saveConfig } from '@/lib/config';
+import { getConfig, saveConfig, type InstalledCredential } from '@/lib/config';
 import { reconcileLanIp } from '@/lib/lanIp';
 import {
   appendLog,
@@ -1159,6 +1159,32 @@ async function runJob(jobId: string): Promise<void> {
     ...scriptCredentials,
   ];
   await patchJob(jobId, { credentialsManifest: manifest });
+
+  // Persist the manifest to `config.installManifest` — the store the
+  // Settings → Saved Credentials page reads. The per-template
+  // credentials capability handler only emits OIDC client_secrets, so
+  // without this end-of-job write the post-deploy service logins
+  // (LLDAP, NPM, AdGuard, Jellyfin, Samba, …) never reach the
+  // persistent store and the page shows empty. Merged per-template so a
+  // feature-only install doesn't drop credentials from earlier installs.
+  try {
+    const cfg = await getConfig();
+    const merged = mergeCredentials(
+      (cfg.installManifest?.credentials ?? []) as Credential[],
+      manifest,
+      ctx.deployed.map(d => d.name),
+    );
+    await saveConfig({
+      ...cfg,
+      installManifest: {
+        savedAt: new Date().toISOString(),
+        credentials: merged as unknown as InstalledCredential[],
+      },
+    });
+    await log(jobId, `Saved ${manifest.length} credential(s) to the install manifest.`);
+  } catch (e) {
+    await log(jobId, `(note) couldn't persist the credentials manifest: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   // Portal routing — apex + wildcard rewrites for the active domain.
   // Always runs after a successful install (#707). Pre-fix this was

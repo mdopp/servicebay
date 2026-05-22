@@ -86,6 +86,31 @@ export function buildCredentialsManifest(opts: BuildOpts): Credential[] {
   return out;
 }
 
+/**
+ * Merge a freshly-built credentials manifest into a previously persisted
+ * one, keyed by owning template.
+ *
+ * The install runner calls this at end-of-job to keep
+ * `config.installManifest` complete. Entries owned by a template in
+ * `deployedTemplates` are dropped (the run just rebuilt them, so `fresh`
+ * carries the current values); entries owned by *other* templates — and
+ * legacy untagged entries — are preserved, so a feature-only install
+ * doesn't wipe credentials captured by earlier installs.
+ *
+ * Same per-template-replace semantics as the credentials capability
+ * handler (`capabilities/credentials.ts`), generalised to the set of
+ * templates one install job touched.
+ */
+export function mergeCredentials(
+  existing: Credential[],
+  fresh: Credential[],
+  deployedTemplates: readonly string[],
+): Credential[] {
+  const deployed = new Set(deployedTemplates);
+  const kept = existing.filter(c => !c.template || !deployed.has(c.template));
+  return [...kept, ...fresh];
+}
+
 // #632 removed `formatCredentialsBanner` — the install runner no longer
 // dumps the manifest into the deploy log. The wizard's Done UI reads
 // the same data from `job.credentialsManifest` and the credentials
