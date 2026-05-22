@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { withApiHandler } from '@/lib/api/handler';
 import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
 
-export async function GET() {
+export const GET = withApiHandler({}, async () => {
   const checks = HealthStore.getChecks();
   // Enrich with last result
   const enrichedChecks = checks.map(check => {
@@ -29,7 +29,7 @@ export async function GET() {
     };
   });
   return NextResponse.json(enrichedChecks);
-}
+});
 
 const CheckPostBody = z.object({
   id: z.string().min(1).max(64).optional(),

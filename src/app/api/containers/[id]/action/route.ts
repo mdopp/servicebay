@@ -1,26 +1,23 @@
-
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { agentManager } from '@/lib/agent/manager';
 import { ContainerId } from '@/lib/api/schemas';
-import { parseRouteParam } from '@/lib/api/validate';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandlerParams } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
+const Query = z.object({ node: z.string().optional() });
 
-  const parsed = await parseRouteParam(params, 'id', ContainerId);
-  if (!parsed.ok) return parsed.response;
-  const id = parsed.value;
-  const searchParams = request.nextUrl.searchParams;
-  const nodeName = searchParams.get('node') || 'Local';
+export const POST = withApiHandlerParams<undefined, z.infer<typeof Query>, { id: string }>(
+  { query: Query },
+  async ({ request, query, params }) => {
+  const check = ContainerId.safeParse(params.id);
+  if (!check.success) {
+    return NextResponse.json({ error: 'invalid id' }, { status: 400 });
+  }
+  const id = check.data;
+  const nodeName = query.node || 'Local';
 
   try {
       const body = await request.json();
@@ -47,10 +44,10 @@ export async function POST(
       if (response && response.code === 0) {
           return NextResponse.json({ success: true, output: response.stdout });
       }
-      
+
       return NextResponse.json({ error: 'Action failed', details: response }, { status: 500 });
-      
+
   } catch (error) {
       return apiError(error, { tag: 'api:containers:action', status: 500 });
   }
-}
+});

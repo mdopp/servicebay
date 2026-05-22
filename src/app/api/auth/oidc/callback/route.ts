@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { getConfig, getOidcCallbackUrl } from '@/lib/config';
 import { login } from '@/lib/auth';
 import { isRequestSecure } from '@/lib/auth/requestSecurity';
 import { assertValidOidcIssuer } from '@/lib/auth/oidcIssuer';
+import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
-export async function GET(request: NextRequest) {
+export const GET = withApiHandler({}, async ({ request }) => {
   try {
     const config = await getConfig();
 
@@ -101,4 +102,4 @@ export async function GET(request: NextRequest) {
     logger.error('api:auth:oidc:callback', 'OIDC callback error', error);
     return NextResponse.redirect(new URL('/login?error=oidc_error', request.url));
   }
-}
+});

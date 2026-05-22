@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
+import { NextResponse } from 'next/server';
+import { withApiHandlerParams } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { setSambaPassword } from '@/lib/fileShare/sambaSync';
 
@@ -21,12 +21,11 @@ const SAFE_USERNAME = /^[A-Za-z0-9._-]{1,64}$/;
  * id, so unknown users are rejected with 404 rather than silently
  * adding a Samba-only account.
  */
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const POST = withApiHandlerParams<undefined, undefined, { id: string }>(
+  {},
+  async ({ request, params }) => {
   try {
-    const auth = await requireSession(request);
-    if (auth instanceof NextResponse) return auth;
-
-    const { id } = await params;
+    const { id } = params;
     if (!SAFE_USERNAME.test(id)) {
       return NextResponse.json({ error: 'Invalid username.' }, { status: 400 });
     }
@@ -50,4 +49,4 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   } catch (error) {
     return apiError(error, { tag: 'api:system:file-share:samba:set-password', status: 500 });
   }
-}
+});

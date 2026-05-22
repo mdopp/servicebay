@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 vi.mock('@/lib/api/requireSession', () => ({
   requireSession: vi.fn(async () => ({ user: 'test', expires: new Date(Date.now() + 60_000) })),
@@ -41,8 +42,8 @@ initial fix.
 initial.
 `;
 
-function makeRequest(): Request {
-  return new Request('http://localhost/api/system/templates/upgrades-pending');
+function makeRequest(): NextRequest {
+  return new NextRequest('http://localhost/api/system/templates/upgrades-pending');
 }
 
 beforeEach(() => {

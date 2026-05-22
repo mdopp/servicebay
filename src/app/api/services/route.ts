@@ -1,15 +1,21 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { HealthStore } from '@/lib/health/store';
 import { listNodes } from '@/lib/nodes';
 import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
+import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
-import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
+
+const ListQuery = z.object({
+  scope: z.string().optional(),
+  node: z.string().optional(),
+});
 
 const parseIpTargets = (input: unknown, fallback: string[] = []) => {
     const parsed = normalizeExternalTargets(input);
@@ -63,10 +69,11 @@ const mapExternalLinks = (links: ExternalLink[]) => {
     });
 };
 
-export async function GET(request: Request) {
+export const GET = withApiHandler<undefined, z.infer<typeof ListQuery>>(
+  { query: ListQuery },
+  async ({ query }) => {
   try {
-    const { searchParams } = new URL(request.url);
-    const scope = searchParams.get('scope');
+    const scope = query.scope;
 
     if (scope === 'links') {
         const config = await getConfig();
@@ -74,7 +81,7 @@ export async function GET(request: Request) {
         return NextResponse.json(mapExternalLinks(links));
     }
 
-    const nodeName = searchParams.get('node');
+    const nodeName = query.node;
     const isLocal = !nodeName || nodeName === 'Local';
     
     // Start fetching config immediately
@@ -239,17 +246,19 @@ export async function GET(request: Request) {
         { status: 500 }
     );
   }
-}
+});
 
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
+const CreateQuery = z.object({
+  node: z.string().optional(),
+  stream: z.string().optional(),
+});
 
+export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
+  { query: CreateQuery },
+  async ({ request, query }) => {
   const body = await request.json();
-  const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node');
-  
+  const nodeName = query.node;
+
   const targetNode = (!nodeName || nodeName === 'Local') ? 'Local' : nodeName;
   
   // Handle Link Creation
@@ -320,7 +329,7 @@ export async function POST(request: Request) {
   }
 
   // Streaming mode: return progress events as they happen
-  if (searchParams.get('stream') === '1') {
+  if (query.stream === '1') {
     const encoder = new TextEncoder();
     const stream = new TransformStream();
     const writer = stream.writable.getWriter();
@@ -395,4 +404,4 @@ export async function POST(request: Request) {
     migrations,
   );
   return NextResponse.json({ success: true });
-}
+});

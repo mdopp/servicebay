@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getConfig } from '@/lib/config';
 import { getActiveDomain } from '@/lib/mode';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +32,7 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders() });
 }
 
-export async function GET() {
+export const GET = withApiHandler({}, async () => {
   const config = await getConfig();
   return NextResponse.json(
     {
@@ -42,4 +43,4 @@ export async function GET() {
     },
     { headers: corsHeaders() },
   );
-}
+});

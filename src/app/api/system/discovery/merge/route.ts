@@ -1,13 +1,16 @@
 
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { cookies } from 'next/headers';
 import { mergeServices, type DiscoveredService } from '@/lib/migration';
 import { listNodes } from '@/lib/nodes';
 import { decrypt } from '@/lib/auth';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 
-import { requireSession } from '@/lib/api/requireSession';
+const Query = z.object({ node: z.string().optional() });
+
 async function resolveActor(request: Request): Promise<string> {
   const forwarded = request.headers.get('x-forwarded-user') || request.headers.get('remote-user');
   if (forwarded) {
@@ -30,14 +33,11 @@ async function resolveActor(request: Request): Promise<string> {
   return 'unknown';
 }
 
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ request, query }) => {
   try {
-    const { searchParams } = new URL(request.url);
-    const nodeName = searchParams.get('node');
+    const nodeName = query.node;
 
     const body = await request.json();
     const { services, newName, dryRun } = body as { services: DiscoveredService[], newName: string, dryRun?: boolean };
@@ -74,4 +74,4 @@ export async function POST(request: Request) {
   } catch (error: unknown) {
     return apiError(error, { tag: 'api:system:discovery:merge', status: 500 });
   }
-}
+});

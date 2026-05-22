@@ -3,17 +3,18 @@ import { z } from 'zod';
 import { listTokens, createToken, revokeToken, ALL_SCOPES, type ApiScope } from '@/lib/mcp/tokens';
 import { revokeBootstrapToken } from '@/lib/mcp/bootstrapToken';
 import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+export const GET = withApiHandler({}, async ({ request }) => {
   const auth = await requireSession(request);
   if (auth instanceof NextResponse) return auth;
   const tokens = await listTokens();
   return NextResponse.json({ tokens });
-}
+});
 
 const CreateBody = z.object({
   name: z.string().min(1).max(100),
@@ -21,7 +22,9 @@ const CreateBody = z.object({
   expiresAt: z.string().datetime().optional(),
 });
 
-export async function POST(request: Request) {
+export const POST = withApiHandler({}, async ({ request }) => {
+  // requireSession is re-run here (the wrapper already gated POST) to
+  // recover the session's user for the token's `createdBy` field.
   const auth = await requireSession(request);
   if (auth instanceof NextResponse) return auth;
   try {
@@ -50,17 +53,18 @@ export async function POST(request: Request) {
   } catch (e) {
     return apiError(e, { tag: 'api:system:mcp-tokens:post', status: 400 });
   }
-}
+});
 
-export async function DELETE(request: Request) {
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id');
+const DeleteQuery = z.object({ id: z.string().optional() });
+
+export const DELETE = withApiHandler<undefined, z.infer<typeof DeleteQuery>>(
+  { query: DeleteQuery },
+  async ({ query }) => {
+  const id = query.id;
   if (!id || !/^[0-9a-f]{8}$/.test(id)) {
     return NextResponse.json({ error: 'invalid token id' }, { status: 400 });
   }
   const ok = await revokeToken(id);
   if (!ok) return NextResponse.json({ error: 'token not found' }, { status: 404 });
   return NextResponse.json({ ok: true });
-}
+});

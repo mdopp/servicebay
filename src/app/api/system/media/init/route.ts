@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { apiError } from '@/lib/api/errors';
 
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 export const dynamic = 'force-dynamic';
 
 interface InitRequest {
@@ -27,11 +27,7 @@ interface InitRequest {
  *                                   exists; not an error, just a signal
  *   { error: '...' }              — anything else
  */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
     const body = await request.json() as Partial<InitRequest>;
     const { service, host, port, username, password } = body;
@@ -49,7 +45,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:system:media:init', status: 500 });
   }
-}
+});
 
 async function initAudiobookshelf(host: string, port: number, username: string, password: string) {
   const url = `http://${host}:${port}/init`;

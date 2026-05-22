@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { getConfig } from '@/lib/config';
 import { getOidcCallbackUrl } from '@/lib/config';
 import { isRequestSecure } from '@/lib/auth/requestSecurity';
 import { assertValidOidcIssuer } from '@/lib/auth/oidcIssuer';
+import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
-export async function GET(request: NextRequest) {
+export const GET = withApiHandler({}, async ({ request }) => {
   try {
     const config = await getConfig();
 
@@ -54,4 +55,4 @@ export async function GET(request: NextRequest) {
     logger.error('api:auth:oidc', 'OIDC redirect error', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-}
+});

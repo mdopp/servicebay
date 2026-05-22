@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { login } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { hashPassword, isPasswordHash, verifyPassword } from '@/lib/auth/password';
 import { checkRateLimit, recordFailure, clearAttempts, clientKeyFromHeaders } from '@/lib/auth/rateLimit';
 import { isRequestSecure } from '@/lib/auth/requestSecurity';
+import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 
 // Pre-hashed sentinel used when the supplied username does not match. Verifying
@@ -19,7 +20,9 @@ function userKey(username: string): string {
   return `user:${username.toLowerCase()}`;
 }
 
-export async function POST(request: NextRequest) {
+// skipAuth: login is intentionally public — requiring a session to log
+// in would be circular. Mirrors src/proxy.ts:PUBLIC_API_RULES.
+export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
   try {
     const clientKey = clientKeyFromHeaders(request.headers);
     const ipDecision = checkRateLimit(clientKey);
@@ -104,4 +107,4 @@ export async function POST(request: NextRequest) {
     logger.error('auth:login', 'login crash', error instanceof Error ? error.message : String(error));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-}
+});

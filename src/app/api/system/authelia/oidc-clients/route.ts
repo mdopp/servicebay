@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { getTemplateVariables } from '@/lib/registry';
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import crypto from 'crypto';
 import yaml from 'js-yaml';
@@ -52,11 +52,8 @@ interface OidcClientsRequest {
  * Looks up each template's variables.json for oidcClient definitions,
  * builds client configs, and appends them to Authelia's configuration.yml.
  */
-export async function POST(request: NextRequest) {
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
-    const auth = await requireSession(request);
-    if (auth instanceof NextResponse) return auth;
-
     const body: OidcClientsRequest = await request.json();
     if (!body.templates?.length || !body.variables) {
       return NextResponse.json({ error: 'templates and variables required' }, { status: 400 });
@@ -230,4 +227,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return apiError(error, { tag: 'api:system:authelia:oidc-clients', status: 500 });
   }
-}
+});

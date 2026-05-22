@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandlerParams } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getConfig } from '@/lib/config';
 import { getTemplateYaml, getTemplateChangelog } from '@/lib/registry';
@@ -34,19 +36,19 @@ export const dynamic = 'force-dynamic';
  *
  * See #353 / #352.
  */
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ name: string }> },
-) {
+const Query = z.object({ source: z.string().optional() });
+
+export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name: string }>(
+  { query: Query },
+  async ({ request, query, params }) => {
   const auth = await requireSession(request);
   if (auth instanceof NextResponse) return auth;
   try {
-    const { name } = await params;
+    const { name } = params;
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) {
       return NextResponse.json({ error: 'invalid template name' }, { status: 400 });
     }
-    const { searchParams } = new URL(request.url);
-    const source = searchParams.get('source') ?? undefined;
+    const source = query.source ?? undefined;
 
     const yaml = await getTemplateYaml(name, source);
     if (yaml === null) {
@@ -78,4 +80,4 @@ export async function GET(
   } catch (e) {
     return apiError(e, { tag: 'api:system:templates:upgrade-preview', status: 500 });
   }
-}
+});

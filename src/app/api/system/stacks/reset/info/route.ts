@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { agentManager } from '@/lib/agent/manager';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getConfig } from '@/lib/config';
 import { RESET_GROUPS, getChildExclusions, isAlwaysWipe, type ResetGroup } from '@/lib/install/resetGroups';
@@ -53,13 +55,16 @@ export const dynamic = 'force-dynamic';
  * `du` failure on one path doesn't kill the whole response — that
  * group reports `bytes: null` so the UI can fall back to "size unknown".
  */
-export async function GET(request: NextRequest) {
+const Query = z.object({ node: z.string().optional() });
+
+export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ request, query }) => {
   try {
     const auth = await requireSession(request);
     if (auth instanceof NextResponse) return auth;
 
-    const url = new URL(request.url);
-    const requestedNode = url.searchParams.get('node') || undefined;
+    const requestedNode = query.node || undefined;
 
     const twin = DigitalTwinStore.getInstance();
     const nodeName = requestedNode || Object.keys(twin.nodes)[0];
@@ -145,4 +150,4 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return apiError(error, { tag: 'api:system:stacks:reset:info', status: 500 });
   }
-}
+});

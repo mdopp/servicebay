@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { provideCredentials } from '@/lib/install/runner';
 import { apiError } from '@/lib/api/errors';
 
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -12,11 +12,7 @@ export const dynamic = 'force-dynamic';
  * to `config.reverseProxy.npm` and lets the nginx capability handler
  * pick them up on the next emit.
  */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
     const body = (await request.json()) as {
       jobId?: string;
@@ -40,4 +36,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:install:credentials', status: 500 });
   }
-}
+});

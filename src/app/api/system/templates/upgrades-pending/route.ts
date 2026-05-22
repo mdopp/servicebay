@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getConfig } from '@/lib/config';
 import { getTemplateYaml, getTemplateChangelog } from '@/lib/registry';
@@ -37,7 +38,7 @@ interface UpgradeSummary {
  * would sit unnoticed for any operator who never opens the
  * Re-deploy modal.
  */
-export async function GET(request: Request) {
+export const GET = withApiHandler({}, async ({ request }) => {
   const auth = await requireSession(request);
   if (auth instanceof NextResponse) return auth;
   try {
@@ -95,4 +96,4 @@ export async function GET(request: Request) {
   } catch (e) {
     return apiError(e, { tag: 'api:system:templates:upgrades-pending', status: 500 });
   }
-}
+});

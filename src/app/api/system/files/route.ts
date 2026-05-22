@@ -1,14 +1,22 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getExecutor } from '@/lib/executor';
 import { listNodes } from '@/lib/nodes';
 import { logger } from '@/lib/logger';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const path = searchParams.get('path');
-  const nodeName = searchParams.get('node');
+const Query = z.object({
+  path: z.string().optional(),
+  node: z.string().optional(),
+});
+
+export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ query }) => {
+  const path = query.path;
+  const nodeName = query.node;
 
   if (!path) {
     return NextResponse.json({ error: 'Missing path parameter' }, { status: 400 });
@@ -32,4 +40,4 @@ export async function GET(request: Request) {
     logger.error('api:system:files', 'Failed to read file content', error);
     return NextResponse.json({ error: `Failed to read file: ${message}` }, { status: 500 });
   }
-}
+});

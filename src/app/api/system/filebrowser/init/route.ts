@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
@@ -54,11 +54,8 @@ interface FbUser {
  * on startup. Spoofing Remote-User here doesn't widen the existing
  * trust surface.
  */
-export async function POST(request: Request) {
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
-    const auth = await requireSession(request);
-    if (auth instanceof NextResponse) return auth;
-
     const body = await request.json() as InitRequest;
     const username = (body.username || 'admin').trim();
     if (!/^[a-z][a-z0-9_-]{1,31}$/.test(username)) {
@@ -157,4 +154,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:system:filebrowser:init', status: 500 });
   }
-}
+});

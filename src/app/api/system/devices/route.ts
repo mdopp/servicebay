@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { agentManager } from '@/lib/agent/manager';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
+
+const Query = z.object({
+  node: z.string().optional(),
+  path: z.string().optional(),
+});
 
 /**
  * List device files from a directory on the target node.
@@ -21,10 +28,11 @@ export const dynamic = 'force-dynamic';
  * preserving the previous behavior for callers that already pass an
  * explicit folder.
  */
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const nodeName = searchParams.get('node');
-  const devicePath = searchParams.get('path') || '/dev/serial/by-id';
+export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ query }) => {
+  const nodeName = query.node;
+  const devicePath = query.path || '/dev/serial/by-id';
 
   if (!nodeName) {
     return NextResponse.json({ error: 'Missing node parameter' }, { status: 400 });
@@ -59,4 +67,4 @@ export async function GET(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:system:devices:get', status: 500 });
   }
-}
+});

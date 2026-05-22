@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
+import { NextResponse } from 'next/server';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import {
   applyMigrationToPublic,
@@ -26,11 +26,8 @@ export const dynamic = 'force-dynamic';
  * lands in PR-2; until then this endpoint can only be exercised via
  * curl with a valid session cookie.
  */
-export async function POST(request: NextRequest) {
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
-    const auth = await requireSession(request);
-    if (auth instanceof NextResponse) return auth;
-
     let body: { publicDomain?: unknown; dryRun?: unknown };
     try {
       body = await request.json();
@@ -50,4 +47,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return apiError(error, { tag: 'api:system:reverse-proxy:migrate-to-public', status: 500 });
   }
-}
+});

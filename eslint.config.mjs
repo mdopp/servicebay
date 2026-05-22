@@ -213,9 +213,10 @@ const eslintConfig = defineConfig([
         },
       ],
       "sb/no-exec-template-literal": "error",
-      // Soft warning — the architecture-invariants script enforces the
-      // adoption ratio. This rule nudges new authors in their editor.
-      "sb/api-route-needs-handler": "warn",
+      // Hard error since the #603 burn-down — every API route verb
+      // export must use withApiHandler / withApiHandlerParams. The
+      // architecture-invariants script holds the file-level backstop.
+      "sb/api-route-needs-handler": "error",
       // Phase 1 of the FE/BE separation (#753). The fe-backend-imports
       // baseline was dropped to 0 in the same PR that lands this rule
       // — any new violation fails CI both via the rule and via

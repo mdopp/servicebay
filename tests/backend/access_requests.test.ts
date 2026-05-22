@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 const post = (body: unknown, opts?: { rawBody?: string }) =>
-  POST(new Request('http://test/api/system/access-requests', {
+  POST(new NextRequest('http://test/api/system/access-requests', {
     method: 'POST',
     body: opts?.rawBody ?? JSON.stringify(body),
     headers: { 'Content-Type': 'application/json' },

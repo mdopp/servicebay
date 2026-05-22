@@ -1,16 +1,13 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { NetworkStore } from '@/lib/network/store';
+import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
-import { requireSession } from '@/lib/api/requireSession';
-export async function POST(req: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(req);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
-    const body = await req.json();
+    const body = await request.json();
     const { source, target, port } = body;
 
     if (!source || !target) {
@@ -32,16 +29,15 @@ export async function POST(req: Request) {
     logger.error('api:network:edges:post', 'Failed to add edge', e);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
-}
+});
 
-export async function DELETE(req: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(req);
-  if (__auth instanceof NextResponse) return __auth;
+const DeleteQuery = z.object({ id: z.string().optional() });
 
+export const DELETE = withApiHandler<undefined, z.infer<typeof DeleteQuery>>(
+  { query: DeleteQuery },
+  async ({ query }) => {
   try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
+    const id = query.id;
 
     if (!id) {
       return NextResponse.json({ error: 'Missing id' }, { status: 400 });
@@ -53,4 +49,4 @@ export async function DELETE(req: Request) {
     logger.error('api:network:edges:delete', 'Failed to remove edge', e);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
-}
+});

@@ -81,11 +81,11 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 | Invariant | Current | Threshold | Enforced by |
 |---|---:|---:|---|
 | `executor.exec(\`…${x}…\`)` call sites | 26 | 26 | `check-invariants.ts:EXEC_TEMPLATE_LITERAL_MAX` + `sb/no-exec-template-literal` |
-| `withApiHandler` adoption (route.ts files) | 1 of 96 | ≥ 1% | `check-invariants.ts:MIN_WITH_API_HANDLER_RATIO` + `sb/api-route-needs-handler` |
+| `withApiHandler` adoption (route.ts files) | 108 of 108 | 100% | `check-invariants.ts:MIN_WITH_API_HANDLER_RATIO` + `sb/api-route-needs-handler` |
 
 **executor.exec template literals.** Ratcheted to 0 in #602. ESLint rule `sb/no-exec-template-literal` is `error` everywhere — every previous offender was converted to `execArgv`. `EXEC_TEMPLATE_LITERAL_MAX = 0` in `check-invariants.ts` blocks any regression.
 
-**withApiHandler adoption.** `src/lib/api/handler.ts` provides shared Zod validation + error envelope + ApiError short-circuiting. Currently 1 of 96 routes use it. The ratio must monotonically increase; new routes must use it (ESLint warning + semgrep INFO). Ratchet target: ≥ 90% adoption.
+**withApiHandler adoption.** `@/lib/api/handler` provides shared Zod validation + error envelope + ApiError short-circuiting. The #603 burn-down completed the migration — all 108 route.ts files use `withApiHandler` / `withApiHandlerParams`. The floor is locked at 100%; every new route must use the wrapper. Enforced as a hard error by the `sb/api-route-needs-handler` ESLint rule (per verb export) and the `check-invariants.ts` ratio (per file). Intentionally-public routes (login, OIDC, family-portal submission) wrap with `{ skipAuth: true }` to opt out of the requireSession gate while keeping the shared envelope.
 
 ### Security boundaries (pattern enforcement)
 

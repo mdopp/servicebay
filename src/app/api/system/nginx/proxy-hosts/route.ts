@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getConfig, updateConfig, ProxyHostEntry } from '@/lib/config';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { ServiceManager } from '@/lib/services/ServiceManager';
+import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 
-import { requireSession } from '@/lib/api/requireSession';
 export const dynamic = 'force-dynamic';
+
+const DeleteQuery = z.object({
+  domain: z.string().optional(),
+  node: z.string().optional(),
+});
 
 interface ProxyHostRequest {
     domain: string;
@@ -527,11 +533,7 @@ async function requestPublicCert(
  *
  * If forwardHost is not set, it defaults to the node's LAN IP.
  */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
     try {
         const { hosts, node, publicDomain, npmCredentials } = await request.json() as {
             hosts: ProxyHostRequest[];
@@ -718,7 +720,7 @@ export async function POST(request: Request) {
         logger.error('api:nginx:proxy-hosts', 'Failed to configure proxy hosts', error);
         return NextResponse.json({ error: 'Failed to configure proxy hosts' }, { status: 500 });
     }
-}
+});
 
 
 /**
@@ -734,14 +736,12 @@ export async function POST(request: Request) {
  * shared cert bundle may still be in use by another host), and the
  * cert_request_failure diagnose probe surfaces stale certs separately.
  */
-export async function DELETE(request: Request) {
-    const __auth = await requireSession(request);
-    if (__auth instanceof NextResponse) return __auth;
-
+export const DELETE = withApiHandler<undefined, z.infer<typeof DeleteQuery>>(
+  { query: DeleteQuery },
+  async ({ query }) => {
     try {
-        const url = new URL(request.url);
-        const domain = url.searchParams.get('domain');
-        const node = url.searchParams.get('node') ?? undefined;
+        const domain = query.domain;
+        const node = query.node;
         if (!domain) {
             return NextResponse.json({ error: 'domain query parameter is required' }, { status: 400 });
         }
@@ -803,4 +803,4 @@ export async function DELETE(request: Request) {
         logger.error('api:nginx:proxy-hosts:delete', 'Failed to delete proxy host', error);
         return NextResponse.json({ error: 'Failed to delete proxy host' }, { status: 500 });
     }
-}
+});
