@@ -27,8 +27,20 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
+
+
+# LLDAP readiness gate (#808). LLDAP shares the `auth` pod with Authelia,
+# but the pod's continuous healthcheck only probes Authelia's
+# `/api/health` — Authelia reaches LLDAP over the LDAP socket, which says
+# nothing about LLDAP's HTTP/GraphQL API being up. The group seed below
+# talks to that HTTP API, so it must wait for it explicitly. Module-level
+# so the test suite can shrink the budget.
+LLDAP_READY_TIMEOUT = 5 * 60
+LLDAP_READY_INTERVAL = 5
+SEED_MAX_ATTEMPTS = 3
 
 
 def env(key: str, default: str = "") -> str:
@@ -70,6 +82,31 @@ def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tu
             return e.code, None
     except (urllib.error.URLError, TimeoutError, OSError):
         return 0, None
+
+
+def wait_for_lldap(sb_api: str, port: int) -> bool:
+    """Poll ServiceBay's LLDAP readiness probe until LLDAP's HTTP/GraphQL
+    endpoint accepts connections. Returns True once reachable, False if
+    the deadline passes first. The probe returns `reachable: true` only
+    after LLDAP's SQLite schema is initialized and the API layer is up
+    (a bare 401 on `/api/graphql`), so seeding straight after it is
+    safe."""
+    started = time.time()
+    last_beat = 0.0
+    while time.time() - started < LLDAP_READY_TIMEOUT:
+        status, body = post_json(
+            f"{sb_api}/api/system/lldap/probe",
+            {"host": "localhost", "port": port},
+            timeout=10,
+        )
+        if status == 200 and body and body.get("reachable"):
+            return True
+        elapsed = time.time() - started
+        if elapsed - last_beat >= 10:
+            log(f"Waiting for LLDAP's HTTP API to come up ({int(elapsed)}s elapsed)...")
+            last_beat = elapsed
+        time.sleep(LLDAP_READY_INTERVAL)
+    return False
 
 
 def main() -> int:
@@ -122,30 +159,51 @@ def main() -> int:
         )
 
     # ── Seed `admins` + `family` groups ──────────────────────────────────
-    # The install runner's readiness probes (servicebay.readiness in this
-    # template's template.yml, #613) already blocked on LLDAP's GraphQL
-    # endpoint returning 401 — by the time we get here the SQLite schema
-    # is initialized and seed can run immediately.
-    log("Seeding LLDAP groups...")
-    seed_status, seed_body = post_json(
-        f"{sb_api}/api/system/lldap/seed",
-        {"host": "localhost", "port": int(lldap_port), "password": lldap_password},
-        timeout=15,
-    )
-    if seed_status == 200 and seed_body:
-        created = seed_body.get("created") or []
-        existing = seed_body.get("existing") or []
-        failed = seed_body.get("failed") or []
-        if created:
-            log(f"✅ Groups created: {', '.join(str(x) for x in created)}")
-        if existing:
-            log(f"ℹ️ Groups already exist: {', '.join(str(x) for x in existing)}")
-        if failed:
-            names = ", ".join(str(f.get("name", "?")) for f in failed)
-            log(f"⚠️ Failed: {names}")
+    # Wait for LLDAP's HTTP API before seeding (#808). The install
+    # runner's per-template readiness probes were retired in Phase 3C, so
+    # this script can no longer assume LLDAP is up by the time it runs —
+    # and a single unguarded seed attempt that lands mid-boot fails
+    # silently, leaving `admins`/`family` uncreated forever. Gate on the
+    # readiness probe, then retry the seed itself a few times in case the
+    # schema is still settling.
+    if not wait_for_lldap(sb_api, int(lldap_port)):
+        log(
+            f"⚠️ LLDAP's HTTP API never became reachable within {LLDAP_READY_TIMEOUT // 60} min — "
+            "skipping group seed. The `admins`/`family` groups were NOT created; "
+            "re-run setup once LLDAP is up, or create them in LLDAP's web UI. "
+            "Family members can't be group-assigned until they exist."
+        )
     else:
-        err = (seed_body or {}).get("error", f"HTTP {seed_status}")
-        log(f"⚠️ Could not seed LLDAP groups: {err}")
+        log("Seeding LLDAP groups...")
+        for attempt in range(1, SEED_MAX_ATTEMPTS + 1):
+            seed_status, seed_body = post_json(
+                f"{sb_api}/api/system/lldap/seed",
+                {"host": "localhost", "port": int(lldap_port), "password": lldap_password},
+                timeout=15,
+            )
+            ok = seed_status == 200 and isinstance(seed_body, dict)
+            failed = (seed_body.get("failed") or []) if ok else []
+            if ok and not failed:
+                created = seed_body.get("created") or []
+                existing = seed_body.get("existing") or []
+                if created:
+                    log(f"✅ Groups created: {', '.join(str(x) for x in created)}")
+                if existing:
+                    log(f"ℹ️ Groups already exist: {', '.join(str(x) for x in existing)}")
+                break
+            # The seed endpoint is idempotent (it reports `existing` for
+            # groups already present), so retrying a partial/failed run
+            # is safe.
+            err = (
+                ", ".join(str(f.get("name", "?")) for f in failed)
+                if failed
+                else (seed_body or {}).get("error", f"HTTP {seed_status}")
+            )
+            if attempt < SEED_MAX_ATTEMPTS:
+                log(f"⏳ LLDAP group seed attempt {attempt}/{SEED_MAX_ATTEMPTS} incomplete ({err}); retrying in {LLDAP_READY_INTERVAL}s...")
+                time.sleep(LLDAP_READY_INTERVAL)
+            else:
+                log(f"⚠️ Could not fully seed LLDAP groups after {SEED_MAX_ATTEMPTS} attempts: {err}")
 
     # ── Authelia portal URL — credential entry only (no admin user; auth
     # via LLDAP) ─────────────────────────────────────────────────────────

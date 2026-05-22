@@ -264,6 +264,62 @@ class AuthScript(unittest.TestCase):
         self.assertNotIn("lldap-pass", log_only)
         self.assertNotIn("jwt-secret", log_only)
 
+    def test_seed_skipped_when_lldap_never_reachable(self):
+        """If LLDAP's HTTP API never comes up, the group seed is skipped
+        with a clear breadcrumb instead of firing blind against a
+        not-ready LLDAP and failing silently (regression-guard for
+        #808)."""
+        m = load_script("auth")
+        responses = {
+            "/api/system/lldap/credentials": {"status": 200, "body": {"ok": True}},
+            # Probe answers but reports LLDAP not yet reachable, forever.
+            "/api/system/lldap/probe": {"status": 200, "body": {"reachable": False}},
+        }
+        env = {
+            "HOST": "h",
+            "SB_API_URL": "http://sb.test",
+            "LLDAP_ADMIN_PASSWORD": "lldap-pass",
+            "LLDAP_PORT": "17170",
+        }
+        import time as time_mod
+        import urllib.request
+        with run_with_env(env), \
+             mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)), \
+             mock.patch.object(time_mod, "sleep", lambda _s: None), \
+             mock.patch.object(m, "LLDAP_READY_TIMEOUT", 0.01), \
+             mock.patch.object(m, "LLDAP_READY_INTERVAL", 0.001):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertIn("skipping group seed", out)
+        # The seed endpoint must never have been hit while LLDAP is down.
+        self.assertNotIn("Seeding LLDAP groups", out)
+
+    def test_seed_retries_then_warns_on_persistent_failure(self):
+        """Once LLDAP is reachable, a failing seed is retried a few
+        times before the script gives up — the pre-#808 code ran it
+        exactly once and never retried."""
+        m = load_script("auth")
+        responses = {
+            "/api/system/lldap/credentials": {"status": 200, "body": {"ok": True}},
+            "/api/system/lldap/probe": {"status": 200, "body": {"reachable": True}},
+            "/api/system/lldap/seed": {"status": 500, "body": {"error": "boom"}},
+        }
+        env = {
+            "HOST": "h",
+            "SB_API_URL": "http://sb.test",
+            "LLDAP_ADMIN_PASSWORD": "lldap-pass",
+            "LLDAP_PORT": "17170",
+        }
+        import time as time_mod
+        import urllib.request
+        with run_with_env(env), \
+             mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)), \
+             mock.patch.object(time_mod, "sleep", lambda _s: None), \
+             mock.patch.object(m, "LLDAP_READY_INTERVAL", 0.001):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertIn("Could not fully seed LLDAP groups after 3 attempts", out)
+
 
 class FileShareScript(unittest.TestCase):
     def test_samba_credential_emitted_when_password_set(self):
@@ -413,6 +469,77 @@ class MediaScript(unittest.TestCase):
         )
         self.assertNotIn("abs-pass", log_only)
         self.assertNotIn("jf-pass", log_only)
+
+    def test_jellyfin_waits_for_default_user_before_seeding_admin(self):
+        """`POST /Startup/User` returns 404 until Jellyfin's UserManager
+        has initialized the default user. The script must GET
+        /Startup/FirstUser — which triggers that init — before POSTing
+        the admin (regression-guard for #809)."""
+        m = load_script("media")
+        import urllib.error
+        import urllib.request
+
+        class _Resp:
+            def __init__(self, status, body):
+                self.status = status
+                self._b = json.dumps(body or {}).encode("utf-8")
+
+            def read(self):
+                return self._b
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        calls: list[tuple[str, str]] = []
+        first_user_initialized = {"v": False}
+
+        def recording_urlopen(req, *_a, **_kw):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            method = req.get_method() if hasattr(req, "get_method") else "GET"
+            calls.append((method, url))
+            if "/Startup/FirstUser" in url:
+                # GET /Startup/FirstUser runs the UserManager init pass.
+                first_user_initialized["v"] = True
+                return _Resp(200, {"Name": "stub"})
+            if "/Startup/User" in url:
+                # Mimic real Jellyfin: 404 until the default user exists.
+                return _Resp(204 if first_user_initialized["v"] else 404, None)
+            if "/System/Info/Public" in url:
+                return _Resp(200, {"StartupWizardCompleted": False})
+            if "/Users/AuthenticateByName" in url:
+                return _Resp(200, {"AccessToken": "tok"})
+            if any(p in url for p in (
+                "/Startup/Configuration", "/Startup/RemoteAccess", "/Startup/Complete",
+                "/QuickConnect/Enable", "/Library/VirtualFolders",
+            )):
+                return _Resp(204, None)
+            raise urllib.error.URLError(f"unmocked URL: {url}")
+
+        env = {
+            "HOST": "h",
+            "SB_API_URL": "http://sb.test",
+            "JELLYFIN_ADMIN_PASSWORD": "jf-pass",
+            "JELLYFIN_PORT": "8096",
+        }
+        with run_with_env(env), mock.patch.object(urllib.request, "urlopen", recording_urlopen):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        # The admin seed must have succeeded — i.e. POST /Startup/User
+        # was not a 404.
+        self.assertIn("admin 'admin' seeded", out)
+        # GET /Startup/FirstUser must come before POST /Startup/User.
+        get_first = next(
+            i for i, (meth, u) in enumerate(calls)
+            if meth == "GET" and "/Startup/FirstUser" in u
+        )
+        post_user = next(
+            i for i, (meth, u) in enumerate(calls)
+            if meth == "POST" and u.endswith("/Startup/User")
+        )
+        self.assertLess(get_first, post_user)
 
 
 class HomeAssistantScript(unittest.TestCase):
