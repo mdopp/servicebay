@@ -38,6 +38,7 @@ import { parseTemplateTier } from '@/lib/templateTier';
 import { selectMigrationChain } from '@/lib/stackInstall/migrations';
 import {
   bootstrapNpmAdmin,
+  buildProxyHosts,
   type StackVariable,
 } from '@/lib/stackInstall/postInstall';
 import { buildCredentialsManifest, type Credential } from '@/lib/stackInstall/credentialsManifest';
@@ -533,6 +534,55 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     : `after ${MAX_DEPLOY_ATTEMPTS} attempt(s): ${lastErr?.message ?? 'unknown error'}`;
   await log(jobId, `❌ Failed to install ${item.name} ${tail}`);
   return false;
+}
+
+/** Consolidated per-service proxy-host provisioning (#807).
+ *
+ *  The capability bus fires one `feature.installed` per template and the
+ *  nginx handler creates only *that* template's subdomain hosts. If any
+ *  single per-template emit is skipped or under-produces, the operator
+ *  is left with the portal routes (created separately by the portal
+ *  provisioner) but no service subdomains — and the failure is silent
+ *  because the handler no-ops `{ ok: true }` when it finds nothing of
+ *  its own to do.
+ *
+ *  This pass builds the host list from every subdomain-typed variable
+ *  across the whole install and creates them in one batch. The
+ *  proxy-hosts route is idempotent (it dedupes by domain), so running
+ *  this after the per-template emits is safe — anything the handlers
+ *  already created is a no-op, anything they missed gets created here.
+ *  The install no longer depends on every per-template emit landing. */
+export async function ensureProxyHosts(
+  jobId: string,
+  variables: StackVariable[],
+  node: string | undefined,
+): Promise<void> {
+  const { domain, hosts } = buildProxyHosts(variables);
+  // No public/LAN domain or no subdomain-typed variables → nothing to
+  // route. A pure-LAN install with no subdomains is a valid no-op.
+  if (!domain || hosts.length === 0) return;
+  try {
+    const res = await apiFetch('/api/system/nginx/proxy-hosts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hosts, publicDomain: domain, node }),
+    });
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    if (!res.ok) {
+      const msg = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+      await log(jobId, `⚠️ Could not create per-service proxy hosts: ${msg}. Settings → Self-Diagnose → Reprovision will retry.`);
+      return;
+    }
+    const created = Array.isArray(data.created) ? (data.created as string[]) : [];
+    const failed = Array.isArray(data.failed) ? (data.failed as Array<{ domain?: string }>) : [];
+    await log(jobId, `✅ Per-service proxy hosts ensured for ${hosts.length} service domain(s)${created.length ? ` (${created.join(', ')})` : ''}.`);
+    if (failed.length > 0) {
+      const names = failed.map(f => f.domain ?? '?').join(', ');
+      await log(jobId, `⚠️ Some proxy hosts could not be created: ${names}. Self-diagnose → Reprovision will retry.`);
+    }
+  } catch (e) {
+    await log(jobId, `⚠️ Per-service proxy-host creation failed: ${e instanceof Error ? e.message : String(e)}. Settings → Self-Diagnose → Reprovision will retry.`);
+  }
 }
 
 /** Inner async pipeline — wrapped by `startJob` so the public surface
@@ -1085,6 +1135,11 @@ async function runJob(jobId: string): Promise<void> {
       await log(jobId, `(note) capability emit failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+
+  // #807 — guarantee every service subdomain has an NPM proxy host,
+  // regardless of whether each per-template `feature.installed` emit
+  // created its own. Idempotent: re-creating an existing host no-ops.
+  await ensureProxyHosts(jobId, variables, input.node);
 
   // Build the final credentials manifest for the Done UI. Handler
   // already persisted per-template entries to `config.installManifest`

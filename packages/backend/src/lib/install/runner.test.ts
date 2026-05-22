@@ -29,11 +29,21 @@ vi.mock('@/lib/health/serviceHealthBootstrap', () => ({
   bootstrapServiceHealth: () => bootstrapMock(),
 }));
 
-import { isServiceReady, waitForDependencies } from './runner';
+// `ensureProxyHosts` POSTs via the loopback apiFetch, which attaches the
+// internal token — stub it so the test doesn't need a real token file.
+vi.mock('@/lib/auth/internalToken', () => ({
+  getInternalApiToken: () => 'test-token',
+}));
+
+import { isServiceReady, waitForDependencies, ensureProxyHosts } from './runner';
+import type { StackVariable } from '@/lib/stackInstall/postInstall';
+
+const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
 beforeEach(() => {
   twinStub.nodes = {};
   bootstrapMock.mockClear();
+  fetchSpy.mockReset();
 });
 
 describe('isServiceReady', () => {
@@ -77,5 +87,48 @@ describe('waitForDependencies', () => {
     ).resolves.toBeUndefined();
     // The gate registers deployed services with the health poller first.
     expect(bootstrapMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ensureProxyHosts', () => {
+  const subdomainVar = (template: string, varName: string, sub: string): StackVariable => ({
+    name: varName,
+    value: sub,
+    meta: {
+      type: 'subdomain',
+      templateName: template,
+      proxyPort: '2283',
+      exposure: 'public',
+    } as StackVariable['meta'],
+  });
+
+  it('POSTs every subdomain host in one batch, even across templates', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, created: ['photos.dopp.cloud', 'vault.dopp.cloud'] }), { status: 200 }),
+    );
+    const variables: StackVariable[] = [
+      { name: 'PUBLIC_DOMAIN', value: 'dopp.cloud' },
+      subdomainVar('immich', 'IMMICH_SUBDOMAIN', 'photos'),
+      subdomainVar('vaultwarden', 'VAULTWARDEN_SUBDOMAIN', 'vault'),
+    ];
+    await ensureProxyHosts('job1', variables, undefined);
+    // Single consolidated POST — not one-per-template.
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toMatch(/\/api\/system\/nginx\/proxy-hosts$/);
+    const body = JSON.parse(String((init as RequestInit).body));
+    expect(body.publicDomain).toBe('dopp.cloud');
+    const domains = body.hosts.map((h: { domain: string }) => h.domain).sort();
+    expect(domains).toEqual(['photos.dopp.cloud', 'vault.dopp.cloud']);
+  });
+
+  it('no-ops on a pure-LAN install with no PUBLIC_DOMAIN', async () => {
+    await ensureProxyHosts('job1', [subdomainVar('immich', 'IMMICH_SUBDOMAIN', 'photos')], undefined);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('no-ops when there are no subdomain-typed variables', async () => {
+    await ensureProxyHosts('job1', [{ name: 'PUBLIC_DOMAIN', value: 'dopp.cloud' }], undefined);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
