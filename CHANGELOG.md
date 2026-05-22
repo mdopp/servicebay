@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.16.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.15.1...servicebay-v4.16.0) (2026-05-22)
+
+
+### Features
+
+* **hermes:** expose the web dashboard with a subdomain and portal card ([#834](https://github.com/mdopp/servicebay/issues/834)) ([57baa17](https://github.com/mdopp/servicebay/commit/57baa1708f1d17e540a7aecf0c547513ef585d35))
+
+
+### Bug Fixes
+
+* **adguard:** use /login.html for the healthcheck, not /control/status ([#835](https://github.com/mdopp/servicebay/issues/835)) ([98c9930](https://github.com/mdopp/servicebay/commit/98c99305441966201dd44c6529a5160cd1a4db92)), closes [#827](https://github.com/mdopp/servicebay/issues/827)
+* **immich:** correct healthcheck endpoint to /api/server/ping ([#831](https://github.com/mdopp/servicebay/issues/831)) ([3e7dd5e](https://github.com/mdopp/servicebay/commit/3e7dd5ea787cb40844e1ba4cbeb2f7c6b1cf2cd4))
+
 ## [4.15.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.15.0...servicebay-v4.15.1) (2026-05-22)
 
 
