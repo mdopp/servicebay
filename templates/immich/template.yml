@@ -10,10 +10,12 @@ metadata:
     servicebay.ports: "{{IMMICH_PORT}}/tcp"
     # photos.<domain> is served via nginx; Immich's SSO uses Authelia.
     servicebay.dependencies: "nginx,auth"
-    # Continuous health probe (#628). `/api/server-info/ping` is Immich's
+    # Continuous health probe (#628). `/api/server/ping` is Immich's
     # unauthenticated liveness endpoint — returns `{"res":"pong"}`.
+    # (Pre-v2.7 this lived at `/api/server-info/ping`; the old path now
+    # 404s, which made the probe report Immich permanently unhealthy.)
     servicebay.healthcheck: |
-      url: http://localhost:{{IMMICH_PORT}}/api/server-info/ping
+      url: http://localhost:{{IMMICH_PORT}}/api/server/ping
       interval: 30s
       timeout: 5s
       startup_timeout: 5m
