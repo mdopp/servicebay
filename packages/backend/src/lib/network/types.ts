@@ -24,6 +24,19 @@ export interface NetworkNode {
   node?: string;
 }
 
+/**
+ * Edge provenance (#505). Lets the UI render — and the operator trust —
+ * each edge for what it is:
+ *   - `gateway` / `proxy` — infrastructure topology (FritzBox, nginx).
+ *   - `observed`  — a real TCP flow seen on the host (`ss`); ground truth.
+ *   - `declared`  — a template's `servicebay.dependencies` (author intent,
+ *                   NOT observed traffic — rendered distinctly).
+ *   - `manual`    — an operator-drawn edge (the `isManual` case).
+ * Optional for backwards compatibility; absent is treated as a plain
+ * structural edge.
+ */
+export type NetworkEdgeKind = 'gateway' | 'proxy' | 'observed' | 'declared' | 'manual';
+
 export interface NetworkEdge {
   id: string;
   source: string;
@@ -33,6 +46,12 @@ export interface NetworkEdge {
   port: number;
   state: 'active' | 'inactive'; // For visualization (e.g. animated line)
   isManual?: boolean;
+  /** Provenance discriminator (#505). See `NetworkEdgeKind`. */
+  kind?: NetworkEdgeKind;
+  /** For `observed` edges — when the flow was last seen + how many
+   *  samples backed it, so the UI can show freshness / confidence. */
+  lastSeen?: string;
+  observedCount?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   style?: any;
 }
