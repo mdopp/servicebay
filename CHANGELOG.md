@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.16.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.16.1...servicebay-v4.16.2) (2026-05-22)
+
+
+### Bug Fixes
+
+* **install:** persist the credentials manifest to config.installManifest ([#839](https://github.com/mdopp/servicebay/issues/839)) ([64f6218](https://github.com/mdopp/servicebay/commit/64f6218f7a97459eab00d8f7c45dfde7ce90511e))
+
 ## [4.16.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.16.0...servicebay-v4.16.1) (2026-05-22)
 
 
