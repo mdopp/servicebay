@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { skipCredentials } from '@/lib/install/runner';
 import { apiError } from '@/lib/api/errors';
 
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -10,11 +10,7 @@ export const dynamic = 'force-dynamic';
  * Proxy routes won't be configured in this run; the operator can fix
  * this later via Settings → Integrations.
  */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
     const body = (await request.json()) as { jobId?: string };
     if (!body.jobId) {
@@ -31,4 +27,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:install:skip-credentials', status: 500 });
   }
-}
+});

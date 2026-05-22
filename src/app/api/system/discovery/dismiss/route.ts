@@ -5,7 +5,7 @@ import { listNodes } from '@/lib/nodes';
 import type { PodmanConnection } from '@/lib/nodes';
 import { apiError } from '@/lib/api/errors';
 
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 export const dynamic = 'force-dynamic';
 
 interface DismissPayload {
@@ -13,11 +13,7 @@ interface DismissPayload {
     nodeName?: string;
 }
 
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
     try {
         const body = (await request.json()) as DismissPayload;
         const bundleId = body?.bundleId?.trim();
@@ -56,4 +52,4 @@ export async function POST(request: Request) {
     } catch (error) {
         return apiError(error, { tag: 'api:system:discovery:dismiss', status: 500 });
     }
-}
+});

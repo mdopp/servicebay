@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { sendTestEmail } from '@/lib/email';
 
@@ -22,10 +22,7 @@ export const dynamic = 'force-dynamic';
  */
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export async function POST(request: Request) {
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
     const body = await request.json().catch(() => ({}));
     const to = typeof body?.to === 'string' ? body.to.trim() : '';
@@ -42,4 +39,4 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : String(error);
     return apiError(new Error(message), { tag: 'api:system:notifications:email:test', status: 502 });
   }
-}
+});

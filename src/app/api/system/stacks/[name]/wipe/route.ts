@@ -22,8 +22,8 @@
  * this endpoint — the basic stack is wipe-via-FACTORY-RESET only. The
  * caller can use `/api/system/factory-reset` for that path.
  */
-import { NextRequest, NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
+import { NextResponse } from 'next/server';
+import { withApiHandlerParams } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getStackManifest } from '@/lib/registry';
 import { ServiceManager } from '@/lib/services/ServiceManager';
@@ -44,15 +44,11 @@ interface WipeResult {
   wipedPaths: string[];
 }
 
-export async function POST(
-  request: NextRequest,
-  ctx: { params: Promise<{ name: string }> },
-) {
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
-
+export const POST = withApiHandlerParams<undefined, undefined, { name: string }>(
+  {},
+  async ({ request, params }) => {
   try {
-    const { name } = await ctx.params;
+    const { name } = params;
     const body = await request.json().catch(() => ({} as Record<string, unknown>));
     const expected = `WIPE-${name}`;
     if (body.confirm !== expected) {
@@ -172,7 +168,7 @@ export async function POST(
   } catch (e) {
     return apiError(e, { tag: 'api:system:stacks:wipe', status: 500 });
   }
-}
+});
 
 /**
  * Reconstruct the install-time variable map from persisted config.

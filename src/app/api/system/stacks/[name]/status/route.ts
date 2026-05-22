@@ -4,23 +4,23 @@
  * Single-stack detail: parsed manifest + per-child health. Drives the
  * stack-detail view (StackCard).
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandlerParams } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getStackManifest } from '@/lib/registry';
 import { getStackHealth } from '@/lib/install/stackHealth';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(
-  request: NextRequest,
-  ctx: { params: Promise<{ name: string }> },
-) {
+export const GET = withApiHandlerParams<undefined, undefined, { name: string }>(
+  {},
+  async ({ request, params }) => {
   const auth = await requireSession(request);
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const { name } = await ctx.params;
+    const { name } = params;
     if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 });
 
     let manifest;
@@ -41,4 +41,4 @@ export async function GET(
   } catch (e) {
     return apiError(e, { tag: 'api:system:stacks:status', status: 500 });
   }
-}
+});

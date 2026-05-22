@@ -3,7 +3,7 @@ import { createJob, getCurrentJob, type JobInput } from '@/lib/install/jobStore'
 import { startJob } from '@/lib/install/runner';
 import { apiError } from '@/lib/api/errors';
 
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -16,11 +16,7 @@ export const dynamic = 'force-dynamic';
  * active phase (running / needs_credentials). The wizard surfaces this
  * via the `installInProgress` banner + reattach flow.
  */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
     const body = (await request.json()) as { source?: string; input?: JobInput };
     const input = body.input;
@@ -40,4 +36,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:install:start', status: 500 });
   }
-}
+});

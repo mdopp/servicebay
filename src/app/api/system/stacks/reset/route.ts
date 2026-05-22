@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
+import { NextResponse } from 'next/server';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { performStackReset, StackResetError } from '@/lib/install/performStackReset';
 
@@ -20,11 +20,8 @@ export const dynamic = 'force-dynamic';
  *
  * ServiceBay itself is intentionally not touched (Quadlet definition).
  */
-export async function POST(request: NextRequest) {
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
-    const auth = await requireSession(request);
-    if (auth instanceof NextResponse) return auth;
-
     const body = await request.json();
     const { confirm, node: requestedNode, preserve: rawPreserve } = body as {
       confirm?: string;
@@ -47,4 +44,4 @@ export async function POST(request: NextRequest) {
     }
     return apiError(error, { tag: 'api:system:stacks:reset', status: 500 });
   }
-}
+});

@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getCurrentJob, getJob, getLatestJob, PROCESS_STARTED_AT, readLog } from '@/lib/install/jobStore';
 import { getConfig } from '@/lib/config';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
+
+const Query = z.object({
+  jobId: z.string().optional(),
+  logsSince: z.string().optional(),
+});
 
 /**
  * Read job state + accumulated logs since a byte offset.
@@ -31,11 +38,12 @@ export const dynamic = 'force-dynamic';
  * pops back open on every reload after install finishes but the
  * operator hasn't acknowledged the result yet.
  */
-export async function GET(request: Request) {
+export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ query }) => {
   try {
-    const url = new URL(request.url);
-    const jobId = url.searchParams.get('jobId');
-    const sinceBytes = parseInt(url.searchParams.get('logsSince') || '0', 10);
+    const jobId = query.jobId;
+    const sinceBytes = parseInt(query.logsSince || '0', 10);
 
     let job = jobId ? await getJob(jobId) : await getCurrentJob();
     if (!job && !jobId) {
@@ -75,4 +83,4 @@ export async function GET(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:install:status', status: 500 });
   }
-}
+});

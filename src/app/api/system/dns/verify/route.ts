@@ -4,7 +4,7 @@ import { getConfig } from '@/lib/config';
 import { FritzBoxClient } from '@/lib/fritzbox/client';
 import { apiError } from '@/lib/api/errors';
 
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 export const dynamic = 'force-dynamic';
 
 interface DomainResult {
@@ -34,11 +34,7 @@ interface DomainResult {
  * results still come through — the per-domain match flag just
  * reflects what we know. The endpoint never throws on partial info.
  */
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   try {
     const body = (await request.json().catch(() => ({}))) as { domains?: unknown };
     const domains = Array.isArray(body.domains)
@@ -90,4 +86,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:system:dns:verify', status: 500 });
   }
-}
+});

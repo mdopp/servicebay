@@ -166,11 +166,13 @@ async function checkExecTemplateLiterals() {
 // Routes that hand-roll their own try/catch + envelope drift apart. The
 // abstraction in src/lib/api/handler.ts is the SoT. Should monotonically
 // increase; ratchet up after each cluster migration so any regression
-// fails CI immediately. Current run: 64/108 routes (~59%) after the
-// nginx cluster sweep (system/nginx/{status,export,import,install,
-// bootstrap}).
+// fails CI immediately. The #603 burn-down completed the migration:
+// 108/108 routes (100%) now use withApiHandler / withApiHandlerParams.
+// Floor is locked at 1.0 — every new route.ts must use the wrapper
+// (the `sb/api-route-needs-handler` ESLint rule, now `error`, is the
+// per-export gate; this ratio is the file-level backstop).
 // ---------------------------------------------------------------------------
-const MIN_WITH_API_HANDLER_RATIO = 0.55;
+const MIN_WITH_API_HANDLER_RATIO = 1.0;
 
 async function checkWithApiHandlerAdoption() {
     const routeFiles = await walk(path.join(SRC, 'app', 'api'), p => p.endsWith('/route.ts'));

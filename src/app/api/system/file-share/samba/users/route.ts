@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { syncSambaWithLldap } from '@/lib/fileShare/sambaSync';
 
@@ -19,13 +20,9 @@ export const dynamic = 'force-dynamic';
  *  LLDAP user (LLDAP's user-create flow runs in a separate pod and
  *  has no broadcast hook).
  */
-export async function GET(request: NextRequest) {
-  return handle(request);
-}
+export const GET = withApiHandler({}, async ({ request }) => handle(request));
 
-export async function POST(request: NextRequest) {
-  return handle(request);
-}
+export const POST = withApiHandler({}, async ({ request }) => handle(request));
 
 async function handle(request: NextRequest) {
   try {

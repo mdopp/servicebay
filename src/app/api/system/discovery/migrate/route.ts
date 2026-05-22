@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { migrateService, type DiscoveredService } from '@/lib/migration';
 import { listNodes } from '@/lib/nodes';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 
-import { requireSession } from '@/lib/api/requireSession';
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
+const Query = z.object({ node: z.string().optional() });
 
+export const POST = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ request, query }) => {
   try {
-    const { searchParams } = new URL(request.url);
-    const nodeName = searchParams.get('node');
+    const nodeName = query.node;
 
     const body = await request.json();
     const { service, customName, dryRun } = body as { service: DiscoveredService, customName?: string, dryRun?: boolean };
@@ -37,4 +37,4 @@ export async function POST(request: Request) {
   } catch (error: unknown) {
     return apiError(error, { tag: 'api:system:discovery:migrate', status: 500 });
   }
-}
+});

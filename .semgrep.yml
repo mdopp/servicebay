@@ -161,7 +161,7 @@ rules:
           `@/lib/api/handler` — gives shared Zod validation, error envelope,
           and ApiError short-circuiting. See docs/ARCHITECTURE_INVARIANTS.md.
       languages: [typescript]
-      severity: INFO
+      severity: WARNING
       paths:
           include:
               - 'src/app/api/**/route.ts'

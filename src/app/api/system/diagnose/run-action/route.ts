@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { dispatchProbeAction } from '@/lib/diagnose/actions';
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import '@/lib/diagnose/probes/register';
 
 export const dynamic = 'force-dynamic';
@@ -29,11 +29,7 @@ const Body = z.object({
   itemId: z.string().min(1).max(128).optional(),
 });
 
-export async function POST(request: Request) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   let parsed;
   try {
     parsed = Body.parse(await request.json());
@@ -53,4 +49,4 @@ export async function POST(request: Request) {
   });
 
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });
-}
+});

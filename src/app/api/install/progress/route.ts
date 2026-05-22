@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getJob, readLog } from '@/lib/install/jobStore';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
+
+const Query = z.object({
+  jobId: z.string().optional(),
+  logsSince: z.string().optional(),
+});
 
 /**
  * Public, sanitized view of an install job's progress (#663 — S1).
@@ -34,14 +41,15 @@ export const dynamic = 'force-dynamic';
  * variables; widening `/progress` to include them would defeat the
  * purpose. See `src/proxy.ts:PUBLIC_API_RULES` for the gate config.
  */
-export async function GET(request: Request) {
+export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
+  { query: Query },
+  async ({ query }) => {
   try {
-    const url = new URL(request.url);
-    const jobId = url.searchParams.get('jobId');
+    const jobId = query.jobId;
     if (!jobId) {
       return NextResponse.json({ error: 'jobId query parameter required' }, { status: 400 });
     }
-    const sinceBytes = parseInt(url.searchParams.get('logsSince') || '0', 10);
+    const sinceBytes = parseInt(query.logsSince || '0', 10);
 
     const job = await getJob(jobId);
     if (!job) {
@@ -71,4 +79,4 @@ export async function GET(request: Request) {
   } catch (error) {
     return apiError(error, { tag: 'api:install:progress', status: 500 });
   }
-}
+});

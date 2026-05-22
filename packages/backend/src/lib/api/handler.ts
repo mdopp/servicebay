@@ -49,6 +49,14 @@ export interface ApiHandlerOptions<B, Q> {
   body?: z.ZodType<B>;
   /** Validates URL query params. Use undefined when no query is expected. */
   query?: z.ZodType<Q>;
+  /**
+   * Opt out of the built-in requireSession gate on mutating verbs (#603).
+   * Only for routes that are *intentionally* public — login, the OIDC
+   * initiator, the family-portal access-request submission. These mirror
+   * `src/proxy.ts:PUBLIC_API_RULES`; keep the two in sync. Authenticated
+   * routes must never set this.
+   */
+  skipAuth?: boolean;
 }
 
 export interface ParsedRequest<B, Q> {
@@ -72,7 +80,7 @@ async function runHandler<B, Q>(
   invoke: (parsed: { body: B; query: Q }) => Promise<Response | NextResponse | unknown>,
 ): Promise<Response> {
   try {
-    if (MUTATING_METHODS.has(request.method)) {
+    if (!options.skipAuth && MUTATING_METHODS.has(request.method)) {
       // Lazy import to keep handler.ts free of the cookie-parse import
       // chain when the module is loaded by middleware-adjacent code.
       const { requireSession } = await import('./requireSession');

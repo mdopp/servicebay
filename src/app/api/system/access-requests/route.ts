@@ -8,11 +8,10 @@ import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-// NOTE: POST is intentionally NOT routed through `withApiHandler` —
-// the endpoint is public (anonymous family-LAN visitors hit it from
-// the portal) and the handler's built-in requireSession gate would
-// reject every submission. GET is admin-only and goes through the
-// handler.
+// NOTE: POST uses `withApiHandler({ skipAuth: true })` — the endpoint
+// is public (anonymous family-LAN visitors hit it from the portal) so
+// it opts out of the handler's built-in requireSession gate. GET is
+// admin-only and goes through the handler normally.
 
 /**
  * "Request access" endpoint for the family portal (#242 follow-up).
@@ -55,7 +54,7 @@ const PostBody = z.object({
   lastName: z.string().trim().min(1).max(60).optional(),
 });
 
-export async function POST(request: Request) {
+export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
   // Cap raw body size so a hostile client can't push gigabytes.
   // Next.js doesn't enforce this by default for route handlers.
   const text = await request.text();
@@ -124,7 +123,7 @@ export async function POST(request: Request) {
   );
 
   return NextResponse.json({ ok: true, id: newRequest.id });
-}
+});
 
 export const GET = withApiHandler({}, async () => {
   const config = await getConfig();

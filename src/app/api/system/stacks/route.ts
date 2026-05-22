@@ -9,6 +9,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getStackManifest } from '@/lib/registry';
 import { getStackHealth, type StackHealth } from '@/lib/install/stackHealth';
@@ -25,7 +26,7 @@ interface StackSummary {
   health: StackHealth | null;
 }
 
-export async function GET(request: Request) {
+export const GET = withApiHandler({}, async ({ request }) => {
   const auth = await requireSession(request);
   if (auth instanceof NextResponse) return auth;
 
@@ -68,4 +69,4 @@ export async function GET(request: Request) {
   } catch (e) {
     return apiError(e, { tag: 'api:system:stacks:list', status: 500 });
   }
-}
+});

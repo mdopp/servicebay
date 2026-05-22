@@ -11,17 +11,14 @@
  */
 
 import { NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandler } from '@/lib/api/handler';
 import { runDiagnose, type DiagnoseProbe } from '@/lib/diagnose/runDiagnose';
 
 export type { DiagnoseProbe };
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request) {
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
-
+export const POST = withApiHandler({}, async ({ request }) => {
   let nodeName = 'Local';
   try {
     const body = await request.json().catch(() => ({}));
@@ -32,4 +29,4 @@ export async function POST(request: Request) {
 
   const result = await runDiagnose(nodeName);
   return NextResponse.json(result);
-}
+});

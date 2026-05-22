@@ -13,10 +13,10 @@
  * duplication is small enough today (yaml load/dump + restart) that
  * factoring it out wasn't worth the indirection for one new endpoint.
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { DigitalTwinStore } from '@/lib/store/twin';
-import { requireSession } from '@/lib/api/requireSession';
+import { withApiHandlerParams } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { agentManager } from '@/lib/agent/manager';
 import yaml from 'js-yaml';
@@ -32,15 +32,11 @@ interface AutheliaConfig {
   };
 }
 
-export async function DELETE(
-  request: NextRequest,
-  ctx: { params: Promise<{ client_id: string }> },
-) {
+export const DELETE = withApiHandlerParams<undefined, undefined, { client_id: string }>(
+  {},
+  async ({ params }) => {
   try {
-    const auth = await requireSession(request);
-    if (auth instanceof NextResponse) return auth;
-
-    const { client_id: clientId } = await ctx.params;
+    const { client_id: clientId } = params;
     if (!clientId) {
       return NextResponse.json({ error: 'client_id required' }, { status: 400 });
     }
@@ -120,4 +116,4 @@ export async function DELETE(
   } catch (error) {
     return apiError(error, { tag: 'api:system:authelia:oidc-clients:delete', status: 500 });
   }
-}
+});

@@ -1,13 +1,16 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { HealthStore } from '@/lib/health/store';
 import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
 import { ServiceName } from '@/lib/api/schemas';
 import { apiError } from '@/lib/api/errors';
+import { withApiHandlerParams } from '@/lib/api/handler';
 import crypto from 'crypto';
 
-import { requireSession } from '@/lib/api/requireSession';
+const Query = z.object({ node: z.string().optional() });
+
 const parseIpTargets = (input: unknown, fallback: string[] = []) => {
   const parsed = normalizeExternalTargets(input);
   if (parsed.length > 0) {
@@ -16,19 +19,12 @@ const parseIpTargets = (input: unknown, fallback: string[] = []) => {
   return fallback;
 };
 
-function getNodeName(request: Request): string {
-    const { searchParams } = new URL(request.url);
-    return searchParams.get('node') || 'Local';
-}
-
 // Decode + validate the [name] segment. External links can use a UUID or a
 // human-readable label; managed services flow into shell commands so they
 // must satisfy ServiceName. We accept any non-empty string here and let the
 // caller decide how strict to be (link lookup vs. shell-bound action).
-async function decodeName(params: Promise<{ name: string }>): Promise<string | null> {
-  const resolved = await params;
-  const raw = resolved?.name ?? '';
-  try { return decodeURIComponent(raw); } catch { return null; }
+function decodeName(raw: string): string | null {
+  try { return decodeURIComponent(raw ?? ''); } catch { return null; }
 }
 
 function ensureServiceName(name: string): { ok: true; value: string } | { ok: false; response: NextResponse } {
@@ -39,29 +35,29 @@ function ensureServiceName(name: string): { ok: true; value: string } | { ok: fa
   return { ok: true, value: check.data };
 }
 
-export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
+export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name: string }>(
+  { query: Query },
+  async ({ query, params }) => {
   try {
-    const decoded = await decodeName(params);
+    const decoded = decodeName(params.name);
     if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
     const guard = ensureServiceName(decoded);
     if (!guard.ok) return guard.response;
-    const nodeName = getNodeName(request);
+    const nodeName = query.node || 'Local';
 
     const files = await ServiceManager.getServiceFiles(nodeName, guard.value);
     return NextResponse.json(files);
   } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
-}
+});
 
-export async function DELETE(request: Request, { params }: { params: Promise<{ name: string }> }) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
-  const decoded = await decodeName(params);
+export const DELETE = withApiHandlerParams<undefined, z.infer<typeof Query>, { name: string }>(
+  { query: Query },
+  async ({ query, params }) => {
+  const decoded = decodeName(params.name);
   if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
-  const nodeName = getNodeName(request);
+  const nodeName = query.node || 'Local';
 
   // External-link branch: name may be a UUID or label, no shell interpolation. Match before strict validation.
   const config = await getConfig();
@@ -88,18 +84,16 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
   if (!guard.ok) return guard.response;
   await ServiceManager.deleteService(nodeName, guard.value);
   return NextResponse.json({ success: true });
-}
+});
 
-export async function PUT(request: Request, { params }: { params: Promise<{ name: string }> }) {
-  // requireSession gate (#596) — defense-in-depth atop proxy.ts.
-  const __auth = await requireSession(request);
-  if (__auth instanceof NextResponse) return __auth;
-
-  const decoded = await decodeName(params);
+export const PUT = withApiHandlerParams<undefined, z.infer<typeof Query>, { name: string }>(
+  { query: Query },
+  async ({ request, query, params }) => {
+  const decoded = decodeName(params.name);
   if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
   const name = decoded;
   const body = await request.json();
-  const nodeName = getNodeName(request);
+  const nodeName = query.node || 'Local';
 
   // Check if it's a link update
   if (body.type === 'link') {
@@ -242,4 +236,4 @@ export async function PUT(request: Request, { params }: { params: Promise<{ name
 
   await ServiceManager.saveService(nodeName, safeName, kubeContent, yamlContent, yamlFileName);
   return NextResponse.json({ success: true });
-}
+});
