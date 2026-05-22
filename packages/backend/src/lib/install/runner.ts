@@ -308,6 +308,7 @@ interface DeployContext {
   input: JobInput;
   scriptCredentials: Credential[];
   deployed: { name: string }[];
+  reusedSecretNames: Set<string>;
 }
 
 /** Deploy a single template via /api/services?stream=1. Returns true on
@@ -330,6 +331,12 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     acc[v.name] = v.value;
     return acc;
   }, {});
+
+  // Inject dynamic variables for self-healing and template rendering
+  if (item.name === 'auth') {
+    const isRegenerated = !ctx.reusedSecretNames.has('LLDAP_ADMIN_PASSWORD');
+    view['LLDAP_FORCE_LDAP_USER_PASS_RESET'] = isRegenerated ? 'true' : 'false';
+  }
   // Disable HTML escaping — Mustache renders YAML and config files, not HTML.
   const savedEscape = Mustache.escape;
   Mustache.escape = (text: string) => text;
@@ -732,7 +739,8 @@ async function runJob(jobId: string): Promise<void> {
     await log(jobId, `Install order (by dependencies): ${sortedNames}`);
   }
 
-  const ctx: DeployContext = { jobId, input, scriptCredentials, deployed: [] };
+  const reusedSecretNames = new Set<string>();
+  const ctx: DeployContext = { jobId, input, scriptCredentials, deployed: [], reusedSecretNames };
 
   // Secret reuse (#615) — before any deploy fires, override the wizard's
   // freshly-generated `type: secret | bcrypt | rsa-private` values with
@@ -756,7 +764,7 @@ async function runJob(jobId: string): Promise<void> {
   // Authelia-storage self-heal below reads this to decide whether the
   // encryption key matches existing on-disk Authelia storage or is
   // freshly generated.
-  const reusedSecretNames = new Set<string>();
+
   const shouldReuseSecrets = !input.cleanInstall || (input.preserve?.includes('secrets') ?? true);
   if (shouldReuseSecrets) {
     try {
@@ -835,19 +843,16 @@ async function runJob(jobId: string): Promise<void> {
     }
   }
 
-  // LLDAP admin-password drift detection (#666). The pathological
-  // combination is "wipe secrets, preserve identity": the wizard
-  // generates a fresh LLDAP_ADMIN_PASSWORD, but the LLDAP image does
-  // not rotate the admin password from env on subsequent starts — it
-  // only does so on first DB init. So the operator can't log in with
-  // the wizard's password, and the previous password is gone with the
-  // wiped `secret.key`. Authelia self-heals by wiping its data dir
-  // (#619); LLDAP can't because that would destroy *all* user accounts.
+  // LLDAP admin-password drift detection (#666) & Self-Healing (ARCH-15).
+  // The pathological combination is "wipe secrets, preserve identity": the wizard
+  // generates a fresh LLDAP_ADMIN_PASSWORD, but the LLDAP image does not rotate
+  // the admin password from env on subsequent starts. We solve this by dynamically
+  // injecting `LLDAP_FORCE_LDAP_USER_PASS_RESET=true` into the environment, which
+  // forces LLDAP to synchronize its database credentials to the freshly generated
+  // password in config.json, avoiding user lockouts.
   //
-  // Best we can do is detect the situation and log a clear breadcrumb
-  // so the operator finds the recovery path (docs/CREDENTIAL_SELF_HEAL.md)
-  // instead of silently getting locked out. No code action — the
-  // recovery is operator-decision territory.
+  // Here, we detect if drift occurred and log a helpful message confirming that
+  // the self-healing password reset mechanism was activated.
   if (authIncluded && !reusedSecretNames.has('LLDAP_ADMIN_PASSWORD')) {
     try {
       const { agentManager } = await import('@/lib/agent/manager');
@@ -862,7 +867,7 @@ async function runJob(jobId: string): Promise<void> {
       });
       const dbPresent = (probe.stdout || '').trim() === 'present';
       if (dbPresent) {
-        await log(jobId, `⚠️ LLDAP admin-password drift detected: existing users.db at ${lldapDbPath} won't accept the wizard's freshly-generated password. If you can't log in to LLDAP, see docs/CREDENTIAL_SELF_HEAL.md for the recovery path.`);
+        await log(jobId, `🔄 LLDAP admin-password drift detected: existing users.db at ${lldapDbPath} has a password mismatch with the freshly generated secret. Automatically synchronizing the database credentials via LLDAP_FORCE_LDAP_USER_PASS_RESET to keep the stack functional.`);
       }
     } catch (e) {
       await log(jobId, `(note) LLDAP drift probe failed: ${e instanceof Error ? e.message : String(e)} — continuing.`);
