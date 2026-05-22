@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.14.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.13.2...servicebay-v4.14.0) (2026-05-22)
+
+
+### Features
+
+* **templates:** add claude-dev stack — containerised Claude Code CLI ([#779](https://github.com/mdopp/servicebay/issues/779)) ([#815](https://github.com/mdopp/servicebay/issues/815)) ([77021af](https://github.com/mdopp/servicebay/commit/77021af1b0f26d3f3eaf9408dcd989cd3793d50f))
+
+
+### Bug Fixes
+
+* **install:** readiness gating + per-service proxy hosts ([#807](https://github.com/mdopp/servicebay/issues/807), [#808](https://github.com/mdopp/servicebay/issues/808), [#809](https://github.com/mdopp/servicebay/issues/809), [#810](https://github.com/mdopp/servicebay/issues/810)) ([#814](https://github.com/mdopp/servicebay/issues/814)) ([0d73981](https://github.com/mdopp/servicebay/commit/0d73981fe2bd03c483f09d99a1b32f99855a839a))
+
 ## [4.13.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.13.1...servicebay-v4.13.2) (2026-05-22)
 
 
