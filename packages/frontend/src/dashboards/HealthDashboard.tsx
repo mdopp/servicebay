@@ -16,6 +16,7 @@ import { PodmanConnection } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import SelfDiagnoseSection from '@/app/(dashboard)/settings/_lib/sections/SelfDiagnoseSection';
+import ContainersDashboard from '@/dashboards/ContainersDashboard';
 
 interface Container {
   Id: string;
@@ -30,7 +31,7 @@ interface HistoryItem {
   message?: string;
 }
 
-type HealthTab = 'checks' | 'diagnose' | 'logs' | 'system';
+type HealthTab = 'checks' | 'diagnose' | 'logs' | 'system' | 'containers';
 
 export default function HealthDashboard() {
   const [checks, setChecks] = useState<Check[]>([]);
@@ -59,7 +60,7 @@ export default function HealthDashboard() {
   const searchParams = useSearchParams();
   const searchString = searchParams?.toString() ?? '';
   const tabParam = searchParams?.get('tab');
-  const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' || tabParam === 'diagnose' ? (tabParam as HealthTab) : null;
+  const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' || tabParam === 'diagnose' || tabParam === 'containers' ? (tabParam as HealthTab) : null;
 
   const closeOverlaysOnEscape = useCallback(() => {
     if (isDeleteModalOpen) return;
@@ -372,6 +373,7 @@ export default function HealthDashboard() {
         {([
           { id: 'checks' as const, label: 'Checks' },
           { id: 'diagnose' as const, label: 'Self-Diagnose' },
+          { id: 'containers' as const, label: 'Containers' },
           { id: 'logs' as const, label: 'Logs' },
           { id: 'system' as const, label: 'System' },
         ]).map(tab => (
@@ -418,6 +420,16 @@ export default function HealthDashboard() {
 
       {activeTab === 'system' && (
         <SystemInfoContent />
+      )}
+
+      {activeTab === 'containers' && (
+        <div className="px-2">
+          {/* Raw Podman container engine — nested here per #802 so the
+              primary sidebar stays user-task shaped. The route /containers
+              still resolves directly for direct-link / muscle-memory
+              navigation. */}
+          <ContainersDashboard />
+        </div>
       )}
       </div>
 
