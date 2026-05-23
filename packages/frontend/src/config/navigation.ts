@@ -14,7 +14,7 @@
  *      bottom bar doesn't get cluttered (it's still in the top
  *      bar's icon row).
  */
-import { LayoutDashboard, Box, Terminal, Activity, Settings, Network } from 'lucide-react';
+import { Box, Terminal, Activity, Settings, Network, Home } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavigationEntry {
@@ -37,11 +37,18 @@ export interface NavigationEntry {
   hiddenOnMobileBottom?: boolean;
 }
 
+/**
+ * Home goes first (#803): it's the operator's landing page after
+ * login, answering "is anything broken?" at a glance. Container
+ * Engine moved into Diagnostics (Health tab) per UX_DECISIONS.md
+ * "Primary sidebar is a user-task list, not an infrastructure list"
+ * — operators who need the raw podman view know to open Diagnostics.
+ */
 export const NAVIGATION_ENTRIES: NavigationEntry[] = [
+  { id: 'home', name: 'Home', shortLabel: 'Home', icon: Home, path: '/' },
   { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },
-  { id: 'containers', name: 'Container Engine', shortLabel: 'Containers', icon: LayoutDashboard, path: '/containers' },
   { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
-  { id: 'health', name: 'Health', shortLabel: 'Health', icon: Activity, path: '/health' },
+  { id: 'health', name: 'Diagnostics', shortLabel: 'Health', icon: Activity, path: '/health' },
   { id: 'terminal', name: 'SSH Terminal', shortLabel: 'Terminal', icon: Terminal, path: '/terminal' },
   { id: 'settings', name: 'Settings', shortLabel: 'Settings', icon: Settings, path: '/settings', hiddenOnMobileBottom: true },
 ];

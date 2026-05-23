@@ -24,15 +24,9 @@ const nextConfig: NextConfig = {
   devIndicators: {
     position: 'bottom-right',
   },
-  async redirects() {
-    return [
-      {
-        source: '/',
-        destination: '/services',
-        permanent: false,
-      },
-    ];
-  },
+  // `/` used to redirect to `/services` — removed in #802/#803 when the
+  // Overview Dashboard landed at the root path. If you're hunting for
+  // the redirect, it's now a real page: src/app/(dashboard)/page.tsx.
   // `src/lib/logger.ts` is imported by both server and client code and lazily
   // `require()`s `better-sqlite3` / `fs` / `path` only on the server. Webpack
   // resolves those `require` calls statically, so without this fallback the
