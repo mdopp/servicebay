@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.18.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.17.0...servicebay-v4.18.0) (2026-05-23)
+
+
+### Features
+
+* **network:** render observed vs declared edges distinctly ([#813](https://github.com/mdopp/servicebay/issues/813)) ([#860](https://github.com/mdopp/servicebay/issues/860)) ([205e255](https://github.com/mdopp/servicebay/commit/205e2559621515363fcd1c70ff8d9ee0028a279b))
+
 ## [4.17.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.16.2...servicebay-v4.17.0) (2026-05-23)
 
 
