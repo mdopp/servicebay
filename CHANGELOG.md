@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.23.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.22.0...servicebay-v4.23.0) (2026-05-23)
+
+
+### Features
+
+* **workspace:** extract WorkspaceDrawer foundation ([#804](https://github.com/mdopp/servicebay/issues/804)) ([#875](https://github.com/mdopp/servicebay/issues/875)) ([806cd49](https://github.com/mdopp/servicebay/commit/806cd49a9ebf5f9b7cdb1370df96bb697ae4bcc0))
+
 ## [4.22.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.21.0...servicebay-v4.22.0) (2026-05-23)
 
 
