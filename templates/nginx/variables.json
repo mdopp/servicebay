@@ -30,20 +30,21 @@
   },
   "NPM_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for Nginx Proxy Manager admin",
+    "description": "Subdomain for Nginx Proxy Manager admin. Internal exposure — gets a real LE cert (without it nginx serves the default cert and the SNI handshake fails with 'unrecognized name'), NPM binds the LAN-only access list so it isn't reachable from outside the LAN, and Authelia forward-auth gates it on top because NPM exposes proxy-host edit (#878).",
     "default": "nginx",
-    "exposure": "lan",
+    "exposure": "internal",
     "proxyPort": "NGINX_ADMIN_PORT",
     "proxyConfig": {
       "block_exploits": true,
-      "ssl_forced": true
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
     }
   },
   "SERVICEBAY_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for ServiceBay admin panel",
+    "description": "Subdomain for ServiceBay admin panel. Internal exposure — gets a real LE cert (without it the SNI handshake fails) and NPM binds the LAN-only access list. ServiceBay has its own login on the application layer; we deliberately don't stack Authelia forward-auth here because the double-login is hostile when the operator's recovery path goes through this UI (#878).",
     "default": "admin",
-    "exposure": "lan",
+    "exposure": "internal",
     "proxyPort": "5888",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
