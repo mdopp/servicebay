@@ -147,7 +147,7 @@ describe('mergeUnmanagedBundleHandler (ARCH-14, #846)', () => {
 
   it('non-dryRun executes the merge and returns the mergedServices list', async () => {
     seedBundle('Local', makeBundle());
-    mockedMergeServices.mockResolvedValue(undefined as unknown as void);
+    mockedMergeServices.mockResolvedValue(undefined);
 
     const result = await mergeUnmanagedBundleHandler({
       bundleId: 'bundle-1',
@@ -166,7 +166,7 @@ describe('mergeUnmanagedBundleHandler (ARCH-14, #846)', () => {
 
   it('maps BundleServiceRef → DiscoveredService with the expected shape', async () => {
     seedBundle('Local', makeBundle());
-    mockedMergeServices.mockResolvedValue(undefined as unknown as void);
+    mockedMergeServices.mockResolvedValue(undefined);
 
     await mergeUnmanagedBundleHandler({
       bundleId: 'bundle-1',
