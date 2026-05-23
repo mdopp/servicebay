@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.20.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.19.0...servicebay-v4.20.0) (2026-05-23)
+
+
+### Features
+
+* Overview Dashboard at /, streamlined sidebar ([#802](https://github.com/mdopp/servicebay/issues/802), [#803](https://github.com/mdopp/servicebay/issues/803)) ([#867](https://github.com/mdopp/servicebay/issues/867)) ([9c4a506](https://github.com/mdopp/servicebay/commit/9c4a506a2d2b3dfe7eb2a678b8a3425098568649))
+
 ## [4.19.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.18.0...servicebay-v4.19.0) (2026-05-23)
 
 
