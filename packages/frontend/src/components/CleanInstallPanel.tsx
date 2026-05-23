@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { AlertTriangle, ShieldCheck, Trash2 } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { AlertTriangle, ShieldCheck, Trash2, ShieldAlert } from 'lucide-react';
 
 /**
  * "Clean install" wizard panel with per-group preserve checkboxes
@@ -77,6 +77,9 @@ export default function CleanInstallPanel({
 }) {
   const [info, setInfo] = useState<InfoResponse | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const isValidCombo = validationErrors.length === 0;
+  const validateAbort = useRef<AbortController | null>(null);
 
   // Fetch group sizes whenever the panel is expanded. Avoid hammering
   // the endpoint when the panel is collapsed — `du -sb` walks the
@@ -97,6 +100,37 @@ export default function CleanInstallPanel({
       .catch(e => { if (!cancelled) setInfoError(e instanceof Error ? e.message : String(e)); });
     return () => { cancelled = true; };
   }, [cleanInstall, node]);
+
+  // Validate preserve combo on every checkbox change (#847 / ARCH-16b).
+  // Debounced with an AbortController so rapid toggles don't queue up
+  // stale responses. Validation errors are cleared in the checkbox
+  // onChange handler (not here) to avoid the set-state-in-effect lint.
+  useEffect(() => {
+    if (!cleanInstall) return;
+    validateAbort.current?.abort();
+    const controller = new AbortController();
+    validateAbort.current = controller;
+
+    const effectivePreserveList = preserve ?? DEFAULT_KEPT;
+    fetch('/api/system/stacks/reset/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preserve: effectivePreserveList, node }),
+      signal: controller.signal,
+    })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then((d: { valid: boolean; errors: string[] }) => {
+        if (!controller.signal.aborted) {
+          setValidationErrors(d.errors);
+        }
+      })
+      .catch(e => {
+        if (e instanceof DOMException && e.name === 'AbortError') return;
+        if (!controller.signal.aborted) setValidationErrors([]);
+      });
+
+    return () => { controller.abort(); };
+  }, [cleanInstall, preserve, node]);
 
   // Source of truth for which groups are kept right now. When the
   // operator hasn't touched anything, `preserve === undefined` and we
@@ -129,6 +163,7 @@ export default function CleanInstallPanel({
             if (!e.target.checked) {
               setCleanInstallConfirm('');
               setPreserve(undefined);
+              setValidationErrors([]);
             }
           }}
           className="mt-0.5"
@@ -243,6 +278,23 @@ export default function CleanInstallPanel({
             );
           })()}
 
+          {/* Validation errors (#847 / ARCH-16b) */}
+          {!isValidCombo && (
+            <div className="text-xs flex items-start gap-1.5 p-2 rounded bg-red-100/80 dark:bg-red-900/30 border border-red-400 dark:border-red-600">
+              <ShieldAlert className="w-4 h-4 text-red-700 dark:text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="font-semibold text-red-900 dark:text-red-100 mb-1">
+                  Unsafe combination — reset blocked
+                </div>
+                {validationErrors.map((err, i) => (
+                  <p key={i} className="text-red-800 dark:text-red-200/90 leading-snug mt-0.5">
+                    {err}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="text-xs font-medium block mb-1 text-amber-900 dark:text-amber-100">
               Type <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">RESET</code> to confirm:
@@ -251,8 +303,13 @@ export default function CleanInstallPanel({
               type="text"
               value={cleanInstallConfirm}
               onChange={(e) => setCleanInstallConfirm(e.target.value)}
-              className="w-full px-2 py-1 border border-amber-300 dark:border-amber-700 rounded text-sm bg-white dark:bg-gray-900"
-              placeholder="RESET"
+              disabled={!isValidCombo}
+              className={`w-full px-2 py-1 border rounded text-sm ${
+                isValidCombo
+                  ? 'border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-900'
+                  : 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20 cursor-not-allowed opacity-60'
+              }`}
+              placeholder={isValidCombo ? 'RESET' : 'Fix the unsafe combination above first'}
               autoComplete="off"
             />
           </div>

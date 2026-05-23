@@ -6,6 +6,9 @@ metadata:
     servicebay.label: "Home (Home Assistant + Voice)"
     servicebay.tier: "feature"
     servicebay.depends-on-stacks: "basic"
+  selfHeal:
+    home-assistant: env_override
+    voice: env_override
 spec:
   # Smart-home + voice pipeline. Voice was extracted from
   # home-assistant in #348 but the two are coupled — HA's

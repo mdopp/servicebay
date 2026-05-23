@@ -30,6 +30,8 @@
  */
 
 import yaml from 'js-yaml';
+import { readdir, readFile } from 'fs/promises';
+import path from 'path';
 
 /**
  * Lifecycle tier. Drives the feature-install gate (#PH5C): if any
@@ -47,6 +49,23 @@ const KNOWN_TIERS: ReadonlySet<StackTier> = new Set(['core', 'feature']);
  */
 export type StackLifecycle = 'atomic-wipe' | 'wipeable';
 const KNOWN_LIFECYCLES: ReadonlySet<StackLifecycle> = new Set(['atomic-wipe', 'wipeable']);
+
+/**
+ * Self-heal mode for a template's secrets. Declared in stack.yml under
+ * `metadata.selfHeal` as `{ <templateName>: <mode> }`.
+ *
+ * - `env_override`: The template regenerates credentials from environment
+ *   variables on startup — no manual intervention needed.
+ * - `api_rotation`: The install runner rotates API keys automatically.
+ * - `recreate_on_key_wipe`: Data is wiped and recreated from scratch when
+ *   the encryption key changes — safe but lossy.
+ * - `none`: The template cannot self-heal. Wiping secrets while preserving
+ *   this template's data group is unsafe and blocked by resetValidation.
+ */
+export type SelfHealMode = 'env_override' | 'api_rotation' | 'recreate_on_key_wipe' | 'none';
+const KNOWN_SELF_HEAL_MODES: ReadonlySet<SelfHealMode> = new Set([
+  'env_override', 'api_rotation', 'recreate_on_key_wipe', 'none',
+]);
 
 /** Parsed stack metadata. Stable shape — both runtime + tests rely on it. */
 export interface StackManifest {
@@ -68,6 +87,13 @@ export interface StackManifest {
   dependsOnStacks: string[];
   /** `spec.templates`. Required, non-empty list of template names. */
   templates: string[];
+  /**
+   * `metadata.selfHeal` — per-template self-heal mode declarations.
+   * Optional. When present, maps template names to their recovery
+   * strategy after a secrets wipe. Used by resetValidation.ts to
+   * block unsafe preserve/wipe combinations (#849 / ARCH-17).
+   */
+  selfHeal?: Record<string, SelfHealMode>;
 }
 
 export type StackParseResult =
@@ -92,6 +118,10 @@ interface RawDoc {
   kind?: unknown;
   metadata?: unknown;
   spec?: unknown;
+}
+
+interface RawSelfHeal {
+  [key: string]: unknown;
 }
 
 /**
@@ -233,6 +263,36 @@ export function parseStackManifest(yamlText: string): StackParseResult {
     errors.push(`Annotation \`servicebay.depends-on-stacks\` lists \`${name}\` itself — a stack cannot depend on itself.`);
   }
 
+  // Parse selfHeal block (#849 / ARCH-17)
+  let selfHeal: Record<string, SelfHealMode> | undefined;
+  const rawSelfHeal = (meta as Record<string, unknown>).selfHeal;
+  if (rawSelfHeal !== undefined) {
+    if (typeof rawSelfHeal !== 'object' || rawSelfHeal === null || Array.isArray(rawSelfHeal)) {
+      errors.push('Field `metadata.selfHeal` must be a mapping of template names to heal modes (e.g. `{ nginx: api_rotation }`).');
+    } else {
+      selfHeal = {};
+      const heal = rawSelfHeal as RawSelfHeal;
+      for (const [tpl, mode] of Object.entries(heal)) {
+        if (typeof mode !== 'string' || !KNOWN_SELF_HEAL_MODES.has(mode as SelfHealMode)) {
+          errors.push(
+            `Field \`metadata.selfHeal.${tpl}\` must be one of ` +
+            `${[...KNOWN_SELF_HEAL_MODES].map(v => `"${v}"`).join(', ')}; ` +
+            `got ${JSON.stringify(mode)}.`,
+          );
+          continue;
+        }
+        if (!templates.includes(tpl)) {
+          warnings.push(
+            `selfHeal key "${tpl}" is not in spec.templates — ` +
+            `this declaration has no effect unless the template is added to the stack.`,
+          );
+        }
+        selfHeal[tpl] = mode as SelfHealMode;
+      }
+      if (Object.keys(selfHeal).length === 0) selfHeal = undefined;
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors, warnings };
   }
@@ -246,6 +306,7 @@ export function parseStackManifest(yamlText: string): StackParseResult {
       lifecycle,
       dependsOnStacks,
       templates,
+      selfHeal,
     },
     warnings,
   };
@@ -266,4 +327,35 @@ function readAnnotationString(annotations: RawAnnotations, key: string): string 
   if (typeof val !== 'string') return undefined;
   const trimmed = val.trim();
   return trimmed === '' ? undefined : trimmed;
+}
+
+/**
+ * Load all stack.yml manifests from the stacks/ directory and return
+ * the parsed manifests (with selfHeal data). Used by resetValidation.ts
+ * for dynamic combo validation.
+ *
+ * @param stacksDir - Override for tests; defaults to `<repoRoot>/stacks`.
+ */
+export async function loadStackManifestsWithSelfHeal(
+  stacksDir?: string,
+): Promise<StackManifest[]> {
+  const dir = stacksDir ?? path.resolve(__dirname, '../../../../stacks');
+  const entries = await readdir(dir, { withFileTypes: true });
+  const manifests: StackManifest[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const ymlPath = path.join(dir, entry.name, 'stack.yml');
+    try {
+      const text = await readFile(ymlPath, 'utf-8');
+      const result = parseStackManifest(text);
+      if (result.ok) {
+        manifests.push(result.manifest);
+      }
+    } catch {
+      // Skip directories without a stack.yml.
+    }
+  }
+
+  return manifests;
 }
