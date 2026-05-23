@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwins } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { withApiHandler } from '@/lib/api/handler';
 
@@ -9,8 +9,7 @@ export const dynamic = 'force-dynamic';
 export const GET = withApiHandler({}, async () => {
     try {
         // Check all known nodes for nginx, not just Local
-        const twinStore = DigitalTwinStore.getInstance();
-        const nodeNames = Object.keys(twinStore.nodes);
+        const nodeNames = Object.keys(getNodeTwins());
         if (nodeNames.length === 0) nodeNames.push('Local');
 
         for (const nodeName of nodeNames) {

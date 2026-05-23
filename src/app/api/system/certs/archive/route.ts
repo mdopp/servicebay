@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { agentManager } from '@/lib/agent/manager';
 import { getConfig } from '@/lib/config';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwins } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { withApiHandler } from '@/lib/api/handler';
 
@@ -23,9 +23,9 @@ function resolveDataDir(cfg: { templateSettings?: Record<string, string> }): str
   return cfg.templateSettings?.DATA_DIR || '/mnt/data/stacks';
 }
 
-function resolveNode(twin: DigitalTwinStore, requested?: string | null): string | null {
+function resolveNode(requested?: string | null): string | null {
   if (requested) return requested;
-  return Object.keys(twin.nodes)[0] ?? null;
+  return Object.keys(getNodeTwins())[0] ?? null;
 }
 
 interface ListEntry {
@@ -35,8 +35,7 @@ interface ListEntry {
 }
 
 async function listArchives(): Promise<ListEntry[]> {
-  const twin = DigitalTwinStore.getInstance();
-  const node = resolveNode(twin);
+  const node = resolveNode();
   if (!node) return [];
   const agent = await agentManager.ensureAgent(node);
   const res = await agent.sendCommand('exec', {
@@ -65,8 +64,7 @@ const PostBody = z.object({
 });
 
 export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
-  const twin = DigitalTwinStore.getInstance();
-  const node = resolveNode(twin, body.node);
+  const node = resolveNode(body.node);
   if (!node) return NextResponse.json({ error: 'No nodes available' }, { status: 404 });
 
   const cfg = await getConfig();

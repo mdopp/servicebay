@@ -6,7 +6,7 @@ import { DigitalTwinProvider } from "@/providers/DigitalTwinProvider";
 import MockProvider from "@/providers/MockProvider";
 import ServerIdentityWatcher from "@/components/ServerIdentityWatcher";
 import { getConfig } from "@/lib/config";
-import { DigitalTwinStore } from "@/lib/store/twin";
+import { getFirstNodeHostname } from "@/lib/store/repository";
 
 // Keep the root layout dynamic to avoid build-time pre-rendering of pages
 // whose data only exists at runtime. The directive is applied at the layout
@@ -39,22 +39,9 @@ export async function generateMetadata(): Promise<Metadata> {
 
   // 3. Twin store hostname or IP (from connected agent)
   try {
-    const twin = DigitalTwinStore.getInstance();
-    const firstNode = Object.values(twin.nodes)[0];
-    if (firstNode?.resources) {
-      const hostname = firstNode.resources.os?.hostname;
-      if (hostname && hostname !== 'localhost' && !hostname.endsWith('.localdomain')) {
-        return { title: `${hostname} - ServiceBay`, description: "Manage Podman Quadlet Services" };
-      }
-      const network = firstNode.resources.network;
-      if (network) {
-        for (const addrs of Object.values(network)) {
-          const pub = addrs.find(a => a.family === 'IPv4' && !a.internal);
-          if (pub) {
-            return { title: `${pub.address} - ServiceBay`, description: "Manage Podman Quadlet Services" };
-          }
-        }
-      }
+    const hostname = getFirstNodeHostname();
+    if (hostname) {
+      return { title: `${hostname} - ServiceBay`, description: "Manage Podman Quadlet Services" };
     }
   } catch { /* twin not ready yet */ }
 

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getUnmanagedBundles, dismissUnmanagedBundle } from '@/lib/store/repository';
 import { deleteBundleResources } from '@/lib/discovery';
 import { listNodes } from '@/lib/nodes';
 import type { PodmanConnection } from '@/lib/nodes';
@@ -23,9 +23,8 @@ export const POST = withApiHandler({}, async ({ request }) => {
             return NextResponse.json({ error: 'bundleId is required' }, { status: 400 });
         }
 
-        const store = DigitalTwinStore.getInstance();
-        const node = store.nodes[nodeName];
-        const targetBundle = node?.unmanagedBundles.find(bundle => bundle.id === bundleId);
+        const bundles = getUnmanagedBundles(nodeName);
+        const targetBundle = bundles.find(bundle => bundle.id === bundleId);
 
         if (!targetBundle) {
             return NextResponse.json({ error: 'Bundle not found' }, { status: 404 });
@@ -41,7 +40,7 @@ export const POST = withApiHandler({}, async ({ request }) => {
         }
 
         const result = await deleteBundleResources(targetBundle, connection);
-        store.dismissUnmanagedBundle(nodeName, bundleId);
+        dismissUnmanagedBundle(nodeName, bundleId);
 
         return NextResponse.json({
             success: true,

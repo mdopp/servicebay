@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getConfig, saveConfig, AppConfig } from '@/lib/config';
 import { getTemplateSettingsSchema } from '@/lib/registry';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { setServerName } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { AppConfigPartialSchema, formatConfigErrors } from '@/lib/config/schema';
 import { withApiHandler } from '@/lib/api/handler';
@@ -57,7 +57,7 @@ export const POST = withApiHandler({}, async ({ request }) => {
   await saveConfig(newConfig);
 
   if ('serverName' in validated) {
-    DigitalTwinStore.getInstance().setServerName(newConfig.serverName ?? null);
+    setServerName(newConfig.serverName ?? null);
   }
 
   return NextResponse.json(newConfig);

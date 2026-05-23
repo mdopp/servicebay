@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ServiceManager } from '@/lib/services/ServiceManager';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwin } from '@/lib/store/repository';
 import { getConfig, saveConfig, ExternalLink } from '@/lib/config';
 import { HealthStore } from '@/lib/health/store';
 import { listNodes } from '@/lib/nodes';
@@ -160,7 +160,7 @@ export const GET = withApiHandler<undefined, z.infer<typeof ListQuery>>(
 
         // Add Best Candidate as Reverse Proxy with Enhanced Gateway Structure
         const targetNode = (!nodeName || nodeName === 'Local') ? 'Local' : nodeName;
-        const nodeTwin = DigitalTwinStore.getInstance().nodes[targetNode];
+        const nodeTwin = getNodeTwin(targetNode);
         const proxyRoutes = nodeTwin?.proxyRoutes || [];
 
         // Transform routes to "Nginx Server"-like structure (Compatibility Mode for UI)

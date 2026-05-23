@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getConfig, updateConfig, ProxyHostEntry } from '@/lib/config';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwins, getNodeTwin } from '@/lib/store/repository';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
@@ -81,8 +81,7 @@ interface NpmResolution {
  * reach vaultwarden, immich, home-assistant etc. on their host ports.
  */
 async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
-    const twinStore = DigitalTwinStore.getInstance();
-    const nodeNames = nodeHint ? [nodeHint] : Object.keys(twinStore.nodes);
+    const nodeNames = nodeHint ? [nodeHint] : Object.keys(getNodeTwins());
     if (nodeNames.length === 0) nodeNames.push('Local');
 
     for (const nodeName of nodeNames) {
@@ -105,10 +104,10 @@ async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
         }
 
         // For the API call from our backend → NPM: use 127.0.0.1 if local
-        const apiHost = nodeName === 'Local' ? '127.0.0.1' : getNodeIp(nodeName, twinStore);
+        const apiHost = nodeName === 'Local' ? '127.0.0.1' : getNodeIp(nodeName);
 
         // For NPM's proxy_pass → other services: always use the node's LAN IP
-        const nodeIp = getNodeIp(nodeName, twinStore);
+        const nodeIp = getNodeIp(nodeName);
 
         return {
             apiUrl: `http://${apiHost}:${adminPort}`,
@@ -119,8 +118,8 @@ async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
     return null;
 }
 
-function getNodeIp(nodeName: string, twinStore: DigitalTwinStore): string {
-    const twin = twinStore.nodes[nodeName];
+function getNodeIp(nodeName: string): string {
+    const twin = getNodeTwin(nodeName);
     // Prefer the first non-loopback IP
     if (twin?.nodeIPs?.length) {
         const lanIp = twin.nodeIPs.find(ip => !ip.startsWith('127.'));

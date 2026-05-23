@@ -28,7 +28,7 @@ import { apiError } from '@/lib/api/errors';
 import { getStackManifest } from '@/lib/registry';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { agentManager } from '@/lib/agent/manager';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwins } from '@/lib/store/repository';
 import { getConfig } from '@/lib/config';
 import { getCapabilityBus } from '@/lib/capabilities/bus';
 import { logger } from '@/lib/logger';
@@ -71,8 +71,7 @@ export const POST = withApiHandlerParams<undefined, undefined, { name: string }>
       );
     }
 
-    const twin = DigitalTwinStore.getInstance();
-    const nodeName = (typeof body.node === 'string' && body.node) || Object.keys(twin.nodes)[0] || 'Local';
+    const nodeName = (typeof body.node === 'string' && body.node) || Object.keys(getNodeTwins())[0] || 'Local';
 
     // Snapshot variables once — every per-template `feature.uninstalled`
     // event carries the same map so handlers (especially NPM, which
