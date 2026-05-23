@@ -30,8 +30,17 @@ export const useSocket = () => {
     // DigitalTwinProvider — bounce to /login so the operator
     // re-authenticates. Only the auth error redirects; transient network
     // `connect_error`s must keep retrying silently.
+    //
+    // The path guard prevents an infinite reload loop on /login itself:
+    // the root layout mounts DigitalTwinProvider unconditionally, so the
+    // socket also connects from the login page; without the guard, every
+    // failed connect would redirect the browser back to /login (#854).
     function onConnectError(err: Error) {
-      if (err?.message === 'unauthorized' && typeof window !== 'undefined') {
+      if (
+        err?.message === 'unauthorized' &&
+        typeof window !== 'undefined' &&
+        window.location.pathname !== '/login'
+      ) {
         window.location.href = '/login';
       }
     }

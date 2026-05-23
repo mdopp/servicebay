@@ -24,7 +24,7 @@ describe('useSocket — connect_error handling', () => {
     const originalLocation = window.location;
     // jsdom's window.location is read-only; swap in a writable stub.
     Object.defineProperty(window, 'location', {
-      value: { href: '' }, writable: true, configurable: true,
+      value: { href: '', pathname: '/services' }, writable: true, configurable: true,
     });
 
     try {
@@ -41,6 +41,24 @@ describe('useSocket — connect_error handling', () => {
       // stale session cookie after a reinstall — bounces to /login.
       handlers.connect_error(new Error('unauthorized'));
       expect(window.location.href).toBe('/login');
+    } finally {
+      Object.defineProperty(window, 'location', {
+        value: originalLocation, writable: true, configurable: true,
+      });
+    }
+  });
+
+  it('does NOT redirect when already on /login (#854 — prevents reload loop)', () => {
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      value: { href: 'http://x/login', pathname: '/login' }, writable: true, configurable: true,
+    });
+
+    try {
+      renderHook(() => useSocket());
+      handlers.connect_error(new Error('unauthorized'));
+      // Must NOT have been replaced — staying on /login lets the user log in.
+      expect(window.location.href).toBe('http://x/login');
     } finally {
       Object.defineProperty(window, 'location', {
         value: originalLocation, writable: true, configurable: true,
