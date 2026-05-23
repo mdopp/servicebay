@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.0...servicebay-v4.24.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* **network:** substitute 0.0.0.0 / 127.0.0.1 with the node's reachable IP ([#892](https://github.com/mdopp/servicebay/issues/892)) ([a72ea58](https://github.com/mdopp/servicebay/commit/a72ea58193f45d5144216bc7456d8cdfcc61c10a))
+
 ## [4.24.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.23.3...servicebay-v4.24.0) (2026-05-23)
 
 
