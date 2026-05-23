@@ -328,8 +328,14 @@ export class ServiceListing {
         // but we still want to visualize them if they are detected by the Agent.
         
         const processedIds = new Set(services.map(s => s.id));
-        const specialServices = twin.services.filter(s => 
+        const specialServices = twin.services.filter(s =>
             (s.isReverseProxy || s.isServiceBay) && !processedIds.has(s.name)
+            // Skip ServiceBay-internal helpers (boot splash, etc.) here too —
+            // they're flagged isServiceBay by the twin detector because the
+            // unit name contains "servicebay", but they're not user-managed
+            // and shouldn't show up in the dashboard's services count.
+            && !HIDDEN_SERVICE_BASENAMES.has(s.name)
+            && !HIDDEN_SERVICE_BASENAMES.has(s.name.replace(/\.service$/, ''))
         );
 
         for (const serviceUnit of specialServices) {

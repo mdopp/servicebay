@@ -158,7 +158,7 @@ spec:
         expect(svc.volumes[0]).toEqual({ host: '/mnt/data', container: '/var/lib/mysql' });
     });
 
-    it('hides servicebay-splash from listServices', async () => {
+    it('hides servicebay-splash from listServices (file-driven path)', async () => {
         // The boot-time splash Quadlet (#775) sits on disk next to
         // `servicebay.container` and the operator can't / shouldn't
         // manage it. listServices must skip it so the dashboard's
@@ -179,6 +179,24 @@ spec:
         const services = await ServiceManager.listServices('local');
         const names = services.map(s => s.name);
         expect(names).toContain('vaultwarden');
+        expect(names).not.toContain('servicebay-splash');
+    });
+
+    it('hides servicebay-splash from the implicit-services path too', async () => {
+        // Second code path in listServices: services flagged
+        // `isServiceBay` (or `isReverseProxy`) get appended even when
+        // they don't have a `.container` on disk. The splash unit
+        // gets flagged isServiceBay by the twin's name-based
+        // detector ("servicebay" keyword match), so this path was
+        // re-introducing it after the file-driven filter.
+        mockNodes['local'].files = {};
+        (mockNodes['local'] as any).services = [
+            { name: 'servicebay', activeState: 'active', isServiceBay: true },
+            { name: 'servicebay-splash', activeState: 'inactive', isServiceBay: true },
+        ];
+        const services = await ServiceManager.listServices('local');
+        const names = services.map(s => s.name);
+        expect(names).toContain('servicebay');
         expect(names).not.toContain('servicebay-splash');
     });
 
