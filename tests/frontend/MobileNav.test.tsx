@@ -40,25 +40,26 @@ describe('MobileNav', () => {
 
     it('MobileBottomBar renders dashboards except Settings using shortLabel', () => {
         renderWithToast(<MobileBottomBar />);
-        expect(screen.getByTitle('Container Engine')).toBeDefined();
+        expect(screen.getByTitle('Services')).toBeDefined();
         expect(screen.getByTitle('Network Map')).toBeDefined();
         expect(screen.queryByTitle('Settings')).toBeNull();
-        // shortLabel renders "Containers", not the trimmed-first-word "Container".
-        expect(screen.getByText('Containers')).toBeDefined();
+        // Container Engine moved into Diagnostics (#802) — no longer a
+        // top-level mobile-bottom entry.
+        expect(screen.queryByTitle('Container Engine')).toBeNull();
     });
 
     it('MobileBottomBar highlights active route', () => {
         renderWithToast(<MobileBottomBar />);
         const networkBtn = screen.getByTitle('Network Map');
         expect(networkBtn.className).toContain('text-blue-600');
-        const containersBtn = screen.getByTitle('Container Engine');
-        expect(containersBtn.className).not.toContain('text-blue-600');
+        const servicesBtn = screen.getByTitle('Services');
+        expect(servicesBtn.className).not.toContain('text-blue-600');
     });
 
     it('MobileBottomBar threads ?node= into navigation', () => {
         currentNode = 'edge-1';
         renderWithToast(<MobileBottomBar />);
-        fireEvent.click(screen.getByTitle('Container Engine'));
-        expect(mockPush).toHaveBeenCalledWith('/containers?node=edge-1');
+        fireEvent.click(screen.getByTitle('Services'));
+        expect(mockPush).toHaveBeenCalledWith('/services?node=edge-1');
     });
 });

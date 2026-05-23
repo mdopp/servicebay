@@ -6,7 +6,7 @@ import Sidebar from '@/components/Sidebar';
 // Mock Next Navigation
 const mockPush = vi.fn();
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/containers', // Default active
+  usePathname: () => '/services', // Default active
   useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: mockPush })
 }));
@@ -49,7 +49,7 @@ describe('Sidebar', () => {
 
     it('renders expanded by default on desktop', () => {
         render(<Sidebar />);
-        expect(screen.getByText('Container Engine')).toBeDefined();
+        expect(screen.getByText('Services')).toBeDefined();
         expect(screen.getByTitle('Collapse Sidebar')).toBeDefined();
     });
 
@@ -60,7 +60,7 @@ describe('Sidebar', () => {
         fireEvent.click(toggleBtn);
 
         await waitFor(() => {
-             expect(screen.queryByText('Container Engine')).toBeNull();
+             expect(screen.queryByText('Services')).toBeNull();
              expect(screen.getByTitle('Expand Sidebar')).toBeDefined();
         });
     });
@@ -68,7 +68,7 @@ describe('Sidebar', () => {
     it('renders active state', () => {
         render(<Sidebar />);
 
-        const text = screen.getByText('Container Engine');
+        const text = screen.getByText('Services');
         const button = text.closest('button');
         expect(button).toBeDefined();
         expect(button?.className).toContain('text-blue-600');
@@ -88,7 +88,7 @@ describe('Sidebar', () => {
         render(<Sidebar />);
 
         // Should be collapsed initially
-        expect(screen.queryByText('Container Engine')).toBeNull();
+        expect(screen.queryByText('Services')).toBeNull();
         expect(screen.getByTitle('Expand Sidebar')).toBeDefined();
     });
 
