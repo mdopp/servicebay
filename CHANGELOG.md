@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.17.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.16.2...servicebay-v4.17.0) (2026-05-23)
+
+
+### Features
+
+* **install,mcp:** MCP unmanaged-bundle tools + parallel image pre-pull [ARCH-14, perf] ([#852](https://github.com/mdopp/servicebay/issues/852)) ([901cf64](https://github.com/mdopp/servicebay/commit/901cf64dd112f49ce233826f6512ef290dbe4692))
+* **install:** centralized reset-combo validation + selfHeal contracts + UI guardrail [ARCH-16a/17/16b] ([#850](https://github.com/mdopp/servicebay/issues/850)) ([32528dd](https://github.com/mdopp/servicebay/commit/32528dda00ec146922cfb9db322a6deedf725e4e))
+
+
+### Bug Fixes
+
+* **login:** guard socket + 401 redirects so /login doesn't loop ([#854](https://github.com/mdopp/servicebay/issues/854)) ([#855](https://github.com/mdopp/servicebay/issues/855)) ([0e0a789](https://github.com/mdopp/servicebay/commit/0e0a789943c91d22244115f4dbb5785a4e45c5d5))
+* **ui:** read app version from /api/system/version ([#812](https://github.com/mdopp/servicebay/issues/812)) ([#856](https://github.com/mdopp/servicebay/issues/856)) ([65fd29b](https://github.com/mdopp/servicebay/commit/65fd29bec4f08c34df2fdad72efdbcf0c409989f))
+* **wizard:** Finish button now closes the wizard reliably ([#811](https://github.com/mdopp/servicebay/issues/811)) ([#857](https://github.com/mdopp/servicebay/issues/857)) ([22d9c6e](https://github.com/mdopp/servicebay/commit/22d9c6e0e56abe7bff3675b8fe8bbed860c1869e))
+
 ## [4.16.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.16.1...servicebay-v4.16.2) (2026-05-22)
 
 
