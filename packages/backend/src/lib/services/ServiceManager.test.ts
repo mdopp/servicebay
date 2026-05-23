@@ -190,9 +190,9 @@ spec:
         // detector ("servicebay" keyword match), so this path was
         // re-introducing it after the file-driven filter.
         mockNodes['local'].files = {};
-        mockNodes['local'].services = [
-            { name: 'servicebay', activeState: 'active', isServiceBay: true } as any,
-            { name: 'servicebay-splash', activeState: 'inactive', isServiceBay: true } as any,
+        (mockNodes['local'] as any).services = [
+            { name: 'servicebay', activeState: 'active', isServiceBay: true },
+            { name: 'servicebay-splash', activeState: 'inactive', isServiceBay: true },
         ];
         const services = await ServiceManager.listServices('local');
         const names = services.map(s => s.name);
