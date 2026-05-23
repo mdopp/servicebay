@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.23.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.23.2...servicebay-v4.23.3) (2026-05-23)
+
+
+### Bug Fixes
+
+* **dashboard:** hide servicebay-splash from implicit-services path too ([#887](https://github.com/mdopp/servicebay/issues/887)) ([55f7998](https://github.com/mdopp/servicebay/commit/55f7998e5a5a1474eda12c1a379f03aeda2a89cc))
+
 ## [4.23.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.23.1...servicebay-v4.23.2) (2026-05-23)
 
 
