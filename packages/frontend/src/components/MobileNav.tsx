@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Github, Settings, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
-import { dashboards } from './Sidebar';
+import { NAVIGATION_ENTRIES } from '@/config/navigation';
 import { useToast } from '@/providers/ToastProvider';
 
 const FIRST_VISIT_KEY = 'sb.mobileHintShown.v1';
@@ -117,8 +117,9 @@ export function MobileBottomBar() {
   const searchParams = useSearchParams();
   const node = searchParams?.get('node');
 
-  // Exclude settings as it is in the top bar
-  const bottomDashboards = dashboards.filter(p => p.id !== 'settings');
+  // Honor the per-entry `hiddenOnMobileBottom` flag from the navigation
+  // schema — Settings opts out (it's in the mobile top bar's icon row).
+  const bottomDashboards = NAVIGATION_ENTRIES.filter(p => !p.hiddenOnMobileBottom);
 
   return (
     <div className="h-[72px] bg-gray-100 dark:bg-black border-t border-gray-200 dark:border-gray-800 flex items-center justify-around px-2 shrink-0 md:hidden z-20 pb-2">

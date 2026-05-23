@@ -23,6 +23,7 @@
       "@/*": ["./src/*"],
       "@/lib/*": ["./packages/backend/src/lib/*"],
       "@/components/*": ["./packages/frontend/src/components/*"],
+      "@/config/*": ["./packages/frontend/src/config/*"],
       "@/hooks/*": ["./packages/frontend/src/hooks/*"],
       "@/dashboards/*": ["./packages/frontend/src/dashboards/*"],
       "@/providers/*": ["./packages/frontend/src/providers/*"],
