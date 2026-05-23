@@ -3,6 +3,7 @@
   "compilerOptions": {
     "paths": {
       "@/components/*": ["./src/components/*"],
+      "@/config/*": ["./src/config/*"],
       "@/hooks/*": ["./src/hooks/*"],
       "@/dashboards/*": ["./src/dashboards/*"],
       "@/providers/*": ["./src/providers/*"],

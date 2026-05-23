@@ -2,19 +2,16 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink, Sparkles, Home, Wrench } from 'lucide-react';
+import { ChevronLeft, Github, Users, ExternalLink, Sparkles, Home, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import { typedFetch, InstallStatusResponseSchema } from '@servicebay/api-client';
+import { NAVIGATION_ENTRIES } from '@/config/navigation';
 
-export const dashboards = [
-    { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },
-    { id: 'containers', name: 'Container Engine', shortLabel: 'Containers', icon: LayoutDashboard, path: '/containers' },
-    { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
-    { id: 'health', name: 'Health', shortLabel: 'Health', icon: Activity, path: '/health' },
-    { id: 'terminal', name: 'SSH Terminal', shortLabel: 'Terminal', icon: Terminal, path: '/terminal' },
-    { id: 'settings', name: 'Settings', shortLabel: 'Settings', icon: Settings, path: '/settings' },
-];
+// Back-compat re-export — MobileNav imports `dashboards` from here.
+// New code should import NAVIGATION_ENTRIES directly from
+// `@/config/navigation`. (#845)
+export const dashboards = NAVIGATION_ENTRIES;
 
 export default function Sidebar() {
     const pathname = usePathname() || '';

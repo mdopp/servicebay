@@ -17,6 +17,7 @@ export default defineConfig({
       // routes into packages/frontend before the catch-all `@/*` mapping
       // into src/.
       { find: /^@\/components\//, replacement: path.resolve(__dirname, './packages/frontend/src/components/') + '/' },
+      { find: /^@\/config\//, replacement: path.resolve(__dirname, './packages/frontend/src/config/') + '/' },
       { find: /^@\/hooks\//, replacement: path.resolve(__dirname, './packages/frontend/src/hooks/') + '/' },
       { find: /^@\/dashboards\//, replacement: path.resolve(__dirname, './packages/frontend/src/dashboards/') + '/' },
       { find: /^@\/providers\//, replacement: path.resolve(__dirname, './packages/frontend/src/providers/') + '/' },
