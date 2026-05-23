@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { Box, ArrowLeft, PlayCircle, Power, RotateCw, RefreshCw, Trash2, X, Loader2 } from 'lucide-react';
+import WorkspaceDrawer from '@/components/WorkspaceDrawer';
 import ServiceMonitor from '@/components/ServiceMonitor';
 import ServiceForm, { ServiceFormInitialData } from '@/components/ServiceForm';
 import ActionProgressModal from '@/components/ActionProgressModal';
@@ -308,66 +309,55 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
         </div>
       )}
 
-      {drawerState && (
-        <div className="fixed inset-0 z-[70] flex justify-end bg-gray-950/70 backdrop-blur-sm">
-          <div className="w-full max-w-6xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col">
-            <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">
-                  {drawerState.mode === 'monitor' ? 'Service Monitor' : 'Edit Service'}
-                </p>
-                <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1 flex items-center gap-2">
-                  {drawerState.service.displayName}
-                  {drawerState.service.nodeName && (
-                    <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                      {drawerState.service.nodeName}
-                    </span>
-                  )}
-                </h3>
-                {drawerState.service.description && (
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-2xl">
-                    {drawerState.service.description}
-                  </p>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={closeDrawer}
-                className="p-2 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800"
-                aria-label="Close drawer"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              {drawerState.mode === 'monitor' ? (
-                <ServiceMonitor
-                  serviceName={drawerState.service.id || drawerState.service.name}
-                  initialNode={drawerState.service.nodeName}
-                  onBack={closeDrawer}
-                  variant="embedded"
-                />
-              ) : drawerLoading || !editInitialData ? (
-                <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500 dark:text-gray-400">
-                  <RefreshCw className="animate-spin" />
-                  Loading configuration...
-                </div>
-              ) : (
-                <div className="h-full overflow-y-auto p-6 bg-gray-50 dark:bg-gray-950/30">
-                  <ServiceForm
-                    key={`${drawerState.service.id || drawerState.service.name}-${drawerState.service.nodeName || 'Local'}`}
-                    initialData={editInitialData}
-                    isEdit
-                    defaultNode={drawerState.service.nodeName && drawerState.service.nodeName !== 'Local' ? drawerState.service.nodeName : ''}
-                    onClose={closeDrawer}
-                    variant="embedded"
-                  />
-                </div>
+      <WorkspaceDrawer
+        isOpen={Boolean(drawerState)}
+        onClose={closeDrawer}
+        header={drawerState && (
+          <>
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">
+              {drawerState.mode === 'monitor' ? 'Service Monitor' : 'Edit Service'}
+            </p>
+            <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1 flex items-center gap-2">
+              {drawerState.service.displayName}
+              {drawerState.service.nodeName && (
+                <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                  {drawerState.service.nodeName}
+                </span>
               )}
-            </div>
+            </h3>
+            {drawerState.service.description && (
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-2xl">
+                {drawerState.service.description}
+              </p>
+            )}
+          </>
+        )}
+      >
+        {drawerState && (drawerState.mode === 'monitor' ? (
+          <ServiceMonitor
+            serviceName={drawerState.service.id || drawerState.service.name}
+            initialNode={drawerState.service.nodeName}
+            onBack={closeDrawer}
+            variant="embedded"
+          />
+        ) : drawerLoading || !editInitialData ? (
+          <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500 dark:text-gray-400">
+            <RefreshCw className="animate-spin" />
+            Loading configuration...
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="h-full overflow-y-auto p-6 bg-gray-50 dark:bg-gray-950/30">
+            <ServiceForm
+              key={`${drawerState.service.id || drawerState.service.name}-${drawerState.service.nodeName || 'Local'}`}
+              initialData={editInitialData}
+              isEdit
+              defaultNode={drawerState.service.nodeName && drawerState.service.nodeName !== 'Local' ? drawerState.service.nodeName : ''}
+              onClose={closeDrawer}
+              variant="embedded"
+            />
+          </div>
+        ))}
+      </WorkspaceDrawer>
     </>
   ), [
     actionLoading,
