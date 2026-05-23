@@ -26,7 +26,20 @@ export interface ServiceVolume {
 export type ServiceType = 'kube' | 'container' | 'link' | 'gateway';
 
 export interface ServiceViewModel {
+  /** The original systemd unit identifier (e.g. `vaultwarden.service`).
+   *  Used for matching/equality and as the canonical id. The UI should
+   *  NOT render this directly — use `displayName` instead. (#844) */
   name: string;
+  /** Pre-computed user-facing label. The backend strips `.service`,
+   *  expands `nginx` → `Reverse Proxy (Nginx)`, etc. Frontend code
+   *  must never `.replace('.service', '')` again. (#844) */
+  displayName: string;
+  /** Pre-split filename portion of `yamlPath` for display in chips and
+   *  copy-to-clipboard affordances. Null when the file is not on disk. (#844) */
+  yamlBasename: string | null;
+  /** Pre-split filename portion of `kubePath`. Null when the unit is
+   *  not a Quadlet `.kube` file. (#844) */
+  kubeBasename: string | null;
   id?: string;
   description?: string | null;
   nodeName?: string;

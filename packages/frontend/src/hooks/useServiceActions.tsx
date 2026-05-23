@@ -70,9 +70,9 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
       }
 
       const files = await res.json();
-      const yamlFileName = files.yamlPath?.split('/').pop() || `${serviceName.replace('.service', '')}.yml`;
+      const yamlFileName = service.yamlBasename || `${service.displayName}.yml`;
       const initialData: ServiceFormInitialData = {
-        name: service.name.replace('.service', ''),
+        name: service.displayName,
         kubeContent: files.kubeContent || '',
         yamlContent: files.yamlContent || '',
         yamlFileName,
@@ -312,7 +312,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
                   {drawerState.mode === 'monitor' ? 'Service Monitor' : 'Edit Service'}
                 </p>
                 <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1 flex items-center gap-2">
-                  {drawerState.service.name.replace('.service', '')}
+                  {drawerState.service.displayName}
                   {drawerState.service.nodeName && (
                     <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                       {drawerState.service.nodeName}

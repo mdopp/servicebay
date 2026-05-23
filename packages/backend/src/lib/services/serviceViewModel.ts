@@ -81,13 +81,35 @@ export function buildServiceViewModel({ unit, nodeName, nodeState, proxyRoutes }
   if (unit.isReverseProxy) labels['servicebay.role'] = 'reverse-proxy';
   if (unit.isServiceBay) labels['servicebay.role'] = 'system';
 
-  let displayName = unit.name;
-  if (unit.isReverseProxy) displayName = 'Reverse Proxy (Nginx)';
-  else if (unit.isServiceBay) displayName = 'ServiceBay System';
+  // Backend-computed display fields (#844 / ARCH-12). The frontend used
+  // to derive these with `.replace('.service', '')` and `.split('/').pop()`
+  // — those rules belong here so every consumer sees the same answer.
+  let displayName = baseName;
+  let legacyName = unit.name;
+  if (unit.isReverseProxy) {
+    displayName = 'Reverse Proxy (Nginx)';
+    legacyName = displayName;
+  } else if (unit.isServiceBay) {
+    displayName = 'ServiceBay System';
+    legacyName = displayName;
+  }
 
+  const yamlBasename = yamlPath ? (yamlPath.split('/').pop() ?? null) : null;
+  const kubeBasename = unit.path ? (unit.path.split('/').pop() ?? null) : null;
+
+  // Note on `name` vs `displayName`: historically `name` held the unit
+  // identifier (e.g. `vaultwarden.service`) for normal rows but the
+  // human label (e.g. `Reverse Proxy (Nginx)`) for the special
+  // overrides. That overload is what callers compensated for with
+  // `.replace('.service', '')`. New code should read `displayName`
+  // (always the rendered string) and `id` (always the unit name);
+  // `name` keeps its legacy shape so the migration stays incremental. (#844)
   const viewModel: ServiceViewModel = {
     id: unit.name,
-    name: displayName,
+    name: legacyName,
+    displayName,
+    yamlBasename,
+    kubeBasename,
     nodeName,
     description: unit.description,
     active: unit.activeState === 'active',
