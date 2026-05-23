@@ -4,6 +4,7 @@ import { listNodes, PodmanConnection } from '../nodes';
 import { getConfig } from '../config';
 import { NetworkStore } from './store';
 import { getActiveEdges } from './flowsStore';
+import { parseTemplateDependencies } from '../stackInstall/dependencies';
 import { checkDomains } from './dns';
 import watcher from '../watcher';
 import { getGateway, getNodeTwin } from '../store/repository';
@@ -1996,6 +1997,71 @@ export class NetworkService {
       }
     } catch (e) {
       logger.warn('NetworkService', `observed-edge synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // #505 PR-2 — declared dependency edges. Each managed service's
+    // rendered template.yml carries a `servicebay.dependencies`
+    // annotation; we emit an edge per (src, dep) pair so the network
+    // map can render dashed "author intent" lines alongside the
+    // observed traffic. The FE rendering of `kind: 'declared'` shipped
+    // in #813. Best-effort — a parse failure must never break the graph.
+    try {
+      const nodeIds = new Set(nodes.map(n => n.id));
+      const fileMap = twinNode.files || {};
+      // Build a baseName → service.name lookup so a dep "auth" resolves
+      // to the deployed service "auth.service".
+      const serviceByBase = new Map<string, string>();
+      for (const svc of services) {
+        if (!svc.isManaged) continue;
+        const base = svc.name.replace(/\.service$/, '');
+        serviceByBase.set(base, svc.name);
+      }
+
+      for (const svc of services) {
+        if (!svc.isManaged) continue;
+        const base = svc.name.replace(/\.service$/, '');
+        // Find the .kube file, follow its Yaml= directive to the rendered
+        // pod manifest — same chain as serviceViewModel.ts.
+        const kubeKey = Object.keys(fileMap).find(k => k.endsWith(`/${base}.kube`));
+        if (!kubeKey) continue;
+        const kubeContent = fileMap[kubeKey]?.content;
+        if (!kubeContent) continue;
+        const yamlMatch = kubeContent.match(/^Yaml=(.+)$/m);
+        if (!yamlMatch) continue;
+        const yamlFileName = yamlMatch[1].trim();
+        const yamlKey = Object.keys(fileMap).find(k => k.endsWith(`/${yamlFileName}`));
+        if (!yamlKey) continue;
+        const yamlContent = fileMap[yamlKey]?.content;
+        if (!yamlContent) continue;
+
+        const deps = parseTemplateDependencies(yamlContent);
+        if (deps.length === 0) continue;
+
+        const srcId = prefix(`service-${svc.name}`);
+        if (!nodeIds.has(srcId)) continue;
+
+        for (const depBase of deps) {
+          const depServiceName = serviceByBase.get(depBase);
+          if (!depServiceName) continue;
+          const dstId = prefix(`service-${depServiceName}`);
+          if (!nodeIds.has(dstId)) continue;
+          if (srcId === dstId) continue;
+          mergedEdges.push({
+            id: `declared-${srcId}-${dstId}`,
+            source: srcId,
+            target: dstId,
+            label: 'declared',
+            protocol: 'tcp',
+            // No specific port for an annotation-level "X depends on Y";
+            // the renderer omits the port label for `declared` edges.
+            port: 0,
+            state: 'active',
+            kind: 'declared',
+          });
+        }
+      }
+    } catch (e) {
+      logger.warn('NetworkService', `declared-edge synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     return { nodes, edges: mergedEdges };
