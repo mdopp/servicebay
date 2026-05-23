@@ -78,8 +78,13 @@ async function createGroup(baseUrl: string, token: string, groupName: string): P
     const data = await res.json();
     if (data.errors?.length) {
       const msg = data.errors[0].message || '';
+      const lowerMsg = msg.toLowerCase();
       // "already exists" is fine
-      if (msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('duplicate')) {
+      if (
+        lowerMsg.includes('already exists') ||
+        lowerMsg.includes('duplicate') ||
+        lowerMsg.includes('unique constraint')
+      ) {
         return { name: groupName, created: false };
       }
       return { name: groupName, created: false, error: msg };

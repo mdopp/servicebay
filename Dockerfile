@@ -13,6 +13,9 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY package.json package-lock.json* ./
+COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backend/package.json ./packages/backend/package.json
+COPY packages/frontend/package.json ./packages/frontend/package.json
 RUN npm ci
 
 # Rebuild the source code only when needed
