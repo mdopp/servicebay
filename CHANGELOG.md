@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.23.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.23.1...servicebay-v4.23.2) (2026-05-23)
+
+
+### Bug Fixes
+
+* **dashboard:** hide servicebay-splash from the services list ([#885](https://github.com/mdopp/servicebay/issues/885)) ([d1f6429](https://github.com/mdopp/servicebay/commit/d1f6429da60286099cbaa355ed62966f97cecd32))
+
 ## [4.23.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.23.0...servicebay-v4.23.1) (2026-05-23)
 
 
