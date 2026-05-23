@@ -2017,21 +2017,57 @@ export class NetworkService {
         serviceByBase.set(base, svc.name);
       }
 
+      // Resolve a service's rendered pod-manifest yaml, following the
+      // .kube → Yaml= → .yml chain (same path serviceViewModel.ts uses).
+      // Returns null if any link in the chain is missing.
+      const readRenderedYaml = (baseName: string): string | null => {
+        const kubeKey = Object.keys(fileMap).find(k => k.endsWith(`/${baseName}.kube`));
+        if (!kubeKey) return null;
+        const kubeContent = fileMap[kubeKey]?.content;
+        if (!kubeContent) return null;
+        const yamlMatch = kubeContent.match(/^Yaml=(.+)$/m);
+        if (!yamlMatch) return null;
+        const yamlFileName = yamlMatch[1].trim();
+        const yamlKey = Object.keys(fileMap).find(k => k.endsWith(`/${yamlFileName}`));
+        if (!yamlKey) return null;
+        return fileMap[yamlKey]?.content ?? null;
+      };
+
+      // Parse the first TCP port out of `servicebay.ports` so a declared
+      // edge carries the port consumers actually talk to. Templates that
+      // expose multiple ports list the consumer-facing one first by
+      // convention (e.g. `auth` puts AUTHELIA_PORT before LLDAP_PORT
+      // because cross-pod consumers are doing OIDC / forward-auth, not
+      // LDAP binds — see templates/auth/template.yml). Returns 0 when
+      // the annotation is missing or has no TCP entry.
+      const readPrimaryTcpPort = (yamlContent: string): number => {
+        const m = yamlContent.match(/servicebay\.ports:\s*['"]?([^\n'"]+)['"]?/);
+        if (!m) return 0;
+        for (const entry of m[1].split(',')) {
+          const [portStr, proto] = entry.trim().split('/');
+          const port = Number.parseInt(portStr, 10);
+          if (Number.isFinite(port) && port > 0 && (!proto || proto === 'tcp')) {
+            return port;
+          }
+        }
+        return 0;
+      };
+
+      // Cache target → port so the inner loop doesn't re-parse for every
+      // dependency declaration pointing at the same target.
+      const portByTargetBase = new Map<string, number>();
+      const portFor = (baseName: string): number => {
+        if (portByTargetBase.has(baseName)) return portByTargetBase.get(baseName)!;
+        const yaml = readRenderedYaml(baseName);
+        const port = yaml ? readPrimaryTcpPort(yaml) : 0;
+        portByTargetBase.set(baseName, port);
+        return port;
+      };
+
       for (const svc of services) {
         if (!svc.isManaged) continue;
         const base = svc.name.replace(/\.service$/, '');
-        // Find the .kube file, follow its Yaml= directive to the rendered
-        // pod manifest — same chain as serviceViewModel.ts.
-        const kubeKey = Object.keys(fileMap).find(k => k.endsWith(`/${base}.kube`));
-        if (!kubeKey) continue;
-        const kubeContent = fileMap[kubeKey]?.content;
-        if (!kubeContent) continue;
-        const yamlMatch = kubeContent.match(/^Yaml=(.+)$/m);
-        if (!yamlMatch) continue;
-        const yamlFileName = yamlMatch[1].trim();
-        const yamlKey = Object.keys(fileMap).find(k => k.endsWith(`/${yamlFileName}`));
-        if (!yamlKey) continue;
-        const yamlContent = fileMap[yamlKey]?.content;
+        const yamlContent = readRenderedYaml(base);
         if (!yamlContent) continue;
 
         const deps = parseTemplateDependencies(yamlContent);
@@ -2046,15 +2082,17 @@ export class NetworkService {
           const dstId = prefix(`service-${depServiceName}`);
           if (!nodeIds.has(dstId)) continue;
           if (srcId === dstId) continue;
+          const targetPort = portFor(depBase);
           mergedEdges.push({
             id: `declared-${srcId}-${dstId}`,
             source: srcId,
             target: dstId,
-            label: 'declared',
+            // Label drives the on-edge text; the FE's `labelForEdgeKind`
+            // adds the "(declared)" suffix when kind === 'declared', so
+            // a non-empty label here becomes e.g. "9091 (declared)".
+            label: targetPort > 0 ? `${targetPort}` : 'declared',
             protocol: 'tcp',
-            // No specific port for an annotation-level "X depends on Y";
-            // the renderer omits the port label for `declared` edges.
-            port: 0,
+            port: targetPort,
             state: 'active',
             kind: 'declared',
           });
