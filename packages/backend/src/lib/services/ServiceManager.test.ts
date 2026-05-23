@@ -158,6 +158,30 @@ spec:
         expect(svc.volumes[0]).toEqual({ host: '/mnt/data', container: '/var/lib/mysql' });
     });
 
+    it('hides servicebay-splash from listServices', async () => {
+        // The boot-time splash Quadlet (#775) sits on disk next to
+        // `servicebay.container` and the operator can't / shouldn't
+        // manage it. listServices must skip it so the dashboard's
+        // services count doesn't include a deliberately-dormant
+        // helper as "1 of N not running".
+        mockNodes['local'].files = {
+            '/var/home/core/.config/containers/systemd/vaultwarden.container': {
+                path: '/var/home/core/.config/containers/systemd/vaultwarden.container',
+                content: '[Container]\nImage=vaultwarden/server',
+                modified: 0,
+            },
+            '/var/home/core/.config/containers/systemd/servicebay-splash.container': {
+                path: '/var/home/core/.config/containers/systemd/servicebay-splash.container',
+                content: '[Container]\nImage=ghcr.io/mdopp/servicebay-splash',
+                modified: 0,
+            },
+        } as any;
+        const services = await ServiceManager.listServices('local');
+        const names = services.map(s => s.name);
+        expect(names).toContain('vaultwarden');
+        expect(names).not.toContain('servicebay-splash');
+    });
+
     it('should parse Quadlet Volumes correctly', async () => {
         const containerContent = `
 [Container]

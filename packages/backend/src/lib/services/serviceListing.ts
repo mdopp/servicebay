@@ -46,6 +46,23 @@ export interface ServiceInfo {
   verifiedDomains?: string[];
 }
 
+/**
+ * Quadlet files that are part of ServiceBay's own runtime but aren't
+ * services the operator manages. Excluded from `listServices` so they
+ * never appear in the dashboard's services count / list.
+ *
+ * - `servicebay-splash` is the boot-time placeholder (#775) that binds
+ *   :5888 during cold boot so visitors see "starting up" instead of a
+ *   connection-refused page. It's a one-shot — its success state is
+ *   `inactive (dead)` once the real servicebay.service takes over via
+ *   the `Conflicts=` directive. Showing it as "1 of 14 not running"
+ *   on the dashboard is misleading, since the operator can't fix it
+ *   (nor should they — it's working as designed).
+ */
+const HIDDEN_SERVICE_BASENAMES = new Set<string>([
+  'servicebay-splash',
+]);
+
 export class ServiceListing {
     static async listServices(nodeName: string): Promise<ServiceInfo[]> {
         // V4: Use DigitalTwinStore
@@ -64,6 +81,10 @@ export class ServiceListing {
             const fileName = path.basename(filePath);
             const baseName = filePath.endsWith('.kube') ? fileName.replace('.kube', '') : fileName.replace('.container', '');
             const type = filePath.endsWith('.kube') ? 'kube' : 'container';
+
+            // Skip ServiceBay-internal Quadlets the operator doesn't manage
+            // (boot splash, etc. — see HIDDEN_SERVICE_BASENAMES comment).
+            if (HIDDEN_SERVICE_BASENAMES.has(baseName)) continue;
 
             // Find State
             const unitName = `${baseName}.service`;
