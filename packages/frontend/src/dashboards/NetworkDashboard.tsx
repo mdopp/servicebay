@@ -709,6 +709,40 @@ const DEFAULT_EDGE_COLOR = '#b1b1b7';
 const DOWN_EDGE_COLOR = '#ef4444';
 const DOWN_EDGE_DASHES = '6 3';
 
+// Edge-kind styling (#813). The backend stamps each edge with `kind`
+// (gateway | proxy | observed | declared | manual). The map must render
+// "I just saw this TCP flow" (observed, solid grey) and "the template
+// author says this exists" (declared, dashed amber) so an operator never
+// confuses the two. Down-target dashes still win — service-down is a
+// stronger signal than provenance.
+const DECLARED_EDGE_COLOR = '#d97706'; // amber-600
+const DECLARED_EDGE_DASHES = '4 4';
+const OBSERVED_EDGE_COLOR = '#0ea5e9'; // sky-500 — subtly distinct from default grey
+
+function styleForEdgeKind(kind: string | undefined, base: React.CSSProperties | undefined): React.CSSProperties | undefined {
+    if (kind === 'declared') {
+        return {
+            ...(base || {}),
+            stroke: DECLARED_EDGE_COLOR,
+            strokeDasharray: DECLARED_EDGE_DASHES,
+        };
+    }
+    if (kind === 'observed') {
+        return {
+            ...(base || {}),
+            stroke: OBSERVED_EDGE_COLOR,
+        };
+    }
+    return base;
+}
+
+function labelForEdgeKind(kind: string | undefined, baseLabel: string | undefined): string | undefined {
+    if (kind === 'declared') {
+        return baseLabel ? `${baseLabel} (declared)` : 'declared';
+    }
+    return baseLabel;
+}
+
 type LinkFormState = {
     name: string;
     url: string;
@@ -740,6 +774,19 @@ function NetworkLegend() {
                         <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5">
                             <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
                             <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
+                        </div>
+                        {/* Edge-kind legend (#813). The two provenance kinds
+                            must read as visually distinct so an operator never
+                            confuses observed traffic with template intent. */}
+                        <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
+                            <div className="flex items-center gap-2">
+                                <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#0ea5e9" strokeWidth="2" /></svg>
+                                <span>Observed TCP flow</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#d97706" strokeWidth="2" strokeDasharray="4 4" /></svg>
+                                <span>Declared dependency</span>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -1187,6 +1234,8 @@ export default function NetworkDashboard() {
         const targetStatus = nodeStatusMap.get(e.target);
         const connectsToDownNode = targetStatus === 'down';
         const baseStyle = e.style as React.CSSProperties | undefined;
+        // Down-target styling (red dashed) takes priority over kind
+        // styling — a broken target is more urgent than provenance. (#813)
         const edgeStyle = connectsToDownNode
             ? {
                 ...(baseStyle || {}),
@@ -1194,13 +1243,16 @@ export default function NetworkDashboard() {
                 strokeWidth: Math.max(2, coerceStrokeWidth(baseStyle?.strokeWidth)),
                 strokeDasharray: DOWN_EDGE_DASHES
             }
-            : baseStyle;
+            : styleForEdgeKind(e.kind, baseStyle);
+
+        const rawLabel = e.label ?? fallbackLabel;
+        const decoratedLabel = labelForEdgeKind(e.kind, rawLabel);
 
         return {
             id: e.id,
             source: e.source,
             target: e.target,
-            label: e.label ?? fallbackLabel,
+            label: decoratedLabel,
             type: 'smoothstep',
             markerEnd: {
                 type: MarkerType.ArrowClosed,
@@ -1209,7 +1261,16 @@ export default function NetworkDashboard() {
             data: {
                 isManual: e.isManual,
                 state: e.state,
-                port: e.port
+                port: e.port,
+                kind: e.kind,
+                // Provenance text used by the edge inspector / tooltip
+                // when the operator clicks a `declared` edge to confirm
+                // it's an annotation, not observed traffic. (#813)
+                tooltip: e.kind === 'declared'
+                    ? 'Declared dependency — not observed traffic'
+                    : e.kind === 'observed'
+                        ? `Observed TCP flow${Number.isFinite(e.port) && e.port > 0 ? ` to :${e.port}` : ''}`
+                        : undefined,
             },
             animated: connectsToDownNode ? true : e.state === 'active'
         };
