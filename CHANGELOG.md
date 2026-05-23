@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.23.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.23.0...servicebay-v4.23.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* **home:** remove duplicate / route that broke the client manifest ([#879](https://github.com/mdopp/servicebay/issues/879)) ([#881](https://github.com/mdopp/servicebay/issues/881)) ([5689751](https://github.com/mdopp/servicebay/commit/5689751d408e3ebf7fd9fc0a63f3dd5b407261ab))
+* **sync:** forward to 127.0.0.1 + disable host check on Syncthing ([#880](https://github.com/mdopp/servicebay/issues/880)) ([#882](https://github.com/mdopp/servicebay/issues/882)) ([8c4c45a](https://github.com/mdopp/servicebay/commit/8c4c45ac2f6f32c1bc7d21e8f0c905b26ffdf560))
+
 ## [4.23.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.22.0...servicebay-v4.23.0) (2026-05-23)
 
 
