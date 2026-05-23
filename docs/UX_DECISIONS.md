@@ -254,6 +254,63 @@ to look the part (a package import, not a path import).
 
 ---
 
+## Primary sidebar is a user-task list, not an infrastructure list
+
+**What.** The desktop sidebar and mobile bottom-nav render from a
+single schema in `packages/frontend/src/config/navigation.ts`
+(`NAVIGATION_ENTRIES`). Each entry is a user-facing destination —
+Services, Network Map, Health, Diagnostics, SSH Terminal, Settings —
+not a raw infrastructure object list. Raw container engine, podman
+socket, system-vitals, system-logs etc. live as **tabs inside
+Diagnostics**, never as peer sidebar entries. New top-level entries
+require an explicit user-task justification ("operators need a
+one-click path to X"), not "the data exists, let's show it."
+
+**Why.** ServiceBay's audience is family-homelab admins; surfacing
+"Container Engine" or "Quadlet files" at the top level trains them
+to think of ServiceBay as a podman frontend instead of a homelab
+manager. The 2026-05 round of user testing landed on the rule from
+[UX_PHILOSOPHY.md](UX_PHILOSOPHY.md) §3: information surface is also
+a "knob," and most operators won't have an opinion on it. The schema
+indirection (#845) makes the rule enforceable — adding an entry
+requires editing the schema, which is reviewable in one place.
+
+**Where enforced.**
+- `packages/frontend/src/config/navigation.ts` — the schema.
+- `Sidebar.tsx` / `MobileNav.tsx` map over the schema; no inline
+  entries.
+- [UX_PHILOSOPHY.md](UX_PHILOSOPHY.md) §3 explicitly lists raw infra
+  views as expert-only.
+
+---
+
+## Progress and capacity displays answer the household question
+
+**What.** Long-running install / backup / capacity readouts default
+to the *household-decision* framing — "about 2 minutes to go", "~3
+years of photos left at current upload rate" — not the raw
+bytes/seconds/percent that a dashboard designer would emit. Raw
+numbers are reachable on hover or behind a "Details" expand for
+operators who explicitly want them.
+
+**Why.** A 16.7% disk gauge tells someone with networking experience
+"plenty of room"; a family operator either ignores it or worries
+unnecessarily. "~3 years of photos left" lets them decide whether to
+keep uploading. Same logic for install progress: "Setting up
+Vaultwarden (4 of 6 services ready)" beats "image pull 7/12 · 2
+healthy" because the operator's actual question is *"is something
+hung or is this normal?"* — a service-name + ratio + ETA answers it,
+raw image counts don't.
+
+**Where enforced.**
+- [UX_PHILOSOPHY.md](UX_PHILOSOPHY.md) §5 with concrete bad/good
+  pairs for progress, capacity, and backup readouts.
+- The install overlay (#805 work) is the first surface to adopt the
+  pattern end-to-end; existing diagnostic panels keep raw numbers
+  while diagnose probes drive household-framed action labels.
+
+---
+
 ## Maintaining this doc
 
 Add an entry when:

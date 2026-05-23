@@ -120,6 +120,15 @@ If less than 5% of users would meaningfully change a setting, give it
 a sensible default and don't surface it. Asking is a footgun for the
 other 95% — they have to evaluate a choice they can't evaluate.
 
+This extends to **information surface**, not just settings: the
+sidebar's primary nav should answer *"what do I want to do?"*, not
+*"what infrastructure objects exist?"* The raw Podman container list,
+the raw systemd unit list, the raw Quadlet file tree — these belong
+inside Diagnostics (where an operator who *needs* them already
+expects to find them), not at the top level. The same is true for
+"Setup" / wizard re-entry: visible only while there's something
+pending, hidden once the install is acknowledged.
+
 Examples:
 - **Auto-update channels (`stable | test | dev`)** — removed entirely.
   Stable is what everyone wants; the others were dev-team artefacts
@@ -130,6 +139,12 @@ Examples:
 - **Knobs whose default is fine forever.** `agent.processCleanup.maxAgeMinutes`,
   `gracefulShutdownTimeout`. Hide unless a user reports a problem the
   knob solves.
+- **Raw infrastructure views in the primary navigation.** The
+  container engine, podman socket status, and raw service-unit grid
+  are diagnostic tools — operators who need them know to open
+  Diagnostics. Surfacing them as peer entries with "Services" /
+  "Network Map" trains users to think of ServiceBay as a podman
+  frontend instead of a homelab manager.
 
 When unsure: ship without the knob. Adding one later is easy; removing
 one is painful.
@@ -166,6 +181,27 @@ Good: *"Restart Vaultwarden"*
 Bad: *"OIDC client_secret rotation requires Authelia config reload"*
 Good: *"Generate a new SSO secret for this app (apps using SSO will
 need to log in again once)"*
+
+The same translation applies to **progress and capacity** displays.
+The goal is for the operator to make a household decision (do I keep
+uploading photos? do I need a bigger disk?) without doing arithmetic.
+
+Bad: *"42.7 GB / 256 GB · 16.7% used · 1.4 MB/s write"*
+Good: *"~3 years of photos left at your current upload rate (42 GB of
+256 GB used)"*
+
+Bad: *"Install progress: 7 / 12 images pulled, 2 services healthy"*
+Good: *"Setting up Vaultwarden (4 of 6 services ready, about 2 minutes
+to go)"*
+
+Bad: *"Backup snapshot: 1.8 GB, 23 minutes ago"*
+Good: *"Last backup: this morning (1.8 GB — small enough to restore
+from your phone in a pinch)"*
+
+Hard numbers stay available on hover / in a "Details" expand —
+operators who *want* the raw values shouldn't have to dig. But the
+default view answers the household question, not the dashboard
+designer's.
 
 ## Concrete checklist for new PRs
 
