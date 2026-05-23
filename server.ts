@@ -215,18 +215,23 @@ app.prepare().then(() => {
         const authHeader = req.headers.authorization || '';
         const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
         let auth: { user: string; scopes: import('./packages/backend/src/lib/mcp/tokens').ApiScope[]; tokenId?: string } | null = null;
-        if (bearerMatch) {
-          const t = await verifyToken(bearerMatch[1]);
-          if (t) auth = { user: `token:${t.name}`, scopes: t.scopes, tokenId: t.id };
-          // Bootstrap token (#322): only valid bearer that doesn't
-          // match the sb_<id>_<secret> shape. Always read-only, always
-          // LAN-only, always TTL'd. The verifier handles all three
-          // gates — server.ts just hands off remoteAddress.
-          if (!auth) {
-            const remoteIp = (req.socket?.remoteAddress) ?? undefined;
-            const bt = await verifyBootstrapToken(bearerMatch[1], remoteIp);
-            if (bt) auth = bt;
+        let authError: string | null = null;
+        try {
+          if (bearerMatch) {
+            const t = await verifyToken(bearerMatch[1]);
+            if (t) auth = { user: `token:${t.name}`, scopes: t.scopes, tokenId: t.id };
+            // Bootstrap token (#322): only valid bearer that doesn't
+            // match the sb_<id>_<secret> shape. Always read-only, always
+            // LAN-only, always TTL'd. The verifier handles all three
+            // gates — server.ts just hands off remoteAddress.
+            if (!auth) {
+              const remoteIp = (req.socket?.remoteAddress) ?? undefined;
+              const bt = await verifyBootstrapToken(bearerMatch[1], remoteIp);
+              if (bt) auth = bt;
+            }
           }
+        } catch (err) {
+          authError = err instanceof Error ? err.message : String(err);
         }
         if (!auth) {
           const session = await getSessionFromCookieHeader(req.headers.cookie);
@@ -240,7 +245,10 @@ app.prepare().then(() => {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             jsonrpc: '2.0',
-            error: { code: -32001, message: 'Unauthorized — provide Authorization: Bearer sb_… or a session cookie' },
+            error: {
+              code: -32001,
+              message: authError || 'Unauthorized — provide Authorization: Bearer sb_… or a session cookie',
+            },
             id: null,
           }));
           return;

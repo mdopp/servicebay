@@ -6,6 +6,12 @@ metadata:
     servicebay.label: "Cloud (Passwords, Photos, Files, Media, Calendar)"
     servicebay.tier: "feature"
     servicebay.depends-on-stacks: "basic"
+  selfHeal:
+    vaultwarden: env_override
+    immich: env_override
+    file-share: env_override
+    media: env_override
+    radicale: none
 spec:
   # Personal-cloud bundle: the services the operator's household reaches
   # from outside the LAN (or from any device on it). Grouped here so a

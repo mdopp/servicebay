@@ -9,5 +9,9 @@ metadata:
     # RESET — the core stack carries identity + cert state every feature
     # depends on, so it can't be one-click wiped from the UI.
     servicebay.lifecycle: "atomic-wipe"
+  selfHeal:
+    nginx: api_rotation
+    auth: recreate_on_key_wipe
+    adguard: env_override
 spec:
   templates: [nginx, auth, adguard]

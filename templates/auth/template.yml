@@ -49,6 +49,8 @@ spec:
         value: "{{LLDAP_PORT}}"
       - name: LLDAP_LDAP_PORT
         value: "{{LLDAP_LDAP_PORT}}"
+      - name: LLDAP_FORCE_LDAP_USER_PASS_RESET
+        value: "{{LLDAP_FORCE_LDAP_USER_PASS_RESET}}"
     ports:
       - containerPort: {{LLDAP_PORT}}
       - containerPort: {{LLDAP_LDAP_PORT}}

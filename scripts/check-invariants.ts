@@ -197,11 +197,10 @@ async function checkWithApiHandlerAdoption() {
 // 5. Singleton fan-in to DigitalTwinStore.
 //
 // 35 direct getInstance() consumers today. Architecture audit ARCH-05ff
-// flags that this should go through a reader API. Pinned at 40 (slack
-// for one or two new sites while the reader API is being built), ratchet
-// to 5 (server.ts + reader module + tests) once it exists.
+// flags that this should go through a reader API. Ratcheted to 0 now that
+// all Next.js route call-sites use repository.ts selectors (#841, #842).
 // ---------------------------------------------------------------------------
-const TWIN_GETINSTANCE_MAX = 40;
+const TWIN_GETINSTANCE_MAX = 0;
 
 async function checkTwinFanIn() {
     const files = await walk(SRC, isTs);

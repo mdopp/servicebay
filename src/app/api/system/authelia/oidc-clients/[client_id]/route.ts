@@ -15,7 +15,7 @@
  */
 import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwins } from '@/lib/store/repository';
 import { withApiHandlerParams } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { agentManager } from '@/lib/agent/manager';
@@ -43,8 +43,7 @@ export const DELETE = withApiHandlerParams<undefined, undefined, { client_id: st
 
     // Locate Authelia by walking the digital twin and looking up the
     // merged auth-pod manifest on each node — same path the POST uses.
-    const twin = DigitalTwinStore.getInstance();
-    const nodes = Object.keys(twin.nodes);
+    const nodes = Object.keys(getNodeTwins());
     let autheliaNode: string | null = null;
     let autheliaYaml = '';
     for (const nodeName of nodes) {

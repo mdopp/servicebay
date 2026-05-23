@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ServiceManager } from '@/lib/services/ServiceManager';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwins } from '@/lib/store/repository';
 import { getTemplateVariables } from '@/lib/registry';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
@@ -116,8 +116,7 @@ export const POST = withApiHandler({}, async ({ request }) => {
     }
 
     // Find which node has Authelia deployed
-    const twin = DigitalTwinStore.getInstance();
-    const nodes = Object.keys(twin.nodes);
+    const nodes = Object.keys(getNodeTwins());
     let autheliaNode: string | null = null;
     let autheliaYaml = '';
     for (const nodeName of nodes) {

@@ -233,6 +233,7 @@ export async function assembleManifest(
   const newlyGenerated: { name: string; value: string }[] = [];
 
   const variables: JobInputVariable[] = [];
+  vars.delete('LLDAP_FORCE_LDAP_USER_PASS_RESET');
   for (const name of vars) {
     const meta = allMeta[name];
     let value = '';

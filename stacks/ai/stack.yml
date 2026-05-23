@@ -6,6 +6,9 @@ metadata:
     servicebay.label: "AI (Ollama + Hermes)"
     servicebay.tier: "feature"
     servicebay.depends-on-stacks: "basic"
+  selfHeal:
+    ollama: env_override
+    hermes: env_override
 spec:
   # Two-template stack: ollama is the LLM runtime, hermes is the
   # ServiceBay-side chat UI. Install order is derived from each

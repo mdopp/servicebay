@@ -7,6 +7,10 @@ vi.mock('@/lib/config', () => ({
   updateConfig: vi.fn(),
 }));
 
+vi.mock('@/lib/install/jobStore', () => ({
+  wasInstallActiveWithin: vi.fn().mockResolvedValue(false),
+}));
+
 import {
   isLanIp,
   lazyInitializeExpiry,
@@ -15,15 +19,18 @@ import {
   getBootstrapTokenStatus,
 } from './bootstrapToken';
 import { getConfig, updateConfig } from '@/lib/config';
+import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 
 const mockGetConfig = getConfig as any;
 const mockUpdateConfig = updateConfig as any;
+const mockWasInstallActiveWithin = wasInstallActiveWithin as any;
 
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
 beforeEach(() => {
   mockGetConfig.mockReset();
   mockUpdateConfig.mockReset();
+  mockWasInstallActiveWithin.mockReset().mockResolvedValue(false);
 });
 
 describe('isLanIp', () => {
@@ -79,7 +86,7 @@ describe('verifyBootstrapToken', () => {
     expect(await verifyBootstrapToken('wrong-token', '127.0.0.1')).toBeNull();
   });
 
-  it('rejects expired tokens', async () => {
+  it('rejects expired tokens by throwing an error', async () => {
     mockGetConfig.mockResolvedValue({
       auth: {
         bootstrapToken: {
@@ -89,7 +96,26 @@ describe('verifyBootstrapToken', () => {
         },
       },
     });
-    expect(await verifyBootstrapToken('right-token', '127.0.0.1')).toBeNull();
+    await expect(verifyBootstrapToken('right-token', '127.0.0.1')).rejects.toThrow('Bootstrap token expired');
+  });
+
+  it('accepts expired tokens if a setup job was active recently', async () => {
+    mockGetConfig.mockResolvedValue({
+      auth: {
+        bootstrapToken: {
+          hash: sha256('right-token'),
+          scope: 'read',
+          expiresAt: new Date(Date.now() - 60_000).toISOString(),
+        },
+      },
+    });
+    mockWasInstallActiveWithin.mockResolvedValue(true);
+    const ctx = await verifyBootstrapToken('right-token', '127.0.0.1');
+    expect(ctx).toEqual({
+      user: 'bootstrap',
+      scopes: ['read'],
+      tokenId: 'bootstrap',
+    });
   });
 
   it('accepts a correct token from a LAN IP within the window', async () => {
@@ -212,5 +238,19 @@ describe('getBootstrapTokenStatus', () => {
       },
     });
     expect(await getBootstrapTokenStatus()).toEqual({ active: false });
+  });
+
+  it('returns active when expired but a setup job was active recently', async () => {
+    mockGetConfig.mockResolvedValue({
+      auth: {
+        bootstrapToken: {
+          hash: 'abc',
+          scope: 'read',
+          expiresAt: new Date(Date.now() - 60_000).toISOString(),
+        },
+      },
+    });
+    mockWasInstallActiveWithin.mockResolvedValue(true);
+    expect(await getBootstrapTokenStatus()).toEqual({ active: true, expiresAt: null, minutesRemaining: null });
   });
 });

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getConfig, updateConfig } from '@/lib/config';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwins, getNodeTwin } from '@/lib/store/repository';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { agentManager } from '@/lib/agent/manager';
 import { logger } from '@/lib/logger';
@@ -73,8 +73,8 @@ interface NpmResolution {
   nodeName: string;
 }
 
-function getNodeIp(nodeName: string, twinStore: DigitalTwinStore): string {
-  const twin = twinStore.nodes[nodeName];
+function getNodeIp(nodeName: string): string {
+  const twin = getNodeTwin(nodeName);
   if (twin?.nodeIPs?.length) {
     const lanIp = twin.nodeIPs.find(ip => !ip.startsWith('127.'));
     if (lanIp) return lanIp;
@@ -84,8 +84,7 @@ function getNodeIp(nodeName: string, twinStore: DigitalTwinStore): string {
 }
 
 async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
-  const twinStore = DigitalTwinStore.getInstance();
-  const nodeNames = nodeHint ? [nodeHint] : Object.keys(twinStore.nodes);
+  const nodeNames = nodeHint ? [nodeHint] : Object.keys(getNodeTwins());
   if (nodeNames.length === 0) nodeNames.push('Local');
 
   for (const nodeName of nodeNames) {
@@ -103,7 +102,7 @@ async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
       const config = await getConfig();
       adminPort = config.templateSettings?.NGINX_ADMIN_PORT || '81';
     }
-    const apiHost = nodeName === 'Local' ? '127.0.0.1' : getNodeIp(nodeName, twinStore);
+    const apiHost = nodeName === 'Local' ? '127.0.0.1' : getNodeIp(nodeName);
     return { apiUrl: `http://${apiHost}:${adminPort}`, nodeName };
   }
   return null;

@@ -98,12 +98,32 @@ export async function verifyBootstrapToken(
   const config = await getConfig();
   const bt = config.auth?.bootstrapToken;
   if (!bt?.hash) return null;
-  if (bt.expiresAt && Date.parse(bt.expiresAt) < Date.now()) return null;
 
   const incomingHash = Buffer.from(sha256(raw), 'hex');
   const storedHash = Buffer.from(bt.hash, 'hex');
   if (incomingHash.length !== storedHash.length) return null;
   if (!crypto.timingSafeEqual(incomingHash, storedHash)) return null;
+
+  // Hash matches perfectly! Now check if the absolute expiry window has passed.
+  let isExpired = false;
+  if (bt.expiresAt && Date.parse(bt.expiresAt) < Date.now()) {
+    // If standard 30 min expired, keep it alive if a setup job is currently
+    // active or completed within the last 30 minutes.
+    try {
+      const { wasInstallActiveWithin } = await import('@/lib/install/jobStore');
+      const isRecent = await wasInstallActiveWithin(30 * 60 * 1000);
+      if (!isRecent) {
+        isExpired = true;
+      }
+    } catch {
+      // Fallback to absolute expiration if jobStore loading fails
+      isExpired = true;
+    }
+  }
+
+  if (isExpired) {
+    throw new Error('Bootstrap token expired. Please generate a fresh API token in Settings.');
+  }
 
   return {
     user: 'bootstrap',
@@ -146,7 +166,18 @@ export async function getBootstrapTokenStatus(): Promise<
     return { active: true, expiresAt: null, minutesRemaining: null };
   }
   const remainingMs = Date.parse(bt.expiresAt) - Date.now();
-  if (remainingMs <= 0) return { active: false };
+  if (remainingMs <= 0) {
+    // If standard 30 min expired, check if a setup job is currently
+    // active or completed within the last 30 minutes.
+    try {
+      const { wasInstallActiveWithin } = await import('@/lib/install/jobStore');
+      const isRecent = await wasInstallActiveWithin(30 * 60 * 1000);
+      if (isRecent) {
+        return { active: true, expiresAt: null, minutesRemaining: null };
+      }
+    } catch {}
+    return { active: false };
+  }
   return {
     active: true,
     expiresAt: bt.expiresAt,

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { agentManager } from '@/lib/agent/manager';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwins } from '@/lib/store/repository';
 import { requireSession } from '@/lib/api/requireSession';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
@@ -66,8 +66,7 @@ export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
 
     const requestedNode = query.node || undefined;
 
-    const twin = DigitalTwinStore.getInstance();
-    const nodeName = requestedNode || Object.keys(twin.nodes)[0];
+    const nodeName = requestedNode || Object.keys(getNodeTwins())[0];
     if (!nodeName) {
       return NextResponse.json({ error: 'No nodes available' }, { status: 404 });
     }

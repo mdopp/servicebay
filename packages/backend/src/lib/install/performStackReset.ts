@@ -12,6 +12,7 @@ import { getConfig, scrubEncryptedConfig } from '@/lib/config';
 import { DigitalTwinStore } from '@/lib/store/twin';
 import { logger } from '@/lib/logger';
 import { RESET_GROUPS, DEFAULT_PRESERVE, isAlwaysWipe, type ResetGroup } from './resetGroups';
+import { validateResetCombo } from './resetValidation';
 
 /** Service names the reset endpoint refuses to delete. */
 const PROTECTED_SERVICES = new Set(['servicebay']);
@@ -59,6 +60,16 @@ export async function performStackReset(
     ? (options.preserve.filter((g): g is ResetGroup => validGroups.includes(g as ResetGroup)))
     : DEFAULT_PRESERVE.slice()
   ).filter(g => !isAlwaysWipe(g));
+
+  // --- Validation gate (#847 / ARCH-16a) ---
+  // Block unsafe preserve/wipe combos before any destructive IO.
+  const validation = await validateResetCombo({ preserve, node: options.node });
+  if (!validation.valid) {
+    throw new StackResetError(
+      `Unsafe reset combination: ${validation.errors.join(' ')}`,
+      400,
+    );
+  }
 
   const twin = DigitalTwinStore.getInstance();
   const nodeName = options.node || Object.keys(twin.nodes)[0];
