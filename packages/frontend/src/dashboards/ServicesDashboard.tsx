@@ -250,6 +250,9 @@ export default function ServicesDashboard() {
                       return {
                           id: link.id || link.name,
                           name: link.name,
+                          displayName: link.name,
+                          yamlBasename: link.yamlPath ? (link.yamlPath.split('/').pop() ?? null) : null,
+                          kubeBasename: link.kubePath ? (link.kubePath.split('/').pop() ?? null) : null,
                           nodeName: link.nodeName || 'Global',
                           description: link.description,
                           active: typeof link.active === 'boolean' ? link.active : true,
@@ -436,8 +439,12 @@ export default function ServicesDashboard() {
         const finalServices = Array.from(uniqueServices.values());
 
         if (twin.gateway) {
+            const gatewayDisplayName = twin.gateway.provider === 'fritzbox' ? 'FritzBox Gateway' : 'Internet Gateway';
             finalServices.push({
-                name: twin.gateway.provider === 'fritzbox' ? 'FritzBox Gateway' : 'Internet Gateway',
+                name: gatewayDisplayName,
+                displayName: gatewayDisplayName,
+                yamlBasename: null,
+                kubeBasename: null,
                 id: 'gateway',
                 nodeName: 'Global',
                 description: 'Upstream Internet Connection',
@@ -634,9 +641,9 @@ export default function ServicesDashboard() {
                                 <h3
                                     className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate"
                                     title={service.name}
-                                    data-testid={`service-name-${service.name.replace('.service', '')}`}
+                                    data-testid={`service-name-${service.displayName}`}
                                 >
-                                    {service.name.replace('.service', '')}
+                                    {service.displayName}
                                 </h3>
                                 {service.nodeName && service.nodeName !== 'Local' && (
                                     <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 rounded">
