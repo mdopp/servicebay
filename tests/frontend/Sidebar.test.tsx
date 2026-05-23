@@ -119,7 +119,7 @@ describe('Sidebar', () => {
     });
 
     it('does not show Users & Groups when fetch fails', async () => {
-        fetchSpy.mockImplementation((url) => {
+        fetchSpy.mockImplementation((url: RequestInfo | URL) => {
             const u = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
             if (u.includes('/api/auth/lldap-url')) {
                 return Promise.reject(new Error('Network error'));
