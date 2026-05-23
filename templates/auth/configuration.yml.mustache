@@ -50,7 +50,7 @@ access_control:
     - domain: 'auth.{{PUBLIC_DOMAIN}}'
       policy: bypass
 
-    # Admin services — admins group, two-factor
+    # Admin services — admins group, two-factor.
     - domain:
         - 'admin.{{PUBLIC_DOMAIN}}'
         - 'nginx.{{PUBLIC_DOMAIN}}'
@@ -59,6 +59,19 @@ access_control:
       policy: two_factor
       subject:
         - 'group:admins'
+
+    # Explicit deny on admin domains for any subject that didn't match
+    # the rule above. Without this, a `family`-only user reaches these
+    # hosts via the wildcard rule below — Authelia evaluates rules top-
+    # to-bottom and a `subject` mismatch SKIPS the rule rather than
+    # denying. (#878 follow-up — the access_control table looked
+    # restrictive but actually let family users into LLDAP / NPM / AdGuard.)
+    - domain:
+        - 'admin.{{PUBLIC_DOMAIN}}'
+        - 'nginx.{{PUBLIC_DOMAIN}}'
+        - 'dns.{{PUBLIC_DOMAIN}}'
+        - 'ldap.{{PUBLIC_DOMAIN}}'
+      policy: deny
 
     # Everything else — family + admins, one-factor
     - domain: '*.{{PUBLIC_DOMAIN}}'

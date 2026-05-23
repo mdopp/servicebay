@@ -24,13 +24,14 @@
   },
   "LLDAP_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for LLDAP Web UI",
+    "description": "Subdomain for LLDAP Web UI. Gated by Authelia forward-auth (admin group, two-factor per Authelia's access_control rules). Without the forward-auth block, the LLDAP UI is reachable at the nginx layer by any logged-in family user — the admin-only Authelia rule never fires because nginx never makes the auth_request subrequest (#878).",
     "default": "ldap",
     "exposure": "internal",
     "proxyPort": "LLDAP_PORT",
     "proxyConfig": {
       "block_exploits": true,
-      "ssl_forced": true
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
     }
   },
   "AUTHELIA_PORT": {
