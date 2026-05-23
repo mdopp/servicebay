@@ -813,15 +813,27 @@ export default function OnboardingWizard() {
   };
 
   const handleFinish = async () => {
-    if (stacksOnlyMode) {
-      await completeStackSetup();
-    } else {
-      await skipOnboarding();
+    // Always clear BOTH flags. `stacksOnlyMode` is captured at mount,
+    // so a same-session full-wizard run that ended with a stack install
+    // can have `stackSetupPending=true` on the server while
+    // `stacksOnlyMode=false` in React state — the old branch would
+    // call `skipOnboarding()`, which leaves `stackSetupPending` set
+    // and the sidebar "Setup" pill never goes away. Both server
+    // actions are idempotent; calling both is correct in every mode.
+    //
+    // Wrap in try/catch so a transient server-action failure (CSRF
+    // hiccup, network blip) does not strand the wizard open — the
+    // operator clicked Finish, the UI must close. (#811)
+    setLoading(true);
+    try {
+      await Promise.allSettled([completeStackSetup(), skipOnboarding()]);
+    } finally {
+      clearPersistedWizardState();
+      setIsOpen(false);
+      router.refresh();
+      addToast('success', 'Setup Complete', 'Welcome to ServiceBay!');
+      setLoading(false);
     }
-    clearPersistedWizardState();
-    setIsOpen(false);
-    router.refresh();
-    addToast('success', 'Setup Complete', 'Welcome to ServiceBay!');
   };
 
   const saveAndNext = async (fn: () => Promise<void>) => {
