@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.22.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.21.0...servicebay-v4.22.0) (2026-05-23)
+
+
+### Features
+
+* **actions:** service-action buttons show Running… spinner + disable peers ([#805](https://github.com/mdopp/servicebay/issues/805)) ([#872](https://github.com/mdopp/servicebay/issues/872)) ([d051287](https://github.com/mdopp/servicebay/commit/d0512878f0edafa963b3e701d7f937b3355c30a9))
+* **install:** emit image-pull progress log lines ([#805](https://github.com/mdopp/servicebay/issues/805)) ([#873](https://github.com/mdopp/servicebay/issues/873)) ([e573eea](https://github.com/mdopp/servicebay/commit/e573eeabec67bf5cafe9c965a351caa27cbbecbd))
+
 ## [4.21.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.20.0...servicebay-v4.21.0) (2026-05-23)
 
 
