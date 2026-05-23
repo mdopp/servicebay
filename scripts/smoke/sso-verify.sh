@@ -279,7 +279,15 @@ section "6/6 · Access control — family user MUST NOT reach admin domains"
 # These are listed under Authelia's admins-group rule. A family-only
 # user should get redirected back to /auth (302) or refused (403 from
 # Authelia's verify endpoint), NOT 200 from the upstream app.
-for h in admin nginx dns ldap; do
+#
+# `admin.dopp.cloud` is intentionally NOT in this list: ServiceBay
+# has its own login on the application layer, and stacking Authelia
+# forward-auth on top would double-login the operator whose recovery
+# path goes through this UI. The HTML shell at `/` is reachable on
+# admin.dopp.cloud but every API call returns 401 without a
+# ServiceBay session — covered by integration tests on the
+# ServiceBay app itself, not by this smoke test.
+for h in nginx dns ldap; do
   body=$(mktemp -t sb-smoke-svc.XXXXXX)
   # Single follow-on response — don't chase redirects, so a 302 back
   # to auth.dopp.cloud is the SUCCESS signal here.
