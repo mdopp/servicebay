@@ -259,7 +259,7 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
         let ip: string | null = null;
         let hostPort: number | string | null = null;
         let containerPort: number | string | null = null;
-        
+
         if (isObj) {
             const portObj = p as LegacyPortMapping;
             ip = portObj.hostIp || portObj.IP || null;
@@ -270,6 +270,20 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
             const val = p as unknown as (string | number);
             hostPort = val;
             containerPort = val; // Assume symmetry if simple number
+        }
+
+        // Podman reports `0.0.0.0` (bind-all) and `127.0.0.1` (loopback)
+        // verbatim, but rendering them on the card tells the operator
+        // nothing about where to actually reach the service — and the
+        // dedup-to-globalIp logic below was hoisting `0.0.0.0` up as
+        // the headline IP. Normalize to the node's reachable host
+        // address (LAN IP) at parse time so every downstream display
+        // (`globalIp`, per-port tag label, and the link's hostname)
+        // shows the real address.
+        const nodeHost = typeof data.metadata?.nodeHost === 'string' ? data.metadata.nodeHost as string : null;
+        const fallbackHost = nodeHost || (data.node && data.node !== 'local' && data.node !== 'Local' ? data.node : null);
+        if (fallbackHost && (ip === '0.0.0.0' || ip === '127.0.0.1' || ip === 'localhost')) {
+            ip = fallbackHost;
         }
 
         return {
