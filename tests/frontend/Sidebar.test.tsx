@@ -13,6 +13,25 @@ vi.mock('next/navigation', () => ({
 
 describe('Sidebar', () => {
     let fetchSpy: ReturnType<typeof vi.spyOn>;
+    // Route-aware mock. `mockResolvedValue` would hand back the same Response
+    // object across calls, so the second `.json()` would throw (a Response's
+    // body can only be read once). Sidebar fires fetches in parallel
+    // (/api/system/version, /api/auth/lldap-url, /api/install/status), so we
+    // mint a fresh Response per URL.
+    const lldapResponse = { url: null as string | null };
+    function mockFetch(url: RequestInfo | URL) {
+        const u = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+        if (u.includes('/api/system/version')) {
+            return new Response(JSON.stringify({ version: '9.9.9' }), { status: 200 });
+        }
+        if (u.includes('/api/auth/lldap-url')) {
+            return new Response(JSON.stringify(lldapResponse), { status: 200 });
+        }
+        if (u.includes('/api/install/status')) {
+            return new Response(JSON.stringify({ jobIsActive: false, stackSetupPending: false }), { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+    }
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -20,10 +39,8 @@ describe('Sidebar', () => {
         Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1024 });
         window.dispatchEvent(new Event('resize'));
 
-        // Default: LLDAP not deployed (url: null)
-        fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-            new Response(JSON.stringify({ url: null }), { status: 200 })
-        );
+        lldapResponse.url = null;
+        fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((url) => Promise.resolve(mockFetch(url)));
     });
 
     afterEach(() => {
@@ -87,9 +104,7 @@ describe('Sidebar', () => {
     });
 
     it('shows Users & Groups link when LLDAP is deployed', async () => {
-        fetchSpy.mockResolvedValue(
-            new Response(JSON.stringify({ url: 'https://ldap.example.com' }), { status: 200 })
-        );
+        lldapResponse.url = 'https://ldap.example.com';
 
         render(<Sidebar />);
 
@@ -104,7 +119,13 @@ describe('Sidebar', () => {
     });
 
     it('does not show Users & Groups when fetch fails', async () => {
-        fetchSpy.mockRejectedValue(new Error('Network error'));
+        fetchSpy.mockImplementation((url) => {
+            const u = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+            if (u.includes('/api/auth/lldap-url')) {
+                return Promise.reject(new Error('Network error'));
+            }
+            return Promise.resolve(mockFetch(url));
+        });
 
         render(<Sidebar />);
 
