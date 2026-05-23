@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.23.3...servicebay-v4.24.0) (2026-05-23)
+
+
+### Features
+
+* **hermes:** add user-guide.md so Hermes appears on /portal ([#889](https://github.com/mdopp/servicebay/issues/889)) ([601b13b](https://github.com/mdopp/servicebay/commit/601b13ba0755d8e6cf122c6961c0d95a7724e405))
+
+
+### Bug Fixes
+
+* **network:** declared edges carry target's primary port + HA→voice dep ([#890](https://github.com/mdopp/servicebay/issues/890)) ([97ab327](https://github.com/mdopp/servicebay/commit/97ab3273e339456fab0c7cf6d8225c63025c0285))
+
 ## [4.23.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.23.2...servicebay-v4.23.3) (2026-05-23)
 
 
