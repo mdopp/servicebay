@@ -1,4 +1,4 @@
-import { DigitalTwinStore } from '../store/twin';
+import { updateGateway } from '../store/repository';
 import { GatewayProvider } from './types';
 import { FritzBoxProvider } from './fritzbox';
 import { getConfig } from '../config';
@@ -8,11 +8,8 @@ export class GatewayPoller {
   private static instance: GatewayPoller;
   private provider: GatewayProvider | null = null;
   private interval: NodeJS.Timeout | null = null;
-  private store: DigitalTwinStore;
 
-  private constructor() {
-    this.store = DigitalTwinStore.getInstance();
-  }
+  private constructor() {}
 
   public static getInstance(): GatewayPoller {
     if (!GatewayPoller.instance) {
@@ -66,7 +63,7 @@ export class GatewayPoller {
     if (!this.provider) return;
     try {
         const update = await this.provider.poll();
-        this.store.updateGateway(update);
+        updateGateway(update);
     } catch (e) {
         logger.error('GatewayPoller', 'Error:', e);
     }

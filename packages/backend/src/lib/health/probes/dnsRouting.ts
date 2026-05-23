@@ -14,8 +14,8 @@ registerProbe({
     const domain = check.target;
     if (!domain) return { status: 'fail', message: 'dns_routing check has no target domain.' };
 
-    const { DigitalTwinStore } = await import('../../store/twin');
-    const expectedIp = DigitalTwinStore.getInstance().gateway?.publicIp ?? '';
+    const { getGateway } = await import('../../store/repository');
+    const expectedIp = getGateway()?.publicIp ?? '';
     const haveExpected = !!expectedIp && expectedIp !== '0.0.0.0';
 
     let answers: string[];

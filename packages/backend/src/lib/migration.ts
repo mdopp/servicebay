@@ -31,7 +31,8 @@ import yaml from 'js-yaml';
 import { injectServiceDirectives } from './services/quadletDirectives';
 import { randomUUID } from 'crypto';
 import { saveSnapshot } from './history';
-import { DigitalTwinStore, MigrationHistoryEntry } from './store/twin';
+import { MigrationHistoryEntry } from './store/twin';
+import { recordMigrationEvent } from './store/repository';
 import {
     type DiscoveredService,
     getSystemdDir,
@@ -344,7 +345,6 @@ function recordMigrationHistory(params: {
     error?: string;
 }) {
     try {
-        const store = DigitalTwinStore.getInstance();
         const entry: MigrationHistoryEntry = {
             id: randomUUID(),
             timestamp: new Date().toISOString(),
@@ -362,7 +362,7 @@ function recordMigrationHistory(params: {
             status: params.status,
             error: params.error
         };
-        store.recordMigrationEvent(params.nodeName, entry);
+        recordMigrationEvent(params.nodeName, entry);
     } catch (error) {
         console.warn('Failed to record migration history', error);
     }

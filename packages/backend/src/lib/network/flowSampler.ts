@@ -12,7 +12,7 @@
  * by ≥2 ticks before it surfaces, which cuts one-off noise).
  */
 import { listNodes } from '@/lib/nodes';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getStoreSnapshot } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { collectHostSockets, resolveFlows } from './socketFlows';
 import { recordFlows } from './flowsStore';
@@ -28,7 +28,7 @@ const SAMPLE_BOOT_DELAY_MS = 90 * 1000;
  */
 export function containerServiceMap(node: string): Map<string, string> {
   const map = new Map<string, string>();
-  const twinNode = DigitalTwinStore.getInstance().getSnapshot().nodes?.[node];
+  const twinNode = getStoreSnapshot().nodes?.[node];
   for (const c of twinNode?.containers ?? []) {
     const unit = c.labels?.['PODMAN_SYSTEMD_UNIT'];
     const svc = unit ? unit.replace(/\.service$/, '') : c.podName;

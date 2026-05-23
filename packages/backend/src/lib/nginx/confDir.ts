@@ -1,5 +1,5 @@
 import { ServiceManager } from '@/lib/services/ServiceManager';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeIds, getNodeTwin, getProxyState } from '@/lib/store/repository';
 import { getExecutor } from '@/lib/executor';
 import { parseQuadletFile } from '@/lib/quadlet/parser';
 import { getConfig } from '@/lib/config';
@@ -42,8 +42,7 @@ const NPM_CONF_SUBDIRS = [
  */
 export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
     const debug: string[] = [];
-    const twinStore = DigitalTwinStore.getInstance();
-    const nodeNames = Object.keys(twinStore.nodes);
+    const nodeNames = getNodeIds();
     if (nodeNames.length === 0) {
         nodeNames.push('Local');
         debug.push('No nodes in twin store, falling back to Local');
@@ -67,7 +66,7 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
         debug.push(`Node "${nodeName}": found nginx service "${nginxService.name}"`);
 
         // Try resolving from Digital Twin YAML
-        const yamlResult = resolveFromTwinFiles(twinStore, nodeName, debug);
+        const yamlResult = resolveFromTwinFiles(nodeName, debug);
 
         if (yamlResult.exactConfDir) {
             logger.info('NginxConfDir', `Resolved conf.d from YAML: ${yamlResult.exactConfDir} on ${nodeName}`);
@@ -113,18 +112,17 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
 }
 
 function resolveFromTwinFiles(
-    twinStore: DigitalTwinStore,
     nodeName: string,
     debug: string[],
 ): YamlResolution {
     const result: YamlResolution = { exactConfDir: null, proxyHostPaths: [], isNpm: false };
-    const twin = twinStore.nodes[nodeName];
+    const twin = getNodeTwin(nodeName);
     if (!twin?.files) {
         debug.push(`Node "${nodeName}": no files in twin store`);
         return result;
     }
 
-    const proxyState = twinStore.proxyState;
+    const proxyState = getProxyState();
     const fileKeys = Object.keys(twin.files);
     const yamlFiles = fileKeys.filter(f => f.endsWith('.yml') || f.endsWith('.yaml'));
     const kubeFiles = fileKeys.filter(f => f.endsWith('.kube'));

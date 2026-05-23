@@ -18,7 +18,7 @@
  */
 import { getConfig } from '../../config';
 import { ServiceManager } from '../../services/ServiceManager';
-import { DigitalTwinStore } from '../../store/twin';
+import { getNodeTwin } from '../../store/repository';
 
 /**
  * Discriminated result for `findNpmAdminUrl`.
@@ -51,7 +51,7 @@ export type FindNpmAdminResult =
  *  the precise reason instead of a misleading "not deployed". */
 export async function findNpmAdminUrl(node: string): Promise<FindNpmAdminResult> {
   try {
-    const twin = DigitalTwinStore.getInstance().nodes[node];
+    const twin = getNodeTwin(node);
     if (!twin || (twin.services.length === 0 && twin.containers.length === 0)) {
       return { kind: 'twin-not-ready' };
     }

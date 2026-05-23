@@ -31,7 +31,7 @@
  */
 
 import { getConfig, updateConfig } from '../config';
-import { DigitalTwinStore } from '../store/twin';
+import { getNodeIds, getNodeTwin } from '../store/repository';
 import { ServiceManager } from '../services/ServiceManager';
 import { logger } from '../logger';
 import yaml from 'js-yaml';
@@ -143,8 +143,7 @@ interface NpmDeps {
 async function realNpmDeps(): Promise<NpmDeps> {
   return {
     resolveNpm: async (nodeHint) => {
-      const twin = DigitalTwinStore.getInstance();
-      const nodeNames = nodeHint ? [nodeHint] : Object.keys(twin.nodes);
+      const nodeNames = nodeHint ? [nodeHint] : getNodeIds();
       if (nodeNames.length === 0) nodeNames.push('Local');
       for (const nodeName of nodeNames) {
         const services = await ServiceManager.listServices(nodeName);
@@ -157,8 +156,8 @@ async function realNpmDeps(): Promise<NpmDeps> {
           const config = await getConfig();
           adminPort = config.templateSettings?.NGINX_ADMIN_PORT || '81';
         }
-        const t = twin.nodes[nodeName];
-        const nodeIp = t?.nodeIPs?.find(ip => !ip.startsWith('127.')) ?? t?.nodeIPs?.[0] ?? '127.0.0.1';
+        const t = getNodeTwin(nodeName);
+        const nodeIp = t?.nodeIPs?.find((ip: string) => !ip.startsWith('127.')) ?? t?.nodeIPs?.[0] ?? '127.0.0.1';
         const apiHost = nodeName === 'Local' ? '127.0.0.1' : nodeIp;
         return { apiUrl: `http://${apiHost}:${adminPort}`, nodeName, nodeIp };
       }
@@ -259,8 +258,7 @@ async function realAutheliaDeps(): Promise<AutheliaDeps> {
   const { agentManager } = await import('../agent/manager');
   return {
     locateConfig: async () => {
-      const twin = DigitalTwinStore.getInstance();
-      for (const nodeName of Object.keys(twin.nodes)) {
+      for (const nodeName of getNodeIds()) {
         try {
           const files = await ServiceManager.getServiceFiles(nodeName, 'auth');
           if (!files.yamlContent) continue;

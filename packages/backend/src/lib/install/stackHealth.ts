@@ -17,7 +17,7 @@
  * first 30 seconds after a fresh deploy before the poller has run)
  * or as a hard fail.
  */
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwin } from '@/lib/store/repository';
 import { getStackManifest } from '@/lib/registry';
 import { getConfig } from '@/lib/config';
 
@@ -187,8 +187,7 @@ export async function getStackHealth(
 ): Promise<StackHealth | null> {
   const manifest = await getStackManifest(stackName);
   if (!manifest) return null;
-  const twin = DigitalTwinStore.getInstance();
-  const node = twin.nodes[nodeName];
+  const node = getNodeTwin(nodeName);
   const services = node?.services ?? [];
   const map = new Map<string, { ready: boolean; degraded?: boolean }>();
   for (const svc of services) {
