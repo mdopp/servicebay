@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.19.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.18.0...servicebay-v4.19.0) (2026-05-23)
+
+
+### Features
+
+* **network:** emit declared dependency edges from servicebay.dependencies ([#505](https://github.com/mdopp/servicebay/issues/505) PR-2) ([#862](https://github.com/mdopp/servicebay/issues/862)) ([b4602c3](https://github.com/mdopp/servicebay/commit/b4602c371d822a7ab54819d45609d94e70572b3d))
+
 ## [4.18.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.17.0...servicebay-v4.18.0) (2026-05-23)
 
 
