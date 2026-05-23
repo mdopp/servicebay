@@ -100,6 +100,16 @@ const pendingCredentials = new Map<string, {
  *  runner has no session, so we attach the token here — without it
  *  every POST /api/services / NPM / portal call from this process gets
  *  403'd by the CSRF check (no Origin header from Node fetch). */
+/** Render a byte count as a short user-readable string ("1.2 GB",
+ *  "240 MB"). Used by the image-pull progress lines (#805). Powers
+ *  of 1024 because that's how podman reports image sizes. */
+function humanBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(0)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 function apiFetch(p: string, init?: RequestInit): Promise<Response> {
   const port = process.env.PORT || '3000';
   const headers = new Headers(init?.headers);
@@ -995,8 +1005,26 @@ async function runJob(jobId: string): Promise<void> {
     try {
       const { agentManager } = await import('@/lib/agent/manager');
       const agent = await agentManager.ensureAgent(node);
+      // Per-image progress throttle (#805). The agent emits
+      // PULL_PROGRESS every ~250ms per layer; multiply by N parallel
+      // images and the log floods. We coalesce per-image: one line
+      // every ~2s with the slowest-still-downloading layer's bytes.
+      // Skip events without total bytes (status-only updates like
+      // "Pull complete") so the line is always informative.
+      const lastEmit = new Map<string, number>();
+      const onProgress = (image: string) => (ev: { current?: number; total?: number; status?: string }) => {
+        if (!ev.total || ev.current === undefined) return;
+        const now = Date.now();
+        const prev = lastEmit.get(image) ?? 0;
+        if (now - prev < 2000 && ev.current < ev.total) return;
+        lastEmit.set(image, now);
+        const pct = Math.round((ev.current / ev.total) * 100);
+        const cur = humanBytes(ev.current);
+        const tot = humanBytes(ev.total);
+        void log(jobId, `  Pulling ${image}: ${pct}% (${cur} / ${tot})`);
+      };
       const results = await Promise.allSettled(
-        imagesToPull.map(image => agent.pullImage(image)),
+        imagesToPull.map(image => agent.pullImage(image, onProgress(image))),
       );
       let okCount = 0;
       const failures: { image: string; reason: string }[] = [];
