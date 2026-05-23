@@ -6,7 +6,6 @@ import { Github, Settings, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import { dashboards } from './Sidebar';
 import { useToast } from '@/providers/ToastProvider';
-import pkg from '../../package.json';
 
 const FIRST_VISIT_KEY = 'sb.mobileHintShown.v1';
 
@@ -21,6 +20,16 @@ export function MobileTopBar() {
   // users who pressed "Minimize" on the wizard would otherwise have
   // no way back to /setup since the Sidebar is hidden < md.
   const [hasActiveInstall, setHasActiveInstall] = useState(false);
+  // Workspace package.json stays at 0.0.0 (release-please only bumps the
+  // root). Read the live version from the API instead. (#812)
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/system/version')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.version) setAppVersion(d.version); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (hintFired.current) return;
@@ -67,7 +76,7 @@ export function MobileTopBar() {
              <span className="font-bold text-gray-900 dark:text-white text-sm leading-none">
                 ServiceBay
              </span>
-             <span className="text-[10px] text-gray-500 dark:text-gray-400">by Korgraph.io - v{pkg.version}</span>
+             <span className="text-[10px] text-gray-500 dark:text-gray-400">by Korgraph.io{appVersion ? ` - v${appVersion}` : ''}</span>
           </div>
        </div>
        {/* Right: Icons */}

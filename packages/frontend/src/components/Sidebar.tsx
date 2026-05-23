@@ -5,7 +5,6 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { LayoutDashboard, Box, Terminal, Activity, ChevronLeft, Github, Settings, Network, Users, ExternalLink, Sparkles, Home, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
-import pkg from '../../package.json';
 import { typedFetch, InstallStatusResponseSchema } from '@servicebay/api-client';
 
 export const dashboards = [
@@ -33,12 +32,22 @@ export default function Sidebar() {
   // operator can navigate to Services / Terminal / Health and still
   // come back to watch progress.
   const [hasActiveInstall, setHasActiveInstall] = useState(false);
+  // Workspace package.json stays at 0.0.0 (release-please only bumps the
+  // root). Read the live version from the API instead. (#812)
+  const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
     if (window.innerWidth < 768) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsCollapsed(true);
     }
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/system/version')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.version) setAppVersion(d.version); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -88,7 +97,7 @@ export default function Sidebar() {
                             ServiceBay
                         </h3>
                         <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap">
-                            by Korgraph.io - v{pkg.version}
+                            by Korgraph.io{appVersion ? ` - v${appVersion}` : ''}
                         </span>
                     </div>
                 </div>
