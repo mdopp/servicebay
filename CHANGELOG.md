@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.21.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.20.0...servicebay-v4.21.0) (2026-05-23)
+
+
+### Features
+
+* **wizard:** per-service expandable rows in the install overlay ([#822](https://github.com/mdopp/servicebay/issues/822)) ([#869](https://github.com/mdopp/servicebay/issues/869)) ([aac39a5](https://github.com/mdopp/servicebay/commit/aac39a524f7c1010c817e9ec367c56dc8d095868))
+
 ## [4.20.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.19.0...servicebay-v4.20.0) (2026-05-23)
 
 
