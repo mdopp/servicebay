@@ -2,6 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { DigitalTwinStore } from '@/lib/store/twin';
+import { getUnmanagedBundles } from '@/lib/store/repository';
+import { mergeServices, type DiscoveredService } from '@/lib/migration';
 import {
   getAllSystemServices,
 } from '@/lib/manager';
@@ -61,6 +63,7 @@ const MUTATING_TOOLS = new Set([
   'create_health_check', 'delete_health_check', 'run_check_now',
   'run_backup', 'restore_backup',
   'update_config', 'exec_command', 'refresh_agent',
+  'merge_unmanaged_bundle',
 ]);
 
 /**
@@ -85,6 +88,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_podman_logs: 'read', list_system_services: 'read',
   list_backups: 'read', diagnose: 'read', verify_node_connection: 'read',
   list_trashed_services: 'read',
+  get_unmanaged_bundles: 'read',
   // lifecycle
   start_service: 'lifecycle', stop_service: 'lifecycle', restart_service: 'lifecycle',
   run_check_now: 'lifecycle', refresh_agent: 'lifecycle',
@@ -93,6 +97,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   deploy_service: 'mutate', update_service_yaml: 'mutate', rename_service: 'mutate',
   add_proxy_route: 'mutate', create_health_check: 'mutate',
   restore_trashed_service: 'mutate',
+  merge_unmanaged_bundle: 'mutate',
   // mutate (config writes, allow-listed to safe keys — see update_config tool)
   update_config: 'mutate',
   // destroy
@@ -133,6 +138,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   'purge_trashed_service',
   'remove_proxy_route', 'restore_backup',
   'update_config', 'exec_command',
+  'merge_unmanaged_bundle',
 ]);
 
 /**
@@ -999,5 +1005,79 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     },
   );
 
+  // --- Get Unmanaged Bundles (ARCH-14, #846) ---
+  server.tool(
+    'get_unmanaged_bundles',
+    'List unmanaged service bundles detected on a node — clusters of legacy systemd/docker units that ServiceBay can merge into managed Quadlet stacks. Returns each bundle\'s id, displayName, severity, hints, and member services.',
+    { node: nodeParam },
+    async ({ node }) => {
+      const nodeName = await resolveNode(node);
+      const bundles = getUnmanagedBundles(nodeName);
+      return textResult(bundles);
+    },
+  );
+
+  // --- Merge Unmanaged Bundle (ARCH-14, #846) ---
+  // Destructive: stops legacy units, replaces them with a single managed
+  // Quadlet stack. safeHandler auto-snapshots before, audits the call,
+  // and emails on success. Use `dryRun: true` to get the migration plan
+  // without touching disk.
+  server.tool(
+    'merge_unmanaged_bundle',
+    'Merge an unmanaged service bundle into a single managed Quadlet stack. Stops the legacy units, generates a combined pod spec, and registers the new service. Pass dryRun:true to preview the plan without writing.',
+    {
+      bundleId: z.string().describe('Bundle id returned by get_unmanaged_bundles'),
+      newName: z.string().min(1).describe('Target service name for the merged stack'),
+      node: nodeParam,
+      dryRun: z.boolean().optional().describe('When true, return the migration plan without applying changes'),
+    },
+    async ({ bundleId, newName, node, dryRun }) => {
+      const nodeName = await resolveNode(node);
+      return mergeUnmanagedBundleHandler({ bundleId, newName, nodeName, dryRun });
+    },
+  );
+
   return server;
+}
+
+/**
+ * Pure-ish implementation of the `merge_unmanaged_bundle` MCP tool —
+ * exposed for unit tests so the handler can be exercised without
+ * spinning up the McpServer SDK. The `nodeName` is already resolved
+ * (no `resolveNode` here so tests don't have to mock listNodes).
+ */
+export async function mergeUnmanagedBundleHandler(args: {
+  bundleId: string;
+  newName: string;
+  nodeName: string;
+  dryRun?: boolean;
+}): Promise<{ content: { type: 'text'; text: string }[]; isError?: true }> {
+  const { bundleId, newName, nodeName, dryRun } = args;
+  const bundle = getUnmanagedBundles(nodeName).find(b => b.id === bundleId);
+  if (!bundle) {
+    return errorResult(`No unmanaged bundle "${bundleId}" found on node "${nodeName}"`);
+  }
+  if (bundle.services.length < 2) {
+    return errorResult(`Bundle "${bundleId}" has fewer than 2 services — nothing to merge`);
+  }
+  const services: DiscoveredService[] = bundle.services.map(s => ({
+    serviceName: s.serviceName,
+    containerNames: s.containerNames,
+    containerIds: s.containerIds,
+    podId: s.podId,
+    unitFile: s.unitFile,
+    sourcePath: s.sourcePath,
+    status: s.status,
+    type: s.type,
+    nodeName: s.nodeName,
+    discoveryHints: s.discoveryHints,
+  }));
+  const connection = nodeName === 'Local' ? undefined : await getNodeConnection(nodeName);
+  const result = await mergeServices(services, newName, {
+    dryRun: !!dryRun,
+    connection: connection ?? undefined,
+    initiator: 'mcp',
+  });
+  if (dryRun) return textResult({ dryRun: true, plan: result });
+  return textResult({ ok: true, newName, mergedServices: services.map(s => s.serviceName) });
 }

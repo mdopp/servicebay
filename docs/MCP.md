@@ -139,10 +139,46 @@ Claude Code) to see the live tool registry on your version.
 | Proxy | `get_proxy_routes`, `add_proxy_route`, `remove_proxy_route` |
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command` |
+| Unmanaged bundles | `get_unmanaged_bundles`, `merge_unmanaged_bundle` |
 
 Sensitive config fields (`auth.passwordHash`, `oidc.clientSecret`, SMTP
 passwords) are redacted from `get_config` and write-allowlisted in
 `update_config`.
+
+### Migrating legacy services into ServiceBay (ARCH-14)
+
+ServiceBay discovers systemd/Podman services on each node that aren't
+under its management. The LLM can enumerate those bundles and either
+preview or execute a merge into a single managed Quadlet stack.
+
+```text
+get_unmanaged_bundles(node?) → ServiceBundle[]
+  Read scope. Returns every unmanaged bundle the digital twin has
+  detected on `node` (default: first node). Each bundle includes an
+  `id`, `displayName`, `severity` (`info` | `warning` | `critical`),
+  member `services`, hints, validations, and a discovery graph.
+
+merge_unmanaged_bundle(bundleId, newName, node?, dryRun?) → plan | ok
+  Mutate scope, destructive. Maps the bundle's members to
+  DiscoveredService records and invokes the same merge pipeline as
+  the React Service Bundle Merge Wizard.
+    - `dryRun: true`  → returns `{ dryRun: true, plan: MergePlan }`
+      with the generated Quadlet/YAML and a pre-mutation validation
+      report. No filesystem writes, no service stops.
+    - `dryRun: false` → executes the merge: stops legacy units,
+      writes the new `{newName}.kube` + `{newName}.yml` to the
+      systemd Quadlet dir, registers the merged service. `safeHandler`
+      snapshots the system first and emails the operator on success.
+```
+
+Workflow the agent typically follows:
+
+1. `get_unmanaged_bundles` → pick a bundle by its `id` and `severity`.
+2. `merge_unmanaged_bundle(bundleId, newName, dryRun: true)` → review
+   the plan's `stackPreview`, `validations`, and `fileMappings`.
+3. Confirm with the operator (or check `config.mcp.allowMutations`).
+4. `merge_unmanaged_bundle(bundleId, newName)` → the merge runs and is
+   audited under `mcp.audit` with the snapshot id for one-click rollback.
 
 ## Troubleshooting
 
