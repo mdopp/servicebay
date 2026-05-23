@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { Box, ArrowLeft, PlayCircle, Power, RotateCw, RefreshCw, Trash2, X } from 'lucide-react';
+import { Box, ArrowLeft, PlayCircle, Power, RotateCw, RefreshCw, Trash2, X, Loader2 } from 'lucide-react';
 import ServiceMonitor from '@/components/ServiceMonitor';
 import ServiceForm, { ServiceFormInitialData } from '@/components/ServiceForm';
 import ActionProgressModal from '@/components/ActionProgressModal';
@@ -27,6 +27,11 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
   const [showActions, setShowActions] = useState(false);
   const [selectedService, setSelectedService] = useState<ServiceViewModel | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  // Which non-modal action is in flight — drives the per-button spinner /
+  // "Running…" label so the operator knows which action is awaiting and
+  // doesn't double-click. Modal-opening actions (start/stop/restart) get
+  // a brief flash of this before the modal takes over visibility. (#805)
+  const [runningAction, setRunningAction] = useState<string | null>(null);
 
   const [actionService, setActionService] = useState<ServiceViewModel | null>(null);
   const [currentAction, setCurrentAction] = useState<'start' | 'stop' | 'restart' | null>(null);
@@ -161,6 +166,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     }
 
     setActionLoading(true);
+    setRunningAction(action);
     const toastId = addToast('loading', 'Action in progress', `Executing ${action} on ${selectedService.name}...`, 0);
 
     try {
@@ -186,6 +192,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
       updateToast(addToast('error', 'Action failed', 'An unexpected error occurred.'), 'error', 'Action failed', '');
     } finally {
       setActionLoading(false);
+      setRunningAction(null);
     }
   }, [addToast, onRefresh, selectedService, updateToast]);
 
@@ -251,41 +258,39 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
 
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <button
+                <ActionButton
                   onClick={() => handleAction('start')}
                   disabled={actionLoading}
-                  className="flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                >
-                  <PlayCircle size={18} className="text-green-500" />
-                  <span className="font-medium">Start</span>
-                </button>
-                <button
+                  running={runningAction === 'start'}
+                  icon={<PlayCircle size={18} className="text-green-500" />}
+                  label="Start"
+                />
+                <ActionButton
                   onClick={() => handleAction('stop')}
                   disabled={actionLoading}
-                  className="flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                >
-                  <Power size={18} className="text-red-500" />
-                  <span className="font-medium">Stop</span>
-                </button>
+                  running={runningAction === 'stop'}
+                  icon={<Power size={18} className="text-red-500" />}
+                  label="Stop"
+                />
               </div>
 
-              <button
+              <ActionButton
                 onClick={() => handleAction('restart')}
                 disabled={actionLoading}
-                className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-              >
-                <RotateCw size={18} className="text-blue-500" />
-                <span className="font-medium">Restart Service</span>
-              </button>
+                running={runningAction === 'restart'}
+                icon={<RotateCw size={18} className="text-blue-500" />}
+                label="Restart Service"
+                fullWidth
+              />
 
-              <button
+              <ActionButton
                 onClick={() => handleAction('update')}
                 disabled={actionLoading}
-                className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-              >
-                <RefreshCw size={18} className="text-orange-500" />
-                <span className="font-medium">Update & Restart</span>
-              </button>
+                running={runningAction === 'update'}
+                icon={<RefreshCw size={18} className="text-orange-500" />}
+                label="Update & Restart"
+                fullWidth
+              />
 
               <button
                 onClick={() => {
@@ -293,7 +298,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
                   requestDelete(selectedService);
                 }}
                 disabled={actionLoading}
-                className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-red-600 dark:text-red-400"
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-red-600 dark:text-red-400 disabled:opacity-60"
               >
                 <Trash2 size={18} />
                 <span className="font-medium">Delete Service</span>
@@ -401,4 +406,38 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     closeOverlays,
     hasOpenOverlay: hasOverlayOpen,
   };
+}
+
+/**
+ * Service-action button with a built-in "Running…" state (#805 acceptance:
+ *   action buttons display a disabled loading state to prevent double-clicks).
+ * `running` shows the spinner + Running… label on the one in-flight button;
+ * `disabled` greys all of them while any action is in flight.
+ */
+function ActionButton({
+  onClick,
+  disabled,
+  running,
+  icon,
+  label,
+  fullWidth,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  running: boolean;
+  icon: React.ReactNode;
+  label: string;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`${fullWidth ? 'w-full ' : ''}flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed`}
+    >
+      {running ? <Loader2 size={18} className="animate-spin text-blue-500" /> : icon}
+      <span className="font-medium">{running ? 'Running…' : label}</span>
+    </button>
+  );
 }
