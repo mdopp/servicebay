@@ -1033,35 +1033,51 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     },
     async ({ bundleId, newName, node, dryRun }) => {
       const nodeName = await resolveNode(node);
-      const bundle = getUnmanagedBundles(nodeName).find(b => b.id === bundleId);
-      if (!bundle) {
-        return errorResult(`No unmanaged bundle "${bundleId}" found on node "${nodeName}"`);
-      }
-      if (bundle.services.length < 2) {
-        return errorResult(`Bundle "${bundleId}" has fewer than 2 services — nothing to merge`);
-      }
-      const services: DiscoveredService[] = bundle.services.map(s => ({
-        serviceName: s.serviceName,
-        containerNames: s.containerNames,
-        containerIds: s.containerIds,
-        podId: s.podId,
-        unitFile: s.unitFile,
-        sourcePath: s.sourcePath,
-        status: s.status,
-        type: s.type,
-        nodeName: s.nodeName,
-        discoveryHints: s.discoveryHints,
-      }));
-      const connection = nodeName === 'Local' ? undefined : await getNodeConnection(nodeName);
-      const result = await mergeServices(services, newName, {
-        dryRun: !!dryRun,
-        connection: connection ?? undefined,
-        initiator: 'mcp',
-      });
-      if (dryRun) return textResult({ dryRun: true, plan: result });
-      return textResult({ ok: true, newName, mergedServices: services.map(s => s.serviceName) });
+      return mergeUnmanagedBundleHandler({ bundleId, newName, nodeName, dryRun });
     },
   );
 
   return server;
+}
+
+/**
+ * Pure-ish implementation of the `merge_unmanaged_bundle` MCP tool —
+ * exposed for unit tests so the handler can be exercised without
+ * spinning up the McpServer SDK. The `nodeName` is already resolved
+ * (no `resolveNode` here so tests don't have to mock listNodes).
+ */
+export async function mergeUnmanagedBundleHandler(args: {
+  bundleId: string;
+  newName: string;
+  nodeName: string;
+  dryRun?: boolean;
+}): Promise<{ content: { type: 'text'; text: string }[]; isError?: true }> {
+  const { bundleId, newName, nodeName, dryRun } = args;
+  const bundle = getUnmanagedBundles(nodeName).find(b => b.id === bundleId);
+  if (!bundle) {
+    return errorResult(`No unmanaged bundle "${bundleId}" found on node "${nodeName}"`);
+  }
+  if (bundle.services.length < 2) {
+    return errorResult(`Bundle "${bundleId}" has fewer than 2 services — nothing to merge`);
+  }
+  const services: DiscoveredService[] = bundle.services.map(s => ({
+    serviceName: s.serviceName,
+    containerNames: s.containerNames,
+    containerIds: s.containerIds,
+    podId: s.podId,
+    unitFile: s.unitFile,
+    sourcePath: s.sourcePath,
+    status: s.status,
+    type: s.type,
+    nodeName: s.nodeName,
+    discoveryHints: s.discoveryHints,
+  }));
+  const connection = nodeName === 'Local' ? undefined : await getNodeConnection(nodeName);
+  const result = await mergeServices(services, newName, {
+    dryRun: !!dryRun,
+    connection: connection ?? undefined,
+    initiator: 'mcp',
+  });
+  if (dryRun) return textResult({ dryRun: true, plan: result });
+  return textResult({ ok: true, newName, mergedServices: services.map(s => s.serviceName) });
 }
