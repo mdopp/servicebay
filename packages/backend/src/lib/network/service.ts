@@ -6,7 +6,7 @@ import { NetworkStore } from './store';
 import { getActiveEdges } from './flowsStore';
 import { checkDomains } from './dns';
 import watcher from '../watcher';
-import { DigitalTwinStore } from '../store/twin'; // Import Twin Store
+import { getGateway, getNodeTwin } from '../store/repository';
 import { logger } from '../logger';
 import yaml from 'js-yaml'; // Helper: YAML parser
 import { EnrichedContainer, PortMapping, ServiceUnit, WatchedFile } from '../agent/types';
@@ -341,8 +341,7 @@ export class NetworkService {
     const config = await getConfig();
     
     // SSOT: Use Digital Twin Gateway State
-    const twin = DigitalTwinStore.getInstance();
-    const gw = twin.gateway;
+    const gw = getGateway();
 
     // Map Twin State to legacy fbStatus format for compatibility
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -481,7 +480,7 @@ export class NetworkService {
     // 0. Prepare Data for this Node
     
     // Check Digital Twin first
-    const twinNode = DigitalTwinStore.getInstance().nodes[nodeName];
+    const twinNode = getNodeTwin(nodeName);
     // We consider twin usable if it has basic data. 
     // Agent V4 pushes 'containers' and 'services'.
     

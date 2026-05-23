@@ -12,7 +12,7 @@
 
 import { agentManager } from '@/lib/agent/manager';
 import { HealthStore } from '@/lib/health/store';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeTwin } from '@/lib/store/repository';
 import { actionsForProbe, resolveItemActions, type ProbeAction, type ProbeItem, type ResolvedProbeItem } from '@/lib/diagnose/actions';
 import { buildPortSourceMap, renderUnexpectedPort, type TwinPortService, type TwinPortContainer } from '@/lib/diagnose/portsProbe';
 import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
@@ -286,7 +286,7 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
   //    so the operator doesn't have to cross-reference manually.
   //    See `lib/diagnose/portsProbe.ts` for the source-walk helpers.
   const ports = trimOutput(listen.stdout, 50).split('\n').filter(Boolean);
-  const portsTwin = DigitalTwinStore.getInstance().nodes[nodeName];
+  const portsTwin = getNodeTwin(nodeName);
   const portSource = buildPortSourceMap(
     portsTwin?.services as TwinPortService[] | undefined,
     portsTwin?.containers as TwinPortContainer[] | undefined,
@@ -513,7 +513,7 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
   //     `lib/diagnose/probes/danglingProxy.ts` (registers
   //     `delete_route`).
   try {
-    const twin = DigitalTwinStore.getInstance().nodes[nodeName];
+    const twin = getNodeTwin(nodeName);
     type ProxyServer = {
       _targetPort?: number;
       _id?: number;

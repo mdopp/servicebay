@@ -35,7 +35,7 @@
  *   and a long fetch is bounded by `timeoutMs`.
  */
 import net from 'net';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { clearServiceHealth as repoClearServiceHealth, setServiceHealth as repoSetServiceHealth } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import type { ServiceHealth } from '@/lib/agent/types';
 import type { HealthcheckConfig } from './serviceHealthcheck';
@@ -94,7 +94,7 @@ export class ServiceHealthPoller {
     const key = this.keyFor(nodeName, serviceName);
     this.stopTimer(key);
     this.registry.delete(key);
-    DigitalTwinStore.getInstance().clearServiceHealth(nodeName, serviceName);
+    repoClearServiceHealth(nodeName, serviceName);
   }
 
   /** Returns the current registrations — exposed for diagnose / debug. */
@@ -137,7 +137,7 @@ export class ServiceHealthPoller {
     if (!reg) return;
     try {
       const health = await this.probe(reg);
-      DigitalTwinStore.getInstance().setServiceHealth(reg.nodeName, reg.serviceName, health);
+      repoSetServiceHealth(reg.nodeName, reg.serviceName, health);
     } catch (e) {
       // probe() itself never throws; this catch is defence-in-depth so a
       // bug in the probe path can't kill the polling loop for every

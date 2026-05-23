@@ -49,9 +49,9 @@ export interface ServiceInfo {
 export class ServiceListing {
     static async listServices(nodeName: string): Promise<ServiceInfo[]> {
         // V4: Use DigitalTwinStore
-        const { DigitalTwinStore } = await import('../store/twin');
-        const twin = DigitalTwinStore.getInstance().nodes[nodeName];
-        const proxyState = DigitalTwinStore.getInstance().proxyState; // Access Global Proxy State
+        const { getNodeTwin, getProxyState } = await import('../store/repository');
+        const twin = getNodeTwin(nodeName);
+        const proxyState = getProxyState(); // Access Global Proxy State
 
         if (!twin) return [];
 
@@ -494,8 +494,8 @@ export class ServiceListing {
 
         try {
             // First try reading from the Digital Twin cache
-            const { DigitalTwinStore } = await import('../store/twin');
-            const twin = DigitalTwinStore.getInstance().nodes[nodeName];
+            const { getNodeTwin } = await import('../store/repository');
+            const twin = getNodeTwin(nodeName);
 
             const fullKubePath = twin ? Object.keys(twin.files).find(p => p.endsWith(`${serviceName}.kube`)) : null;
 

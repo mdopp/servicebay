@@ -21,6 +21,7 @@ import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'src');
+const BACKEND_SRC = path.join(REPO_ROOT, 'packages', 'backend', 'src');
 
 interface Violation {
     check: string;
@@ -199,16 +200,25 @@ async function checkWithApiHandlerAdoption() {
 // 35 direct getInstance() consumers today. Architecture audit ARCH-05ff
 // flags that this should go through a reader API. Ratcheted to 0 now that
 // all Next.js route call-sites use repository.ts selectors (#841, #842).
+//
+// Scans both `src/` (Next.js routes / pages / components) and
+// `packages/backend/src/` (extracted backend library). The store itself
+// (`store/twin.ts`) and the encapsulation layer (`store/repository.ts`)
+// are the only allowed call sites.
 // ---------------------------------------------------------------------------
 const TWIN_GETINSTANCE_MAX = 0;
 
 async function checkTwinFanIn() {
-    const files = await walk(SRC, isTs);
+    const files = [
+        ...await walk(SRC, isTs),
+        ...await walk(BACKEND_SRC, isTs),
+    ];
     let count = 0;
     for (const file of files) {
         if (isTestFile(file)) continue;
-        // Skip the store itself.
+        // Skip the store itself and the encapsulation layer.
         if (file.endsWith(path.join('store', 'twin.ts'))) continue;
+        if (file.endsWith(path.join('store', 'repository.ts'))) continue;
         const content = await readFile(file, 'utf-8');
         const hits = content.match(/\bDigitalTwinStore\.getInstance\(\)/g)?.length ?? 0;
         count += hits;
@@ -216,7 +226,7 @@ async function checkTwinFanIn() {
     if (count > TWIN_GETINSTANCE_MAX) {
         violations.push({
             check: 'twin-singleton-fan-in',
-            detail: `${count} direct DigitalTwinStore.getInstance() call sites (max ${TWIN_GETINSTANCE_MAX}). Route new reads through a reader API.`,
+            detail: `${count} direct DigitalTwinStore.getInstance() call sites (max ${TWIN_GETINSTANCE_MAX}). Route new reads through packages/backend/src/lib/store/repository.ts.`,
         });
     }
 }

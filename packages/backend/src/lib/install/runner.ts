@@ -44,7 +44,7 @@ import {
 import { buildCredentialsManifest, mergeCredentials, type Credential } from '@/lib/stackInstall/credentialsManifest';
 import { provisionPortalWithRetries } from '@/lib/stackInstall/portalProvision';
 import { getCapabilityBus } from '@/lib/capabilities/bus';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getStoreSnapshot } from '@/lib/store/repository';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { getConfig, saveConfig, type InstalledCredential } from '@/lib/config';
 import { reconcileLanIp } from '@/lib/lanIp';
@@ -244,10 +244,9 @@ async function settleWait(
   const startedAt = Date.now();
   let lastReady = -1;
   let lastLogAt = Date.now();
-  const twin = DigitalTwinStore.getInstance();
   while (Date.now() - startedAt < SETTLE_TIMEOUT_MS) {
     if (abortFlags.get(jobId)) return;
-    const snapshot = twin.getSnapshot();
+    const snapshot = getStoreSnapshot();
     const twinNode = snapshot.nodes?.[node];
     const services = twinNode?.services ?? [];
     const ready = expected.filter(name => isServiceReady(services, name)).length;
@@ -299,14 +298,13 @@ export async function waitForDependencies(
     await bootstrapServiceHealth(node);
   } catch { /* fall back to the systemd-active signal */ }
 
-  const twin = DigitalTwinStore.getInstance();
   const startedAt = Date.now();
   let lastLogAt = startedAt;
   const pending = new Set(deps);
   await log(jobId, `Waiting for ${item.name}'s dependencies to become healthy: ${deps.join(', ')}...`);
   while (pending.size > 0 && Date.now() - startedAt < DEP_READY_TIMEOUT_MS) {
     if (abortFlags.get(jobId)) return;
-    const services = twin.getSnapshot().nodes?.[node]?.services ?? [];
+    const services = getStoreSnapshot().nodes?.[node]?.services ?? [];
     for (const dep of [...pending]) {
       if (isServiceReady(services, dep)) pending.delete(dep);
     }

@@ -714,19 +714,18 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
         const serviceDataDir = path.join(stagingDir, 'service-data');
         metadata.serviceData = [];
 
-        const { DigitalTwinStore } = await import('./store/twin');
+        const { getNodeTwin, getProxyState } = await import('./store/repository');
         const { default: yamlLib } = await import('js-yaml');
-        const twinStore = DigitalTwinStore.getInstance();
         const allNodes = await listNodes();
         const sshNodes = allNodes.filter(node => node.URI?.startsWith('ssh://'));
 
         for (const node of sshNodes) {
-            const twin = twinStore.nodes[node.Name];
+            const twin = getNodeTwin(node.Name);
             if (!twin) continue;
 
             // Parse hostPath volumes from reverse-proxy YAML files in twin.files
             const proxyMounts: { source: string; label: string }[] = [];
-            const proxyState = twinStore.proxyState;
+            const proxyState = getProxyState();
 
             for (const [filePath, file] of Object.entries(twin.files || {})) {
                 if (!filePath.endsWith('.yml') && !filePath.endsWith('.yaml')) continue;

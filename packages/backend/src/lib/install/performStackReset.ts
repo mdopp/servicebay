@@ -9,7 +9,7 @@
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { agentManager } from '@/lib/agent/manager';
 import { getConfig, scrubEncryptedConfig } from '@/lib/config';
-import { DigitalTwinStore } from '@/lib/store/twin';
+import { getNodeIds } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { RESET_GROUPS, DEFAULT_PRESERVE, isAlwaysWipe, type ResetGroup } from './resetGroups';
 import { validateResetCombo } from './resetValidation';
@@ -71,8 +71,7 @@ export async function performStackReset(
     );
   }
 
-  const twin = DigitalTwinStore.getInstance();
-  const nodeName = options.node || Object.keys(twin.nodes)[0];
+  const nodeName = options.node || getNodeIds()[0];
   if (!nodeName) throw new StackResetError('No nodes available', 404);
 
   const config = await getConfig();

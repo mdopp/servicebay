@@ -1,8 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
-import { DigitalTwinStore } from '@/lib/store/twin';
-import { getUnmanagedBundles } from '@/lib/store/repository';
+import {
+  getStoreSnapshot,
+  getServices,
+  getContainers,
+  getNodeTwin,
+  getUnmanagedBundles,
+} from '@/lib/store/repository';
 import { mergeServices, type DiscoveredService } from '@/lib/migration';
 import {
   getAllSystemServices,
@@ -247,8 +252,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
 
   // --- List Nodes ---
   server.tool('list_nodes', 'List all registered nodes with connection status and resources', {}, async () => {
-    const twin = DigitalTwinStore.getInstance();
-    const snapshot = twin.getSnapshot();
+    const snapshot = getStoreSnapshot();
     const nodes = await listNodes();
 
     const result = nodes.map(n => {
@@ -268,18 +272,14 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
 
   // --- List Services ---
   server.tool('list_services', 'List services on a node with status, ports, volumes', { node: nodeParam }, async ({ node }) => {
-    const twin = DigitalTwinStore.getInstance();
     const nodeName = await resolveNode(node);
-    const services = twin.nodes[nodeName]?.services || [];
-    return textResult(services);
+    return textResult(getServices(nodeName));
   });
 
   // --- List Containers ---
   server.tool('list_containers', 'List running containers with image, state, ports', { node: nodeParam }, async ({ node }) => {
-    const twin = DigitalTwinStore.getInstance();
     const nodeName = await resolveNode(node);
-    const containers = twin.nodes[nodeName]?.containers || [];
-    return textResult(containers);
+    return textResult(getContainers(nodeName));
   });
 
   // --- Get Service Logs ---
@@ -506,9 +506,8 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
 
   // --- Get System Info ---
   server.tool('get_system_info', 'Get CPU, memory, disk, and uptime info for a node', { node: nodeParam }, async ({ node }) => {
-    const twin = DigitalTwinStore.getInstance();
     const nodeName = await resolveNode(node);
-    const nodeTwin = twin.nodes[nodeName];
+    const nodeTwin = getNodeTwin(nodeName);
 
     if (!nodeTwin) {
       return errorResult(`Node "${nodeName}" not found`);
@@ -576,8 +575,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
 
   // --- Get Network Graph ---
   server.tool('get_network_graph', 'Get network topology: nodes, edges, port mappings', {}, async () => {
-    const twin = DigitalTwinStore.getInstance();
-    const snapshot = twin.getSnapshot();
+    const snapshot = getStoreSnapshot();
     const nodes = await listNodes();
 
     const graphNodes: Array<{ id: string; type: string; data: Record<string, unknown> }> = [];
@@ -645,16 +643,12 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
 
   // --- Get Gateway Status ---
   server.tool('get_gateway_status', 'Get gateway info: public IP, port mappings, uptime', {}, async () => {
-    const twin = DigitalTwinStore.getInstance();
-    const snapshot = twin.getSnapshot();
-    return textResult(snapshot.gateway);
+    return textResult(getStoreSnapshot().gateway);
   });
 
   // --- Get Proxy Routes ---
   server.tool('get_proxy_routes', 'Get reverse proxy routes configuration', {}, async () => {
-    const twin = DigitalTwinStore.getInstance();
-    const snapshot = twin.getSnapshot();
-    return textResult(snapshot.proxyState);
+    return textResult(getStoreSnapshot().proxyState);
   });
 
   // --- Exec Command ---
