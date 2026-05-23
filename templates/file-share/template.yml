@@ -80,6 +80,14 @@ spec:
       # network (hostNetwork=true, so 127.0.0.1 is reachable).
       - name: STGUIADDRESS
         value: "127.0.0.1:8384"
+      # GUI Host: header check — disabled via post-deploy.py patching
+      # config.xml's `<insecureSkipHostcheck>` (no equivalent env var
+      # exists in Syncthing). Without that patch the proxied URL
+      # `sync.<PUBLIC_DOMAIN>` returns HTTP 403 `Host check error`
+      # because Syncthing's default allowlist is bind-address only.
+      # The actual gate is Authelia forward-auth + the LAN-only access
+      # list at the proxy layer, so opening this is not an auth bypass.
+      # (#880)
       # Disable Syncthing's UPnP / NAT-PMP NAT-traversal (#415). The
       # FritzBox replies 403 to AddPortMapping on its IPv6 WAN entry
       # (WANIPConn2), which Syncthing then retries on a loop and

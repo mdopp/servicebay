@@ -10,10 +10,11 @@
   },
   "SYNCTHING_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for Syncthing Web UI — gated by Authelia forward-auth. The Syncthing mobile/desktop apps use API keys, not the GUI session, so device sync keeps working.",
+    "description": "Subdomain for Syncthing Web UI — gated by Authelia forward-auth. The Syncthing mobile/desktop apps use API keys, not the GUI session, so device sync keeps working. Syncthing's GUI is loopback-only by design (it exposes API keys + folder paths); NPM (hostNetwork=true) forwards to 127.0.0.1:8384 to reach it (#880).",
     "default": "sync",
     "exposure": "internal",
     "proxyPort": "8384",
+    "loopbackOnly": true,
     "proxyConfig": {
       "allow_websocket_upgrade": true,
       "block_exploits": true,
