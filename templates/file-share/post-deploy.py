@@ -68,6 +68,33 @@ def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tu
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
+    # ── Syncthing GUI host-check ───────────────────────────────────────
+    # Syncthing's GUI defaults to allowing the bind address only as a
+    # Host: header. NPM forwards `sync.<PUBLIC_DOMAIN>` and Syncthing
+    # rejects with HTTP 403 `Host check error`. STGUIHOSTCHECK isn't a
+    # real env var; only the config.xml `<insecureSkipHostcheck>` child
+    # element disables the check. We patch it idempotently here so a
+    # fresh install or a re-deploy lands the right config without
+    # waiting for the operator to do it manually. (#880)
+    syncthing_config_xml = "/var/syncthing/config/config.xml"
+    patch_syncthing_cmd = (
+        "podman exec file-share-syncthing sh -c "
+        "'grep -q insecureSkipHostcheck " + syncthing_config_xml + " || "
+        "sed -i \"s|<address>127.0.0.1:8384</address>|<address>127.0.0.1:8384</address>"
+        "\\n        <insecureSkipHostcheck>true</insecureSkipHostcheck>|\" "
+        + syncthing_config_xml + "'"
+    )
+    rc = os.system(patch_syncthing_cmd)
+    if rc == 0:
+        # Syncthing reloads config.xml on SIGHUP but not on a plain file
+        # write; restart the container to pick up the new setting. The
+        # subsequent Samba/FileBrowser steps don't depend on Syncthing
+        # so a short window where Syncthing is restarting is harmless.
+        os.system("podman restart file-share-syncthing > /dev/null 2>&1 || true")
+        log("✅ Syncthing GUI host-check disabled (config.xml patched).")
+    else:
+        log("⚠️  Syncthing config patch returned a non-zero exit. The sync.<domain> URL may return 403 'Host check error' — fix manually in /var/syncthing/config/config.xml.")
+
     # ── Samba ──────────────────────────────────────────────────────────
     share_user = env("SHARE_USER", "samba")
     share_password = env("SHARE_PASSWORD")

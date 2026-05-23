@@ -185,4 +185,20 @@ describe('buildProxyHosts', () => {
     expect(hosts.find(h => h.domain === 'navi.example.com')?.service).toBe('media');
     expect(hosts.find(h => h.domain === 'foo.example.com')?.service).toBe('foo');
   });
+
+  it('routes loopback-only services through 127.0.0.1 (#880)', () => {
+    const { hosts } = buildProxyHosts([
+      v('PUBLIC_DOMAIN', 'example.com'),
+      v('SYNC_SUBDOMAIN', 'sync', subdomain('internal', '8384', { loopbackOnly: true })),
+      v('PHOTOS_SUBDOMAIN', 'photos', subdomain('internal', '2283')),
+    ]);
+    const sync = hosts.find(h => h.domain === 'sync.example.com');
+    const photos = hosts.find(h => h.domain === 'photos.example.com');
+    // NPM runs hostNetwork=true, so its 127.0.0.1 IS the host's
+    // loopback where Syncthing's GUI listens.
+    expect(sync?.forwardHost).toBe('127.0.0.1');
+    // Regular services don't override — the proxy-hosts route defaults
+    // forwardHost to the node's LAN IP.
+    expect(photos?.forwardHost).toBeUndefined();
+  });
 });

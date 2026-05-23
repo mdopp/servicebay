@@ -437,6 +437,17 @@ export interface VariableMeta {
    * from outside the LAN.
    */
   exposure?: 'public' | 'internal' | 'lan';
+  /**
+   * For subdomain type: when true, the service binds **only to the host
+   * loopback** (e.g. Syncthing's `STGUIADDRESS=127.0.0.1:8384`).
+   * NPM today runs `hostNetwork: true` and shares the host netns, so
+   * `forward_host: 127.0.0.1` reaches the loopback-bound upstream
+   * correctly. Default (false) routes through the node's LAN IP, which
+   * is correct for any service binding 0.0.0.0 or the LAN address.
+   * (#880; if #817 ever moves NPM off hostNetwork, the forward target
+   * needs to switch to `host.containers.internal`.)
+   */
+  loopbackOnly?: boolean;
   /** OIDC client to register with Authelia when this service is deployed */
   oidcClient?: OidcClientConfig;
   /** For bcrypt type: name of another variable whose plaintext gets bcrypt-hashed */

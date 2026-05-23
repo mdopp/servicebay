@@ -112,6 +112,13 @@ export function buildProxyHosts(variables: StackVariable[]): {
     /** 'public' and 'internal' trigger auto-cert; 'lan' skips. */
     exposure: 'public' | 'internal' | 'lan';
     proxyConfig?: VariableMeta['proxyConfig'];
+    /** Target the proxy host forwards to. Defaults (when omitted by
+     *  the proxy-host route) to the node's LAN IP — correct for
+     *  services binding 0.0.0.0 or the LAN interface. Loopback-bound
+     *  services (Syncthing's GUI, etc.) need this set to
+     *  `host.containers.internal` so NPM (in a container) can reach
+     *  the host's loopback. (#880) */
+    forwardHost?: string;
   }[];
 } {
   const domain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
@@ -143,6 +150,12 @@ export function buildProxyHosts(variables: StackVariable[]): {
       service,
       exposure,
       proxyConfig: renderProxyConfig(sv.meta?.proxyConfig, view),
+      // Loopback-bound services (Syncthing GUI etc.) bind to the host's
+      // 127.0.0.1. NPM today runs `hostNetwork: true` so it shares the
+      // host netns and `127.0.0.1` IS the right forward target. When
+      // #817 eventually moves NPM into its own netns, this needs to
+      // become `host.containers.internal` instead. (#880)
+      ...(sv.meta?.loopbackOnly ? { forwardHost: '127.0.0.1' } : {}),
     }];
   }).filter(h => Number.isFinite(h.forwardPort) && h.forwardPort > 0);
   return { domain, hosts };
