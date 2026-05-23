@@ -178,6 +178,30 @@ async function waitForCredentials(
   });
 }
 
+/** Extract every unique container `image:` reference from items the
+ *  install runner is about to deploy. Filters out already-installed
+ *  items (their images are warm by definition) and items without yaml.
+ *
+ *  Uses a tolerant regex (the value after `image:` up to whitespace or
+ *  `#`) rather than a YAML parse — templates carry Mustache placeholders
+ *  in unrelated fields that can break js-yaml. Images themselves are
+ *  static refs in every shipped template, so the regex is reliable here.
+ */
+export function collectImagesToPull(
+  items: ReadonlyArray<{ name: string; yaml?: string; alreadyInstalled?: boolean }>,
+): string[] {
+  const seen = new Set<string>();
+  const imageRe = /^[\t ]*-?[\t ]*image:[\t ]*['"]?([^\s'"#]+)['"]?[\t ]*(?:#.*)?$/gm;
+  for (const item of items) {
+    if (item.alreadyInstalled || !item.yaml) continue;
+    for (const m of item.yaml.matchAll(imageRe)) {
+      const image = m[1].trim();
+      if (image) seen.add(image);
+    }
+  }
+  return [...seen];
+}
+
 /** True when `name` reports ready in the twin's service list. Prefers
  *  the unified health signal (#627) — set by the service-health poller
  *  when the template ships a `servicebay.healthcheck` annotation — and
@@ -952,6 +976,49 @@ async function runJob(jobId: string): Promise<void> {
       // Best-effort — a restore failure shouldn't block the install.
       // Operator can always click "Retry Let's Encrypt" in NPM later.
       await log(jobId, `(note) cert archive restore skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Parallel pre-pull — warm up every container image referenced by the
+  // selected items before the sequential deploy loop. Pulls are the
+  // long pole of a cold install (multi-GB layers over a 5 Mbps line),
+  // and they have no install-ordering dependency on each other. Doing
+  // them in parallel cuts the cold-install wall-clock time roughly
+  // linearly with the number of independent images.
+  //
+  // Best-effort: a failed pull does NOT abort the install. The
+  // subsequent unit start will trigger a sequential retry via Quadlet's
+  // own image-pull path; the operator just loses the parallelism
+  // benefit for that one image.
+  const imagesToPull = collectImagesToPull(selected);
+  if (imagesToPull.length > 0) {
+    await log(jobId, `📦 Pre-pulling ${imagesToPull.length} container image${imagesToPull.length === 1 ? '' : 's'} in parallel...`);
+    const node = input.node || 'Local';
+    try {
+      const { agentManager } = await import('@/lib/agent/manager');
+      const agent = await agentManager.ensureAgent(node);
+      const results = await Promise.allSettled(
+        imagesToPull.map(image => agent.pullImage(image)),
+      );
+      let okCount = 0;
+      const failures: { image: string; reason: string }[] = [];
+      results.forEach((r, i) => {
+        const image = imagesToPull[i];
+        if (r.status === 'fulfilled' && r.value?.success) {
+          okCount++;
+        } else {
+          const reason = r.status === 'rejected'
+            ? (r.reason instanceof Error ? r.reason.message : String(r.reason))
+            : 'agent reported failure';
+          failures.push({ image, reason });
+        }
+      });
+      await log(jobId, `✅ Pulled ${okCount}/${imagesToPull.length} image${imagesToPull.length === 1 ? '' : 's'}.`);
+      for (const f of failures) {
+        await log(jobId, `(note) pre-pull failed for ${f.image}: ${f.reason} — will be retried during deploy.`);
+      }
+    } catch (e) {
+      await log(jobId, `(note) parallel pre-pull skipped: ${e instanceof Error ? e.message : String(e)} — deploy will pull sequentially as usual.`);
     }
   }
 
