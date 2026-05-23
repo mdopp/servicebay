@@ -23,8 +23,9 @@
  * consolidation history.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { Loader2, RefreshCcw, XCircle } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, RefreshCcw, XCircle, ChevronDown, ChevronRight, CheckCircle2, Circle } from 'lucide-react';
+import type { StackItem } from '@/hooks/useStackInstall';
 import StackVariableField from './StackVariableField';
 import { groupVariablesByTemplate } from '@servicebay/api-client';
 import { buildBitwardenCsv } from '@servicebay/api-client';
@@ -190,7 +191,7 @@ interface ProgressProps extends CommonProps {
 }
 
 export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
-  const { logs, phase, npmCredPrompt, npmCredFallback, retryNpmCredentials, skipNpmCredentials, abortInstall, reset } = controller;
+  const { items, logs, phase, installingNow, deployedNames, npmCredPrompt, npmCredFallback, retryNpmCredentials, skipNpmCredentials, abortInstall, reset } = controller;
   const logTailRef = useRef<HTMLDivElement | null>(null);
   const [credEmail, setCredEmail] = useNpmCredFallback(npmCredFallback.email);
   const [credPassword, setCredPassword] = useNpmCredFallback(npmCredFallback.password);
@@ -203,11 +204,35 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
     }
   }, [logs, phase]);
 
+  // Bucket the flat log stream into per-service groups (#822). The
+  // runner already emits `Installing <name>...` / `✅ <name> deployed`
+  // markers, plus `Running <name> post-deploy script…` for post-install
+  // steps — anything between an Install marker and its closing line
+  // belongs to that service. Everything else stays in the "global" tail.
+  //
+  // Skip attribution when there are no items to render rows for (e.g.
+  // the StackInstallModal path, or a controller spun up without the
+  // wizard's items prefetch); a flat log is the correct fallback there.
+  const { perService, globalLines } = useMemo(
+    () => (items.length > 0 ? attributeLogs(logs) : { perService: new Map<string, string[]>(), globalLines: logs }),
+    [items.length, logs],
+  );
+
   return (
     <div>
       {beforeLog}
+
+      {items.length > 0 && (
+        <InstallServiceRows
+          items={items}
+          installingNow={installingNow}
+          deployedNames={deployedNames}
+          perService={perService}
+        />
+      )}
+
       <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs min-h-[12rem] border border-gray-800">
-        {logs.map((log, i) => (
+        {globalLines.map((log, i) => (
           <div key={i} className="mb-1">{log}</div>
         ))}
         {phase === 'installing' && (
@@ -428,4 +453,150 @@ export default function StackInstallFlow(props: {
  */
 function useNpmCredFallback(initial: string): [string, (v: string) => void] {
   return useState(initial);
+}
+
+/**
+ * Per-service log attribution (#822). The runner emits markers around
+ * every service it installs:
+ *
+ *   Installing <name>...
+ *   …per-service stdout/stderr…
+ *   ✅ <name> deployed (...)
+ *   Running <name> post-deploy script…
+ *   …per-service post-deploy output…
+ *
+ * Lines between an opener and the next service-affecting marker are
+ * attributed to the named service. Anything outside any service block
+ * (Install order announcement, manifest-assembly chatter, NPM prompt
+ * status) stays in the global tail so nothing gets hidden.
+ *
+ * Exported for unit testing — the regexes are worth pinning since the
+ * markers' shape is the only contract this attribution depends on.
+ */
+export function attributeLogs(logs: string[]): {
+  perService: Map<string, string[]>;
+  globalLines: string[];
+} {
+  const perService = new Map<string, string[]>();
+  const globalLines: string[] = [];
+  let currentService: string | null = null;
+
+  const startInstall = /^Installing (\S+)\.{3}\s*$/;
+  const doneInstall = /^✅ (\S+) deployed/;
+  const startPostDeploy = /^Running (\S+) post-deploy script/;
+
+  for (const line of logs) {
+    const m1 = startInstall.exec(line);
+    const m2 = doneInstall.exec(line);
+    const m3 = startPostDeploy.exec(line);
+
+    if (m1) {
+      currentService = m1[1];
+      pushToService(perService, currentService, line);
+      continue;
+    }
+    if (m3) {
+      currentService = m3[1];
+      pushToService(perService, currentService, line);
+      continue;
+    }
+    if (m2) {
+      const svc = m2[1];
+      pushToService(perService, svc, line);
+      // Closing line; subsequent lines fall back to global until the
+      // next opener.
+      currentService = null;
+      continue;
+    }
+
+    if (currentService) {
+      pushToService(perService, currentService, line);
+    } else {
+      globalLines.push(line);
+    }
+  }
+
+  return { perService, globalLines };
+}
+
+function pushToService(map: Map<string, string[]>, svc: string, line: string) {
+  const existing = map.get(svc);
+  if (existing) existing.push(line);
+  else map.set(svc, [line]);
+}
+
+interface InstallServiceRowsProps {
+  items: StackItem[];
+  installingNow: string | null;
+  deployedNames: string[];
+  perService: Map<string, string[]>;
+}
+
+/**
+ * Per-service expandable status rows (#822). Renders the install
+ * order as a vertical list above the global log tail. Each row is
+ * collapsed by default — expand to see only that service's lines.
+ *
+ * Order: trust `items[]` as the install order. The runner topo-sorts
+ * by `servicebay.dependencies` before it emits items via job state, so
+ * the array already arrives in dependency order. (Falls back to input
+ * order when dependencies aren't declared.)
+ */
+function InstallServiceRows({ items, installingNow, deployedNames, perService }: InstallServiceRowsProps) {
+  const deployedSet = useMemo(() => new Set(deployedNames), [deployedNames]);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+
+  const toggle = (name: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  return (
+    <div className="mb-3 border border-gray-200 dark:border-gray-800 rounded-md overflow-hidden">
+      {items.map(item => {
+        const isDone = deployedSet.has(item.name);
+        const isInstalling = installingNow === item.name;
+        const lines = perService.get(item.name) || [];
+        const isOpen = expanded.has(item.name);
+        const statusIcon = isDone
+          ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
+          : isInstalling
+            ? <Loader2 size={14} className="animate-spin text-blue-500 shrink-0" />
+            : <Circle size={14} className="text-gray-300 dark:text-gray-600 shrink-0" />;
+        const statusText = isDone ? 'Deployed' : isInstalling ? 'Installing…' : 'Pending';
+        return (
+          <div key={item.name} className="border-b border-gray-200 dark:border-gray-800 last:border-b-0">
+            <button
+              type="button"
+              onClick={() => toggle(item.name)}
+              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+            >
+              {isOpen ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
+              {statusIcon}
+              <span className="text-sm font-medium text-gray-900 dark:text-gray-100 flex-1 truncate">{item.name}</span>
+              <span className={`text-xs ${isDone ? 'text-emerald-600 dark:text-emerald-400' : isInstalling ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                {statusText}
+              </span>
+              {lines.length > 0 && (
+                <span className="text-[10px] text-gray-400 tabular-nums">{lines.length} ln</span>
+              )}
+            </button>
+            {isOpen && (
+              <div className="bg-gray-900 text-gray-100 px-3 py-2 font-mono text-[11px] max-h-48 overflow-y-auto">
+                {lines.length === 0 ? (
+                  <span className="text-gray-500">No log lines yet for {item.name}.</span>
+                ) : (
+                  lines.map((line, i) => <div key={i} className="leading-snug">{line}</div>)
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
