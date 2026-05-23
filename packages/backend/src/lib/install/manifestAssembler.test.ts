@@ -12,10 +12,12 @@ import type { VariableMeta } from '@/lib/registry';
 const getTemplateYaml = vi.fn<(n: string, s?: string) => Promise<string | null>>();
 const getTemplateVariables = vi.fn<(n: string, s?: string) => Promise<Record<string, VariableMeta> | null>>();
 const getTemplateConfigFiles = vi.fn<(n: string, s?: string) => Promise<{ filename: string; content: string }[]>>();
+const getTemplateSettingsSchema = vi.fn<() => Promise<Record<string, { default: string; description?: string }>>>();
 vi.mock('@/lib/registry', () => ({
   getTemplateYaml: (n: string, s?: string) => getTemplateYaml(n, s),
   getTemplateVariables: (n: string, s?: string) => getTemplateVariables(n, s),
   getTemplateConfigFiles: (n: string, s?: string) => getTemplateConfigFiles(n, s),
+  getTemplateSettingsSchema: () => getTemplateSettingsSchema(),
 }));
 
 const getConfig = vi.fn<() => Promise<{ templateSettings?: Record<string, string> }>>();
@@ -55,6 +57,8 @@ beforeEach(() => {
   getTemplateVariables.mockReset();
   getTemplateConfigFiles.mockReset();
   getTemplateConfigFiles.mockResolvedValue([]);
+  getTemplateSettingsSchema.mockReset();
+  getTemplateSettingsSchema.mockResolvedValue({});
   getConfig.mockReset();
   getConfig.mockResolvedValue({ templateSettings: {} });
   loadSavedSecrets.mockReset();

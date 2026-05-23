@@ -27,6 +27,7 @@ import {
   getTemplateYaml,
   getTemplateVariables,
   getTemplateConfigFiles,
+  getTemplateSettingsSchema,
   type VariableMeta,
 } from '@/lib/registry';
 import { parseTemplateDependencies } from '@/lib/stackInstall/dependencies';
@@ -231,6 +232,21 @@ export async function assembleManifest(
   // returning so a mid-install failure doesn't strand a value that
   // exists only in this manifest (#622).
   const newlyGenerated: { name: string; value: string }[] = [];
+
+  // Merge global settings schema variables into allMeta so their defaults
+  // are respected if not prefilled.
+  const globalSchema = await getTemplateSettingsSchema().catch(() => ({}));
+  for (const [key, val] of Object.entries(globalSchema)) {
+    if (!allMeta[key]) {
+      allMeta[key] = {
+        type: 'text',
+        default: val.default,
+        description: val.description,
+        templateName: 'global',
+        templateLabel: 'Global Settings',
+      };
+    }
+  }
 
   const variables: JobInputVariable[] = [];
   vars.delete('LLDAP_FORCE_LDAP_USER_PASS_RESET');
