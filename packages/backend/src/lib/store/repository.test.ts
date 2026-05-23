@@ -46,7 +46,19 @@ describe('Store Repository Selectors', () => {
     store.registerNode('node1');
     expect(getContainers('node1')).toEqual([]);
     store.nodes['node1'].containers = [
-      { id: 'c1', name: 'container1', names: ['container1'], podName: 'pod1', labels: {}, status: 'running', image: 'nginx', ports: [] },
+      {
+        id: 'c1',
+        names: ['container1'],
+        podName: 'pod1',
+        labels: {},
+        state: 'running',
+        status: 'running',
+        created: 0,
+        image: 'nginx',
+        ports: [],
+        mounts: [],
+        networks: [],
+      },
     ];
     expect(getContainers('node1')).toHaveLength(1);
     expect(getContainers('node1')[0].id).toBe('c1');
@@ -56,7 +68,15 @@ describe('Store Repository Selectors', () => {
     store.registerNode('node1');
     expect(getServices('node1')).toEqual([]);
     store.nodes['node1'].services = [
-      { name: 'service1', active: true, status: 'active' },
+      {
+        name: 'service1',
+        active: true,
+        activeState: 'active',
+        subState: 'running',
+        loadState: 'loaded',
+        description: '',
+        path: '',
+      },
     ];
     expect(getServices('node1')).toHaveLength(1);
     expect(getServices('node1')[0].name).toBe('service1');
