@@ -13,7 +13,12 @@ metadata:
     # a future ServiceBay renames or restructures those endpoints.
     servicebay.requires-api.lldap: "1"
     servicebay.requires-api.authelia: "1"
-    servicebay.ports: "{{LLDAP_PORT}}/tcp,{{LLDAP_LDAP_PORT}}/tcp,{{AUTHELIA_PORT}}/tcp"
+    # AUTHELIA_PORT first because that's the port every cross-pod
+    # consumer talks to (OIDC discovery, forward-auth). When the
+    # network map renders a `declared` edge into `auth`, picking the
+    # first port shows that consumer-facing port instead of the
+    # admin-only LLDAP web UI port. (#880-followup)
+    servicebay.ports: "{{AUTHELIA_PORT}}/tcp,{{LLDAP_PORT}}/tcp,{{LLDAP_LDAP_PORT}}/tcp"
     # Pin the configuration.yml.mustache target to authelia's /config mount —
     # without this the wizard's path resolver would also consider lldap's
     # mounts and pick whichever lands first in the parsed YAML.
