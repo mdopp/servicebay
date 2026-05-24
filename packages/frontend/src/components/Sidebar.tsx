@@ -75,7 +75,7 @@ export default function Sidebar() {
           { cache: 'no-store' },
         );
         if (cancelled) return;
-        setHasActiveInstall(data.jobIsActive || data.stackSetupPending);
+        setHasActiveInstall(data.jobIsActive);
       } catch { /* offline / mid-redeploy / schema drift — keep the previous value */ }
     };
     void tick();
@@ -87,30 +87,32 @@ export default function Sidebar() {
     <div className={`${isCollapsed ? 'w-16' : 'w-64'} flex flex-col transition-all duration-300 h-full shrink-0`}>
         <div className="h-16 flex items-center justify-between px-4">
             {!isCollapsed && (
-                <div className="flex items-center gap-3 overflow-hidden">
-                    <ServiceBayLogo size={24} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                <div className="flex items-center gap-3.5 overflow-hidden">
+                    <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 shadow-inner shrink-0">
+                        <ServiceBayLogo size={22} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                    </div>
                     <div className="flex flex-col overflow-hidden">
-                        <h3 className="font-bold text-gray-800 dark:text-gray-100 leading-none whitespace-nowrap">
+                        <h3 className="font-extrabold text-gray-800 dark:text-gray-100 leading-none whitespace-nowrap tracking-tight text-sm">
                             ServiceBay
                         </h3>
-                        <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium whitespace-nowrap">
-                            by Korgraph.io{appVersion ? ` - v${appVersion}` : ''}
+                        <span className="text-[9px] uppercase font-black text-gray-500 dark:text-gray-500 tracking-[0.15em] mt-1.5 whitespace-nowrap">
+                            SYSTEM{appVersion ? ` - v${appVersion}` : ''}
                         </span>
                     </div>
                 </div>
             )}
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
-                className={`p-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 ${isCollapsed ? 'mx-auto' : ''}`}
+                className={`p-1.5 rounded-xl border border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-500 ${isCollapsed ? 'mx-auto' : ''}`}
                 title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             >
                 {isCollapsed ? <ServiceBayLogo size={20} /> : <ChevronLeft size={18} />}
             </button>
         </div>
         {node && !isCollapsed && (
-            <div className="mx-2 mb-1 px-3 py-1.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md flex items-center gap-2">
+            <div className="mx-2 mb-1 px-3 py-1.5 bg-amber-50 dark:bg-amber-900/10 border border-amber-200/50 dark:border-amber-800/40 rounded-xl flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                <span className="text-xs font-medium text-amber-700 dark:text-amber-400 truncate">{node}</span>
+                <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 truncate">{node}</span>
             </div>
         )}
         {node && isCollapsed && (
@@ -131,10 +133,10 @@ export default function Sidebar() {
             {/* Setup entry (#696). Only visible when there's an active install OR we are looking at the setup page. */}
             {(hasActiveInstall || (pathname?.startsWith('/setup') ?? false)) && (() => {
                 const isActive = pathname?.startsWith('/setup') ?? false;
-                const baseClass = `w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${isCollapsed ? 'justify-center' : 'gap-3'} `;
+                const baseClass = `w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border ${isCollapsed ? 'justify-center' : 'gap-3.5'} `;
                 const tone = isActive
-                    ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
-                    : 'bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300';
+                    ? 'bg-blue-50 dark:bg-blue-600/10 border-blue-100 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 font-bold shadow-sm shadow-blue-500/5'
+                    : 'border-blue-100/50 dark:border-blue-500/10 bg-blue-50/50 dark:bg-blue-900/20 hover:bg-blue-100/60 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300';
                 const iconColor = isActive
                     ? 'text-blue-500 dark:text-blue-400'
                     : 'text-blue-600 dark:text-blue-400';
@@ -151,7 +153,7 @@ export default function Sidebar() {
                                 <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                             )}
                         </div>
-                        {!isCollapsed && <span className="font-medium whitespace-nowrap overflow-hidden">Setup</span>}
+                        {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden">Setup</span>}
                     </button>
                 );
             })()}
@@ -162,15 +164,15 @@ export default function Sidebar() {
                     <button
                         key={p.id}
                         onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
-                        className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${
+                        className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border ${
                             isActive
-                            ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
-                            : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
-                        } ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+                            ? 'bg-blue-50 dark:bg-blue-600/10 border-blue-100 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 font-bold shadow-sm shadow-blue-500/5'
+                            : 'border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                        } ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
                         title={isCollapsed ? p.name : ''}
                     >
                         <Icon size={20} className={`shrink-0 ${isActive ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-500'}`} />
-                        {!isCollapsed && <span className="font-medium whitespace-nowrap overflow-hidden">{p.name}</span>}
+                        {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden">{p.name}</span>}
                     </button>
                 );
             })}
@@ -179,32 +181,28 @@ export default function Sidebar() {
                     href={lldapUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+                    className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
                     title={isCollapsed ? 'Users & Groups (LLDAP)' : ''}
                 >
                     <Users size={20} className="shrink-0 text-gray-500 dark:text-gray-500" />
                     {!isCollapsed && (
-                        <span className="font-medium whitespace-nowrap overflow-hidden flex items-center gap-1.5">
+                        <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5">
                             Users & Groups
                             <ExternalLink size={12} className="text-gray-400" />
                         </span>
                     )}
                 </a>
             )}
-            {/* "View as user" — preview the family-facing /portal that
-                lists every running service with a friendly card and
-                user-guide. Opens in a new tab so the admin's session
-                stays put. */}
             <a
                 href="/portal"
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`w-full text-left px-3 py-3 rounded-md flex items-center transition-colors hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+                className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
                 title={isCollapsed ? 'View as user' : ''}
             >
                 <Home size={20} className="shrink-0 text-gray-500 dark:text-gray-500" />
                 {!isCollapsed && (
-                    <span className="font-medium whitespace-nowrap overflow-hidden flex items-center gap-1.5">
+                    <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5">
                         View as user
                         <ExternalLink size={12} className="text-gray-400" />
                     </span>
@@ -212,10 +210,7 @@ export default function Sidebar() {
             </a>
         </div>
 
-        <div className="p-2 space-y-1">
-            {/* "What's new" — opens the same modal SectionHelp uses, but loads
-              CHANGELOG.md instead of a per-dashboard help file. Available
-              independent of "is there an update pending?". */}
+        <div className="p-2 space-y-1 border-t border-gray-200/40 dark:border-white/5 pt-3 mt-auto">
             <div className={isCollapsed ? 'flex justify-center' : ''}>
                 <SectionHelp
                     helpId="changelog"
@@ -223,19 +218,19 @@ export default function Sidebar() {
                     icon={Sparkles}
                     label={isCollapsed ? undefined : "What's new"}
                     className={isCollapsed
-                        ? 'p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
-                        : 'w-full flex items-center gap-3 px-3 py-3 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors !bg-transparent !border-0 !text-current font-medium'}
+                        ? 'p-2 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
+                        : 'w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-gray-500 hover:text-gray-950 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-colors border border-transparent !bg-transparent font-semibold'}
                 />
             </div>
             <a
                 href="https://github.com/mdopp/servicebay"
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`w-full flex items-center px-3 py-3 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+                className={`w-full flex items-center px-3.5 py-3 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
                 title="View on GitHub"
             >
                 <Github size={20} className="shrink-0" />
-                {!isCollapsed && <span className="font-medium whitespace-nowrap overflow-hidden">GitHub Repo</span>}
+                {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden">GitHub Repo</span>}
             </a>
         </div>
     </div>

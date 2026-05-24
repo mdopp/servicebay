@@ -13,7 +13,7 @@ Four tools, each in its own lane:
 | `.semgrep.yml` | Security & coupling patterns — tar bypass of `safeTarExtract`, `eval` / `new Function`, SSRF-prone fetches, `child_process.exec` non-literal | `podman run --rm -v "$PWD:/src:Z" docker.io/returntocorp/semgrep semgrep --config /src/.semgrep.yml /src` |
 | `eslint.config.mjs` `sb/*` rules | IDE-time feedback — `sb/no-exec-template-literal`, `sb/api-route-needs-handler` | `npm run lint` |
 
-CI: `.github/workflows/architecture.yml` runs the first three on every push and PR. The existing `ci.yml` lint step picks up the `sb/*` ESLint rules.
+CI: `.github/workflows/ci.yml` runs the first three (`invariants`, `depcruise`, `semgrep` jobs) on every PR, alongside the `lint` job that picks up the `sb/*` ESLint rules.
 
 **Practical consequence.** "All green" is a valid outcome of an architecture review. Future review prompts should run `npm run check:arch && npm run lint` first and only flag what crosses a defined threshold — see the rubric for what does and does not get enforced this way. Anything not mechanically detectable (data-model fit, security-boundary logic, abstraction match) is the remaining LLM-review surface.
 
