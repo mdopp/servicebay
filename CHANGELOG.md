@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.2...servicebay-v4.24.3) (2026-05-24)
+
+
+### Performance Improvements
+
+* **build:** switch to Turbopack by splitting logger into client-safe stub ([#905](https://github.com/mdopp/servicebay/issues/905)) ([#907](https://github.com/mdopp/servicebay/issues/907)) ([0987c33](https://github.com/mdopp/servicebay/commit/0987c3327ea294feaaa607c3f3f5540b8d438d91))
+
 ## [4.24.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.1...servicebay-v4.24.2) (2026-05-24)
 
 
