@@ -6,7 +6,13 @@ import type { NextConfig } from "next";
 // Next 16. The runtime container instead bundles `server.ts` to CJS via
 // `scripts/build-server.mjs` and runs it under plain `node`.
 //
-// Two known Next 16.2.4 quirks ServiceBay works around at build time:
+// #905 migrated the production build from webpack to Turbopack (Next 16
+// default) by splitting logger.ts into a client-safe stub (logger-client.ts)
+// that the frontend imports, and the full SQLite-backed logger that stays
+// server-only. Previously a webpack `resolve.fallback` hack was needed
+// because the client bundle transitively pulled `fs`/`path`/`better-sqlite3`.
+//
+// Known Next 16.2.4 quirk still worked around at build time:
 // - `routes-manifest.json` omits `onMatchHeaders` → patched in
 //   `scripts/patch-routes-manifest.mjs` (otherwise `app.prepare()` throws
 //   "Cannot read properties of undefined (reading 'map')" in `setupFsCheck`).
@@ -27,22 +33,6 @@ const nextConfig: NextConfig = {
   // `/` used to redirect to `/services` — removed in #802/#803 when the
   // Overview Dashboard landed at the root path. If you're hunting for
   // the redirect, it's now a real page: src/app/(dashboard)/page.tsx.
-  // `src/lib/logger.ts` is imported by both server and client code and lazily
-  // `require()`s `better-sqlite3` / `fs` / `path` only on the server. Webpack
-  // resolves those `require` calls statically, so without this fallback the
-  // client bundle fails to compile (`Module not found: Can't resolve 'fs'`).
-  webpack: (config, { isServer }) => {
-    if (!isServer) {
-      config.resolve = config.resolve || {};
-      config.resolve.fallback = {
-        ...(config.resolve.fallback || {}),
-        fs: false,
-        path: false,
-        'better-sqlite3': false,
-      };
-    }
-    return config;
-  },
 };
 
 export default nextConfig;

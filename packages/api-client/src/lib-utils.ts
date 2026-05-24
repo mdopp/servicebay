@@ -8,7 +8,7 @@
 // utilities (network layout, view-model builders), into the frontend
 // package itself.
 
-export { logger } from '@/lib/logger';
+export { logger } from '@/lib/logger-client';
 export { humanizeError } from '@/lib/util/humanizeError';
 export { humanizeYamlError } from '@/lib/util/humanizeYamlError';
 export { isValidOperatorEmail, operatorEmailIssue } from '@/lib/operatorEmail';

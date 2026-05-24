@@ -13,7 +13,7 @@
     "predev:frontend": "node scripts/predev.mjs",
     "dev": "fuser -k 3000/tcp || true && tsx server.ts",
     "dev:frontend": "fuser -k 3001/tcp || true && NEXT_PUBLIC_USE_MOCKS=1 next dev --port 3001",
-    "build": "next build --webpack && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
+    "build": "next build && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
     "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "eslint",
     "knip": "knip",
