@@ -192,14 +192,25 @@ def main() -> int:
         log(f"⚠️  Immich admin sign-up returned HTTP {code}: {body}. Continuing.")
 
     # 2. Log in to fetch a token for the system-config call.
-    code, body = request_json(
-        "POST",
-        f"{base_url}/api/auth/login",
-        {"email": admin_email, "password": admin_password},
-    )
-    token = body.get("accessToken") if isinstance(body, dict) else None
+    # `admin-sign-up` returns 200/201 the instant the row is written, but
+    # Immich's auth path occasionally rejects the immediate follow-up login
+    # with HTTP 401 while the user row is still propagating to the auth
+    # cache (observed in #TBD). Short retry loop rides through it.
+    code, body, token = 0, None, None
+    for attempt in range(8):  # ~20s with 2.5s backoff
+        code, body = request_json(
+            "POST",
+            f"{base_url}/api/auth/login",
+            {"email": admin_email, "password": admin_password},
+        )
+        token = body.get("accessToken") if isinstance(body, dict) else None
+        if code == 201 and token:
+            break
+        if attempt == 0:
+            log(f"   admin login attempt 1 returned HTTP {code} — retrying for ~20s while Immich settles...")
+        time.sleep(2.5)
     if code != 201 or not token:
-        log(f"⚠️  Could not log in as admin (HTTP {code}). Skipping OIDC config.")
+        log(f"⚠️  Could not log in as admin after 8 attempts (last HTTP {code}). Skipping OIDC config.")
         return 0
 
     # 3. Configure OAuth. Read-modify-write so we don't clobber any

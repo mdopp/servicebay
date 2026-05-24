@@ -23,6 +23,7 @@
  * restart by design: any job in an active phase at startup is flipped to
  * `crashed` by `jobStore.markCrashedOnStartup()` (see server.ts).
  */
+import crypto from 'node:crypto';
 import Mustache from 'mustache';
 // Direct lib imports (#600) — the actions.ts wrappers are RPC bridges
 // for client components, not appropriate for server-side lib code.
@@ -831,40 +832,75 @@ async function runJob(jobId: string): Promise<void> {
   }
 
   // Authelia storage self-heal — Authelia encrypts its SQLite storage
-  // with AUTHELIA_STORAGE_ENCRYPTION_KEY. If the wizard regenerates the
-  // key (no saved value to reuse) but the preserved `authelia-data` dir
-  // still holds rows encrypted with the previous install's key,
-  // Authelia comes up returning 500 on every route — including the
-  // readiness probe's OIDC discovery endpoint. Without intervention the
-  // install times out 5 min later with no breadcrumb the operator can
-  // act on.
+  // with AUTHELIA_STORAGE_ENCRYPTION_KEY. If the data dir survives a
+  // reinstall but the new key doesn't match what encrypted that data,
+  // Authelia crashes on startup ("encryption key does not appear to be
+  // valid for this database") and loops indefinitely.
   //
-  // When we detect this case (auth is being deployed, AUTHELIA_STORAGE_
-  // ENCRYPTION_KEY is *not* in the reused-from-saved set, and the data
-  // dir has content), wipe `authelia-data/` only. LLDAP user accounts
-  // at the sibling `auth/lldap` host path are preserved — that's the
-  // identity state operators actually care about. The wizard's
-  // post-deploy re-seeds Authelia's OIDC clients + storage schema from
-  // scratch.
+  // We track a SHA-256 fingerprint of the encryption key in a sidecar
+  // file (`.sb-key-fingerprint`) inside the data dir. On every install
+  // where auth is being deployed:
+  //   - If the fingerprint file matches the new key → keep the data.
+  //   - If it exists and differs → wipe (real mismatch, Authelia would crash).
+  //   - If it's missing → fall back to the legacy heuristic: wipe iff
+  //     the data dir has content AND the key was freshly generated
+  //     (not reused from savedSecrets). This covers pre-fingerprint
+  //     upgrades.
+  // After deciding, write the new fingerprint so the next install can
+  // check it. LLDAP user accounts at the sibling `auth/lldap` host
+  // path are preserved either way.
   const authIncluded = selected.some(s => s.name === 'auth' && !s.alreadyInstalled);
-  if (authIncluded && !reusedSecretNames.has('AUTHELIA_STORAGE_ENCRYPTION_KEY')) {
+  if (authIncluded) {
     try {
       const { agentManager } = await import('@/lib/agent/manager');
       const { getConfig } = await import('@/lib/config');
       const cfg = await getConfig();
       const dataDir = cfg.templateSettings?.DATA_DIR || '/mnt/data/stacks';
       const autheliaDataPath = `${dataDir}/auth/authelia-data`;
+      const fingerprintPath = `${autheliaDataPath}/.sb-key-fingerprint`;
+      const newKey = input.variables.find(v => v.name === 'AUTHELIA_STORAGE_ENCRYPTION_KEY')?.value || '';
+      const newFp = newKey
+        ? crypto.createHash('sha256').update(newKey).digest('hex')
+        : '';
       const node = input.node || 'Local';
       const agent = await agentManager.ensureAgent(node);
+      // Probe both the fingerprint and any other content in the dir in
+      // one round-trip. Output format: "FP=<hex|>\nCONTENT=<something|>"
       const probe = await agent.sendCommand('exec', {
-        command: `[ -d "${autheliaDataPath}" ] && find "${autheliaDataPath}" -mindepth 1 -maxdepth 1 | head -1 || true`,
+        command:
+          `printf 'FP=%s\\n' "$(cat "${fingerprintPath}" 2>/dev/null || true)"; ` +
+          `printf 'CONTENT=%s\\n' "$([ -d "${autheliaDataPath}" ] && find "${autheliaDataPath}" -mindepth 1 -maxdepth 1 -not -name .sb-key-fingerprint | head -1 || true)"`,
       });
-      const hasContent = !!(probe.stdout || '').trim();
-      if (hasContent) {
-        await log(jobId, `🔄 Wiping Authelia storage at ${autheliaDataPath} — the encryption key is freshly generated and would mismatch the preserved storage (LLDAP users at ${dataDir}/auth/lldap are kept).`);
+      const out = probe.stdout || '';
+      const recordedFp = (out.match(/^FP=([a-f0-9]{64})$/m)?.[1] || '').trim();
+      const hasContent = !!(out.match(/^CONTENT=(.+)$/m)?.[1] || '').trim();
+      let shouldWipe = false;
+      let reason = '';
+      if (recordedFp) {
+        if (newFp && recordedFp !== newFp) {
+          shouldWipe = true;
+          reason = 'encryption-key fingerprint changed since the last successful deploy';
+        }
+      } else if (hasContent && !reusedSecretNames.has('AUTHELIA_STORAGE_ENCRYPTION_KEY')) {
+        // Legacy path: no fingerprint recorded (pre-fix install) but data
+        // exists and the new key isn't from savedSecrets — almost certainly
+        // a key mismatch.
+        shouldWipe = true;
+        reason = 'data dir has content, encryption key was freshly generated, and no fingerprint exists to prove the key matches';
+      }
+      if (shouldWipe) {
+        await log(jobId, `🔄 Wiping Authelia storage at ${autheliaDataPath} — ${reason} (LLDAP users at ${dataDir}/auth/lldap are kept).`);
         await agent.sendCommand('exec', { command: `rm -rf "${autheliaDataPath}"` });
-        await agent.sendCommand('exec', { command: `mkdir -p "${autheliaDataPath}" && chown core:core "${autheliaDataPath}"` });
-        await log(jobId, `✅ Authelia storage cleared and recreated. Authelia will bootstrap fresh on first start.`);
+        await log(jobId, `✅ Authelia storage cleared. Authelia will bootstrap fresh on first start.`);
+      }
+      // Always (re)create the dir and stamp the new fingerprint. Done
+      // after a potential wipe so it lands in the recreated dir.
+      if (newFp) {
+        await agent.sendCommand('exec', {
+          command:
+            `mkdir -p "${autheliaDataPath}" && chown core:core "${autheliaDataPath}" && ` +
+            `printf '%s\\n' "${newFp}" > "${fingerprintPath}"`,
+        });
       }
     } catch (e) {
       // Best-effort: if probe/wipe fails the install will hit the
