@@ -425,9 +425,7 @@ export default function HealthDashboard() {
       {activeTab === 'containers' && (
         <div className="px-2">
           {/* Raw Podman container engine — nested here per #802 so the
-              primary sidebar stays user-task shaped. The route /containers
-              still resolves directly for direct-link / muscle-memory
-              navigation. */}
+              primary sidebar stays user-task shaped. */}
           <ContainersDashboard />
         </div>
       )}
