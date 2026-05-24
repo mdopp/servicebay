@@ -16,11 +16,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Skip the `:dev` build on release-please version-bump commits. The
-    # `release: published` event fires moments later and builds the proper
-    # version-tagged image (which also re-pushes `:latest`), so this run
-    # would just be a 4-minute duplicate.
-    if: "${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(main): release')) }}"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,6 +39,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # On a chore(main): release commit, read the version from package.json
+      # so we can emit :X.Y.Z and :X.Y tags. Historically we relied on the
+      # `release: published` event to do this, but release-please-action
+      # publishes via GITHUB_TOKEN — GitHub's anti-recursion rule means
+      # that event never triggers another workflow run. So :X.Y.Z would
+      # never get built. Reading the version here closes that gap.
+      - name: Read version from package.json (chore release commits only)
+        id: pkg
+        if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, 'chore(main): release') }}"
+        run: |
+          VERSION=$(jq -r .version package.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "majmin=${VERSION%.*}" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -52,6 +61,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}},enable=${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/') }}
             type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=${{ steps.pkg.outputs.version }},enable=${{ steps.pkg.outputs.version != '' }}
+            type=raw,value=${{ steps.pkg.outputs.majmin }},enable=${{ steps.pkg.outputs.majmin != '' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' || (github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, 'chore(main): release')) }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'chore(main): release') }}
             type=raw,value=test,enable=${{ github.ref == 'refs/heads/test' }}
