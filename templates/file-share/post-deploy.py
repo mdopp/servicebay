@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -69,31 +70,48 @@ def main() -> int:
     host = env("HOST", "<server-ip>")
 
     # ── Syncthing GUI host-check ───────────────────────────────────────
-    # Syncthing's GUI defaults to allowing the bind address only as a
-    # Host: header. NPM forwards `sync.<PUBLIC_DOMAIN>` and Syncthing
-    # rejects with HTTP 403 `Host check error`. STGUIHOSTCHECK isn't a
-    # real env var; only the config.xml `<insecureSkipHostcheck>` child
-    # element disables the check. We patch it idempotently here so a
-    # fresh install or a re-deploy lands the right config without
-    # waiting for the operator to do it manually. (#880)
+    # Syncthing's GUI rejects Host headers other than the bind address
+    # with HTTP 403 "Host check error" — NPM forwards `sync.<PUBLIC_DOMAIN>`
+    # → instant 403 until the check is disabled.
+    #
+    # Approach in Syncthing v2: wait for config.xml + apikey to exist (the
+    # container creates them on first start, not before), then issue the
+    # change via `syncthing cli config gui insecure-skip-host-check set true`
+    # which writes through the live API. An XML-only edit (sed) lands the
+    # attribute but Syncthing v2 doesn't honour it across restarts;
+    # the CLI is the only reliable path. (#880, fixed for v2 in
+    # follow-up to install-self-heal-batch.)
     syncthing_config_xml = "/var/syncthing/config/config.xml"
-    patch_syncthing_cmd = (
-        "podman exec file-share-syncthing sh -c "
-        "'grep -q insecureSkipHostcheck " + syncthing_config_xml + " || "
-        "sed -i \"s|<address>127.0.0.1:8384</address>|<address>127.0.0.1:8384</address>"
-        "\\n        <insecureSkipHostcheck>true</insecureSkipHostcheck>|\" "
-        + syncthing_config_xml + "'"
-    )
-    rc = os.system(patch_syncthing_cmd)
-    if rc == 0:
-        # Syncthing reloads config.xml on SIGHUP but not on a plain file
-        # write; restart the container to pick up the new setting. The
-        # subsequent Samba/FileBrowser steps don't depend on Syncthing
-        # so a short window where Syncthing is restarting is harmless.
-        os.system("podman restart file-share-syncthing > /dev/null 2>&1 || true")
-        log("✅ Syncthing GUI host-check disabled (config.xml patched).")
+    apikey = ""
+    for _ in range(40):  # ~60s, covers cold-cache first start
+        # Read the apikey out of config.xml in a single shell — sed prints
+        # the captured group when the line is present, or nothing when the
+        # file doesn't yet exist / has no apikey. Empty stdout means
+        # "not ready" and we sleep + retry.
+        probe = subprocess.run(
+            ["podman", "exec", "file-share-syncthing", "sh", "-c",
+             f"sed -n 's|.*<apikey>\\(.*\\)</apikey>.*|\\1|p' {syncthing_config_xml} 2>/dev/null | head -1"],
+            capture_output=True, text=True, check=False,
+        )
+        candidate = (probe.stdout or "").strip()
+        if probe.returncode == 0 and candidate:
+            apikey = candidate
+            break
+        time.sleep(1.5)
+    if not apikey:
+        log("⚠️  Syncthing config.xml + apikey not present after 60s — skipping host-check patch. The sync.<domain> URL may return 403 'Host check error'; re-run this post-deploy from Diagnose once Syncthing is up.")
     else:
-        log("⚠️  Syncthing config patch returned a non-zero exit. The sync.<domain> URL may return 403 'Host check error' — fix manually in /var/syncthing/config/config.xml.")
+        cli = subprocess.run(
+            ["podman", "exec", "file-share-syncthing", "syncthing", "cli",
+             "--gui-address", "http://127.0.0.1:8384",
+             "--gui-apikey", apikey,
+             "config", "gui", "insecure-skip-host-check", "set", "true"],
+            capture_output=True, text=True, check=False,
+        )
+        if cli.returncode == 0:
+            log("✅ Syncthing GUI host-check disabled (live API).")
+        else:
+            log("⚠️  Syncthing CLI returned non-zero. The sync.<domain> URL may return 403 'Host check error' — fix manually with `syncthing cli config gui insecure-skip-host-check set true`.")
 
     # ── Samba ──────────────────────────────────────────────────────────
     share_user = env("SHARE_USER", "samba")
