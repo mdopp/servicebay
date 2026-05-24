@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.7](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.6...servicebay-v4.24.7) (2026-05-24)
+
+
+### Bug Fixes
+
+* **media:** accept alreadySetup as a terminal success without requiring ok ([#917](https://github.com/mdopp/servicebay/issues/917)) ([3ff81e3](https://github.com/mdopp/servicebay/commit/3ff81e30daa1a4ef7694efa9ec432f2f0436bce7))
+
 ## [4.24.6](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.5...servicebay-v4.24.6) (2026-05-24)
 
 
