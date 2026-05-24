@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { getSystemUpdates } from '@/app/actions/system';
 import { logger } from '@servicebay/api-client';
-import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info, Monitor } from 'lucide-react';
+import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info, Monitor, Settings } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useSocket } from '@/hooks/useSocket';
@@ -183,31 +184,43 @@ export function SystemInfoContent() {
                 <div className="text-xs text-gray-400">Total running time</div>
             </div>
 
-             <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
-                <div className="flex items-center gap-2 mb-2 text-gray-500">
-                    <Package size={18} />
-                    <span className="text-sm font-medium">Pending Updates</span>
-                </div>
-                <div className="flex items-center justify-between">
-                    <div>
-                        {checkingUpdates ? (
-                            <div className="text-sm animate-pulse">Checking...</div>
-                        ) : (
-                            <div className={`text-lg font-semibold ${updates && updates.count > 0 ? 'text-yellow-600' : 'text-green-600'}`}>
-                                {updates ? updates.count : 0}
-                            </div>
-                        )}
-                        <div className="text-xs text-gray-400">System packages</div>
+             <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between h-full">
+                <div>
+                    <div className="flex items-center gap-2 mb-2 text-gray-500">
+                        <Package size={18} />
+                        <span className="text-sm font-medium">Pending Updates</span>
                     </div>
-                     {updates && updates.count > 0 && (
-                        <button 
-                            onClick={handleCopyCommand}
-                            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition"
-                            title="Copy update command"
-                        >
-                            {copied ? <Check size={16} className="text-green-500"/> : <Copy size={16}/>}
-                        </button>
-                    )}
+                    <div className="flex items-center justify-between">
+                        <div>
+                            {checkingUpdates ? (
+                                <div className="text-sm animate-pulse">Checking...</div>
+                            ) : (
+                                <div className={`text-lg font-semibold ${updates && updates.count > 0 ? 'text-yellow-600 dark:text-yellow-500' : 'text-green-600 dark:text-green-500'}`}>
+                                    {updates ? updates.count : 0}
+                                </div>
+                            )}
+                            <div className="text-xs text-gray-400">System packages</div>
+                        </div>
+                         {updates && updates.count > 0 && (
+                            <button 
+                                onClick={handleCopyCommand}
+                                className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
+                                title="Copy update command"
+                            >
+                                {copied ? <Check size={16} className="text-green-500"/> : <Copy size={16}/>}
+                            </button>
+                        )}
+                    </div>
+                </div>
+                <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700 flex justify-end">
+                    <Link
+                        href={`/settings/system?node=${selectedNode}`}
+                        className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium transition-colors"
+                        title="Configure update windows and automatic updates"
+                    >
+                        <Settings size={12} />
+                        Configure Updates
+                    </Link>
                 </div>
             </div>
         </div>

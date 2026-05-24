@@ -126,16 +126,16 @@ export default function OverviewDashboard() {
 
 function HealthHeadline({ tone, text }: { tone: 'good' | 'warn' | 'bad' | 'neutral'; text: string }) {
   const toneClasses: Record<typeof tone, string> = {
-    good: 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300',
-    warn: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300',
-    bad: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300',
-    neutral: 'bg-gray-50 dark:bg-gray-900/40 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300',
+    good: 'bg-emerald-50/80 dark:bg-emerald-950/20 border-emerald-200/50 dark:border-emerald-900/50 text-emerald-800 dark:text-emerald-300 backdrop-blur-md pulse-glow-emerald',
+    warn: 'bg-amber-50/80 dark:bg-amber-950/20 border-amber-200/50 dark:border-amber-900/50 text-amber-800 dark:text-amber-300 backdrop-blur-md pulse-glow-amber',
+    bad: 'bg-red-50/80 dark:bg-red-950/20 border-red-200/50 dark:border-red-900/50 text-red-800 dark:text-red-300 backdrop-blur-md pulse-glow-rose',
+    neutral: 'bg-gray-50/80 dark:bg-gray-900/40 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300 backdrop-blur-md',
   };
   const Icon = tone === 'bad' || tone === 'warn' ? AlertCircle : CheckCircle2;
   return (
-    <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${toneClasses[tone]}`}>
+    <div className={`flex items-center gap-3 rounded-xl border px-4 py-3.5 transition-all duration-300 ${toneClasses[tone]}`}>
       <Icon size={20} className="shrink-0" />
-      <span className="text-sm font-medium">{text}</span>
+      <span className="text-sm font-semibold tracking-wide">{text}</span>
     </div>
   );
 }
@@ -159,15 +159,15 @@ function OverviewCard({ href, title, metric, description, icon: Icon, tone }: Ov
   return (
     <Link
       href={href}
-      className="group block bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm transition-all"
+      className="group block rounded-xl p-5 glass-panel premium-hover-card"
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <Icon size={20} className={accentClasses[tone]} />
-        <ArrowRight size={16} className="text-gray-300 dark:text-gray-700 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors" />
+        <ArrowRight size={16} className="text-gray-400 dark:text-gray-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors duration-300" />
       </div>
-      <h2 className="font-semibold text-gray-900 dark:text-gray-100">{title}</h2>
-      <p className={`text-sm font-medium mt-0.5 ${accentClasses[tone]}`}>{metric}</p>
-      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{description}</p>
+      <h2 className="font-bold text-gray-900 dark:text-gray-100 tracking-wide text-base">{title}</h2>
+      <p className={`text-sm font-semibold mt-1 ${accentClasses[tone]}`}>{metric}</p>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 font-medium leading-relaxed">{description}</p>
     </Link>
   );
 }

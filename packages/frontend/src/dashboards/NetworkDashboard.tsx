@@ -1986,7 +1986,7 @@ export default function NetworkDashboard() {
 
                         {selectedNodeData.type === 'container' && selectedNodeData.rawData?.Id && (
                             <Link 
-                                href={`/containers/${selectedNodeData.rawData.Id}`}
+                                href={`/health?tab=containers&containerId=${selectedNodeData.rawData.Id}`}
                                 className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
                             >
                                 <Info size={14} />
