@@ -89,33 +89,33 @@ export default function RequestAccessButton() {
 
       {open && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+          className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center p-4 z-50 transition-all duration-300"
           onClick={onClose}
         >
           <div
-            className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto"
+            className="glass-panel rounded-2xl shadow-2xl max-w-md w-full p-8 max-h-[90vh] overflow-y-auto border border-gray-200/50 dark:border-white/10"
             onClick={e => e.stopPropagation()}
           >
             {submitted ? (
-              <div className="text-center py-8 space-y-3">
-                <div className="text-5xl">✅</div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-white">Request sent</h2>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  The family admin has been notified. They&apos;ll create your account and let you know when it&apos;s ready.
+              <div className="text-center py-8 space-y-4">
+                <div className="text-5xl animate-bounce">✨</div>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white tracking-wide">Request Sent Successfully!</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed font-medium">
+                  The family administrator has been notified. They will create your account in the local identity pool and notify you when it is ready.
                 </p>
                 <button
                   onClick={onClose}
-                  className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
+                  className="mt-4 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow transition-colors"
                 >
                   Got it
                 </button>
               </div>
             ) : (
-              <form onSubmit={onSubmit} className="space-y-4">
+              <form onSubmit={onSubmit} className="space-y-5">
                 <div>
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">Request access</h2>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    The family admin will get a notification and create your account.
+                  <h2 className="text-2xl font-extrabold text-gray-900 dark:text-white tracking-wide">Request Access</h2>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1.5 font-medium leading-relaxed">
+                    The administrator will create your personal account. Enter your details below to get started.
                   </p>
                 </div>
 
