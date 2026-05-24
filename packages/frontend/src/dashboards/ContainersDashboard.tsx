@@ -1,5 +1,6 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import { useSearchParams } from 'next/navigation';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import DashboardHydrationGate, { type HydrationPhase } from '@/components/DashboardHydrationGate';
 import { Box, Terminal as TerminalIcon, MoreVertical, X, Activity, Search, RefreshCw, Eraser } from 'lucide-react';
@@ -42,6 +43,10 @@ interface Container {
 
 export default function ContainersDashboard() {
   const { data: twin, isConnected, isNodeSynced } = useDigitalTwin();
+  const searchParams = useSearchParams();
+  const containerIdParam = searchParams?.get('containerId');
+  const drawerParam = searchParams?.get('drawer');
+  const [handledQueryContainer, setHandledQueryContainer] = useState<string | null>(null);
 
     // filteredContainers derived via useMemo below
   const [searchQuery, setSearchQuery] = useState('');
@@ -129,6 +134,21 @@ export default function ContainersDashboard() {
     });
     return list;
   }, [containerParentMap, twin]);
+
+  useEffect(() => {
+    if (!containerIdParam || !containers.length) return;
+    if (handledQueryContainer === containerIdParam) return;
+
+    const found = containers.find(c => c.Id === containerIdParam || c.Id.startsWith(containerIdParam));
+    if (found) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setDrawerContainer(found);
+         
+        setDrawerMode(drawerParam === 'terminal' ? 'terminal' : 'logs');
+         
+        setHandledQueryContainer(containerIdParam);
+    }
+  }, [containerIdParam, drawerParam, containers, handledQueryContainer]);
 
 
   const loading = !isConnected && containers.length === 0;

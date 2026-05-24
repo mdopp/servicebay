@@ -157,9 +157,12 @@ export default function ServicesDashboard() {
     const [showRegistryOverlay, setShowRegistryOverlay] = useState(false);
     const [filePreview, setFilePreview] = useState<{ path: string; nodeName?: string } | null>(null);
     const [handledBundleQuery, setHandledBundleQuery] = useState<string | null>(null);
+    const [handledQueryContainer, setHandledQueryContainer] = useState<string | null>(null);
     const searchParams = useSearchParams();
     const bundleQueryParam = searchParams?.get('bundle') || null;
     const bundleNodeParam = searchParams?.get('bundleNode') || null;
+    const containerIdParam = searchParams?.get('containerId') || null;
+    const drawerParam = searchParams?.get('drawer') || null;
 
     const wizardStepIndex = Math.max(0, bundleWizardSteps.findIndex(step => step.key === bundleWizardStep));
 
@@ -478,6 +481,22 @@ export default function ServicesDashboard() {
 
         return finalServices;
     }, [twin, externalLinks]);
+
+    const allContainers = useMemo(() => {
+        return services.flatMap(s => s.attachedContainers || []);
+    }, [services]);
+
+    useEffect(() => {
+        if (!containerIdParam || !allContainers.length) return;
+        if (handledQueryContainer === containerIdParam) return;
+
+        const found = allContainers.find(c => c.id === containerIdParam || c.id.startsWith(containerIdParam));
+        if (found) {
+            setDrawerContainer(attachNodeContext(found));
+            setContainerDrawerMode(drawerParam === 'terminal' ? 'terminal' : 'logs');
+            setHandledQueryContainer(containerIdParam);
+        }
+    }, [containerIdParam, drawerParam, allContainers, handledQueryContainer, attachNodeContext]);
 
     const loading = !isConnected && services.length === 0;
     const waitingForSync = isConnected && !isNodeSynced() && services.length === 0;
