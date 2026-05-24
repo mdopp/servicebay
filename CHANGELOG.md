@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.5](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.4...servicebay-v4.24.5) (2026-05-24)
+
+
+### Bug Fixes
+
+* **install:** self-heal three reinstall regressions ([#912](https://github.com/mdopp/servicebay/issues/912)) ([a4ddaf0](https://github.com/mdopp/servicebay/commit/a4ddaf0a3d7fabd854c9facae8bafa344cf2de03))
+
 ## [4.24.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.3...servicebay-v4.24.4) (2026-05-24)
 
 
