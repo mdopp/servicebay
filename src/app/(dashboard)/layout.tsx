@@ -14,7 +14,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col md:flex-row h-dvh w-full bg-gray-100 dark:bg-black overflow-hidden md:p-4 md:gap-4">
+    <div className="flex flex-col md:flex-row h-dvh w-full bg-gray-50 dark:bg-[#070709] overflow-hidden md:p-4 md:gap-4">
       <OnboardingWizard />
       <RestoreStatusBanner />
       <CoreHealthBanner />
@@ -24,7 +24,7 @@ export default function DashboardLayout({
       
       <MobileTopBar />
       
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm relative">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-white dark:bg-[#0c0c0e] border border-gray-200/60 dark:border-white/5 rounded-2xl shadow-xl relative">
         {children}
       </main>
 

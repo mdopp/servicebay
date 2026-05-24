@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Box, Network, Activity, Terminal, Settings, ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Box, Network, Activity, Terminal, Settings, ArrowRight, AlertCircle, CheckCircle2, Wrench } from 'lucide-react';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
 
 /**
@@ -64,6 +64,28 @@ export default function OverviewDashboard() {
         {/* Headline status — the single sentence that answers "is everything OK?" */}
         <HealthHeadline tone={healthHeadline.tone} text={healthHeadline.text} />
 
+        {/* Setup wizard CTA banner shown when nothing has been installed yet (#902 followup) */}
+        {hasFirstSnapshot && totalCount === 0 && (
+          <div className="rounded-2xl p-6 glass-panel premium-hover-card flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 pulse-glow-emerald">
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <Wrench className="text-blue-500 shrink-0" size={22} />
+                Welcome to ServiceBay!
+              </h2>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-medium max-w-xl leading-relaxed">
+                You haven&apos;t installed any services yet. Start the setup wizard to configure your network, OIDC identity pool, SMTP notifications, and deploy your first home server stacks.
+              </p>
+            </div>
+            <Link
+              href="/setup"
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2 group shrink-0"
+            >
+              Start Setup Wizard
+              <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </Link>
+          </div>
+        )}
+
         <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <OverviewCard
             href="/services"
@@ -74,10 +96,12 @@ export default function OverviewDashboard() {
                 ? `${failedCount} need attention`
                 : totalCount === 0
                   ? 'No services installed yet'
-                  : 'All services are running'
+                  : activeCount === totalCount
+                    ? 'All services are running'
+                    : `${totalCount - activeCount} service${totalCount - activeCount === 1 ? '' : 's'} stopped`
             }
             icon={Box}
-            tone={failedCount > 0 ? 'bad' : totalCount === 0 ? 'neutral' : 'good'}
+            tone={failedCount > 0 ? 'bad' : totalCount === 0 ? 'neutral' : activeCount === totalCount ? 'good' : 'warn'}
           />
           <OverviewCard
             href="/network"
