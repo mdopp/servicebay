@@ -169,12 +169,22 @@ def seed_audiobookshelf(port: str, user: str, password: str) -> None:
             "username": user,
             "password": password,
         }, timeout=15)
-        if status == 200 and body and body.get("ok"):
+        # The proxy returns one of:
+        #   { ok: true }              — admin just created
+        #   { alreadySetup: true }    — service already has an admin
+        #   { error: '...' }          — anything else
+        # Either of the first two is a terminal success — the old check
+        # required `body.get("ok") && body.get("alreadySetup")`, but the
+        # proxy never returns both together, so on a re-install the
+        # alreadySetup signal was missed and the post-deploy spun until
+        # its 5-min deadline.
+        if status == 200 and isinstance(body, dict):
             if body.get("alreadySetup"):
                 log("ℹ️ Audiobookshelf already initialized — keeping existing admin. Reset manually if the password doesn't match.")
-            else:
+                return
+            if body.get("ok"):
                 log(f"✅ Audiobookshelf root user '{user}' created.")
-            return
+                return
         elapsed = time.time() - started
         if elapsed - last_beat >= 10:
             log(f"Still waiting for Audiobookshelf ({int(elapsed)}s elapsed)...")
