@@ -744,7 +744,7 @@ ${SERVICEBAY_SSH_PRIV}
               exit 0
           fi
 
-          FEDORA_VERSION=$$(/usr/bin/rpm -E %fedora)
+          FEDORA_VERSION=$(/usr/bin/rpm -E %fedora)
 
           # Stage 1: layer the packages. RPM Fusion ships the driver
           # build; `nvidia-container-toolkit` provides `nvidia-ctk` for
@@ -755,8 +755,8 @@ ${SERVICEBAY_SSH_PRIV}
           if [ ! -f /var/lib/install-nvidia-driver-done ]; then
               echo "install-nvidia: layering NVIDIA driver + container toolkit..."
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
-                  "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$${FEDORA_VERSION}.noarch.rpm" \
-                  "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$${FEDORA_VERSION}.noarch.rpm"
+                  "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
+                  "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm"
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
                   kmod-nvidia-open-dkms \
                   xorg-x11-drv-nvidia-cuda \
@@ -773,7 +773,7 @@ ${SERVICEBAY_SSH_PRIV}
           # generate the CDI config that podman reads for GPU passthrough.
           if [ ! -f /var/lib/install-nvidia-cdi-done ]; then
               echo "install-nvidia: stage 2 — checking nvidia kernel module..."
-              for i in $$(/usr/bin/seq 1 30); do
+              for i in $(/usr/bin/seq 1 30); do
                   if /usr/sbin/lsmod | grep -q '^nvidia '; then break; fi
                   sleep 2
               done
