@@ -12,6 +12,22 @@ const LLDAP_GRAPHQL_GROUPS = `
   }
 `;
 
+const LLDAP_GRAPHQL_LIST_GROUPS = `
+  { groups { id displayName } }
+`;
+
+const LLDAP_GRAPHQL_ADD_USER_TO_GROUP = `
+  mutation AddUserToGroup($userId: String!, $groupId: Int!) {
+    addUserToGroup(userId: $userId, groupId: $groupId) { ok }
+  }
+`;
+
+const LLDAP_GRAPHQL_USER_GROUPS = `
+  query UserGroups($userId: String!) {
+    user(userId: $userId) { groups { id displayName } }
+  }
+`;
+
 interface SeedRequest {
   host?: string;
   port?: number;
@@ -134,5 +150,75 @@ export const POST = withApiHandler({}, async ({ request }) => {
   const existing = results.filter(r => !r.created && !r.error).map(r => r.name);
   const failed = results.filter(r => r.error).map(r => ({ name: r.name, error: r.error }));
 
-  return NextResponse.json({ created, existing, failed });
+  // Auto-grant LLDAP's built-in `admin` user the `admins` group so
+  // the operator can immediately reach https://ldap.<domain>/ via
+  // Authelia's admin-domain rule (`subject: group:admins`). Without
+  // this step the docs' first-run path (per project memory:
+  // *"log in as admin to LLDAP and add users to family"*) hit
+  // Authelia 403 on every protected admin domain — the LLDAP admin
+  // is in `lldap_admin` by default, not the Authelia `admins` group.
+  // Best-effort: a failure here doesn't fail the seed.
+  let adminGrant: { ok: boolean; reason?: string } = { ok: false };
+  if (groups.includes('admins') && !failed.some(f => f.name === 'admins')) {
+    adminGrant = await grantAdminGroup(baseUrl, auth.token);
+  }
+
+  return NextResponse.json({ created, existing, failed, adminGrant });
 });
+
+/**
+ * Add LLDAP's built-in `admin` user to the `admins` group (idempotent).
+ * Lookups the group id off the live group list rather than capturing
+ * it from the createGroup response so the call works equally well
+ * when the group already exists from a previous install.
+ */
+async function grantAdminGroup(baseUrl: string, token: string): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    // 1) Already a member? Short-circuit so we don't post a useless mutation.
+    const memberRes = await fetch(`${baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ query: LLDAP_GRAPHQL_USER_GROUPS, variables: { userId: 'admin' } }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (memberRes.ok) {
+      const data = await memberRes.json();
+      const groupsForAdmin: Array<{ displayName?: string }> = data?.data?.user?.groups ?? [];
+      if (groupsForAdmin.some(g => g.displayName === 'admins')) {
+        return { ok: true };
+      }
+    }
+
+    // 2) Resolve `admins` group id off the live listing.
+    const listRes = await fetch(`${baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ query: LLDAP_GRAPHQL_LIST_GROUPS }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!listRes.ok) return { ok: false, reason: `groups query HTTP ${listRes.status}` };
+    const listData = await listRes.json();
+    const allGroups: Array<{ id: number; displayName: string }> = listData?.data?.groups ?? [];
+    const adminGroup = allGroups.find(g => g.displayName === 'admins');
+    if (!adminGroup) return { ok: false, reason: '`admins` group not found' };
+
+    // 3) Add.
+    const addRes = await fetch(`${baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        query: LLDAP_GRAPHQL_ADD_USER_TO_GROUP,
+        variables: { userId: 'admin', groupId: adminGroup.id },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!addRes.ok) return { ok: false, reason: `addUserToGroup HTTP ${addRes.status}` };
+    const addData = await addRes.json();
+    if (addData?.errors?.length) {
+      return { ok: false, reason: addData.errors[0]?.message || 'unknown' };
+    }
+    return { ok: addData?.data?.addUserToGroup?.ok === true };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}

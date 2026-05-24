@@ -85,25 +85,32 @@ build_resolve_flags() {
   done
 }
 
-# Random test-user identifier — keeps concurrent runs (CI + operator
-# laptop) from stepping on each other.
+# Random test-user identifiers — keeps concurrent runs (CI + operator
+# laptop) from stepping on each other. Two users: one family-only
+# (most user-facing tests run against this), one admins+family (the
+# positive-admin-path test in section 7).
 TEST_USER="sb-smoke-$(date +%s)-$$"
 TEST_PASS=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
+ADMIN_TEST_USER="sb-smoke-admin-$(date +%s)-$$"
+ADMIN_TEST_PASS=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
 LLDAP_ADMIN_TOKEN=""
 
 # Always-runs teardown — even if a check throws.
 cleanup() {
   local rc=$?
   if [[ -n "$LLDAP_ADMIN_TOKEN" && $KEEP_USER -eq 0 ]]; then
-    curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
-      -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "{\"query\":\"mutation { deleteUser(userId: \\\"$TEST_USER\\\") { ok } }\"}" \
-      > /dev/null 2>&1 || true
-    info "test user $TEST_USER deleted"
+    for u in "$TEST_USER" "$ADMIN_TEST_USER"; do
+      curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
+        -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"query\":\"mutation { deleteUser(userId: \\\"$u\\\") { ok } }\"}" \
+        > /dev/null 2>&1 || true
+    done
+    info "test users $TEST_USER + $ADMIN_TEST_USER deleted"
   elif [[ $KEEP_USER -eq 1 ]]; then
-    printf "\n%sKept test user — clean up manually when done:%s\n" "$YELLOW" "$OFF"
-    printf "  username: %s\n  password: %s\n" "$TEST_USER" "$TEST_PASS"
+    printf "\n%sKept test users — clean up manually when done:%s\n" "$YELLOW" "$OFF"
+    printf "  family user: %s / %s\n" "$TEST_USER" "$TEST_PASS"
+    printf "  admin user:  %s / %s\n" "$ADMIN_TEST_USER" "$ADMIN_TEST_PASS"
   fi
   rm -f /tmp/sb-smoke-cookies.* /tmp/sb-smoke-svc.* /tmp/sb-smoke-token
   exit $rc
@@ -111,7 +118,7 @@ cleanup() {
 trap cleanup EXIT
 
 # -------------------- 1. box health --------------------
-section "1/6 · Box health — Quadlet units + containers"
+section "1/7 · Box health — Quadlet units + containers"
 if ! ssh_cmd 'true' &> /dev/null; then
   fail "SSH to $SSH_USER@$HOST failed (key: $SSH_KEY)"
   exit 1
@@ -133,7 +140,7 @@ else
 fi
 
 # -------------------- 2. LLDAP admin handshake --------------------
-section "2/6 · LLDAP admin handshake"
+section "2/7 · LLDAP admin handshake"
 LLDAP_ADMIN_PASS=$(ssh_cmd 'podman exec auth-lldap printenv LLDAP_LDAP_USER_PASS 2>/dev/null' | tr -d '\r\n')
 if [[ -z "$LLDAP_ADMIN_PASS" ]]; then
   fail "could not read LLDAP_LDAP_USER_PASS from auth-lldap container"
@@ -151,20 +158,50 @@ if [[ -z "$LLDAP_ADMIN_TOKEN" ]]; then
 fi
 pass "LLDAP admin /auth/simple/login → JWT"
 
-# Family group id must exist — every test user needs it for the user-app rule.
-FAMILY_GID=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
+# Family + admins group ids must exist — Authelia rules key off both.
+GROUP_IDS=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
   -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query":"{ groups { id displayName } }"}' \
-  | python3 -c "import json,sys; gs=json.load(sys.stdin)['data']['groups']; print(next((g['id'] for g in gs if g['displayName']=='family'), ''))")
+  | python3 -c "
+import json, sys
+gs = json.load(sys.stdin)['data']['groups']
+fam = next((g['id'] for g in gs if g['displayName']=='family'), '')
+adm = next((g['id'] for g in gs if g['displayName']=='admins'), '')
+print(f'{fam}|{adm}')")
+FAMILY_GID=$(echo "$GROUP_IDS" | cut -d'|' -f1)
+ADMINS_GID=$(echo "$GROUP_IDS" | cut -d'|' -f2)
 if [[ -z "$FAMILY_GID" ]]; then
   fail "no 'family' group in LLDAP — Authelia rules expect it"
   exit 1
 fi
 pass "'family' group exists (id=$FAMILY_GID)"
+if [[ -z "$ADMINS_GID" ]]; then
+  fail "no 'admins' group in LLDAP — Authelia rules for admin domains expect it"
+  exit 1
+fi
+pass "'admins' group exists (id=$ADMINS_GID)"
+
+# Pre-flight: the built-in LLDAP `admin` user must be in `admins`
+# so the operator's first hit on https://ldap.<domain>/ passes
+# Authelia's admin-domain rule. Without this, the docs' first-run
+# flow ("log in as admin to LLDAP and add users to family") returns
+# 403 at the door. The auth template's post-deploy.py grants this
+# at install — flagging it here catches drift if someone removes
+# the membership manually.
+admin_groups=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
+  -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ user(userId: \"admin\") { groups { displayName } } }"}' \
+  | python3 -c "import json,sys; print(','.join(g.get('displayName','') for g in (json.load(sys.stdin).get('data',{}).get('user',{}).get('groups',[]))))")
+if [[ ",${admin_groups}," == *",admins,"* ]]; then
+  pass "LLDAP 'admin' user is in 'admins' (Authelia admin-domain login enabled)"
+else
+  fail "LLDAP 'admin' user is NOT in 'admins' — operator can't log into ldap.<domain> (groups: $admin_groups)"
+fi
 
 # -------------------- 3. user lifecycle --------------------
-section "3/6 · User lifecycle — create + set password + group-add"
+section "3/7 · User lifecycle — create + set password + group-add"
 
 create_resp=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
   -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
@@ -211,8 +248,37 @@ else
   fail "LLDAP login as $TEST_USER failed"
 fi
 
+# Mirror lifecycle for the admin-group test user used by section 7.
+create_admin=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
+  -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\":\"mutation { createUser(user: { id: \\\"$ADMIN_TEST_USER\\\", email: \\\"$ADMIN_TEST_USER@$DOMAIN\\\", displayName: \\\"Smoke Admin\\\" }) { id } }\"}")
+if echo "$create_admin" | grep -q "\"id\":\"$ADMIN_TEST_USER\""; then
+  pass "createUser($ADMIN_TEST_USER)"
+else
+  fail "createUser admin failed: $create_admin"
+  exit 1
+fi
+ssh_cmd "podman exec auth-lldap /app/lldap_set_password \
+  -u $ADMIN_TEST_USER -p '$ADMIN_TEST_PASS' \
+  --base-url http://localhost:$LLDAP_PORT \
+  --token '$LLDAP_ADMIN_TOKEN'" > /dev/null 2>&1 && \
+  pass "lldap_set_password($ADMIN_TEST_USER)" || fail "lldap_set_password($ADMIN_TEST_USER) failed"
+# Add to both groups: admins (for admin-domain ACL match) and family
+# (so the wildcard rule still grants user-app access via the same
+# session — without family, Authelia's catch-all wouldn't match and
+# the admin would be locked out of user apps).
+for GID in "$FAMILY_GID" "$ADMINS_GID"; do
+  curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
+    -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"query\":\"mutation { addUserToGroup(userId: \\\"$ADMIN_TEST_USER\\\", groupId: $GID) { ok } }\"}" \
+    > /dev/null
+done
+pass "addUserToGroup($ADMIN_TEST_USER, family + admins)"
+
 # -------------------- 4. Authelia SSO --------------------
-section "4/6 · Authelia firstfactor"
+section "4/7 · Authelia firstfactor"
 build_resolve_flags
 COOKIE_JAR=$(mktemp -t sb-smoke-cookies.XXXXXX)
 authelia_resp=$(curl -fsS $RESOLVE_FLAGS -k -c "$COOKIE_JAR" \
@@ -233,7 +299,7 @@ else
 fi
 
 # -------------------- 5. per-service reachability --------------------
-section "5/6 · User-facing services — hit via SSO cookie"
+section "5/7 · User-facing services — hit via SSO cookie"
 
 # host → expected content signature (case-sensitive grep). Empty value
 # means "just expect 2xx/3xx" without content assertion.
@@ -274,7 +340,7 @@ for h in "${!USER_APPS[@]}"; do
 done
 
 # -------------------- 6. access control negative --------------------
-section "6/6 · Access control — family user MUST NOT reach admin domains"
+section "6/7 · Access control — family user MUST NOT reach admin domains"
 
 # These are listed under Authelia's admins-group rule. A family-only
 # user should get redirected back to /auth (302) or refused (403 from
@@ -312,6 +378,55 @@ for h in nginx dns ldap; do
   esac
   rm -f "$body"
 done
+
+# -------------------- 7. admin path — admins user reaches admin domains --------------------
+section "7/7 · Admin path — admins user reaches LLDAP / NPM / AdGuard admin"
+
+# Authelia's admin-domain rule requires `group:admins` AND `policy: two_factor`.
+# An admins-group user without 2FA enrolled gets redirected through the
+# Authelia 2FA enrollment / challenge flow rather than a clean 200. The
+# expected responses are:
+#   - 200 if `--max-redirs 0` lands on the upstream after auth (2FA disabled / configured)
+#   - 302/303 to auth.<domain>/2fa/... (Authelia challenge — admin can reach the path)
+#   - 401 from Authelia's verify endpoint while 2FA pending (also an OK signal —
+#     the admin is recognised, just needs to complete 2FA)
+# What we MUST NOT see is 403 — that means the admins-group user is
+# being denied at the group level (the bug this test catches).
+ADMIN_JAR=$(mktemp -t sb-smoke-cookies.XXXXXX)
+admin_authelia=$(curl -fsS $RESOLVE_FLAGS -k -c "$ADMIN_JAR" \
+  -X POST "https://auth.$DOMAIN/api/firstfactor" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"$ADMIN_TEST_USER\",\"password\":\"$ADMIN_TEST_PASS\",\"requestMethod\":\"GET\",\"targetURL\":\"https://ldap.$DOMAIN/\"}")
+if echo "$admin_authelia" | grep -q '"status":"OK"'; then
+  pass "POST auth.$DOMAIN/api/firstfactor as admins user → OK"
+else
+  fail "Authelia firstfactor for admin user failed: $admin_authelia"
+fi
+
+for h in ldap nginx dns; do
+  body=$(mktemp -t sb-smoke-svc.XXXXXX)
+  set +e
+  code=$(curl -ks $RESOLVE_FLAGS -b "$ADMIN_JAR" \
+              --max-redirs 0 \
+              -o "$body" -w "%{http_code}" "https://$h.$DOMAIN/" 2>/dev/null)
+  curl_rc=$?
+  set -e
+  [[ $curl_rc -ne 0 && -z "$code" ]] && code="000"
+
+  case "$code" in
+    2*|301|302|303|401)
+      pass "$h.$DOMAIN → HTTP $code (admins user reaches it — 401/302 = 2FA challenge, both OK)"
+      ;;
+    403)
+      fail "$h.$DOMAIN → HTTP $code: admins user DENIED. The ACL is gated on a group the user doesn't have — check 'admins' membership + Authelia rules."
+      ;;
+    *)
+      fail "$h.$DOMAIN → HTTP $code (transport-level error, can't judge admin path)"
+      ;;
+  esac
+  rm -f "$body"
+done
+rm -f "$ADMIN_JAR"
 
 # -------------------- summary --------------------
 section "Summary"

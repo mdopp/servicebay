@@ -190,6 +190,17 @@ def main() -> int:
                     log(f"✅ Groups created: {', '.join(str(x) for x in created)}")
                 if existing:
                     log(f"ℹ️ Groups already exist: {', '.join(str(x) for x in existing)}")
+                # Confirmation that the LLDAP `admin` user is now in
+                # `admins` — the gate Authelia checks before letting
+                # anyone hit ldap.<domain> / nginx.<domain> / etc.
+                # Without this membership, the docs' first-run flow
+                # ("log in as admin at ldap.<domain>") hits a 403.
+                admin_grant = (seed_body or {}).get("adminGrant") or {}
+                if admin_grant.get("ok"):
+                    log("✅ LLDAP `admin` user is in `admins` — Authelia admin-domain login enabled.")
+                else:
+                    reason = admin_grant.get("reason", "no reason returned")
+                    log(f"⚠️ Could not grant LLDAP `admin` the `admins` group ({reason}). Add it manually in LLDAP's web UI or you'll get HTTP 403 from ldap.<domain>.")
                 break
             # The seed endpoint is idempotent (it reports `existing` for
             # groups already present), so retrying a partial/failed run
