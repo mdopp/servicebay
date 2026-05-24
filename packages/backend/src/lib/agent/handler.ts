@@ -342,6 +342,12 @@ export class AgentHandler extends EventEmitter {
           this.log(this.nodeName, 'info', '✓ Python agent started successfully via SSH');
           this.flushDeferredCommands();
           this.emit('connected');
+          
+          // Trigger a refresh on connect/reconnect so initialSyncComplete fires again for the twin (#894)
+          void this.sendCommand('refresh', {}).catch(err => {
+              this.log(this.nodeName, 'error', `Failed to send automatic refresh command on connect: ${err.message}`);
+          });
+
           resolve();
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
