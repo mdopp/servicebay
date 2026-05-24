@@ -128,24 +128,16 @@ export default function Sidebar() {
             </button>
         )}
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
-            {/* Always-visible Setup entry (#696). Pulse + tinted background
-                only when there's an active or pending install, otherwise
-                a plain dashboards-style row so operators can re-open the
-                wizard later (install another stack, reconfigure gateway,
-                etc.) without knowing the /setup URL. */}
-            {(() => {
+            {/* Setup entry (#696). Only visible when there's an active install OR we are looking at the setup page. */}
+            {(hasActiveInstall || (pathname?.startsWith('/setup') ?? false)) && (() => {
                 const isActive = pathname?.startsWith('/setup') ?? false;
                 const baseClass = `w-full text-left px-3 py-3 rounded-md flex items-center transition-colors ${isCollapsed ? 'justify-center' : 'gap-3'} `;
                 const tone = isActive
                     ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
-                    : hasActiveInstall
-                    ? 'bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300'
-                    : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400';
+                    : 'bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300';
                 const iconColor = isActive
                     ? 'text-blue-500 dark:text-blue-400'
-                    : hasActiveInstall
-                    ? 'text-blue-600 dark:text-blue-400'
-                    : 'text-gray-500 dark:text-gray-500';
+                    : 'text-blue-600 dark:text-blue-400';
                 return (
                     <button
                         type="button"
