@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.1...servicebay-v4.24.2) (2026-05-24)
+
+
+### Bug Fixes
+
+* **ux:** comprehensive UX polish batch ([#903](https://github.com/mdopp/servicebay/issues/903)) ([b3cbbec](https://github.com/mdopp/servicebay/commit/b3cbbec97b2a00f97d809b5557ff2859313b8776))
+
 ## [4.24.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.0...servicebay-v4.24.1) (2026-05-23)
 
 
