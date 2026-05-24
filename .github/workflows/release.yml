@@ -16,6 +16,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Skip the `:dev` build on release-please version-bump commits. The
+    # `release: published` event fires moments later and builds the proper
+    # version-tagged image (which also re-pushes `:latest`), so this run
+    # would just be a 4-minute duplicate.
+    if: "${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(main): release')) }}"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

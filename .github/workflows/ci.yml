@@ -1,35 +1,136 @@
 name: CI
 
+# Quality gate for servicebay PRs. Replaces the previous split CI + Architecture
+# workflows so all checks live in one place, run in parallel, and share a single
+# concurrency group.
+#
+# Jobs (all run in parallel; each does its own npm ci against the setup-node cache):
+#   lint        — eslint
+#   typecheck   — tsc --noEmit
+#   build       — next build (with .next/cache restored)
+#   test        — vitest run
+#   invariants  — file size, security `as any` budget, exec-template-literal count,
+#                 withApiHandler adoption ratio, twin singleton fan-in
+#                 (companion to docs/ARCHITECTURE_INVARIANTS.md)
+#   depcruise   — module boundary rules (no lib→app imports, one mutation path,
+#                 one renderer, no circular deps outside the known set)
+#   semgrep     — security & coupling patterns (executor.exec template literals,
+#                 tar extraction bypass, eval/Function, SSRF-prone fetches,
+#                 missing withApiHandler)
+#
+# ANY failure blocks merge. Adoption-ratio floors and per-file ratchets in the
+# config files mean today's debt passes — new regressions do not.
+#
+# Trigger model: PR-only.
+#   - The post-merge `push: main` run was re-validating the same tree as the PR
+#     tip (squash-merge produces identical content) and added ~5 min per merge
+#     for no signal — dropped.
+#   - release-please PRs (head_ref `release-please--*`) only touch package.json,
+#     CHANGELOG.md, and .release-please-manifest.json; the underlying code was
+#     already validated when those PRs were merged. Skipped via job-level `if`.
+
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  lint:
     runs-on: ubuntu-latest
-
+    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm run lint
 
-    - name: Use Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
+  typecheck:
+    runs-on: ubuntu-latest
+    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npx tsc --noEmit
 
-    - name: Install dependencies
-      run: npm ci
+  build:
+    runs-on: ubuntu-latest
+    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.next/cache
+          key: nextjs-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            nextjs-${{ hashFiles('package-lock.json') }}-
+      - run: npm run build
 
-    - name: Lint
-      run: npm run lint
+  test:
+    runs-on: ubuntu-latest
+    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm test
 
-    - name: Typecheck
-      run: npx tsc --noEmit
+  invariants:
+    runs-on: ubuntu-latest
+    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm run check:invariants
 
-    - name: Build
-      run: npm run build
+  depcruise:
+    runs-on: ubuntu-latest
+    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm run check:deps
 
-    - name: Test
-      run: npm test
+  semgrep:
+    runs-on: ubuntu-latest
+    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      # ServiceBay-specific patterns only at first. Each rule in .semgrep.yml
+      # has a severity assigned; --severity=ERROR makes only ERROR-tagged
+      # findings fail the build (WARNING/INFO are reported but non-blocking).
+      # Registry rulesets (p/typescript, p/security-audit) can be enabled
+      # additively once the custom baseline is clean — see
+      # docs/ARCHITECTURE_INVARIANTS.md.
+      - name: Custom ServiceBay rules
+        run: semgrep --config .semgrep.yml --severity=ERROR --metrics=off --error .
+      - name: Custom rules (informational warnings)
+        run: semgrep --config .semgrep.yml --metrics=off . || true

@@ -3,8 +3,8 @@
 # Run locally:
 #   docker run --rm -v "$PWD:/src" returntocorp/semgrep semgrep --config /src/.semgrep.yml /src
 #
-# Run in CI: see .github/workflows/architecture.yml (uses the official
-# returntocorp/semgrep-action).
+# Run in CI: see the `semgrep` job in .github/workflows/ci.yml (uses the
+# official returntocorp/semgrep-action).
 #
 # These rules complement, not duplicate, the registry rulesets (which CI
 # also runs: `p/typescript`, `p/security-audit`). Keep entries here narrow

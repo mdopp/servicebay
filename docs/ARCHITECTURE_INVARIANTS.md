@@ -25,7 +25,7 @@ podman run --rm -v "$PWD:/src:Z" docker.io/returntocorp/semgrep \
     semgrep --config /src/.semgrep.yml --metrics=off /src
 ```
 
-CI: see `.github/workflows/architecture.yml`.
+CI: see the `invariants`, `depcruise`, and `semgrep` jobs in `.github/workflows/ci.yml`.
 
 ---
 
