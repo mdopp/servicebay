@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.3...servicebay-v4.24.4) (2026-05-24)
+
+
+### Bug Fixes
+
+* **auth:** auto-grant LLDAP 'admin' the 'admins' group at install + smoke-test it ([#895](https://github.com/mdopp/servicebay/issues/895)) ([71ee3a3](https://github.com/mdopp/servicebay/commit/71ee3a398f37735c839f7a00fb06a0bdf67c3dcc))
+
 ## [4.24.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.2...servicebay-v4.24.3) (2026-05-24)
 
 
