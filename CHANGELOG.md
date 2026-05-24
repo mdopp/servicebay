@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.6](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.5...servicebay-v4.24.6) (2026-05-24)
+
+
+### Bug Fixes
+
+* **install:** self-heal three more stale-data-dir regressions ([#915](https://github.com/mdopp/servicebay/issues/915)) ([031d897](https://github.com/mdopp/servicebay/commit/031d89722bc7a73ddeaaae2c27d80eebd52dfa86))
+
 ## [4.24.5](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.4...servicebay-v4.24.5) (2026-05-24)
 
 
