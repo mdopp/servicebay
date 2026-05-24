@@ -1155,18 +1155,23 @@ async function runJob(jobId: string): Promise<void> {
     });
     let bootstrapState: 'ok' | 'needs_credentials' | 'skipped' = bootstrap;
 
-    // Self-heal on clean install with certs preserved (#704). The
-    // operator's data volume kept the OLD admin bcrypt; the wizard's
-    // INITIAL_ADMIN_PASSWORD env never overwrites an existing admin
-    // user. The pre-fix flow paused for the operator to type the old
-    // password — which they typically don't have (forgotten, never
-    // copied off the credentials banner). Auto-wipe the NPM data dir
-    // (admin sqlite + sites table) and retry bootstrap; letsencrypt/
-    // stays untouched so cert files survive — that's the only reason
-    // "preserve certs" exists in the first place.
+    // Self-heal whenever NPM rejects every credential we know about
+    // (#704, broadened in #TBD). The operator's data volume kept the
+    // OLD admin bcrypt; the wizard's INITIAL_ADMIN_PASSWORD env never
+    // overwrites an existing admin user. The pre-fix flow paused for
+    // the operator to type the old password — which they typically
+    // don't have (forgotten, never copied off the credentials banner).
+    // Auto-wipe the NPM data dir (admin sqlite + sites table) and
+    // retry bootstrap; letsencrypt/ stays untouched so cert files
+    // survive — that's the only reason "preserve certs" exists in the
+    // first place.
+    //
+    // Used to be gated on `input.cleanInstall` only — but the same
+    // mismatch happens on a regular re-install over a preserved data
+    // volume (e.g. swap an OS install, redeploy stacks). Both end with
+    // the same prompt-the-operator flow; auto-heal applies equally.
     if (
       bootstrapState === 'needs_credentials'
-      && input.cleanInstall
       && (input.preserve?.includes('certs') ?? true)
     ) {
       const node = input.node || 'Local';

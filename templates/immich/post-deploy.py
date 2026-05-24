@@ -195,7 +195,16 @@ def main() -> int:
     # `admin-sign-up` returns 200/201 the instant the row is written, but
     # Immich's auth path occasionally rejects the immediate follow-up login
     # with HTTP 401 while the user row is still propagating to the auth
-    # cache (observed in #TBD). Short retry loop rides through it.
+    # cache. Short retry loop rides through that.
+    #
+    # A persistent 401 after retries means something different: the admin
+    # row pre-dates this install and was created with a different password
+    # (preserved data dir + freshly-generated IMMICH_ADMIN_PASSWORD that
+    # never made it into savedSecrets). There's no automatic recovery — Immich
+    # has no env-driven password reset and we don't have its DB credentials
+    # to write a new bcrypt. Degrade gracefully: skip OIDC, surface what the
+    # operator needs to know, exit zero (Immich is still reachable via
+    # Authelia forward-auth at the proxy layer).
     code, body, token = 0, None, None
     for attempt in range(8):  # ~20s with 2.5s backoff
         code, body = request_json(
@@ -210,7 +219,13 @@ def main() -> int:
             log(f"   admin login attempt 1 returned HTTP {code} — retrying for ~20s while Immich settles...")
         time.sleep(2.5)
     if code != 201 or not token:
-        log(f"⚠️  Could not log in as admin after 8 attempts (last HTTP {code}). Skipping OIDC config.")
+        log(
+            f"ℹ️  Immich admin login returns HTTP {code} — the admin row pre-dates this install "
+            "and holds a different password than the wizard's value. OIDC config skipped; the "
+            "service stays reachable via Authelia forward-auth. To restore SSO, reset Immich's "
+            "admin from the Immich UI (forgot-password flow) or DROP the user table in the "
+            "immich-database container and re-run this post-deploy from Diagnose."
+        )
         return 0
 
     # 3. Configure OAuth. Read-modify-write so we don't clobber any

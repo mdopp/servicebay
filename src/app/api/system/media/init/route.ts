@@ -48,6 +48,25 @@ export const POST = withApiHandler({}, async ({ request }) => {
 });
 
 async function initAudiobookshelf(host: string, port: number, username: string, password: string) {
+  // Probe /status first — `isInit:true` means a root user already exists.
+  // ABS 2.x returns generic HTTP 500 with body "Internal Server Error" when
+  // /init is hit on an initialised server (the "already has a root user"
+  // log line stays inside the container), so the previous body-text match
+  // missed and the post-deploy spun for 5 minutes before timing out.
+  try {
+    const statusRes = await fetch(`http://${host}:${port}/status`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (statusRes.ok) {
+      const status = await statusRes.json().catch(() => ({} as Record<string, unknown>));
+      if (status.isInit === true) return NextResponse.json({ alreadySetup: true });
+    }
+  } catch {
+    // /status itself failed — fall through to /init and let that report the
+    // actual error.
+  }
+
   const url = `http://${host}:${port}/init`;
   const res = await fetch(url, {
     method: 'POST',
@@ -56,8 +75,7 @@ async function initAudiobookshelf(host: string, port: number, username: string, 
     signal: AbortSignal.timeout(10_000),
   });
   if (res.ok) return NextResponse.json({ ok: true });
-  // 400/409 with "already" in the body means admin already exists — that's
-  // a normal state on a re-install over an existing data dir, not a failure.
+  // Body-text fallback for non-2.x or upstream message changes.
   const text = await res.text().catch(() => '');
   if (text.toLowerCase().includes('already') || res.status === 409) {
     return NextResponse.json({ alreadySetup: true });
