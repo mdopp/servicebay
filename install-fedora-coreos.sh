@@ -1027,19 +1027,55 @@ ${SERVICEBAY_SSH_PRIV}
 
           /usr/local/bin/update-install-status.sh "Waiting for NVIDIA kernel module" "akmods compiles the nvidia driver against the running kernel. 1 to 10 minutes depending on hardware." || true
 
+          # Kick akmods --force exactly once if the kmod isn't already
+          # loaded and akmodsbuild isn't already running. On Fedora
+          # CoreOS, akmods.service is condition-skipped
+          # (ConditionPathExists=!/run/ostree-booted) — by design,
+          # because the rootfs is read-only — so nothing auto-builds
+          # the akmod after stage-2's rpm-ostree layering finishes.
+          # Without this kick, the kmod NEVER loads on FCoS, the
+          # `for` loop below polls /proc/modules forever, and the
+          # operator sits at "Waiting for NVIDIA kernel module" until
+          # they SSH in and run akmods themselves. Observed live on
+          # this box, 2026-05-25: 28 minutes of wasted polling.
+          # The build itself takes ~3-4 minutes on RTX-class hardware;
+          # we kick it in the background and let the per-60s timer
+          # retries catch it on the second or third fire.
+          if ! /usr/bin/grep -q '^nvidia ' /proc/modules \
+               && ! /usr/bin/pgrep -af 'akmodsbuild' >/dev/null 2>&1 \
+               && [ ! -f /var/lib/install-nvidia-akmods-kicked ]; then
+              echo "install-nvidia-cdi: kmod not loaded + no akmodsbuild running — kicking akmods --force in background"
+              /usr/bin/touch /var/lib/install-nvidia-akmods-kicked
+              /usr/bin/nohup /usr/sbin/akmods --force >/var/log/install-nvidia-akmods.log 2>&1 &
+              disown 2>/dev/null || true
+          fi
+
           # Force-load the kmod — udev's GPU-triggered autoload can
-          # race the boot path. modprobe failing here is fine; lsmod
-          # below is the actual gate.
+          # race the boot path. modprobe failing here is fine; the
+          # /proc/modules check below is the actual gate.
           /usr/sbin/modprobe nvidia 2>/dev/null || true
+
+          # IMPORTANT: read /proc/modules directly instead of
+          # `lsmod | grep -q`. With `set -o pipefail` (line 2 above),
+          # `lsmod | grep -q "^nvidia "` returns 141 (SIGPIPE) when
+          # there IS a match: grep -q exits as soon as it sees the
+          # first match, closes its stdin, lsmod gets SIGPIPE mid-write
+          # of its ~165 lines, dies with exit 141, pipefail propagates
+          # that 141 to the whole pipeline, and our `if` treats 141 as
+          # "no match" → the loop never breaks even though the kmod is
+          # loaded. Observed live on this box, 2026-05-25: 28 minutes
+          # of fruitless polling while nvidia was sitting loaded in
+          # lsmod. /proc/modules has no pipe = no SIGPIPE = no bug.
+          # lsmod itself just formats /proc/modules anyway.
 
           # Short internal poll (1 min) so we don't always burn an
           # extra timer-fire when the kmod is moments from loading.
           for i in $(/usr/bin/seq 1 30); do
-              if /usr/sbin/lsmod | grep -q '^nvidia '; then break; fi
+              if /usr/bin/grep -q '^nvidia ' /proc/modules; then break; fi
               sleep 2
           done
 
-          if ! /usr/sbin/lsmod | grep -q '^nvidia '; then
+          if ! /usr/bin/grep -q '^nvidia ' /proc/modules; then
               echo "install-nvidia-cdi: nvidia kmod not loaded yet — retrying via timer in 60 s"
               exit 1
           fi
