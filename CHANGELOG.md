@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.24.8](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.7...servicebay-v4.24.8) (2026-05-25)
+
+
+### Bug Fixes
+
+* **fcos,scripts:** split NVIDIA install into 3 stages with reboot between each ([#919](https://github.com/mdopp/servicebay/issues/919)) ([d997b77](https://github.com/mdopp/servicebay/commit/d997b7765d87a148347ddd83833fd37184ca1036))
+
 ## [4.24.7](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.6...servicebay-v4.24.7) (2026-05-24)
 
 
