@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.27.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.26.0...servicebay-v4.27.0) (2026-05-25)
+
+
+### Features
+
+* **oscar:** close OSCAR follow-ups [#937](https://github.com/mdopp/servicebay/issues/937) [#938](https://github.com/mdopp/servicebay/issues/938) [#939](https://github.com/mdopp/servicebay/issues/939) [#940](https://github.com/mdopp/servicebay/issues/940) ([#941](https://github.com/mdopp/servicebay/issues/941)) ([8b47738](https://github.com/mdopp/servicebay/commit/8b47738270f32e5323e11f37c6d16af80e8d3ff5))
+
 ## [4.26.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.25.0...servicebay-v4.26.0) (2026-05-25)
 
 
