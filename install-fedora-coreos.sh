@@ -512,12 +512,19 @@ storage:
           # the path unit servicebay-trigger.path the moment the marker
           # appears, or directly at boot if the marker already exists.
           ConditionPathExists=/var/lib/installation-ready
-          # Boot splash sidecar binds :${SERVICEBAY_PORT} until this
-          # gate opens. Conflicts= tells systemd to stop the splash
-          # unit before activating this one — splash releases the port,
-          # podman binds it. Sub-second handoff window; the splash
-          # page meta-refresh covers it.
-          Conflicts=servicebay-splash.service
+          # Deliberately NO `Conflicts=servicebay-splash.service` here.
+          # Conflicts= is evaluated statically by systemd's transaction
+          # resolver when default.target is built — BEFORE conditions
+          # are checked at runtime. With both this unit AND splash in
+          # default.target.wants, the resolver drops splash's start job
+          # to satisfy the conflict, even though we wanted splash to
+          # start (because this unit's condition is false during install).
+          # Result on this box, observed live during the 2026-05-25
+          # reinstall: splash never activated, operator saw
+          # ERR_CONNECTION_REFUSED on :${SERVICEBAY_PORT} all through
+          # the install window. Fix is to handle the runtime port-handoff
+          # via ExecStartPre below instead — splash is stopped explicitly
+          # before podman binds the port, no static conflict required.
           # Deliberately NO Requires=/After=servicebay-auth-secret-init.service.
           # That unit is in the system instance and is invisible to user
           # systemd here (a user unit referencing it by name fails to start
@@ -543,6 +550,15 @@ storage:
           SecurityLabelDisable=true
 
           [Service]
+          # Stop the splash sidecar before podman binds :${SERVICEBAY_PORT}
+          # so the port is free. Replaces the [Unit] Conflicts= directive
+          # that systemd's transaction resolver was dropping splash's
+          # start-job over (see [Unit] comment above). `--no-block` and
+          # the explicit `|| true` cover the case where splash isn't
+          # running (e.g. on a subsequent restart of this unit) — we
+          # don't want servicebay activation to fail just because there's
+          # no splash to stop.
+          ExecStartPre=-/usr/bin/systemctl --user stop servicebay-splash.service
           # Retry restart if it fails (e.g. socket not ready)
           Restart=always
           RestartSec=5
@@ -563,8 +579,8 @@ storage:
     #   - When installation completes: install-nvidia-cdi.sh (GPU boxes) or
     #     install-nvidia.sh stage 0 (no-GPU boxes) touches /var/lib/installation-ready.
     #     servicebay-trigger.path (user unit) observes the marker and starts
-    #     servicebay.service, whose Conflicts=servicebay-splash.service then
-    #     atomically takes the port.
+    #     servicebay.service, which stops this splash via its own
+    #     ExecStartPre and then binds the port.
     #
     # This file is the FIRST-BOOT fallback shown for the few seconds before
     # any install service has run. Most operators will only see it briefly.
@@ -716,7 +732,15 @@ storage:
           Image=docker.io/library/busybox:stable
           ContainerName=servicebay-splash
           Network=host
-          Volume=/var/home/${HOST_USER}/.config/containers/splash:/splash:ro,Z
+          # Volume mount uses :ro (not :ro,Z) — the :Z flag asks podman
+          # to set a unique-MCS SELinux xattr on the host directory,
+          # which rootless podman cannot do without CAP_SYS_ADMIN and
+          # fails at runtime with `lsetxattr(...): operation not
+          # permitted` (observed live on this box, 2026-05-25 reinstall).
+          # SecurityLabelDisable=true below means the container itself
+          # is unconfined from SELinux, so relabeling the volume is
+          # unnecessary anyway. Plain :ro is the right level of locking.
+          Volume=/var/home/${HOST_USER}/.config/containers/splash:/splash:ro
           # `-f` keeps httpd in the foreground so podman/systemd sees
           # process exits accurately. Default port mapping isn't used
           # because Network=host means the container shares the host
@@ -1044,8 +1068,8 @@ ${SERVICEBAY_SSH_PRIV}
 
           # Unlock servicebay.service. The path unit
           # servicebay-trigger.path observes this file and triggers
-          # servicebay.service, whose Conflicts=servicebay-splash.service
-          # then atomically swaps the splash for the real server.
+          # servicebay.service, whose ExecStartPre stops the splash
+          # before podman binds the port.
           /usr/local/bin/update-install-status.sh "Starting ServiceBay…" "GPU ready. Handing off to ServiceBay. The wizard will appear in a few seconds." || true
           touch /var/lib/installation-ready
           echo "install-nvidia-cdi: done"
