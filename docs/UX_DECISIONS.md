@@ -224,7 +224,7 @@ production.
 - `packages/frontend/tsconfig.json` paths — only `@servicebay/api-client`
   is import-visible from frontend.
 - ESLint rule `sb/no-backend-from-frontend` — blocks
-  `@/lib/...` imports from `src/components/**` / `src/hooks/**`.
+  `@/lib/...` imports from `packages/frontend/src/components/**` / `packages/frontend/src/hooks/**`.
 - depcruise rule in `.dependency-cruiser.cjs` — fails the build
   on backend → frontend or frontend → backend-internal imports.
 - `docs/ARCHITECTURE_INVARIANTS.md` "FE/BE workspace boundary" row.
@@ -248,9 +248,11 @@ to look the part (a package import, not a path import).
 **Where enforced.**
 - `packages/backend/tsconfig.json` paths.
 - `packages/frontend/tsconfig.json` paths.
-- Root `tsconfig.json` re-exports both for the legacy `src/app/**`
-  Next.js shim until that's collapsed into `packages/frontend/`
-  fully (Phase 4 follow-up).
+- Root `tsconfig.json` still defines both `@/lib/*` and the per-package
+  `@/...` aliases so the Next.js dev server can resolve cross-package
+  imports without each workspace having to duplicate them. The
+  pre-Phase-3.3 root-level `src/app/**` shim is gone — the routes
+  now live entirely inside `packages/frontend/src/app/`.
 
 ---
 

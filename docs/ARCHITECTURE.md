@@ -25,20 +25,20 @@ A modular / KISS / DRY / SoT review of the codebase plus a security pass. Open f
 
 ### What's working
 
-- **Single Digital Twin store.** `src/lib/store/twin.ts:90-126` enforces a `DigitalTwinStore.getInstance()` singleton via `global.__DIGITAL_TWIN__`. No parallel state caches found.
-- **One mutation path per operation.** Every deploy / delete / start / stop / restart / update-yaml call — whether from the UI, the install runner, or MCP — funnels through `ServiceManager` (`src/lib/services/ServiceManager.ts`). Add/remove proxy route both write `config.reverseProxy.hosts` via `updateConfig`. No bypasses.
+- **Single Digital Twin store.** `packages/backend/src/lib/store/twin.ts:90-126` enforces a `DigitalTwinStore.getInstance()` singleton via `global.__DIGITAL_TWIN__`. No parallel state caches found.
+- **One mutation path per operation.** Every deploy / delete / start / stop / restart / update-yaml call — whether from the UI, the install runner, or MCP — funnels through `ServiceManager` (`packages/backend/src/lib/services/ServiceManager.ts`). Add/remove proxy route both write `config.reverseProxy.hosts` via `updateConfig`. No bypasses.
 - **One definition per type.** `EnrichedContainer`, `ServiceUnit`, `PortMapping`, `NetworkNode` are each declared once and imported everywhere. No frontend/backend redeclaration.
-- **One renderer.** All Mustache rendering passes through `src/lib/install/runner.ts`. One health-check runner (`src/lib/health/runner.ts:CheckRunner.run`) dispatches by type internally — no parallel implementations.
-- **Core stays out of template internals.** `tests/backend/template_consistency.test.ts:564-614` allows exactly one template-name branch in the install engine (`isSelected('nginx')` in `src/lib/stackInstall/postInstall.ts:366`, for the NPM-credentials tri-state UI prompt that can't live in a template script). Every other deploy path is template-agnostic.
-- **Login rate limiting** is SQLite-backed sliding window, survives restarts (`src/lib/auth/rateLimit.ts`).
-- **MCP scope enforcement** is real — every tool is mapped to `read|lifecycle|mutate|destroy` and bearer tokens are checked server-side (`src/lib/mcp/server.ts:74-98`).
+- **One renderer.** All Mustache rendering passes through `packages/backend/src/lib/install/runner.ts`. One health-check runner (`packages/backend/src/lib/health/runner.ts:CheckRunner.run`) dispatches by type internally — no parallel implementations.
+- **Core stays out of template internals.** `tests/backend/template_consistency.test.ts:564-614` allows exactly one template-name branch in the install engine (`isSelected('nginx')` in `packages/backend/src/lib/stackInstall/postInstall.ts:366`, for the NPM-credentials tri-state UI prompt that can't live in a template script). Every other deploy path is template-agnostic.
+- **Login rate limiting** is SQLite-backed sliding window, survives restarts (`packages/backend/src/lib/auth/rateLimit.ts`).
+- **MCP scope enforcement** is real — every tool is mapped to `read|lifecycle|mutate|destroy` and bearer tokens are checked server-side (`packages/backend/src/lib/mcp/server.ts:74-98`).
 
 ### Coupling leaks (architecture issues)
 
 | Issue | Summary |
 |---|---|
 | [#582 ARCH-01](https://github.com/mdopp/servicebay/issues/582) | `OnboardingWizard.tsx:963` hardcodes `'full-stack'` with no fallback (sibling call at :1288 *does* have one — inconsistency). |
-| [#583 ARCH-02](https://github.com/mdopp/servicebay/issues/583) | The "plugin architecture" docs oversold the modularity. Resolved by renaming `src/plugins/` → `src/dashboards/` everywhere (component files, helpers, tests, CSS, modal copy) and rewriting § Dashboard surfaces below to match the static-array reality. |
+| [#583 ARCH-02](https://github.com/mdopp/servicebay/issues/583) | The "plugin architecture" docs oversold the modularity. Resolved by renaming `src/plugins/` → `packages/frontend/src/dashboards/` everywhere (component files, helpers, tests, CSS, modal copy) and rewriting § Dashboard surfaces below to match the static-array reality. |
 | [#584 ARCH-03](https://github.com/mdopp/servicebay/issues/584) | Bundled templates' `post-deploy.py` scripts POST to internal endpoints (`/api/system/lldap/credentials`, `/api/system/authelia/oidc-clients`) with no versioned contract or test. Biggest real coupling leak. |
 | [#585 ARCH-04](https://github.com/mdopp/servicebay/issues/585) | Template structure rules are spread across `registry.ts`, `templateTier.ts`, the test suite, `TEMPLATE_AUTHORING.md`, and `templates/CLAUDE.md`. Consolidate into one TypeScript interface that both runtime loaders and tests use. |
 
@@ -184,7 +184,7 @@ interface DigitalTwinStore {
 ## Component Details
 
 ### A. The Agent (State Aggregator)
-A single lightweight Python script (`src/lib/agent/v4/agent.py`) running on the target host. It acts as the "Digital Twin" source of truth, optimizing data collection to minimize system load while ensuring real-time responsiveness.
+A single lightweight Python script (`packages/backend/src/lib/agent/v4/agent.py`) running on the target host. It acts as the "Digital Twin" source of truth, optimizing data collection to minimize system load while ensuring real-time responsiveness.
 
 ## Data Lineage & Visualization
 
@@ -405,7 +405,7 @@ sequenceDiagram
 *   **Goal**: Let an external LLM (Claude, OpenAI, etc.) drive ServiceBay end-to-end via the [Model Context Protocol](https://modelcontextprotocol.io).
 *   **Endpoint**: `POST /mcp` — handled directly in `server.ts` (intercepts the request before the Next.js handler) and bridged to `@modelcontextprotocol/sdk`'s `StreamableHTTPServerTransport`. Authentication is the same `session` cookie the UI uses, decoded via `getSessionFromCookieHeader`. No additional token surface.
 *   **Stateless**: a fresh `McpServer` + transport are created per request, both closed when the response stream ends. No long-lived sessions.
-*   **Tool surface** (`src/lib/mcp/server.ts`, 37 tools):
+*   **Tool surface** (`packages/backend/src/lib/mcp/server.ts`, 37 tools):
     *   *Read*: `list_nodes`, `list_services`, `list_containers`, `get_container_logs`, `get_service_logs`, `get_system_info`, `get_network_graph`, `get_health_checks`, `get_gateway_status`, `get_proxy_routes`, `list_templates`, `get_template_readme`/`yaml`/`variables`, `verify_node_connection`, `get_podman_logs`, `list_system_services`, `get_config`.
     *   *Mutate*: `start_service`/`stop_service`/`restart_service`, `deploy_service`/`update_service_yaml`/`delete_service`/`rename_service`, `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`/`list_backups`, `create_health_check`/`delete_health_check`/`run_check_now`, `update_config`, `exec_command`, `refresh_agent`.
 *   **SoT alignment**: all tools route through the same Digital Twin / `ServiceManager` / `HealthStore` paths the UI uses — no parallel mutation surface. `update_config` is allow-listed (`logLevel`, `serverName`, `domain`, `autoUpdate`, `templateSettings`); auth/OIDC/SMTP credentials are intentionally excluded so they always need a human in the loop.
@@ -433,7 +433,7 @@ We have explicitly chosen **Python 3** (Standard Library only) over Bash/Shell s
 
 ## System Backup Pipeline
 
-ServiceBay includes a built-in configuration backup workflow implemented in `src/lib/systemBackup.ts`. The goal is to archive the full control-plane (config files + Quadlet manifests) for every managed node without duplicating user data volumes.
+ServiceBay includes a built-in configuration backup workflow implemented in `packages/backend/src/lib/systemBackup.ts`. The goal is to archive the full control-plane (config files + Quadlet manifests) for every managed node without duplicating user data volumes.
 
 ### Flow
 
@@ -475,15 +475,15 @@ sequenceDiagram
 
 ## Dashboard surfaces
 
-The sidebar's top-level navigation entries are called **dashboards** — each is a React component under `src/dashboards/*Dashboard.tsx`, mounted by a route page at `src/app/(dashboard)/<id>/page.tsx`, and listed in a hand-edited array in `src/components/Sidebar.tsx`.
+The sidebar's top-level navigation entries are called **dashboards** — each is a React component under `packages/frontend/src/dashboards/*Dashboard.tsx`, mounted by a route page at `packages/frontend/src/app/(dashboard)/<id>/page.tsx`, and listed in a hand-edited array in `packages/frontend/src/components/Sidebar.tsx`.
 
 This is NOT a pluggable registry. There is no runtime registration API, no dynamic loading, and no extension point — external templates cannot ship dashboards. Adding one is a three-file change (component + route + sidebar entry). The previous version of this section described a "plugin architecture" that overstated the modularity; see #583.
 
 ### Adding a dashboard
 
-1. Create `src/dashboards/<Name>Dashboard.tsx` exporting a default React component.
-2. Create `src/app/(dashboard)/<id>/page.tsx` that imports and renders it.
-3. Add a `{ id, name, shortLabel, icon, path }` entry to `dashboards` in `src/components/Sidebar.tsx`. The mobile bottom-bar (`MobileNav.tsx`) reads from the same array.
+1. Create `packages/frontend/src/dashboards/<Name>Dashboard.tsx` exporting a default React component.
+2. Create `packages/frontend/src/app/(dashboard)/<id>/page.tsx` that imports and renders it.
+3. Add a `{ id, name, shortLabel, icon, path }` entry to `dashboards` in `packages/frontend/src/components/Sidebar.tsx`. The mobile bottom-bar (`MobileNav.tsx`) reads from the same array.
 
 ### Current dashboards
 

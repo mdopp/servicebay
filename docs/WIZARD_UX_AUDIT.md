@@ -1,6 +1,6 @@
 # OnboardingWizard — UX flow audit (2026-05-19)
 
-State machine reconstructed from `src/components/OnboardingWizard.tsx`.
+State machine reconstructed from `packages/frontend/src/components/OnboardingWizard.tsx`.
 Two state axes: `currentStep` (top-level wizard step) and
 `stackInstallStep` (sub-state within `stacks`).
 

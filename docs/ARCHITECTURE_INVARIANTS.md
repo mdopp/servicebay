@@ -58,7 +58,7 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 |---|---:|---:|---|
 | `as any` in security paths | 3 | 3 | `check-invariants.ts:SECURITY_AS_ANY_BUDGET` |
 
-**Security paths**: `src/lib/auth/**`, `src/lib/mcp/**`, `src/lib/agent/executor.ts`, `src/proxy.ts`. Non-test only. The three current casts are error-augmentation in `executor.ts`. Ratchet target: 0.
+**Security paths**: `packages/backend/src/lib/auth/**`, `packages/backend/src/lib/mcp/**`, `packages/backend/src/lib/agent/executor.ts`, `packages/frontend/src/proxy.ts`. Non-test only. The three current casts are error-augmentation in `executor.ts`. Ratchet target: 0.
 
 ### Coupling
 
@@ -103,8 +103,8 @@ Enforced by `.semgrep.yml`. ERROR severity = build-blocking; WARNING = reported 
 
 These are enforced as depcruise rules:
 
-- **One mutation path per operation** — every deploy/delete/start/stop/restart/update goes through `ServiceManager`. Direct imports of `serviceLifecycle`/`serviceListing` from outside `src/lib/services` are forbidden.
-- **One renderer** — all Mustache rendering goes through `src/lib/template/render.ts` (post-#599). `install/runner.ts` and the `stackInstall/` family still import `mustache` directly and are exempt for the moment; the next ratchet step migrates them to the shared helper too.
+- **One mutation path per operation** — every deploy/delete/start/stop/restart/update goes through `ServiceManager`. Direct imports of `serviceLifecycle`/`serviceListing` from outside `packages/backend/src/lib/services` are forbidden.
+- **One renderer** — all Mustache rendering goes through `packages/backend/src/lib/template/render.ts` (post-#599). `install/runner.ts` and the `stackInstall/` family still import `mustache` directly and are exempt for the moment; the next ratchet step migrates them to the shared helper too.
 - **One Digital Twin store** — singleton via `DigitalTwinStore.getInstance()`. Fan-in cap enforced by `check-invariants.ts`.
 
 ### Frontend ↔ Backend boundary (#753)
@@ -116,14 +116,15 @@ Layout:
 | Package | Path | Owns | Allowed imports |
 |---|---|---|---|
 | `@servicebay/api-client` | `packages/api-client/` | typed seam: shared types + zod schemas + `typedFetch` helper | `zod` only |
-| `@servicebay/frontend` | `packages/frontend/` | UI: components, hooks, dashboards, providers | `@servicebay/api-client` + UI libs |
+| `@servicebay/frontend` | `packages/frontend/` | UI + Next.js App Router (`src/app/**/route.ts`, `src/app/**/page.tsx`, `src/proxy.ts`, custom `server.ts`) | `@servicebay/api-client` + UI libs + (still) backend via `@/lib/*` — see "leaky alias" caveat below |
 | `@servicebay/backend` | `packages/backend/` | server-side: agent, install, diagnose, network, store, … | `@servicebay/api-client` + runtime deps |
-| (root) | `src/app/`, `server.ts`, `src/proxy.ts` | Next.js framework root: route handlers, server actions, custom server | all three packages |
+
+Post-Phase-3.3 there is no root-level source tree — `src/` at the repo root is empty. The Next.js custom server (`server.ts`) lives inside `packages/frontend/` and is mounted via the workspace's own build scripts.
 
 What enforces what:
 
-- **Workspace deps** (`package.json#dependencies`): `packages/frontend/package.json` does not list `@servicebay/backend`. A `@servicebay/backend/*` import from frontend would fail to resolve at build time.
-- **tsconfig paths**: `packages/frontend/tsconfig.json` defines a restricted `paths` block — it omits `@/lib/*`, so the legacy path also fails to resolve.
+- **Workspace deps** (`package.json#dependencies`): `packages/frontend/package.json` does not list `@servicebay/backend` directly. A `@servicebay/backend/*` import from frontend would fail to resolve at build time.
+- **tsconfig paths — leaky alias caveat**: `packages/frontend/tsconfig.json` still defines `@/lib/*` → `../backend/src/lib/*` because the App Router handlers under `src/app/api/**/route.ts` need server-side modules. **454 imports** flow through this alias today. depcruise can't see through path aliases, so the FE → BE direction is structurally enforced but spirit-leaky. Tightening this is tracked in #977.
 - **`sb/no-fe-backend-import` ESLint rule**: editor-time signal + defense-in-depth. Catches `@/lib/*` and `@servicebay/backend/*` imports under `packages/frontend/**`.
 - **`depcruise`**: `lib-no-import-app`, `lib-no-import-components`, `lib-no-import-dashboards` rules forbid backend → frontend imports.
 

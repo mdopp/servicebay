@@ -28,7 +28,7 @@ the wizard substitutes at deploy time. Use these annotations under
 `metadata.annotations`:
 
 <!-- AUTOGEN:TEMPLATE_FIELDS_START -->
-<!-- This table is generated from src/lib/template/contract.ts:TEMPLATE_FIELDS by
+<!-- This table is generated from packages/backend/src/lib/template/contract.ts:TEMPLATE_FIELDS by
      scripts/gen-template-docs.ts. Run `npm run gen-template-docs` after editing
      the field-spec table; do not hand-edit between these markers. -->
 

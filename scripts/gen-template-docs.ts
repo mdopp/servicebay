@@ -2,7 +2,7 @@
 /**
  * Regenerate the template annotation reference table in
  * docs/TEMPLATE_AUTHORING.md from the single source of truth in
- * src/lib/template/contract.ts (#585).
+ * packages/backend/src/lib/template/contract.ts (#585).
  *
  * Run: `npm run gen-template-docs` (writes the file) or
  *      `npm run gen-template-docs -- --check` (CI: exits non-zero if
@@ -49,7 +49,7 @@ function renderTable(): string {
   });
   return [
     START,
-    '<!-- This table is generated from src/lib/template/contract.ts:TEMPLATE_FIELDS by',
+    '<!-- This table is generated from packages/backend/src/lib/template/contract.ts:TEMPLATE_FIELDS by',
     '     scripts/gen-template-docs.ts. Run `npm run gen-template-docs` after editing',
     '     the field-spec table; do not hand-edit between these markers. -->',
     '',
@@ -90,7 +90,7 @@ function main(): void {
 
   if (check) {
     process.stderr.write(
-      `${path.relative(REPO_ROOT, DOC_PATH)} is out of date with src/lib/template/contract.ts.\n` +
+      `${path.relative(REPO_ROOT, DOC_PATH)} is out of date with packages/backend/src/lib/template/contract.ts.\n` +
       `Run \`npm run gen-template-docs\` to regenerate, then commit the result.\n`,
     );
     process.exit(1);

@@ -98,12 +98,6 @@
     "workspaces": {
       ".": {
         "entry": [
-          "packages/frontend/src/app/**/page.tsx",
-          "packages/frontend/src/app/**/layout.tsx",
-          "packages/frontend/src/app/**/route.ts",
-          "packages/frontend/src/app/**/loading.tsx",
-          "packages/frontend/src/app/**/error.tsx",
-          "packages/frontend/src/app/**/not-found.tsx",
           "scripts/**/*.{ts,mjs}"
         ],
         "ignoreDependencies": [
@@ -115,6 +109,14 @@
       },
       "packages/frontend": {
         "entry": [
+          "src/app/**/page.tsx",
+          "src/app/**/layout.tsx",
+          "src/app/**/route.ts",
+          "src/app/**/loading.tsx",
+          "src/app/**/error.tsx",
+          "src/app/**/not-found.tsx",
+          "server.ts",
+          "src/mocks/browser.ts",
           "src/**/*.{ts,tsx}"
         ]
       },
