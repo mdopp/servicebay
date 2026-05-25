@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.26.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.25.0...servicebay-v4.26.0) (2026-05-25)
+
+
+### Features
+
+* **oscar:** consolidate oscar repository into servicebay ([#933](https://github.com/mdopp/servicebay/issues/933)) ([59846cb](https://github.com/mdopp/servicebay/commit/59846cb2e67cdbb00265ac0cb02ddd46c4c1117e))
+* **oscar:** relocate gatekeeper, schema, and skills under templates/oscar-household/src/ ([f6aa0d6](https://github.com/mdopp/servicebay/commit/f6aa0d6dedf3d5a5aaa308d151e4beb9d69c6e67))
+* **system:** stop UEFI USB boot loop after FCoS install ([#930](https://github.com/mdopp/servicebay/issues/930)) ([04aead3](https://github.com/mdopp/servicebay/commit/04aead34db1d58c952d46a81598172360f25691f))
+* **system:** stop UEFI USB boot loop after FCoS install ([#930](https://github.com/mdopp/servicebay/issues/930)) ([d79fb6d](https://github.com/mdopp/servicebay/commit/d79fb6d1ec1ad3ad1a6d6b69e264a115af554b14))
+
+
+### Bug Fixes
+
+* auto-onboard HA + mint long-lived token so Hermes can authenticate [#934](https://github.com/mdopp/servicebay/issues/934) ([8f39adc](https://github.com/mdopp/servicebay/commit/8f39adcd12a8b2d75eda728650480f8794740422))
+* **fcos:** force-load nvidia kmod + bump stage-3 timeout to 3 min ([b55e159](https://github.com/mdopp/servicebay/commit/b55e159c16821797deb2d17b7ca7cdcf138304c4))
+* **fcos:** use akmod-nvidia-open + add libnvidia-container repo ([2c77a17](https://github.com/mdopp/servicebay/commit/2c77a175ff83b99e65663e309af523c5e9c6c7c6))
+* **health:** re-bootstrap service-health poller after agent sync [#935](https://github.com/mdopp/servicebay/issues/935) ([347a72e](https://github.com/mdopp/servicebay/commit/347a72e7847a00632fe9ef69b072abd602cceebb))
+* **hermes:** relax data-dir perms so oscar-household can merge MCP block ([d8f0a43](https://github.com/mdopp/servicebay/commit/d8f0a4377d022e0f24d76a99d6ebd0c6cad06b9b))
+* **install:** stop oscar-household init thrash + auto-enable ollama GPU on CDI hosts ([f5fb57d](https://github.com/mdopp/servicebay/commit/f5fb57daddb5fa7c312963ad925b8221e63c870d))
+* **oscar-household:** add tcp health probe so household stack reports ready ([0282693](https://github.com/mdopp/servicebay/commit/0282693e71dbc5014f9ffa8b37a3cbfcf0099091))
+* **oscar-household:** drop ports block - hostNetwork can't carry port mappings ([664eda0](https://github.com/mdopp/servicebay/commit/664eda00a848bb2f5c182bdfd291650b2b8c2815))
+* **oscar-household:** mint real servicebay-mcp token instead of unused env value ([6079a54](https://github.com/mdopp/servicebay/commit/6079a5492f375b862b23d77660394afa1fefccdc))
+
+
+### Performance Improvements
+
+* **ci:** optimize CI and release workflows with caching and removing redundant steps ([098ec7d](https://github.com/mdopp/servicebay/commit/098ec7d521bd852862a53e28a2404240cad15496))
+
 ## [4.25.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.8...servicebay-v4.25.0) (2026-05-25)
 
 
