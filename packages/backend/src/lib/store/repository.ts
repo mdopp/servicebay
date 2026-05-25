@@ -102,3 +102,7 @@ export function updateGateway(update: Partial<GatewayState>): void {
 export function recordMigrationEvent(nodeId: string, entry: MigrationHistoryEntry): void {
   DigitalTwinStore.getInstance().recordMigrationEvent(nodeId, entry);
 }
+
+export function subscribeToTwin(listener: () => void): () => void {
+  return DigitalTwinStore.getInstance().subscribe(listener);
+}

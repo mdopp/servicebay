@@ -9,6 +9,7 @@ import { initializeDefaultChecks } from './init';
 import { sendEmailAlert } from '@/lib/email';
 import { NotificationBatcher } from './notificationBatcher';
 import { DATA_DIR } from '@/lib/dirs';
+import { getNodeTwins, subscribeToTwin } from '@/lib/store/repository';
 
 // In-memory interval tracking
 const intervals = new Map<string, NodeJS.Timeout>();
@@ -31,16 +32,15 @@ export class HealthService {
     //     of truth Phase 3B migrates `settleWait`, diagnose probes, and
     //     per-template `wait_for_X` helpers onto.
     //
-    //     Best-effort: a discovery failure on one service doesn't block
-    //     boot, and the periodic agent sync will eventually pick up new
-    //     services. Phase 3B replaces this one-shot bootstrap with
-    //     capability-bus hooks on deploy/wipe.
-    try {
-      const { bootstrapServiceHealth } = await import('./serviceHealthBootstrap');
-      await bootstrapServiceHealth('Local');
-    } catch (e) {
-      logger.warn('Health', `Service-health bootstrap failed: ${e instanceof Error ? e.message : String(e)}. Probes will be available after next restart.`);
-    }
+    //     The bootstrap reads deployed services off the twin. On a fresh
+    //     process start the agent hasn't synced yet, so an eager call
+    //     here finds zero services and registers no probes — every
+    //     template stays at health=unknown forever (#935). We re-run
+    //     the bootstrap once per node when its initial sync completes,
+    //     which is also when `ServiceManager.listServices` first returns
+    //     meaningful data. `register()` keys by `(node, name)` so
+    //     repeated calls are idempotent.
+    this.startServiceHealthBootstrap();
 
     // 1b. Open the boot-grace email-batch window. Health checks
     //     that flip ok → fail during the first 10 min after boot
@@ -73,6 +73,43 @@ export class HealthService {
 
   private static checksWatcher: fs.FSWatcher | null = null;
   private static checksWatcherDebounce: NodeJS.Timeout | null = null;
+  private static bootstrappedNodes = new Set<string>();
+  private static twinUnsubscribe: (() => void) | null = null;
+
+  private static async runServiceHealthBootstrap(nodeName: string): Promise<void> {
+    if (this.bootstrappedNodes.has(nodeName)) return;
+    this.bootstrappedNodes.add(nodeName);
+    try {
+      const { bootstrapServiceHealth } = await import('./serviceHealthBootstrap');
+      await bootstrapServiceHealth(nodeName);
+    } catch (e) {
+      this.bootstrappedNodes.delete(nodeName);
+      logger.warn('Health', `Service-health bootstrap failed for ${nodeName}: ${e instanceof Error ? e.message : String(e)}. Will retry on next sync.`);
+    }
+  }
+
+  private static startServiceHealthBootstrap() {
+    // First pass: any node already past initial sync (e.g. the install
+    // runner bootstrapped them mid-deploy and this is a hot re-init).
+    for (const [nodeName, twin] of Object.entries(getNodeTwins())) {
+      if (twin.initialSyncComplete) {
+        void this.runServiceHealthBootstrap(nodeName);
+      }
+    }
+    // Catch the common cold-boot case: agent finishes syncing after
+    // HealthService.init returns. Re-running bootstrap is cheap (the
+    // poller dedupes by key) so we don't need to filter on first-flip
+    // — we just guard with `bootstrappedNodes` for the "already done"
+    // case.
+    if (this.twinUnsubscribe) return;
+    this.twinUnsubscribe = subscribeToTwin(() => {
+      for (const [nodeName, twin] of Object.entries(getNodeTwins())) {
+        if (twin.initialSyncComplete && !this.bootstrappedNodes.has(nodeName)) {
+          void this.runServiceHealthBootstrap(nodeName);
+        }
+      }
+    });
+  }
 
   private static startChecksFileWatcher() {
     if (this.checksWatcher) return;
