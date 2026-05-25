@@ -715,5 +715,60 @@ class ClaudeDevScript(unittest.TestCase):
         self.assertEqual(parse_credentials(out), [])
 
 
+class HermesScript(unittest.TestCase):
+    def test_happy_path_writes_config_and_restarts(self):
+        import urllib.request
+        m = load_script("hermes")
+        import tempfile
+        import shutil
+
+        tmp = tempfile.mkdtemp()
+        try:
+            env = {
+                "DATA_DIR": tmp,
+                "SB_API_URL": "http://localhost:3000",
+                "HOST": "192.168.1.100",
+                "HERMES_API_PORT": "8642",
+                "HERMES_API_KEY": "hermes-secret-key",
+                "HERMES_LLM_PROVIDER_URL": "http://127.0.0.1:11434/v1",
+                "HERMES_LLM_MODEL": "gemma3:4b",
+                "HERMES_DASHBOARD_PORT": "9119",
+            }
+
+            fake_urlopen = fake_urlopen_factory({
+                "/api/services/hermes/action": {
+                    "status": 200,
+                    "body": {"ok": True}
+                }
+            })
+
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch("time.sleep", return_value=None):
+                rc, out = capture_main(m)
+
+            self.assertEqual(rc, 0)
+            self.assertIn("wrote config.yaml", out)
+            self.assertIn("restart requested via ServiceBay API", out)
+            
+            # Check credentials emitted
+            creds = parse_credentials(out)
+            self.assertEqual(len(creds), 1)
+            self.assertEqual(creds[0]["service"], "Hermes Agent (API)")
+            self.assertEqual(creds[0]["url"], "http://192.168.1.100:8642")
+            self.assertEqual(creds[0]["password"], "hermes-secret-key")
+
+            # Check config file content
+            config_path = Path(tmp) / "hermes" / "config.yaml"
+            self.assertTrue(config_path.exists())
+            config_content = config_path.read_text()
+            self.assertIn("provider: custom", config_content)
+            self.assertIn("model: gemma3:4b", config_content)
+            self.assertIn("base_url: http://127.0.0.1:11434/v1", config_content)
+
+        finally:
+            shutil.rmtree(tmp)
+
+
 if __name__ == "__main__":
     unittest.main()

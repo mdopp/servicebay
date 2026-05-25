@@ -72,6 +72,10 @@ spec:
       value: "{{HERMES_API_KEY}}"
     - name: API_SERVER_CORS_ORIGINS
       value: "*"
+    - name: HASS_URL
+      value: "{{HASS_URL}}"
+    - name: HASS_TOKEN
+      value: "{{HASS_TOKEN}}"
     ports:
     - containerPort: {{HERMES_API_PORT}}
     volumeMounts:
