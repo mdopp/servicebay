@@ -144,6 +144,15 @@ def hermes_get(path: str, timeout: float = 5.0) -> int:
 def sb_post(path: str, payload: dict[str, object], timeout: float = 30.0) -> int:
     """POST against ServiceBay's API with the internal-token header (the
     same shape ServiceBay's own post-deploys use)."""
+    status, _ = sb_post_json(path, payload, timeout)
+    return status
+
+
+def sb_post_json(
+    path: str, payload: dict[str, object], timeout: float = 30.0
+) -> tuple[int, dict[str, object] | None]:
+    """Same as sb_post but also returns the parsed JSON body (or None
+    when no body / non-JSON body)."""
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"{SB_API_URL}{path}",
@@ -155,11 +164,61 @@ def sb_post(path: str, payload: dict[str, object], timeout: float = 30.0) -> int
         req.add_header("X-SB-Internal-Token", SB_API_TOKEN)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status
+            raw = resp.read()
+            try:
+                return resp.status, json.loads(raw) if raw else None
+            except json.JSONDecodeError:
+                return resp.status, None
     except urllib.error.HTTPError as e:
-        return e.code
+        return e.code, None
     except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
-        return 0
+        return 0, None
+
+
+def mint_servicebay_mcp_token() -> str | None:
+    """Mint a real MCP token from ServiceBay's tokens API, so the value
+    we splice into hermes' config.yaml is one ServiceBay actually
+    recognises. Without this, the random SERVICEBAY_MCP_TOKEN that
+    `assemble` generates is never registered and Hermes gets
+    401 Unauthorized on every `/mcp` call (observed 2026-05-25).
+
+    Returns the minted secret on success, or None on failure - the
+    caller should fall back to whatever was in SERVICEBAY_MCP_TOKEN
+    (even though that won't actually work, it preserves the older
+    behaviour for nodes the API call can't reach).
+    """
+    status, body = sb_post_json(
+        "/api/system/mcp-tokens",
+        # `read` is enough for the audit-query / status skills (they
+        # read logs + service health); `mutate` and `lifecycle` cover
+        # the future MCP-driven self-heal flows in the household stack.
+        {"name": "oscar-hermes", "scopes": ["read", "mutate", "lifecycle"]},
+        timeout=15,
+    )
+    if status != 200 or not isinstance(body, dict):
+        jlog(
+            "warn",
+            "oscar-household:mcp",
+            "could not mint servicebay-mcp token via API; falling back to env value (likely unregistered, expect 401 from Hermes)",
+            status=status,
+        )
+        return None
+    secret = body.get("secret")
+    if not isinstance(secret, str) or not secret:
+        jlog(
+            "warn",
+            "oscar-household:mcp",
+            "token mint succeeded but response missing `secret`; falling back to env value",
+        )
+        return None
+    token_id = (body.get("token") or {}).get("id") if isinstance(body.get("token"), dict) else None
+    jlog(
+        "info",
+        "oscar-household:mcp",
+        "minted servicebay-mcp token",
+        token_id=token_id,
+    )
+    return secret
 
 
 # ───── config.yaml merge ───────────────────────────────────────────────────
@@ -305,14 +364,29 @@ def collect_mcp_servers() -> list[tuple[str, str, str]]:
             "ha-mcp skipped",
             reason="missing url or token",
         )
-    if SERVICEBAY_MCP_URL and SERVICEBAY_MCP_TOKEN:
-        servers.append(("servicebay-mcp", SERVICEBAY_MCP_URL, SERVICEBAY_MCP_TOKEN))
+    if SERVICEBAY_MCP_URL:
+        # SERVICEBAY_MCP_TOKEN from `assemble` is a random value that nothing
+        # registered against ServiceBay's mcp-tokens table. Mint a real one
+        # here and use it; if the API call fails (e.g. ServiceBay not reachable
+        # over the loopback yet) fall back to the env value so the splice
+        # still happens — Hermes will then 401 on /mcp until an operator
+        # re-mints, which is at least more visible than silently skipping.
+        token = mint_servicebay_mcp_token() or SERVICEBAY_MCP_TOKEN
+        if token:
+            servers.append(("servicebay-mcp", SERVICEBAY_MCP_URL, token))
+        else:
+            jlog(
+                "info",
+                "oscar-household:mcp",
+                "servicebay-mcp skipped",
+                reason="mint failed and no fallback token in env",
+            )
     else:
         jlog(
             "info",
             "oscar-household:mcp",
             "servicebay-mcp skipped",
-            reason="missing url or token",
+            reason="missing url",
         )
     return servers
 

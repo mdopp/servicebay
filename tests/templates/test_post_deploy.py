@@ -841,6 +841,66 @@ class OscarHouseholdScript(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_minted_servicebay_mcp_token_supersedes_env(self):
+        """When ServiceBay's /api/system/mcp-tokens is reachable, the post-deploy
+        mints a real token and uses *that* in hermes' config.yaml instead of the
+        random SERVICEBAY_MCP_TOKEN from assemble. Without this, every cloud-LLM
+        call from Hermes hits 401 because the env value was never registered."""
+        import urllib.request
+        m = load_script("oscar-household")
+        import tempfile
+        import shutil
+
+        tmp = tempfile.mkdtemp()
+        try:
+            hermes_dir = Path(tmp) / "hermes"
+            hermes_dir.mkdir(parents=True, exist_ok=True)
+            config_path = hermes_dir / "config.yaml"
+            config_path.write_text("model:\n  provider: custom\n  model: gemma3:4b\n")
+
+            env = {
+                "DATA_DIR": tmp,
+                "SB_API_URL": "http://localhost:3000",
+                "SB_API_TOKEN": "internal-token",
+                "HERMES_API_PORT": "8642",
+                "HERMES_API_KEY": "hermes-secret-key",
+                "HA_MCP_URL": "http://localhost:8123/mcp",
+                "HA_MCP_TOKEN": "ha-token",
+                "SERVICEBAY_MCP_URL": "http://localhost:3000/mcp",
+                # Random value from `assemble`; mint should override.
+                "SERVICEBAY_MCP_TOKEN": "random-unregistered-from-assemble",
+                "OSCAR_DEBUG_MODE": "true",
+                "TZ": "Europe/Berlin",
+            }
+
+            fake_urlopen = fake_urlopen_factory({
+                "/health": {"status": 200, "body": {"status": "ok"}},
+                "/api/system/mcp-tokens": {
+                    "status": 200,
+                    "body": {
+                        "token": {"id": "abcd1234", "name": "oscar-hermes", "scopes": ["read","mutate","lifecycle"]},
+                        "secret": "sb_abcd1234_REAL_MINTED_SECRET_xyz",
+                    },
+                },
+                "/api/services/hermes/action": {"status": 200, "body": {"ok": True}},
+            })
+
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch("time.sleep", return_value=None):
+                rc, out = capture_main(m)
+
+            self.assertEqual(rc, 0)
+            self.assertIn("minted servicebay-mcp token", out)
+            config_content = config_path.read_text()
+            self.assertIn(
+                'Authorization: "Bearer sb_abcd1234_REAL_MINTED_SECRET_xyz"',
+                config_content,
+            )
+            self.assertNotIn("random-unregistered-from-assemble", config_content)
+        finally:
+            shutil.rmtree(tmp)
+
 
 if __name__ == "__main__":
     unittest.main()
