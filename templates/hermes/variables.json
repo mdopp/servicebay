@@ -44,5 +44,33 @@
   "HASS_TOKEN": {
     "type": "secret",
     "description": "Optional: Home Assistant long-lived access token. When set, turns on Hermes' native Home Assistant integration for zero-code device control."
+  },
+  "TELEGRAM_BOT_TOKEN": {
+    "type": "secret",
+    "description": "Optional: Telegram bot token from @BotFather. When set, Hermes' Telegram gateway starts and routes inbound chats to OSCAR. Pair with TELEGRAM_ALLOWED_USERS — without an allowlist Hermes denies every message and logs `No user allowlists configured`."
+  },
+  "TELEGRAM_ALLOWED_USERS": {
+    "type": "text",
+    "description": "Optional: comma-separated Telegram user IDs allowed to chat with Hermes (e.g. `123456789,987654321`). Use @userinfobot to find your numeric ID. Empty value means every Telegram message is denied even if TELEGRAM_BOT_TOKEN is set.",
+    "default": ""
+  },
+  "DISCORD_BOT_TOKEN": {
+    "type": "secret",
+    "description": "Optional: Discord bot token from the Discord developer portal. When set, Hermes' Discord gateway starts. Pair with DISCORD_ALLOWED_CHANNELS to allowlist the channels Hermes responds in."
+  },
+  "DISCORD_ALLOWED_CHANNELS": {
+    "type": "text",
+    "description": "Optional: comma-separated Discord channel IDs Hermes is allowed to respond in. Empty means every channel is denied even if DISCORD_BOT_TOKEN is set.",
+    "default": ""
+  },
+  "SIGNAL_ACCOUNT": {
+    "type": "text",
+    "description": "Optional: Signal phone number (E.164, e.g. `+491701234567`) the linked signal-cli account belongs to. Linking itself is interactive (`podman exec -it hermes signal-cli link -n HermesAgent` + scan QR with the operator's phone — see README). Setting this here writes the Hermes-side config; pair with SIGNAL_ALLOWED_USERS.",
+    "default": ""
+  },
+  "SIGNAL_ALLOWED_USERS": {
+    "type": "text",
+    "description": "Optional: comma-separated Signal phone numbers (E.164) allowed to chat with Hermes. Empty means every Signal message is denied even after pairing.",
+    "default": ""
   }
 }
