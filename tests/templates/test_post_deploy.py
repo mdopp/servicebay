@@ -766,6 +766,15 @@ class HermesScript(unittest.TestCase):
             self.assertIn("model: gemma3:4b", config_content)
             self.assertIn("base_url: http://127.0.0.1:11434/v1", config_content)
 
+            # Check that templates/hermes/template.yml contains skills and notes volume mounts
+            template_path = REPO_ROOT / "templates" / "hermes" / "template.yml"
+            self.assertTrue(template_path.exists())
+            template_content = template_path.read_text()
+            self.assertIn("mountPath: /opt/data/skills/oscar", template_content)
+            self.assertIn("mountPath: /opt/data/notes", template_content)
+            self.assertIn("path: {{DATA_DIR}}/oscar-household/skills", template_content)
+            self.assertIn("path: {{DATA_DIR}}/file-share/data/notes", template_content)
+
         finally:
             shutil.rmtree(tmp)
 
