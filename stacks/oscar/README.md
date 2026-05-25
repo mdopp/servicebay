@@ -136,6 +136,6 @@ The full observe-first matrix lives in [`mdopp/oscar#70`](https://github.com/mdo
 - [ ] Signal/Telegram round-trip → Hermes responds in German
 - [ ] Light command turns the light on/off (Hermes' native HA integration)
 - [ ] Timer command creates a Hermes cron job and fires on schedule
-- [ ] Cloud-LLM call (e.g. complex question) writes a `cloud_audit` row
+* [ ] Cloud-LLM call (e.g. complex question) writes a `cloud_audit` row
 - [ ] `oscar-audit-query` returns the row when asked
 - [ ] (Phase 1) Voice round-trip via HA Voice PE works under 1.5 s end-to-end
