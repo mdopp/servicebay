@@ -248,6 +248,10 @@ storage:
         inline: |
           #!/usr/bin/env bash
           set -euo pipefail
+          # Best-effort status update — the helper may not exist on very
+          # early boots where this script runs before /usr/local/bin is
+          # writable, hence `|| true`.
+          /usr/local/bin/update-install-status.sh "Setting up data storage" "Detecting + formatting the largest non-OS disk. About 30 seconds." 2>/dev/null || true
           MOUNT_POINT="${DATA_ROOT}"
           HOST_USER="${HOST_USER}"
 
@@ -497,13 +501,22 @@ storage:
           [Unit]
           Description=ServiceBay Rootless Management Interface
           After=network-online.target
-          # Boot splash sidecar (#775) binds :${SERVICEBAY_PORT} during the
-          # cold-boot window so the operator sees "starting up" instead of
-          # connection refused while podman pulls + Next.js prepares. The
-          # Conflicts= directive tells systemd to stop the splash unit
-          # before activating this one — splash releases the port, podman
-          # binds it. There's a sub-second port-release window; the splash
-          # page has a meta-refresh that retries through it.
+          # Don't start until the install chain has finished. The marker
+          # is written by install-nvidia-cdi.sh on GPU boxes (last step
+          # of the install chain) or by install-nvidia.sh stage-0 on
+          # no-GPU boxes (which short-circuits the chain immediately).
+          # Without this gate, servicebay would race the install on the
+          # intermediate boots between NVIDIA stages — pulling the image,
+          # binding 5888, and showing the operator a wizard mid-install
+          # that then gets thrown away by the next reboot. Started by
+          # the path unit servicebay-trigger.path the moment the marker
+          # appears, or directly at boot if the marker already exists.
+          ConditionPathExists=/var/lib/installation-ready
+          # Boot splash sidecar binds :${SERVICEBAY_PORT} until this
+          # gate opens. Conflicts= tells systemd to stop the splash
+          # unit before activating this one — splash releases the port,
+          # podman binds it. Sub-second handoff window; the splash
+          # page meta-refresh covers it.
           Conflicts=servicebay-splash.service
           # Deliberately NO Requires=/After=servicebay-auth-secret-init.service.
           # That unit is in the system instance and is invisible to user
@@ -537,13 +550,24 @@ storage:
           [Install]
           WantedBy=default.target
 
-    # Boot splash sidecar (#775). Tiny busybox httpd serves a single
-    # "ServiceBay is starting…" page on ${SERVICEBAY_PORT} during the
-    # cold-boot window. Ordered Before=servicebay.service so it grabs
-    # the port first; Conflicts on the real Quadlet (see above) means
-    # starting the real server stops the splash. The page meta-
-    # refreshes every 4 s so a held-open browser tab transparently
-    # picks up the real ServiceBay UI as soon as it binds the port.
+    # Boot/install progress page. Tiny busybox httpd serves this static
+    # HTML on ${SERVICEBAY_PORT} during the cold-boot + install window.
+    # Each install script (setup-raid, install-python, install-nvidia
+    # stages 1+2, install-nvidia-cdi) calls /usr/local/bin/update-install-status.sh
+    # at the start of its work to rewrite this file with a stage-specific
+    # message and the current timestamp. The page meta-refreshes every
+    # 5 s so the operator's browser tab transparently follows progress.
+    #
+    # Two handoffs:
+    #   - During install: each stage replaces this file with its own status.
+    #   - When installation completes: install-nvidia-cdi.sh (GPU boxes) or
+    #     install-nvidia.sh stage 0 (no-GPU boxes) touches /var/lib/installation-ready.
+    #     servicebay-trigger.path (user unit) observes the marker and starts
+    #     servicebay.service, whose Conflicts=servicebay-splash.service then
+    #     atomically takes the port.
+    #
+    # This file is the FIRST-BOOT fallback shown for the few seconds before
+    # any install service has run. Most operators will only see it briefly.
     - path: /var/home/${HOST_USER}/.config/containers/splash/index.html
       mode: 0644
       user:
@@ -556,9 +580,9 @@ storage:
           <html lang="en">
             <head>
               <meta charset="utf-8" />
-              <meta http-equiv="refresh" content="4" />
+              <meta http-equiv="refresh" content="5" />
               <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>ServiceBay is starting up</title>
+              <title>ServiceBay setup</title>
               <style>
                 :root { color-scheme: dark light; }
                 html, body { margin: 0; height: 100%; }
@@ -568,11 +592,11 @@ storage:
                   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
                 }
                 main {
-                  max-width: 32rem; padding: 2rem 2.5rem;
+                  max-width: 36rem; padding: 2rem 2.5rem;
                   background: #181b22; border: 1px solid #2a2f3a;
                   border-radius: 14px; text-align: center;
                 }
-                h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+                h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
                 p  { color: #a9b0bc; margin: .25rem 0; }
                 .spinner {
                   width: 28px; height: 28px; margin: 1rem auto;
@@ -580,18 +604,91 @@ storage:
                   border-radius: 50%; animation: spin 1s linear infinite;
                 }
                 @keyframes spin { to { transform: rotate(360deg); } }
-                code { color: #8fb3ff; }
+                .since { color: #6b7280; font-size: .875rem; margin-top: 1rem; }
               </style>
             </head>
             <body>
               <main>
                 <div class="spinner" aria-hidden="true"></div>
-                <h1>ServiceBay is starting up</h1>
-                <p>This can take a few minutes after a reboot — usually under one.</p>
-                <p>This page auto-refreshes; the real UI will appear when the server binds <code>:${SERVICEBAY_PORT}</code>.</p>
+                <h1>Booting…</h1>
+                <p>This page auto-refreshes. Install progress will appear here in a moment.</p>
+                <p>Please leave this window open. The box may reboot a few times during initial setup.</p>
               </main>
             </body>
           </html>
+
+    # Status-page helper. Any install script can call:
+    #   /usr/local/bin/update-install-status.sh "Short title" "Optional one-line description"
+    # This rewrites the splash index.html (served by servicebay-splash.container
+    # on :${SERVICEBAY_PORT}) with the new message, the current UTC timestamp,
+    # and the 5 s meta-refresh that ties everything together. The operator's
+    # browser tab follows along without manual reloads.
+    #
+    # The helper writes via a temp file + atomic rename so the busybox httpd
+    # always serves a complete page (no half-written HTML during the write).
+    # Plain-text args only — angle brackets / ampersands are NOT escaped.
+    # That's fine for the stage messages we send; do not pass user-supplied
+    # data through here.
+    - path: /usr/local/bin/update-install-status.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+
+          TITLE="${1:-Installing ServiceBay…}"
+          DESC="${2:-Please leave this window open. The page refreshes automatically.}"
+          HTML_PATH=/var/home/${HOST_USER}/.config/containers/splash/index.html
+          TMP_PATH="$(/usr/bin/mktemp "$(/usr/bin/dirname "$HTML_PATH")/.index.html.XXXXXX")"
+          NOW="$(/usr/bin/date -u +%FT%TZ)"
+
+          /usr/bin/cat > "$TMP_PATH" <<HTML
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta http-equiv="refresh" content="5" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>ServiceBay setup — $TITLE</title>
+              <style>
+                :root { color-scheme: dark light; }
+                html, body { margin: 0; height: 100%; }
+                body {
+                  display: flex; align-items: center; justify-content: center;
+                  background: #0f1115; color: #e6e6e6;
+                  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                }
+                main {
+                  max-width: 36rem; padding: 2rem 2.5rem;
+                  background: #181b22; border: 1px solid #2a2f3a;
+                  border-radius: 14px; text-align: center;
+                }
+                h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
+                p  { color: #a9b0bc; margin: .25rem 0; }
+                .spinner {
+                  width: 28px; height: 28px; margin: 1rem auto;
+                  border: 3px solid #2a2f3a; border-top-color: #6aa6ff;
+                  border-radius: 50%; animation: spin 1s linear infinite;
+                }
+                @keyframes spin { to { transform: rotate(360deg); } }
+                .since { color: #6b7280; font-size: .875rem; margin-top: 1rem; }
+              </style>
+            </head>
+            <body>
+              <main>
+                <div class="spinner" aria-hidden="true"></div>
+                <h1>$TITLE</h1>
+                <p>$DESC</p>
+                <p class="since">Status updated $NOW (UTC)</p>
+              </main>
+            </body>
+          </html>
+          HTML
+
+          /usr/bin/chown ${HOST_USER}:${HOST_USER} "$TMP_PATH" 2>/dev/null || true
+          /usr/bin/chmod 0644 "$TMP_PATH"
+          /usr/bin/mv -f "$TMP_PATH" "$HTML_PATH"
+          echo "install-status: $TITLE ($NOW)"
 
     # Splash Quadlet — runs the busybox httpd as a rootless container
     # under the same `core` user as the real servicebay.container so
@@ -632,6 +729,33 @@ storage:
           # via Conflicts=, the SIGTERM is intentional and we want to
           # stay down.
           Restart=no
+
+          [Install]
+          WantedBy=default.target
+
+    # Path unit that waits for /var/lib/installation-ready and starts
+    # servicebay.service the moment it appears. Lives in user systemd
+    # (alongside the servicebay Quadlet) so root and user instances stay
+    # decoupled. When the marker file is created by the last install
+    # step, this unit activates → systemd starts servicebay.service →
+    # ConditionPathExists on servicebay.service evaluates true →
+    # Conflicts= kills the splash → servicebay binds the port.
+    - path: /var/home/${HOST_USER}/.config/systemd/user/servicebay-trigger.path
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          [Unit]
+          Description=Trigger ServiceBay when /var/lib/installation-ready appears
+
+          [Path]
+          # Fires both when the file is created during this boot AND
+          # when this unit is started and the file already exists.
+          PathExists=/var/lib/installation-ready
+          Unit=servicebay.service
 
           [Install]
           WantedBy=default.target
@@ -694,6 +818,7 @@ ${SERVICEBAY_SSH_PRIV}
         inline: |
           #!/bin/bash
           set -euo pipefail
+          /usr/local/bin/update-install-status.sh "Installing Python runtime" "Layering python3 for the ServiceBay agent. About 30 seconds." || true
           echo "install-python: installing python3 via rpm-ostree..."
           rpm-ostree install --apply-live --allow-inactive python3
           echo "install-python: done"
@@ -739,8 +864,12 @@ ${SERVICEBAY_SSH_PRIV}
           # the driver may not be present.
           if ! /usr/sbin/lspci 2>/dev/null | grep -qi 'NVIDIA Corporation'; then
               echo "install-nvidia: no NVIDIA GPU detected, skipping" >&2
-              # Mark every stage done so we don't keep retrying.
+              # Mark every NVIDIA stage done so we don't keep retrying,
+              # and unlock servicebay startup immediately (no GPU work to
+              # wait on).
               touch /var/lib/install-nvidia-repos-done /var/lib/install-nvidia-driver-done /var/lib/install-nvidia-cdi-done
+              touch /var/lib/installation-ready
+              /usr/local/bin/update-install-status.sh "Starting ServiceBay…" "Almost done. The wizard will open in a few seconds." || true
               exit 0
           fi
 
@@ -758,6 +887,7 @@ ${SERVICEBAY_SSH_PRIV}
           # fails with "Packages not found". Split repo layering from
           # driver layering with a reboot between.
           if [ ! -f /var/lib/install-nvidia-repos-done ]; then
+              /usr/local/bin/update-install-status.sh "Adding NVIDIA repositories" "Layering RPM Fusion + NVIDIA container-toolkit repos. About 2 minutes, then the box reboots." || true
               echo "install-nvidia: stage 1 — layering RPM Fusion repos + NVIDIA container-toolkit repo..."
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
                   "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
@@ -787,6 +917,7 @@ ${SERVICEBAY_SSH_PRIV}
           # since Container Toolkit ≥1.14) from NVIDIA's own repo
           # dropped in stage 1.
           if [ ! -f /var/lib/install-nvidia-driver-done ]; then
+              /usr/local/bin/update-install-status.sh "Installing NVIDIA driver + container toolkit" "Layering akmod-nvidia-open + cuda + container-toolkit. About 4 minutes, then the box reboots so the kernel module can build." || true
               echo "install-nvidia: stage 2 — layering NVIDIA driver + container toolkit..."
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
                   akmod-nvidia-open \
@@ -798,43 +929,21 @@ ${SERVICEBAY_SSH_PRIV}
               exit 0
           fi
 
-          # Stage 3 — kernel module should be live now. Verify, then
-          # generate the CDI config that podman reads for GPU passthrough.
-          if [ ! -f /var/lib/install-nvidia-cdi-done ]; then
-              echo "install-nvidia: stage 3 — loading nvidia kernel module..."
-              # akmod-built kmod lives in the layered deployment, but udev's
-              # GPU-triggered autoload can race the boot path — observed on
-              # an Ada RTX 2000 where lsmod was empty for ~65s after boot,
-              # then nvidia appeared. Force-load explicitly first, then
-              # poll with a generous timeout as a safety net.
-              /usr/sbin/modprobe nvidia || true
-              for i in $(/usr/bin/seq 1 90); do
-                  if /usr/sbin/lsmod | grep -q '^nvidia '; then break; fi
-                  sleep 2
-              done
-              if ! /usr/sbin/lsmod | grep -q '^nvidia '; then
-                  echo "install-nvidia: nvidia module did not load after 3 min — operator should check journalctl -u systemd-modules-load + akmods build output (rpm-ostree status)" >&2
-                  exit 1
-              fi
-              /usr/bin/mkdir -p /etc/cdi
-              if /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml; then
-                  echo "install-nvidia: CDI config at /etc/cdi/nvidia.yaml"
-                  /usr/bin/nvidia-ctk cdi list || true
-                  touch /var/lib/install-nvidia-cdi-done
-                  # Marker file for ServiceBay's assembler — when present, the
-                  # OLLAMA_GPU_PASSTHROUGH wizard variable defaults to "yes"
-                  # instead of "" so ollama runs on the GPU out of the box
-                  # without the operator having to discover the toggle.
-                  # /mnt/data/servicebay is ServiceBay's data dir (mounted
-                  # to /app/data in the container).
-                  /usr/bin/mkdir -p /mnt/data/servicebay
-                  /usr/bin/touch /mnt/data/servicebay/.has-nvidia-cdi
-              else
-                  echo "install-nvidia: nvidia-ctk cdi generate failed" >&2
-                  exit 1
-              fi
-          fi
-
+          # Stage 3 (kmod load + CDI generation) used to live here, but it
+          # mixed two very different timescales into one service: the
+          # synchronous rpm-ostree layering above (minutes), and the
+          # asynchronous akmod build that produces the nvidia kernel
+          # module (potentially 10+ min on cold-cache hardware, with
+          # akmods.service condition-skipped on FCoS so we can't even
+          # synchronously wait for it). A single TimeoutStartSec covers
+          # both badly — too short and we miss the late kmod load and
+          # leave CDI ungenerated (#982); too long and operators stare
+          # at "starting…" for the full ceiling on every install.
+          # The kmod-load → CDI-generate phase is now its own service
+          # + timer (install-nvidia-cdi.{service,timer}), which retries
+          # every 60 s until the kmod actually appears, then writes the
+          # markers and skips forever.
+          echo "install-nvidia: driver + container-toolkit layered, CDI handled by install-nvidia-cdi.timer"
           echo "install-nvidia: done"
 
     - path: /etc/systemd/system/install-nvidia.service
@@ -843,21 +952,142 @@ ${SERVICEBAY_SSH_PRIV}
         inline: |
           [Unit]
           Description=Install NVIDIA driver + container toolkit (idempotent)
-          ConditionPathExists=!/var/lib/install-nvidia-cdi-done
+          # Stops running once the driver has been layered (stage 2).
+          # The kmod-load + CDI generation is the separate
+          # install-nvidia-cdi.{service,timer} pair.
+          ConditionPathExists=!/var/lib/install-nvidia-driver-done
           After=network-online.target install-python.service
           Wants=network-online.target
 
           [Service]
           Type=oneshot
           RemainAfterExit=yes
-          # Long timeout — rpm-ostree layering + akmod build can take
-          # several minutes on cold-cache, especially on slow ARM /
-          # mini-PC class hardware.
+          # Long timeout — rpm-ostree layering itself can take several
+          # minutes on cold-cache, especially on slow ARM / mini-PC
+          # class hardware. (The kmod build no longer lives here.)
           TimeoutStartSec=900
           ExecStart=/bin/bash /usr/local/bin/install-nvidia.sh
 
           [Install]
           WantedBy=multi-user.target
+
+    # CDI-generation phase, decoupled from install-nvidia.service.
+    #
+    # Why split: the akmod build that produces the nvidia kernel
+    # module runs asynchronously after stage-2's rpm-ostree layering
+    # + reboot. On Fedora CoreOS, akmods.service is intentionally
+    # condition-skipped (`ConditionPathExists=!/run/ostree-booted`),
+    # so we can't synchronously wait on it. The build can finish
+    # anywhere from ~1 min to >10 min after boot depending on cache
+    # warmth and CPU. A single service with a hard timeout will
+    # either give up too early (#982 on RTX 2000 Ada — kmod appeared
+    # at min ~5–60, the 3-min poll missed it) or burn the operator's
+    # patience on every install.
+    #
+    # The service below runs once per timer fire. Each fire does a
+    # short internal poll (60 s) for the kmod; if it's not loaded,
+    # exit 1 and let the timer retry in 60 s. Once CDI is generated,
+    # the unit's ConditionPathExists short-circuits and future timer
+    # fires are free no-ops.
+    - path: /usr/local/bin/install-nvidia-cdi.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+
+          if [ -f /var/lib/install-nvidia-cdi-done ]; then
+              echo "install-nvidia-cdi: already done, skipping"
+              exit 0
+          fi
+
+          /usr/local/bin/update-install-status.sh "Waiting for NVIDIA kernel module" "akmods compiles the nvidia driver against the running kernel. 1 to 10 minutes depending on hardware." || true
+
+          # Force-load the kmod — udev's GPU-triggered autoload can
+          # race the boot path. modprobe failing here is fine; lsmod
+          # below is the actual gate.
+          /usr/sbin/modprobe nvidia 2>/dev/null || true
+
+          # Short internal poll (1 min) so we don't always burn an
+          # extra timer-fire when the kmod is moments from loading.
+          for i in $(/usr/bin/seq 1 30); do
+              if /usr/sbin/lsmod | grep -q '^nvidia '; then break; fi
+              sleep 2
+          done
+
+          if ! /usr/sbin/lsmod | grep -q '^nvidia '; then
+              echo "install-nvidia-cdi: nvidia kmod not loaded yet — retrying via timer in 60 s"
+              exit 1
+          fi
+
+          /usr/local/bin/update-install-status.sh "Configuring GPU passthrough" "Generating CDI descriptor for podman → GPU." || true
+
+          echo "install-nvidia-cdi: nvidia kmod loaded, generating CDI..."
+          /usr/bin/mkdir -p /etc/cdi
+          if ! /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml; then
+              echo "install-nvidia-cdi: nvidia-ctk cdi generate failed — retrying via timer in 60 s" >&2
+              exit 1
+          fi
+
+          echo "install-nvidia-cdi: CDI config at /etc/cdi/nvidia.yaml"
+          /usr/bin/nvidia-ctk cdi list || true
+
+          # Marker for ServiceBay's assembler — when present, the
+          # OLLAMA_GPU_PASSTHROUGH wizard variable defaults to "yes"
+          # so ollama runs on the GPU out of the box without the
+          # operator having to discover the toggle.
+          /usr/bin/mkdir -p /mnt/data/servicebay
+          /usr/bin/touch /mnt/data/servicebay/.has-nvidia-cdi
+
+          # done-marker LAST so a crash mid-script triggers a retry.
+          touch /var/lib/install-nvidia-cdi-done
+
+          # Unlock servicebay.service. The path unit
+          # servicebay-trigger.path observes this file and triggers
+          # servicebay.service, whose Conflicts=servicebay-splash.service
+          # then atomically swaps the splash for the real server.
+          /usr/local/bin/update-install-status.sh "Starting ServiceBay…" "GPU ready. Handing off to ServiceBay. The wizard will appear in a few seconds." || true
+          touch /var/lib/installation-ready
+          echo "install-nvidia-cdi: done"
+
+    - path: /etc/systemd/system/install-nvidia-cdi.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Generate NVIDIA CDI config once the kmod is loaded
+          # Only meaningful once the driver has been layered.
+          ConditionPathExists=/var/lib/install-nvidia-driver-done
+          # Skip forever once CDI is generated.
+          ConditionPathExists=!/var/lib/install-nvidia-cdi-done
+
+          [Service]
+          Type=oneshot
+          # Each attempt is bounded by the script's 1-min internal
+          # poll + the CDI generation step. 5 min is well past that
+          # but small enough to not look like a hang.
+          TimeoutStartSec=300
+          ExecStart=/bin/bash /usr/local/bin/install-nvidia-cdi.sh
+
+    - path: /etc/systemd/system/install-nvidia-cdi.timer
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Retry NVIDIA CDI generation until the kmod is available
+
+          [Timer]
+          # First attempt 30 s into the boot — gives udev a moment to
+          # autoload the module if the build had already finished.
+          OnBootSec=30s
+          # Retry 60 s after the service goes inactive (success or
+          # failure both qualify as "inactive"; on success the
+          # ConditionPathExists makes the next fire a no-op).
+          OnUnitInactiveSec=60s
+          Unit=install-nvidia-cdi.service
+
+          [Install]
+          WantedBy=timers.target
 
     # Script to disable USB/removable boot entries on first successful SSD boot.
     # This prevents the BIOS from booting the live USB again on subsequent reboots.
@@ -874,31 +1104,34 @@ ${SERVICEBAY_SSH_PRIV}
           fi
 
           echo "disable-usb-boot: neutralizing USB UEFI boot entries..."
-          # Get all USB/removable boot entries
-          USB_LIST=$$(/usr/bin/efibootmgr -v | /usr/bin/grep -i 'usb\|removable' | /usr/bin/grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
+          # Get all USB/removable boot entries. Plain $-syntax — same envsubst
+          # whitelist + 'EOF' heredoc story as install-python.sh / setup-raid.sh /
+          # usb-mount.sh / install-nginx.sh. (Earlier draft over-escaped with $$
+          # and tripped exactly the bug #910 fixed in install-nvidia.sh.)
+          USB_LIST=$(/usr/bin/efibootmgr -v | /usr/bin/grep -i 'usb\|removable' | /usr/bin/grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
 
-          if [[ -n "$$USB_LIST" ]]; then
-            for i in $$USB_LIST; do
-              echo "disable-usb-boot: disabling boot entry Boot$$i"
-              /usr/bin/efibootmgr -A -b "$$i" || true
+          if [[ -n "$USB_LIST" ]]; then
+            for i in $USB_LIST; do
+              echo "disable-usb-boot: disabling boot entry Boot$i"
+              /usr/bin/efibootmgr -A -b "$i" || true
             done
-            
+
             # Also remove them from the current BootOrder
-            CURRENT=$$(/usr/bin/efibootmgr | /usr/bin/grep -oP 'BootOrder: \K.*' || true)
-            if [[ -n "$$CURRENT" ]]; then
-              NEW_ORDER="$$CURRENT"
-              for i in $$USB_LIST; do
-                NEW_ORDER=$$(echo "$$NEW_ORDER" | sed -E "s/,$$i|^$$i,//; s/$$i//")
+            CURRENT=$(/usr/bin/efibootmgr | /usr/bin/grep -oP 'BootOrder: \K.*' || true)
+            if [[ -n "$CURRENT" ]]; then
+              NEW_ORDER="$CURRENT"
+              for i in $USB_LIST; do
+                NEW_ORDER=$(echo "$NEW_ORDER" | sed -E "s/,$i|^$i,//; s/$i//")
               done
               # Append them to the end so they are technically bootable if selected manually
-              NEW_ORDER=$$(echo "$$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$//')
-              for i in $$USB_LIST; do
-                NEW_ORDER="$$NEW_ORDER,$$i"
+              NEW_ORDER=$(echo "$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$//')
+              for i in $USB_LIST; do
+                NEW_ORDER="$NEW_ORDER,$i"
               done
-              NEW_ORDER=$$(echo "$$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$$//')
-              
-              echo "disable-usb-boot: setting new BootOrder to $$NEW_ORDER"
-              /usr/bin/efibootmgr -o "$$NEW_ORDER" || true
+              NEW_ORDER=$(echo "$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$//')
+
+              echo "disable-usb-boot: setting new BootOrder to $NEW_ORDER"
+              /usr/bin/efibootmgr -o "$NEW_ORDER" || true
             fi
           else
             echo "disable-usb-boot: no USB boot entries found"
@@ -1421,6 +1654,33 @@ ${SERVICEBAY_SSH_PRIV}
         name: ${HOST_USER}
       group:
         name: ${HOST_USER}
+
+    # Enable the ServiceBay trigger path on first boot. Same enablement
+    # story as install-nginx above — user units need an explicit wants/
+    # symlink at Ignition time. Without this, the marker can appear but
+    # servicebay.service would never get triggered (its ConditionPathExists
+    # would skip the boot-time activation forever).
+    - path: /var/home/${HOST_USER}/.config/systemd/user/default.target.wants/servicebay-trigger.path
+      target: /var/home/${HOST_USER}/.config/systemd/user/servicebay-trigger.path
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+
+    # Enable disable-usb-boot on first boot. Same Ignition story as the
+    # other system-level oneshots above — the unit file alone is not
+    # enough, the wants/ symlink has to be present at ignition time.
+    # Without this, BootOrder stays as the live ISO put it and the box
+    # boots the USB again on the next reboot (the #930 loop).
+    - path: /etc/systemd/system/multi-user.target.wants/disable-usb-boot.service
+      target: /etc/systemd/system/disable-usb-boot.service
+
+    # Enable the NVIDIA CDI retry timer. Same Ignition story as the
+    # other wants/ symlinks above — for .timer units the wants/ dir
+    # is timers.target.wants. Without this the timer never starts and
+    # CDI is never generated even though the unit file is present.
+    - path: /etc/systemd/system/timers.target.wants/install-nvidia-cdi.timer
+      target: /etc/systemd/system/install-nvidia-cdi.timer
 
     # Enable restore-usb-boot on first boot
     - path: /etc/systemd/system/multi-user.target.wants/restore-usb-boot.service
@@ -2230,51 +2490,105 @@ chmod +x "$PRE_INSTALL"
 POST_INSTALL="$BUILD_DIR/post-install.sh"
 cat > "$POST_INSTALL" <<'POSTINST'
 #!/usr/bin/env bash
+# Runs from the live-USB environment AFTER coreos-installer has written
+# FCoS to the SSD and registered the new EFI boot entry, BEFORE the
+# system reboots into the installed OS for the first time.
+#
+# Goal: make the FIRST reboot land on installed FCoS, not back into the
+# live USB. Without this, the BIOS happily picks the still-first USB
+# entry from BootOrder, the live ISO runs the install again, the OS
+# reboots, the BIOS picks the USB again, ... — the #930 reboot loop.
+#
+# Strategy (defense in depth):
+#   1. Modify BootOrder so the OS entry is first and USB entries are
+#      pushed to the end. Persistent across reboots.
+#   2. Set BootNext to the OS entry. One-shot override the BIOS
+#      consumes on the next boot — this is the bulletproof guarantee
+#      even if (1) somehow fails or the BIOS reverts NVRAM writes.
+#
+# After we reach the installed OS, disable-usb-boot.service then
+# permanently deactivates USB entries with `efibootmgr -A` so the
+# user can leave the USB plugged in without re-entering the loop.
+#
+# Verbose throughout — any failure visible in the live-ISO console.
+
 set -euo pipefail
-# After install: set the installed OS disk as first boot so we don't loop
-ENTRY=$(efibootmgr -v | grep -i -m1 '\\EFI\\\(fedora\|coreos\|boot\)\\\' | grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
+
+echo "post-install: starting (date=$(date -u +%FT%TZ))"
+echo "post-install: efibootmgr -v before:"
+efibootmgr -v || true
+echo "----"
+
+# Find the installed-OS boot entry. Match by EFI loader path first
+# (the most specific signal — entries like \EFI\fedora\shimx64.efi),
+# then fall back to entry-label patterns. Using ERE (-E) throughout
+# to avoid the BRE \(...\) escaping minefield the previous version
+# tripped over.
+ENTRY=$(efibootmgr -v | grep -i -m1 -E '\\EFI\\(fedora|coreos|boot)\\' | grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
 if [[ -z "$ENTRY" ]]; then
-  ENTRY=$(efibootmgr | grep -i -m1 'fedora\|coreos\|Linux Boot Manager' | grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
+  ENTRY=$(efibootmgr | grep -i -m1 -E 'fedora|coreos|Linux Boot Manager' | grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
 fi
 
-if [[ -n "$ENTRY" ]]; then
-  CURRENT=$(efibootmgr | grep -oP 'BootOrder: \K.*' || true)
-  if [[ -n "$CURRENT" ]]; then
-    CURRENT_WITHOUT_ENTRY=$(echo "$CURRENT" | sed -E "s/,$ENTRY|^$ENTRY,//; s/$ENTRY//")
-    NEW_ORDER="$ENTRY,$CURRENT_WITHOUT_ENTRY"
-    
-    USB_LIST=$(efibootmgr -v | grep -i 'usb\|removable' | grep -oP 'Boot\K[0-9A-Fa-f]+' | tr '\n' ',' | sed 's/,$//' || true)
-    if [[ -n "$USB_LIST" ]]; then
-      IFS=',' read -ra ADDR <<< "$USB_LIST"
-      DEMOTED=""
-      for i in "${ADDR[@]}"; do
-        if [[ "$i" != "$ENTRY" ]]; then
-          NEW_ORDER=$(echo "$NEW_ORDER" | sed -E "s/,$i|^$i,//; s/$i//")
-          DEMOTED="$DEMOTED,$i"
-        fi
-      done
-      NEW_ORDER=$(echo "$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$//')
-      if [[ -n "$DEMOTED" ]]; then
-        NEW_ORDER="$NEW_ORDER$DEMOTED"
-      fi
-    fi
-    NEW_ORDER=$(echo "$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$//')
-    
-    efibootmgr -o "$NEW_ORDER"
-    
-    VERIFY=$(efibootmgr | grep -oP 'BootOrder: \K.*' || true)
-    if [[ "$VERIFY" == "$NEW_ORDER" ]]; then
-      echo "post-install: boot order successfully set and verified to $NEW_ORDER (disk first, USBs demoted)"
-    else
-      echo "post-install: WARNING, boot order verification mismatch. Expected $NEW_ORDER, got $VERIFY"
-    fi
-  else
-    echo "post-install: current BootOrder is empty, setting order to $ENTRY"
-    efibootmgr -o "$ENTRY"
-  fi
-else
-  echo "post-install: no OS boot entry found, boot order unchanged"
+if [[ -z "$ENTRY" ]]; then
+  echo "post-install: WARNING — no OS boot entry detected; nothing to promote." >&2
+  echo "post-install: BootOrder + BootNext unchanged. Operator will need to pick the SSD from the BIOS boot menu on first boot." >&2
+  exit 0
 fi
+
+echo "post-install: OS boot entry = Boot$ENTRY"
+
+# --- BootOrder: OS first, USB last ---
+
+CURRENT=$(efibootmgr | grep -oP 'BootOrder: \K.*' || true)
+if [[ -z "$CURRENT" ]]; then
+  echo "post-install: BootOrder was empty; setting to $ENTRY"
+  efibootmgr -o "$ENTRY"
+else
+  # strip OS entry from current order, then prepend it
+  WITHOUT_ENTRY=$(echo "$CURRENT" | sed -E "s/(^|,)$ENTRY(,|\$)/\1\2/" | sed -E 's/^,+//; s/,+$//; s/,,+/,/g')
+  NEW_ORDER="$ENTRY${WITHOUT_ENTRY:+,$WITHOUT_ENTRY}"
+
+  # collect USB / removable entries
+  USB_LIST=$(efibootmgr -v | grep -i -E 'usb|removable' | grep -oP 'Boot\K[0-9A-Fa-f]+' | tr '\n' ',' | sed 's/,$//' || true)
+  if [[ -n "$USB_LIST" ]]; then
+    DEMOTED=""
+    IFS=',' read -ra USB_ARR <<< "$USB_LIST"
+    for u in "${USB_ARR[@]}"; do
+      if [[ "$u" != "$ENTRY" ]]; then
+        # remove $u from NEW_ORDER if present
+        NEW_ORDER=$(echo "$NEW_ORDER" | sed -E "s/(^|,)$u(,|\$)/\1\2/" | sed -E 's/^,+//; s/,+$//; s/,,+/,/g')
+        DEMOTED="${DEMOTED:+$DEMOTED,}$u"
+      fi
+    done
+    [[ -n "$DEMOTED" ]] && NEW_ORDER="$NEW_ORDER,$DEMOTED"
+  fi
+  NEW_ORDER=$(echo "$NEW_ORDER" | sed -E 's/^,+//; s/,+$//; s/,,+/,/g')
+
+  echo "post-install: setting BootOrder $CURRENT -> $NEW_ORDER"
+  efibootmgr -o "$NEW_ORDER" || echo "post-install: WARNING — efibootmgr -o exited non-zero" >&2
+fi
+
+# --- BootNext: one-shot override for the FIRST reboot ---
+#
+# Even if the BootOrder write above is reverted by the BIOS or another
+# layer, BootNext wins for the next boot. The BIOS clears BootNext
+# automatically after consuming it, so this only redirects the single
+# critical first reboot — subsequent reboots fall through to BootOrder
+# (which we also set above; disable-usb-boot.service will permanently
+# demote USB once we're in installed FCoS).
+echo "post-install: setting BootNext = $ENTRY (one-shot override for first reboot)"
+efibootmgr -n "$ENTRY" || echo "post-install: WARNING — efibootmgr -n exited non-zero" >&2
+
+# --- Verify ---
+VERIFY_ORDER=$(efibootmgr | grep -oP 'BootOrder: \K.*' || true)
+VERIFY_NEXT=$(efibootmgr | grep -oP 'BootNext: \K[0-9A-Fa-f]+' || true)
+echo "post-install: after — BootOrder=$VERIFY_ORDER  BootNext=$VERIFY_NEXT"
+if [[ "${VERIFY_NEXT,,}" == "${ENTRY,,}" ]]; then
+  echo "post-install: BootNext set successfully — first reboot will pick installed FCoS"
+else
+  echo "post-install: WARNING — BootNext does not match expected $ENTRY; operator may need to pick SSD from BIOS boot menu" >&2
+fi
+echo "post-install: done"
 POSTINST
 
 chmod +x "$POST_INSTALL"
