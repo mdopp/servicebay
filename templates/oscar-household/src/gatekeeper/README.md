@@ -57,7 +57,7 @@ Test from another shell with a tiny Wyoming client (`wyoming-satellite` CLI or t
 
 ## Image
 
-Built from this directory by [`.github/workflows/build-images.yml`](../.github/workflows/build-images.yml) on every push to `main` and on tags. Published as `ghcr.io/mdopp/oscar-gatekeeper:latest`. To rebuild locally: `podman build -t ghcr.io/mdopp/oscar-gatekeeper:latest -f gatekeeper/Dockerfile .` (from the repo root).
+Built from this directory by [`.github/workflows/build-images.yml`](../../../../.github/workflows/build-images.yml) on every push to `main` and on tags. Published as `ghcr.io/mdopp/oscar-gatekeeper:latest`. To rebuild locally: `podman build -t ghcr.io/mdopp/oscar-gatekeeper:latest -f templates/oscar-household/src/gatekeeper/Dockerfile .` (from the repo root).
 
 ## Open points
 
@@ -65,4 +65,4 @@ Built from this directory by [`.github/workflows/build-images.yml`](../.github/w
 - **Server-side wakeword orchestration** — Phase 0 trusts the satellite to do wakeword (HA Voice PE does it locally). For software clients without VAD, the gatekeeper needs an extra event flow that connects to `OPENWAKEWORD_URI`.
 - **Logging contract** — the inlined `gatekeeper.logging` helper is a placeholder until [`mdopp/servicebay`](https://github.com/mdopp/servicebay) ships a platform-wide structured-logging contract every template can follow.
 
-Architecture: [`../oscar-architecture.md`](../oscar-architecture.md) → "gatekeeper (OSCAR-published image)".
+Architecture: [`../../../../oscar-architecture.md`](../../../../oscar-architecture.md) → "gatekeeper (OSCAR-published image)".

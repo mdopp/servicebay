@@ -30,7 +30,7 @@ def _info() -> Info:
                 name="oscar-gatekeeper-asr",
                 description="OSCAR gatekeeper — ASR via internal Whisper",
                 attribution=Attribution(
-                    name="OSCAR", url="https://github.com/mdopp/oscar"
+                    name="OSCAR", url="https://github.com/mdopp/servicebay"
                 ),
                 installed=True,
                 models=[
@@ -38,7 +38,7 @@ def _info() -> Info:
                         name="oscar-gatekeeper",
                         description="Gatekeeper pipeline (Whisper -> HERMES -> Piper)",
                         attribution=Attribution(
-                            name="OSCAR", url="https://github.com/mdopp/oscar"
+                            name="OSCAR", url="https://github.com/mdopp/servicebay"
                         ),
                         installed=True,
                         languages=["de", "en"],
@@ -51,7 +51,7 @@ def _info() -> Info:
                 name="oscar-gatekeeper-tts",
                 description="OSCAR gatekeeper — TTS via internal Piper",
                 attribution=Attribution(
-                    name="OSCAR", url="https://github.com/mdopp/oscar"
+                    name="OSCAR", url="https://github.com/mdopp/servicebay"
                 ),
                 installed=True,
                 voices=[],

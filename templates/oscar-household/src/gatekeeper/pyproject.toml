@@ -27,8 +27,8 @@ test = [
 gatekeeper = "gatekeeper.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/mdopp/oscar"
-Spec = "https://github.com/mdopp/oscar/blob/main/gatekeeper/README.md"
+Homepage = "https://github.com/mdopp/servicebay"
+Spec = "https://github.com/mdopp/servicebay/blob/main/templates/oscar-household/src/gatekeeper/README.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
