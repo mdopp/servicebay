@@ -16,13 +16,13 @@ on:
     branches: [main]
     tags: ['v*']
     paths:
-      - 'gatekeeper/**'
-      - 'schema/**'
+      - 'templates/oscar-household/src/gatekeeper/**'
+      - 'templates/oscar-household/src/schema/**'
       - '.github/workflows/build-images.yml'
   pull_request:
     paths:
-      - 'gatekeeper/**'
-      - 'schema/**'
+      - 'templates/oscar-household/src/gatekeeper/**'
+      - 'templates/oscar-household/src/schema/**'
       - '.github/workflows/build-images.yml'
 
 permissions:
@@ -38,10 +38,10 @@ jobs:
       matrix:
         include:
           - image: oscar-gatekeeper
-            dockerfile: gatekeeper/Dockerfile
+            dockerfile: templates/oscar-household/src/gatekeeper/Dockerfile
             description: "OSCAR Wyoming-to-Hermes bridge — STT/TTS pipeline orchestration, Phase-2 speaker ID. Runs as a container inside oscar-household; reaches ServiceBay's voice template via host loopback (both pods hostNetwork)."
           - image: oscar-household-init
-            dockerfile: schema/Dockerfile
+            dockerfile: templates/oscar-household/src/schema/Dockerfile
             description: "OSCAR schema-init sidecar — runs alembic upgrade head against oscar-household's local SQLite (oscar.db) on every pod start. Idempotent."
     steps:
       - name: Checkout

@@ -15,11 +15,11 @@ WORKDIR /opt/oscar-schema
 # Install runtime deps. No application package — we only need Alembic +
 # SQLAlchemy to drive op.execute() against SQLite. The migration files
 # themselves are baked in below.
-COPY schema/pyproject.toml ./
+COPY templates/oscar-household/src/schema/pyproject.toml ./
 RUN pip install --no-cache-dir alembic>=1.13 sqlalchemy>=2.0
 
-COPY schema/alembic.ini ./
-COPY schema/migrations ./migrations
+COPY templates/oscar-household/src/schema/alembic.ini ./
+COPY templates/oscar-household/src/schema/migrations ./migrations
 
 # Default entrypoint runs the upgrade. The pod manifest may override
 # with `args: ["downgrade", "base"]` etc.; default is idempotent upgrade.

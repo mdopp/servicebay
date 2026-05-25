@@ -7,8 +7,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-COPY gatekeeper/pyproject.toml gatekeeper/README.md /app/
-COPY gatekeeper/src /app/src
+COPY templates/oscar-household/src/gatekeeper/pyproject.toml templates/oscar-household/src/gatekeeper/README.md /app/
+COPY templates/oscar-household/src/gatekeeper/src /app/src
 
 RUN pip install --no-cache-dir /app
 
