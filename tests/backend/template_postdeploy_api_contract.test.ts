@@ -22,7 +22,7 @@
  *     available to the script)
  *   - extract the literal path (giving up at any `{var}` segment past
  *     the host placeholder, since those are runtime-substituted)
- *   - resolve each path against `src/app/api/<path>/route.ts`,
+ *   - resolve each path against `packages/frontend/src/app/api/<path>/route.ts`,
  *     allowing `[param]` segments to match any literal
  *   - fail if any post-deploy script references an endpoint that
  *     doesn't exist
@@ -89,7 +89,7 @@ function extractEndpoints(scriptPath: string, template: string): EndpointRef[] {
 }
 
 /**
- * Resolve `/api/foo/bar` to an existing `src/app/api/foo/bar/route.ts`,
+ * Resolve `/api/foo/bar` to an existing `packages/frontend/src/app/api/foo/bar/route.ts`,
  * allowing `[param]` directory segments to act as wildcards (the way
  * Next.js does at runtime). Returns the resolved path on success, null
  * on miss.
@@ -149,7 +149,7 @@ describe('template post-deploy.py → ServiceBay API contract (#584)', () => {
         if (!resolved) {
           offenders.push(
             `${ref.file}:${ref.line} → ${ref.path} ` +
-            `(from ${ref.rawUrl}) — no matching route under src/app/api/`,
+            `(from ${ref.rawUrl}) — no matching route under packages/frontend/src/app/api/`,
           );
         }
       }

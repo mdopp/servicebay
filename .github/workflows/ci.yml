@@ -21,16 +21,28 @@ name: CI
 # ANY failure blocks merge. Adoption-ratio floors and per-file ratchets in the
 # config files mean today's debt passes — new regressions do not.
 #
-# Trigger model: PR-only.
-#   - The post-merge `push: main` run was re-validating the same tree as the PR
-#     tip (squash-merge produces identical content) and added ~5 min per merge
-#     for no signal — dropped.
-#   - release-please PRs (head_ref `release-please--*`) only touch package.json,
-#     CHANGELOG.md, and .release-please-manifest.json; the underlying code was
-#     already validated when those PRs were merged. Skipped via job-level `if`.
+# Trigger model: PR-first + targeted post-merge `push: main` (#972).
+#   - PRs run the full check matrix.
+#   - On `push: main`, only the `test` job runs. Direct commits to `main`
+#     (this repo allows them; `main` is not branch-protected because of
+#     release-please's workflow) bypassed CI entirely under the previous
+#     PR-only model — observed live in this session: a direct-to-main
+#     commit landed with a doc-sync test that the contributor hadn't
+#     re-run locally, and the failure was only caught at the next push's
+#     husky hook. A 30-second post-merge test run on `main` catches that
+#     class of regression cheaply.
+#   - The full check matrix still does NOT run on `push: main` — that
+#     would re-validate the same tree as the PR tip for squash-merges
+#     (~5 min for no signal). Only `test` runs.
+#   - release-please PRs (head_ref `release-please--*`) only touch
+#     package.json, CHANGELOG.md, and .release-please-manifest.json;
+#     the underlying code was already validated when those PRs were
+#     merged. Skipped via job-level `if`.
 
 on:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
 
 concurrency:
@@ -40,7 +52,7 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,7 +71,7 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
-    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -78,7 +90,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -123,7 +135,7 @@ jobs:
 
   invariants:
     runs-on: ubuntu-latest
-    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -142,7 +154,7 @@ jobs:
 
   depcruise:
     runs-on: ubuntu-latest
-    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -161,7 +173,7 @@ jobs:
 
   semgrep:
     runs-on: ubuntu-latest
-    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     container:
       image: returntocorp/semgrep
     steps:
