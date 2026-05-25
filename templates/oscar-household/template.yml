@@ -17,6 +17,20 @@ metadata:
     # 127.0.0.1:10300 / 10200, so it must be running too if the gatekeeper
     # should actually do something.
     servicebay.dependencies: "hermes,voice"
+    # TCP probe against the gatekeeper's Wyoming listener — once that
+    # socket accepts, the pod is at least minimally functional (init
+    # container is one-shot and has already touched the SQLite schema).
+    # ServiceBay's `household` stack relies on this signal to drop
+    # oscar-household from "unknown" to "ready". Without it the whole
+    # household stack never reports ready=true even when everything is
+    # actually running.
+    servicebay.healthcheck: |
+      kind: tcp
+      host: 127.0.0.1
+      port: 10700
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 3m
 spec:
   # hostNetwork so:
   #   - the gatekeeper reaches the ServiceBay `voice` template's Wyoming
