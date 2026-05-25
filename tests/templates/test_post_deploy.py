@@ -770,5 +770,68 @@ class HermesScript(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+class OscarHouseholdScript(unittest.TestCase):
+    def test_happy_path_configures_mcp_and_restarts(self):
+        import urllib.request
+        m = load_script("oscar-household")
+        import tempfile
+        import shutil
+
+        tmp = tempfile.mkdtemp()
+        try:
+            # Write a mock config.yaml file that the post-deploy script will read and merge into.
+            hermes_dir = Path(tmp) / "hermes"
+            hermes_dir.mkdir(parents=True, exist_ok=True)
+            config_path = hermes_dir / "config.yaml"
+            config_path.write_text("model:\n  provider: custom\n  model: gemma3:4b\n")
+
+            env = {
+                "DATA_DIR": tmp,
+                "SB_API_URL": "http://localhost:3000",
+                "HOST": "192.168.1.100",
+                "HERMES_API_PORT": "8642",
+                "HERMES_API_KEY": "hermes-secret-key",
+                "HA_MCP_URL": "http://localhost:8123/mcp",
+                "HA_MCP_TOKEN": "ha-token",
+                "SERVICEBAY_MCP_URL": "http://localhost:5888/mcp",
+                "SERVICEBAY_MCP_TOKEN": "sb-token",
+                "OSCAR_DEBUG_MODE": "true",
+                "TZ": "Europe/Berlin",
+            }
+
+            fake_urlopen = fake_urlopen_factory({
+                "/health": {
+                    "status": 200,
+                    "body": {"status": "ok"}
+                },
+                "/api/services/hermes/action": {
+                    "status": 200,
+                    "body": {"ok": True}
+                }
+            })
+
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch("time.sleep", return_value=None):
+                rc, out = capture_main(m)
+
+            self.assertEqual(rc, 0)
+            self.assertIn("config.yaml mcp_servers block updated", out)
+            self.assertIn("hermes restart requested via ServiceBay API", out)
+
+            # Check config file content includes merged mcp_servers block
+            config_content = config_path.read_text()
+            self.assertIn("mcp_servers:", config_content)
+            self.assertIn("ha-mcp:", config_content)
+            self.assertIn('url: "http://localhost:8123/mcp"', config_content)
+            self.assertIn('Authorization: "Bearer ha-token"', config_content)
+            self.assertIn("servicebay-mcp:", config_content)
+            self.assertIn('url: "http://localhost:5888/mcp"', config_content)
+            self.assertIn('Authorization: "Bearer sb-token"', config_content)
+
+        finally:
+            shutil.rmtree(tmp)
+
+
 if __name__ == "__main__":
     unittest.main()
