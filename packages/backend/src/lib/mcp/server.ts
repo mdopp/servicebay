@@ -69,6 +69,7 @@ const MUTATING_TOOLS = new Set([
   'run_backup', 'restore_backup',
   'update_config', 'exec_command', 'refresh_agent',
   'merge_unmanaged_bundle',
+  'set_boot_next_usb',
 ]);
 
 /**
@@ -109,6 +110,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   delete_service: 'destroy', delete_health_check: 'destroy',
   remove_proxy_route: 'destroy', restore_backup: 'destroy',
   purge_trashed_service: 'destroy',
+  set_boot_next_usb: 'destroy',
   // exec (shell — own scope so tokens can grant config writes without it)
   exec_command: 'exec',
 };
@@ -144,6 +146,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   'remove_proxy_route', 'restore_backup',
   'update_config', 'exec_command',
   'merge_unmanaged_bundle',
+  'set_boot_next_usb',
 ]);
 
 /**
@@ -1028,6 +1031,122 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     async ({ bundleId, newName, node, dryRun }) => {
       const nodeName = await resolveNode(node);
       return mergeUnmanagedBundleHandler({ bundleId, newName, nodeName, dryRun });
+    },
+  );
+
+  // --- Set Boot Next USB (#930) ---
+  // Gated under 'destroy' scope. Sets BootNext to a USB UEFI entry and optionally reboots.
+  server.tool(
+    'set_boot_next_usb',
+    'Configure UEFI BootNext one-shot target to boot from the installation USB next reboot, or clear current settings.',
+    {
+      action: z.enum(['list', 'set', 'clear']).optional().default('set').describe('Action: list candidates, set boot next, or clear active boot next'),
+      bootNum: z.string().regex(/^[0-9A-Fa-f]{4}$/, 'Must be a 4-digit hex number').optional().describe('4-digit hex boot number (required for set if auto-detect not desired)'),
+      reboot: z.boolean().optional().default(false).describe('Whether to reboot the system immediately after setting'),
+      node: nodeParam,
+    },
+    async ({ action, bootNum, reboot, node }) => {
+      const nodeName = await resolveNode(node);
+      try {
+        const agent = agentManager.getAgent(nodeName);
+        
+        if (action === 'clear') {
+          const res = await agent.sendCommand('exec', { command: 'efibootmgr -N' }) as { code?: number; stderr?: string };
+          if (res.code !== 0) {
+            return errorResult(`Failed to clear BootNext: ${res.stderr}`);
+          }
+          return textResult({ success: true, message: 'UEFI BootNext cleared successfully.' });
+        }
+        
+        if (action === 'list') {
+          const res = await agent.sendCommand('exec', { command: 'efibootmgr -v' }) as { code?: number; stdout?: string };
+          if (res.code !== 0) {
+            return errorResult('Failed to query efibootmgr');
+          }
+          const stdout = res.stdout ?? '';
+          const entries: Array<{ bootNum: string; name: string; active: boolean; description: string; current: boolean }> = [];
+          const lines = stdout.split('\n');
+          let bootNext: string | null = null;
+          let bootCurrent: string | null = null;
+          let bootOrder: string[] = [];
+          
+          for (const line of lines) {
+            if (line.startsWith('BootNext:')) {
+              bootNext = line.replace('BootNext:', '').trim();
+            } else if (line.startsWith('BootCurrent:')) {
+              bootCurrent = line.replace('BootCurrent:', '').trim();
+            } else if (line.startsWith('BootOrder:')) {
+              bootOrder = line.replace('BootOrder:', '').trim().split(',');
+            } else if (line.startsWith('Boot')) {
+              const match = line.match(/^Boot([0-9A-Fa-f]+)(\*?)\s+(.+)$/);
+              if (match) {
+                const num = match[1];
+                const active = match[2] === '*';
+                const description = match[3];
+                entries.push({
+                  bootNum: num,
+                  name: description.split('\t')[0] || description,
+                  active,
+                  description,
+                  current: bootCurrent === num,
+                });
+              }
+            }
+          }
+          const candidates = entries.filter(e => 
+            e.description.toLowerCase().includes('usb') || 
+            e.description.toLowerCase().includes('removable') ||
+            e.description.toLowerCase().includes('disk') ||
+            e.description.includes('\\EFI\\boot\\')
+          );
+          return textResult({ entries, candidates, bootNext, bootCurrent, bootOrder });
+        }
+        
+        // action === 'set'
+        let targetBootNum = bootNum;
+        if (!targetBootNum) {
+          const res = await agent.sendCommand('exec', { command: 'efibootmgr -v' }) as { code?: number; stdout?: string };
+          if (res.code === 0) {
+            const stdout = res.stdout ?? '';
+            const lines = stdout.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('Boot') && !line.startsWith('BootOrder') && !line.startsWith('BootNext') && !line.startsWith('BootCurrent')) {
+                const match = line.match(/^Boot([0-9A-Fa-f]+)(\*?)\s+(.+)$/);
+                if (match) {
+                  const num = match[1];
+                  const desc = match[3];
+                  if (desc.toLowerCase().includes('usb') || desc.toLowerCase().includes('removable') || desc.includes('\\EFI\\boot\\')) {
+                    targetBootNum = num;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        if (!targetBootNum) {
+          return errorResult('No USB boot entry found or specified');
+        }
+        
+        await agent.sendCommand('exec', { command: `efibootmgr -A -b ${targetBootNum}` });
+        const resBootNext = await agent.sendCommand('exec', { command: `efibootmgr -n ${targetBootNum}` }) as { code?: number; stderr?: string };
+        if (resBootNext.code !== 0) {
+          return errorResult(`Failed to set BootNext: ${resBootNext.stderr}`);
+        }
+        
+        if (reboot) {
+          agent.sendCommand('exec', { command: 'systemctl reboot' }).catch(() => {});
+        }
+        
+        return textResult({
+          success: true,
+          bootNum: targetBootNum,
+          message: reboot ? 'One-shot BootNext set. System is rebooting.' : 'One-shot BootNext set successfully.',
+        });
+      } catch (err: unknown) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
     },
   );
 

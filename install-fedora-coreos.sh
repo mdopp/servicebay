@@ -829,6 +829,72 @@ ${SERVICEBAY_SSH_PRIV}
           [Install]
           WantedBy=multi-user.target
 
+    # Script to disable USB/removable boot entries on first successful SSD boot.
+    # This prevents the BIOS from booting the live USB again on subsequent reboots.
+    - path: /usr/local/bin/disable-usb-boot.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+
+          if [ -f /var/lib/disable-usb-boot-done ]; then
+              echo "disable-usb-boot: already completed, skipping"
+              exit 0
+          fi
+
+          echo "disable-usb-boot: neutralizing USB UEFI boot entries..."
+          # Get all USB/removable boot entries
+          USB_LIST=$$(/usr/bin/efibootmgr -v | /usr/bin/grep -i 'usb\|removable' | /usr/bin/grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
+
+          if [[ -n "$$USB_LIST" ]]; then
+            for i in $$USB_LIST; do
+              echo "disable-usb-boot: disabling boot entry Boot$$i"
+              /usr/bin/efibootmgr -A -b "$$i" || true
+            done
+            
+            # Also remove them from the current BootOrder
+            CURRENT=$$(/usr/bin/efibootmgr | /usr/bin/grep -oP 'BootOrder: \K.*' || true)
+            if [[ -n "$$CURRENT" ]]; then
+              NEW_ORDER="$$CURRENT"
+              for i in $$USB_LIST; do
+                NEW_ORDER=$$(echo "$$NEW_ORDER" | sed -E "s/,$$i|^$$i,//; s/$$i//")
+              done
+              # Append them to the end so they are technically bootable if selected manually
+              NEW_ORDER=$$(echo "$$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$//')
+              for i in $$USB_LIST; do
+                NEW_ORDER="$$NEW_ORDER,$$i"
+              done
+              NEW_ORDER=$$(echo "$$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$$//')
+              
+              echo "disable-usb-boot: setting new BootOrder to $$NEW_ORDER"
+              /usr/bin/efibootmgr -o "$$NEW_ORDER" || true
+            fi
+          else
+            echo "disable-usb-boot: no USB boot entries found"
+          fi
+
+          touch /var/lib/disable-usb-boot-done
+          echo "disable-usb-boot: completed"
+
+    # Systemd unit to run the disable-usb-boot script once on first SSD boot
+    - path: /etc/systemd/system/disable-usb-boot.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Disable USB/removable boot entries on first SSD boot
+          ConditionPathExists=!/var/lib/disable-usb-boot-done
+          After=local-fs.target
+          
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/bin/bash /usr/local/bin/disable-usb-boot.sh
+          
+          [Install]
+          WantedBy=multi-user.target
+
     # Re-install config-merge script (#331). On a re-install, setup-raid
     # leaves the existing config.json alone (so runtime-managed values
     # like encrypted password hashes + LLDAP creds + NPM creds + post-
@@ -2136,12 +2202,46 @@ cat > "$POST_INSTALL" <<'POSTINST'
 #!/usr/bin/env bash
 set -euo pipefail
 # After install: set the installed OS disk as first boot so we don't loop
-ENTRY=$(efibootmgr | grep -i -m1 'fedora\|coreos\|Linux Boot Manager' | grep -oP 'Boot\K[0-9A-Fa-f]+')
+ENTRY=$(efibootmgr -v | grep -i -m1 '\\EFI\\\(fedora\|coreos\|boot\)\\\' | grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
+if [[ -z "$ENTRY" ]]; then
+  ENTRY=$(efibootmgr | grep -i -m1 'fedora\|coreos\|Linux Boot Manager' | grep -oP 'Boot\K[0-9A-Fa-f]+' || true)
+fi
+
 if [[ -n "$ENTRY" ]]; then
-  CURRENT=$(efibootmgr | grep -oP 'BootOrder: \K.*')
-  NEW="$ENTRY,$(echo "$CURRENT" | sed "s/$ENTRY,\?//;s/,$//")"
-  efibootmgr -o "$NEW"
-  echo "post-install: boot order set to $NEW (disk first)"
+  CURRENT=$(efibootmgr | grep -oP 'BootOrder: \K.*' || true)
+  if [[ -n "$CURRENT" ]]; then
+    CURRENT_WITHOUT_ENTRY=$(echo "$CURRENT" | sed -E "s/,$ENTRY|^$ENTRY,//; s/$ENTRY//")
+    NEW_ORDER="$ENTRY,$CURRENT_WITHOUT_ENTRY"
+    
+    USB_LIST=$(efibootmgr -v | grep -i 'usb\|removable' | grep -oP 'Boot\K[0-9A-Fa-f]+' | tr '\n' ',' | sed 's/,$//' || true)
+    if [[ -n "$USB_LIST" ]]; then
+      IFS=',' read -ra ADDR <<< "$USB_LIST"
+      DEMOTED=""
+      for i in "${ADDR[@]}"; do
+        if [[ "$i" != "$ENTRY" ]]; then
+          NEW_ORDER=$(echo "$NEW_ORDER" | sed -E "s/,$i|^$i,//; s/$i//")
+          DEMOTED="$DEMOTED,$i"
+        fi
+      done
+      NEW_ORDER=$(echo "$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$//')
+      if [[ -n "$DEMOTED" ]]; then
+        NEW_ORDER="$NEW_ORDER$DEMOTED"
+      fi
+    fi
+    NEW_ORDER=$(echo "$NEW_ORDER" | tr -s ',' | sed 's/^,//; s/,$//')
+    
+    efibootmgr -o "$NEW_ORDER"
+    
+    VERIFY=$(efibootmgr | grep -oP 'BootOrder: \K.*' || true)
+    if [[ "$VERIFY" == "$NEW_ORDER" ]]; then
+      echo "post-install: boot order successfully set and verified to $NEW_ORDER (disk first, USBs demoted)"
+    else
+      echo "post-install: WARNING, boot order verification mismatch. Expected $NEW_ORDER, got $VERIFY"
+    fi
+  else
+    echo "post-install: current BootOrder is empty, setting order to $ENTRY"
+    efibootmgr -o "$ENTRY"
+  fi
 else
   echo "post-install: no OS boot entry found, boot order unchanged"
 fi
