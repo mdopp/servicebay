@@ -1,0 +1,89 @@
+name: cleanup-caches
+
+# Reclaim GHA cache storage so the repo stays under the 10 GB / repo cap.
+#
+# Two triggers carry most of the load:
+#   - pull_request closed: a PR's caches go stale the moment it merges or
+#     closes. Each PR push spawns ~215 MiB of node-cache plus any matrix
+#     scopes, so wiping them on close is the highest-ROI cleanup.
+#   - schedule (Sunday): belt-and-braces sweep for caches that survived
+#     because a branch was deleted out-of-band, or main itself accumulated
+#     too many lockfile-keyed variants.
+#
+# Also exposed as workflow_dispatch for manual prunes when you're staring
+# at a "10.0 GB of 10 GB Used" warning.
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      max_age_days:
+        description: 'Delete caches whose last access is older than N days (scheduled/manual sweep).'
+        required: false
+        default: '14'
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete caches for the closed PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          set -euo pipefail
+          echo "Pruning caches for $BRANCH"
+          ids=$(gh cache list --ref "$BRANCH" --limit 100 --json id --jq '.[].id' || true)
+          if [ -z "$ids" ]; then
+            echo "No caches found for $BRANCH"
+            exit 0
+          fi
+          echo "$ids" | while read -r id; do
+            [ -n "$id" ] || continue
+            echo "Deleting cache id=$id"
+            gh cache delete "$id" || true
+          done
+
+      - name: Delete caches older than the cutoff (scheduled / manual sweep)
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          MAX_AGE_DAYS: ${{ github.event.inputs.max_age_days || '14' }}
+        run: |
+          set -euo pipefail
+          cutoff_epoch=$(date -u -d "${MAX_AGE_DAYS} days ago" +%s)
+          echo "Cutoff: $(date -u -d "@$cutoff_epoch" +%Y-%m-%dT%H:%M:%SZ) (${MAX_AGE_DAYS} days)"
+          # `--sort last_accessed_at --order asc` walks oldest-first so we exit
+          # as soon as we hit a cache newer than the cutoff.
+          gh cache list --limit 100 --sort last_accessed_at --order asc \
+            --json id,lastAccessedAt,key,sizeInBytes \
+            --jq '.[] | [.id, .lastAccessedAt, .sizeInBytes, .key] | @tsv' \
+            | while IFS=$'\t' read -r id ts size key; do
+                ts_epoch=$(date -u -d "$ts" +%s)
+                if [ "$ts_epoch" -ge "$cutoff_epoch" ]; then
+                  echo "Reached cache newer than cutoff (id=$id last=$ts) — stopping."
+                  break
+                fi
+                printf 'Deleting id=%s size=%s last=%s key=%s\n' "$id" "$size" "$ts" "$key"
+                gh cache delete "$id" || true
+              done
+
+      - name: Report remaining cache usage
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "/repos/${{ github.repository }}/actions/cache/usage" \
+            --jq '"Active caches: \(.active_caches_count)  size: \(.active_caches_size_in_bytes / 1024 / 1024 | floor) MiB"'
