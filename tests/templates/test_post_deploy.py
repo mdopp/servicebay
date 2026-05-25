@@ -715,5 +715,132 @@ class ClaudeDevScript(unittest.TestCase):
         self.assertEqual(parse_credentials(out), [])
 
 
+class HermesScript(unittest.TestCase):
+    def test_happy_path_writes_config_and_restarts(self):
+        import urllib.request
+        m = load_script("hermes")
+        import tempfile
+        import shutil
+
+        tmp = tempfile.mkdtemp()
+        try:
+            env = {
+                "DATA_DIR": tmp,
+                "SB_API_URL": "http://localhost:3000",
+                "HOST": "192.168.1.100",
+                "HERMES_API_PORT": "8642",
+                "HERMES_API_KEY": "hermes-secret-key",
+                "HERMES_LLM_PROVIDER_URL": "http://127.0.0.1:11434/v1",
+                "HERMES_LLM_MODEL": "gemma3:4b",
+                "HERMES_DASHBOARD_PORT": "9119",
+            }
+
+            fake_urlopen = fake_urlopen_factory({
+                "/api/services/hermes/action": {
+                    "status": 200,
+                    "body": {"ok": True}
+                }
+            })
+
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch("time.sleep", return_value=None):
+                rc, out = capture_main(m)
+
+            self.assertEqual(rc, 0)
+            self.assertIn("wrote config.yaml", out)
+            self.assertIn("restart requested via ServiceBay API", out)
+            
+            # Check credentials emitted
+            creds = parse_credentials(out)
+            self.assertEqual(len(creds), 1)
+            self.assertEqual(creds[0]["service"], "Hermes Agent (API)")
+            self.assertEqual(creds[0]["url"], "http://192.168.1.100:8642")
+            self.assertEqual(creds[0]["password"], "hermes-secret-key")
+
+            # Check config file content
+            config_path = Path(tmp) / "hermes" / "config.yaml"
+            self.assertTrue(config_path.exists())
+            config_content = config_path.read_text()
+            self.assertIn("provider: custom", config_content)
+            self.assertIn("model: gemma3:4b", config_content)
+            self.assertIn("base_url: http://127.0.0.1:11434/v1", config_content)
+
+            # Check that templates/hermes/template.yml contains skills and notes volume mounts
+            template_path = REPO_ROOT / "templates" / "hermes" / "template.yml"
+            self.assertTrue(template_path.exists())
+            template_content = template_path.read_text()
+            self.assertIn("mountPath: /opt/data/skills/oscar", template_content)
+            self.assertIn("mountPath: /opt/data/notes", template_content)
+            self.assertIn("path: {{DATA_DIR}}/oscar-household/skills", template_content)
+            self.assertIn("path: {{DATA_DIR}}/file-share/data/notes", template_content)
+
+        finally:
+            shutil.rmtree(tmp)
+
+
+class OscarHouseholdScript(unittest.TestCase):
+    def test_happy_path_configures_mcp_and_restarts(self):
+        import urllib.request
+        m = load_script("oscar-household")
+        import tempfile
+        import shutil
+
+        tmp = tempfile.mkdtemp()
+        try:
+            # Write a mock config.yaml file that the post-deploy script will read and merge into.
+            hermes_dir = Path(tmp) / "hermes"
+            hermes_dir.mkdir(parents=True, exist_ok=True)
+            config_path = hermes_dir / "config.yaml"
+            config_path.write_text("model:\n  provider: custom\n  model: gemma3:4b\n")
+
+            env = {
+                "DATA_DIR": tmp,
+                "SB_API_URL": "http://localhost:3000",
+                "HOST": "192.168.1.100",
+                "HERMES_API_PORT": "8642",
+                "HERMES_API_KEY": "hermes-secret-key",
+                "HA_MCP_URL": "http://localhost:8123/mcp",
+                "HA_MCP_TOKEN": "ha-token",
+                "SERVICEBAY_MCP_URL": "http://localhost:5888/mcp",
+                "SERVICEBAY_MCP_TOKEN": "sb-token",
+                "OSCAR_DEBUG_MODE": "true",
+                "TZ": "Europe/Berlin",
+            }
+
+            fake_urlopen = fake_urlopen_factory({
+                "/health": {
+                    "status": 200,
+                    "body": {"status": "ok"}
+                },
+                "/api/services/hermes/action": {
+                    "status": 200,
+                    "body": {"ok": True}
+                }
+            })
+
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch("time.sleep", return_value=None):
+                rc, out = capture_main(m)
+
+            self.assertEqual(rc, 0)
+            self.assertIn("config.yaml mcp_servers block updated", out)
+            self.assertIn("hermes restart requested via ServiceBay API", out)
+
+            # Check config file content includes merged mcp_servers block
+            config_content = config_path.read_text()
+            self.assertIn("mcp_servers:", config_content)
+            self.assertIn("ha-mcp:", config_content)
+            self.assertIn('url: "http://localhost:8123/mcp"', config_content)
+            self.assertIn('Authorization: "Bearer ha-token"', config_content)
+            self.assertIn("servicebay-mcp:", config_content)
+            self.assertIn('url: "http://localhost:5888/mcp"', config_content)
+            self.assertIn('Authorization: "Bearer sb-token"', config_content)
+
+        finally:
+            shutil.rmtree(tmp)
+
+
 if __name__ == "__main__":
     unittest.main()

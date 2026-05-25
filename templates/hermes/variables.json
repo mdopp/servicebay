@@ -35,5 +35,14 @@
       "ssl_forced": true,
       "advanced_config": "__authelia_forward_auth__"
     }
+  },
+  "HASS_URL": {
+    "type": "text",
+    "description": "Optional: URL of your Home Assistant instance. Defaults to http://127.0.0.1:8123 (reachable because both pods share hostNetwork). When combined with HASS_TOKEN, turns on Hermes' native Home Assistant integration for device control on first start.",
+    "default": "http://127.0.0.1:8123"
+  },
+  "HASS_TOKEN": {
+    "type": "secret",
+    "description": "Optional: Home Assistant long-lived access token. When set, turns on Hermes' native Home Assistant integration for zero-code device control."
   }
 }

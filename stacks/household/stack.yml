@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Stack
+metadata:
+  name: household
+  annotations:
+    servicebay.label: "Household AI Assistant (OSCAR)"
+    servicebay.tier: "feature"
+    servicebay.depends-on-stacks: "basic"
+spec:
+  # Bundled templates: Home Assistant (device control), Voice (STT/TTS puck gateway), Ollama (Local LLM), Hermes (Conversational Agent), Oscar Household (Wyoming Bridge + Speaker-ID)
+  templates: [home-assistant, voice, ollama, hermes, oscar-household]

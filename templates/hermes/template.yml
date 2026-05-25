@@ -72,11 +72,19 @@ spec:
       value: "{{HERMES_API_KEY}}"
     - name: API_SERVER_CORS_ORIGINS
       value: "*"
+    - name: HASS_URL
+      value: "{{HASS_URL}}"
+    - name: HASS_TOKEN
+      value: "{{HASS_TOKEN}}"
     ports:
     - containerPort: {{HERMES_API_PORT}}
     volumeMounts:
     - mountPath: /opt/data
       name: hermes-data
+    - mountPath: /opt/data/skills/oscar
+      name: oscar-skills
+    - mountPath: /opt/data/notes
+      name: syncthing-notes
 
   # The Hermes web dashboard (config / API-key / session UI) runs as its
   # own `hermes dashboard` process — the HERMES_DASHBOARD* env vars are
@@ -108,4 +116,12 @@ spec:
   - name: hermes-data
     hostPath:
       path: {{DATA_DIR}}/hermes
+      type: DirectoryOrCreate
+  - name: oscar-skills
+    hostPath:
+      path: {{DATA_DIR}}/oscar-household/skills
+      type: DirectoryOrCreate
+  - name: syncthing-notes
+    hostPath:
+      path: {{DATA_DIR}}/file-share/data/notes
       type: DirectoryOrCreate
