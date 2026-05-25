@@ -42,12 +42,16 @@ spec:
   #     <host-ip>:<GATEKEEPER_PORT>
   hostNetwork: true
   restartPolicy: Always
-  containers:
-  # 1. oscar-household-init — one-shot Alembic against the local SQLite
-  #    file. Idempotent on every pod start; exits cleanly when migrations
-  #    are at head. The restartPolicy: Always above re-runs it on pod
-  #    restart, which is fine (idempotent) and gives us migration
-  #    convergence after image updates.
+  # oscar-household-init runs as a Kubernetes-style init container —
+  # podman supports `initContainers:` on pod specs and treats it as
+  # run-to-completion before regular containers start. With the unit
+  # `restartPolicy: Always` we previously declared the init in
+  # `containers:` and it thrashed: Alembic exits 0 → podman restarts
+  # it (because restartPolicy applies to all `containers:`) → Alembic
+  # runs again (idempotent, so harmless) → restart → … forever.
+  # Moving it to `initContainers:` runs it exactly once per pod start
+  # and lets it stay `Completed` after the migrations land.
+  initContainers:
   - name: oscar-household-init
     image: ghcr.io/mdopp/oscar-household-init:latest
     env:
@@ -61,7 +65,8 @@ spec:
     - mountPath: /var/lib/oscar
       name: oscar-data
 
-  # 2. gatekeeper — OSCAR-published Wyoming-to-Hermes bridge. Phase 0/1
+  containers:
+  # gatekeeper — OSCAR-published Wyoming-to-Hermes bridge. Phase 0/1
   #    runs pass-through with uid = DEFAULT_UID; Phase 2 reads
   #    voice_embeddings from oscar.db and resolves uid per turn.
   - name: gatekeeper

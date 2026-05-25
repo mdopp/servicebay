@@ -821,6 +821,14 @@ ${SERVICEBAY_SSH_PRIV}
                   echo "install-nvidia: CDI config at /etc/cdi/nvidia.yaml"
                   /usr/bin/nvidia-ctk cdi list || true
                   touch /var/lib/install-nvidia-cdi-done
+                  # Marker file for ServiceBay's assembler — when present, the
+                  # OLLAMA_GPU_PASSTHROUGH wizard variable defaults to "yes"
+                  # instead of "" so ollama runs on the GPU out of the box
+                  # without the operator having to discover the toggle.
+                  # /mnt/data/servicebay is ServiceBay's data dir (mounted
+                  # to /app/data in the container).
+                  /usr/bin/mkdir -p /mnt/data/servicebay
+                  /usr/bin/touch /mnt/data/servicebay/.has-nvidia-cdi
               else
                   echo "install-nvidia: nvidia-ctk cdi generate failed" >&2
                   exit 1

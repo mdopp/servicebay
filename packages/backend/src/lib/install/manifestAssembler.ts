@@ -21,6 +21,7 @@
  * assembler instead of assembling the manifest inline.
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import bcrypt from 'bcryptjs';
 import yaml from 'js-yaml';
 import {
@@ -154,6 +155,31 @@ function generateRsaPrivateKeyPem(): string {
 }
 
 /**
+ * Cached result of {@link hostHasNvidiaCdi}. The marker file is dropped
+ * once, at FCoS install time, so a per-process memoisation is safe — the
+ * file's presence never flips during a ServiceBay lifecycle.
+ */
+let nvidiaCdiCache: boolean | null = null;
+
+/**
+ * Returns true when install-nvidia.sh stage 3 dropped its CDI-ready
+ * marker file in ServiceBay's data dir (`/app/data/.has-nvidia-cdi`).
+ * Used to flip OLLAMA_GPU_PASSTHROUGH's wizard default to "yes" on
+ * hosts where the GPU is set up, so ollama runs on GPU without the
+ * operator having to find the toggle.
+ */
+async function hostHasNvidiaCdi(): Promise<boolean> {
+  if (nvidiaCdiCache !== null) return nvidiaCdiCache;
+  try {
+    await fs.access('/app/data/.has-nvidia-cdi');
+    nvidiaCdiCache = true;
+  } catch {
+    nvidiaCdiCache = false;
+  }
+  return nvidiaCdiCache;
+}
+
+/**
  * Assemble a stack-install manifest server-side.
  *
  * Faithful port of `useStackInstall.startConfigure`. The variable
@@ -161,8 +187,10 @@ function generateRsaPrivateKeyPem(): string {
  *   1. `prefilled[name]` (caller / baked config) — marks the var global
  *   2. `templateSettings[name]` (operator's Settings → Template Settings)
  *   3. `LLDAP_HOST` is always `localhost`
- *   4. `meta.default`
- *   5. `secret` / `rsa-private` / `bcrypt` typed vars: reuse a saved
+ *   4. `OLLAMA_GPU_PASSTHROUGH` → "yes" when `/app/data/.has-nvidia-cdi`
+ *      exists (dropped by install-nvidia.sh stage 3)
+ *   5. `meta.default`
+ *   6. `secret` / `rsa-private` / `bcrypt` typed vars: reuse a saved
  *      value when one exists, else generate (and persist) a fresh one
  */
 export async function assembleManifest(
@@ -265,6 +293,16 @@ export async function assembleManifest(
     if (name === 'LLDAP_HOST') {
       value = 'localhost';
       isGlobal = true;
+    }
+    // Default OLLAMA_GPU_PASSTHROUGH to "yes" on hosts where the FCoS
+    // install layered the NVIDIA driver + CDI (install-nvidia.sh stage 3
+    // drops `.has-nvidia-cdi` into ServiceBay's data dir). Without this
+    // the wizard's prefilled default stays empty - ollama renders without
+    // `resources.limits.nvidia.com/gpu: "1"` and runs on CPU even though
+    // a working GPU is right there. Observed during the 2026-05-25 test:
+    // gemma3:4b took ~8 s for a one-line response.
+    if (name === 'OLLAMA_GPU_PASSTHROUGH' && !value && (await hostHasNvidiaCdi())) {
+      value = 'yes';
     }
     if (!value && meta?.default) value = meta.default;
 
