@@ -40,3 +40,5 @@ jobs:
           context: templates/claude-dev
           push: true
           tags: ghcr.io/${{ github.repository }}-claude-dev:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
