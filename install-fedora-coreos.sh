@@ -801,13 +801,19 @@ ${SERVICEBAY_SSH_PRIV}
           # Stage 3 — kernel module should be live now. Verify, then
           # generate the CDI config that podman reads for GPU passthrough.
           if [ ! -f /var/lib/install-nvidia-cdi-done ]; then
-              echo "install-nvidia: stage 3 — checking nvidia kernel module..."
-              for i in $(/usr/bin/seq 1 30); do
+              echo "install-nvidia: stage 3 — loading nvidia kernel module..."
+              # akmod-built kmod lives in the layered deployment, but udev's
+              # GPU-triggered autoload can race the boot path — observed on
+              # an Ada RTX 2000 where lsmod was empty for ~65s after boot,
+              # then nvidia appeared. Force-load explicitly first, then
+              # poll with a generous timeout as a safety net.
+              /usr/sbin/modprobe nvidia || true
+              for i in $(/usr/bin/seq 1 90); do
                   if /usr/sbin/lsmod | grep -q '^nvidia '; then break; fi
                   sleep 2
               done
               if ! /usr/sbin/lsmod | grep -q '^nvidia '; then
-                  echo "install-nvidia: nvidia module did not load — operator should check journalctl -u dkms*" >&2
+                  echo "install-nvidia: nvidia module did not load after 3 min — operator should check journalctl -u systemd-modules-load + akmods build output (rpm-ostree status)" >&2
                   exit 1
               fi
               /usr/bin/mkdir -p /etc/cdi
