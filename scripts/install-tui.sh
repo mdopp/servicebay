@@ -55,7 +55,23 @@ else
   C_GREEN=""; C_RED=""; C_YELLOW=""; C_DIM=""; C_BOLD=""; C_RESET=""; C_HEAD=""
 fi
 
-CLEAR=$'\033[2J\033[H'
+# Anti-flicker: instead of `\033[2J\033[H` (clear-entire-screen + home),
+# which causes a visible "blank then redraw" on each tick, we use the
+# alternate screen buffer + hide cursor + per-line clear (\033[K) so the
+# only visible change between ticks is the actual content that changed.
+#
+#   \033[?1049h    enter alternate screen buffer (preserves scrollback)
+#   \033[?1049l    leave alternate screen buffer
+#   \033[?25l      hide cursor
+#   \033[?25h      show cursor
+#   \033[H         move cursor to home (top-left), without clearing
+#   \033[K         clear from cursor to end of line
+#   \033[J         clear from cursor to end of screen
+ALT_ENTER=$'\033[?1049h\033[?25l'   # enter alt screen + hide cursor
+ALT_LEAVE=$'\033[?25h\033[?1049l'   # show cursor + leave alt screen
+HOME=$'\033[H'
+ELINE=$'\033[K'
+EREST=$'\033[J'
 
 # ──────────────── probes ────────────────
 
@@ -115,7 +131,6 @@ render() {
   # Build "updated X ago" from the status.txt timestamp
   local updated_str=""
   if [[ -n "$status_ts_iso" ]]; then
-    # Convert ISO ts to epoch (BSD/GNU date both accept -d on linux)
     local status_epoch
     status_epoch=$(date -u -d "$status_ts_iso" +%s 2>/dev/null || echo 0)
     if (( status_epoch > 0 )); then
@@ -123,69 +138,93 @@ render() {
     fi
   fi
 
-  # Emit screen
-  printf '%s' "$CLEAR"
+  # Build the full frame in a buffer so we can flush it in one printf —
+  # any extra cursor moves caused by printf inside a loop create flicker.
+  # Each line ends with `\033[K` to wipe leftover chars from the previous
+  # render (in case the new line is shorter). The whole frame is preceded
+  # by `\033[H` (home) — no clear-screen, that's the flicker source.
+  local buf=""
 
   # Title bar
-  printf '%sServiceBay install monitor%s — %s%s:%s%s' \
-    "$C_BOLD" "$C_RESET" "$C_BOLD" "$HOST" "$PORT" "$C_RESET"
-  # Right-align the clock
-  local title_left_len=$((30 + ${#HOST} + ${#PORT} + 1))
-  local pad=$((cols - title_left_len - ${#now_clock}))
+  local title_left
+  title_left=$(printf '%sServiceBay install monitor%s — %s%s:%s%s' \
+    "$C_BOLD" "$C_RESET" "$C_BOLD" "$HOST" "$PORT" "$C_RESET")
+  local visible_left_len=$((30 + ${#HOST} + ${#PORT} + 1))
+  local pad=$((cols - visible_left_len - ${#now_clock}))
   (( pad < 1 )) && pad=1
-  printf '%*s%s%s%s\n' "$pad" '' "$C_DIM" "$now_clock" "$C_RESET"
-  printf '%s%s%s\n\n' "$C_DIM" "$rule" "$C_RESET"
+  buf+="${title_left}$(printf '%*s' "$pad" '')${C_DIM}${now_clock}${C_RESET}${ELINE}"$'\n'
+  buf+="${C_DIM}${rule}${C_RESET}${ELINE}"$'\n'
+  buf+="${ELINE}"$'\n'
 
-  # Stage
+  # Stage block
   if [[ -n "$stage" ]]; then
-    printf '  %sStage%s    %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_GREEN" "$stage" "$C_RESET"
+    buf+="  ${C_BOLD}Stage${C_RESET}    ${C_GREEN}${stage}${C_RESET}${ELINE}"$'\n'
     if [[ -n "$stage_desc" ]]; then
-      printf '           %s%s%s\n' "$C_DIM" "$stage_desc" "$C_RESET"
+      # Truncate desc to terminal width so it doesn't wrap (which would
+      # bump the rest of the frame down and cause visible jitter).
+      local desc_max=$((cols - 13))
+      local desc_trunc="${stage_desc:0:$desc_max}"
+      buf+="           ${C_DIM}${desc_trunc}${C_RESET}${ELINE}"$'\n'
+    else
+      buf+="${ELINE}"$'\n'
     fi
   elif [[ "$tcp" == yes ]]; then
-    printf '  %sStage%s    %s(port open, no status yet)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+    buf+="  ${C_BOLD}Stage${C_RESET}    ${C_DIM}(port open, no status yet)${C_RESET}${ELINE}"$'\n'
+    buf+="${ELINE}"$'\n'
   elif [[ "$icmp" == yes ]]; then
-    printf '  %sStage%s    %s(network up, services starting)%s\n' "$C_BOLD" "$C_RESET" "$C_YELLOW" "$C_RESET"
+    buf+="  ${C_BOLD}Stage${C_RESET}    ${C_YELLOW}(network up, services starting)${C_RESET}${ELINE}"$'\n'
+    buf+="${ELINE}"$'\n'
   else
-    printf '  %sStage%s    %sREBOOTING…%s\n' "$C_BOLD" "$C_RESET" "$C_YELLOW" "$C_RESET"
+    buf+="  ${C_BOLD}Stage${C_RESET}    ${C_YELLOW}REBOOTING…${C_RESET}${ELINE}"$'\n'
+    buf+="${ELINE}"$'\n'
   fi
-  printf '\n'
+  buf+="${ELINE}"$'\n'
 
-  # Connection + meta row
-  printf '  %sStatus%s   %s   %s   %s[%s]%s\n' \
-    "$C_BOLD" "$C_RESET" "$icmp_glyph" "$tcp_glyph" "$badge_color" "$badge_text" "$C_RESET"
-  printf '  %sMeta%s     elapsed %s%s%s' \
-    "$C_BOLD" "$C_RESET" "$C_BOLD" "$(fmt_dur "$elapsed")" "$C_RESET"
+  # Status + meta rows
+  buf+="  ${C_BOLD}Status${C_RESET}   ${icmp_glyph}   ${tcp_glyph}   ${badge_color}[${badge_text}]${C_RESET}${ELINE}"$'\n'
+  local meta="  ${C_BOLD}Meta${C_RESET}     elapsed ${C_BOLD}$(fmt_dur "$elapsed")${C_RESET}"
   if [[ -n "$stage" ]]; then
-    printf '   |   at stage %s%s%s' "$C_BOLD" "$(fmt_dur "$stage_elapsed")" "$C_RESET"
+    meta+="   |   at stage ${C_BOLD}$(fmt_dur "$stage_elapsed")${C_RESET}"
   fi
-  printf '   |   reboots %s%d%s' "$C_BOLD" "$REBOOTS" "$C_RESET"
+  meta+="   |   reboots ${C_BOLD}${REBOOTS}${C_RESET}"
   if [[ -n "$updated_str" ]]; then
-    printf '   |   updated %s%s%s' "$C_BOLD" "$updated_str" "$C_RESET"
+    meta+="   |   updated ${C_BOLD}${updated_str}${C_RESET}"
   fi
-  printf '\n\n'
+  buf+="${meta}${ELINE}"$'\n'
+  buf+="${ELINE}"$'\n'
 
-  # Recent activity rule + last N log lines
-  printf '%s─── Recent install activity %s%s\n\n' "$C_HEAD" "${rule:28}" "$C_RESET"
+  # Recent activity heading + log
+  buf+="${C_HEAD}─── Recent install activity ${rule:28}${C_RESET}${ELINE}"$'\n'
+  buf+="${ELINE}"$'\n'
   if [[ -n "$log_text" ]]; then
-    # Last ~18 lines, truncated to terminal width so long lines don't wrap.
-    printf '%s' "$log_text" | tail -18 | while IFS= read -r ln; do
-      printf '  %s\n' "${ln:0:$((cols-4))}"
-    done
+    # last ~18 lines, truncated to terminal width
+    while IFS= read -r ln; do
+      buf+="  ${ln:0:$((cols-4))}${ELINE}"$'\n'
+    done < <(printf '%s' "$log_text" | tail -18)
   else
-    printf '  %s(no log content yet — splash quadlet may still be starting)%s\n' "$C_DIM" "$C_RESET"
+    buf+="  ${C_DIM}(no log content yet — splash quadlet may still be starting)${C_RESET}${ELINE}"$'\n'
   fi
-  printf '\n'
-  printf '%sCtrl+C to exit%s\n' "$C_DIM" "$C_RESET"
+  buf+="${ELINE}"$'\n'
+  buf+="${C_DIM}Ctrl+C to exit${C_RESET}${ELINE}"$'\n'
+
+  # Single atomic write: home, then the whole frame, then wipe anything
+  # below (e.g. if the log shrank between ticks).
+  printf '%s%s%s' "$HOME" "$buf" "$EREST"
 }
 
-# ──────────────── exit handling ────────────────
+# ──────────────── alt-screen lifecycle ────────────────
+
+# Enter the alternate screen buffer + hide the cursor. The terminal
+# preserves the operator's previous content (prompt, scrollback) so when
+# the script exits, everything looks like nothing happened.
+if [[ -t 1 ]]; then
+  printf '%s' "$ALT_ENTER"
+fi
 
 cleanup() {
-  # Restore cursor + scroll the title to the bottom of the screen so the
-  # operator can see the goodbye message without it being clobbered by the
-  # next shell prompt.
-  printf '\n'
+  if [[ -t 1 ]]; then
+    printf '%s' "$ALT_LEAVE"
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -210,14 +249,18 @@ while true; do
       # status.txt not TSV — check for ServiceBay takeover
       root_title=$(probe_root_title)
       if [[ -n "$root_title" && "$root_title" != "ServiceBay setup"* ]]; then
-        printf '%s' "$CLEAR"
-        printf '\n\n  %s%s→ ServiceBay wizard is live%s\n\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
-        printf '     %sSetup wizard:%s  %shttp://%s:%s/setup%s\n' \
+        # Leave alt screen first so the goodbye banner lands in the
+        # operator's normal scrollback (and survives terminal close).
+        if [[ -t 1 ]]; then printf '%s' "$ALT_LEAVE"; fi
+        printf '\n%s%s→ ServiceBay wizard is live%s\n\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
+        printf '   %sSetup wizard:%s  %shttp://%s:%s/setup%s\n' \
           "$C_BOLD" "$C_RESET" "$C_GREEN" "$HOST" "$PORT" "$C_RESET"
-        printf '     %sDashboard:%s     %shttp://%s:%s/%s\n\n' \
+        printf '   %sDashboard:%s     %shttp://%s:%s/%s\n\n' \
           "$C_BOLD" "$C_RESET" "$C_DIM" "$HOST" "$PORT" "$C_RESET"
-        local total=$(( $(date +%s) - START_TS ))
-        printf '  Total: %s, %d reboots observed.\n\n' "$(fmt_dur "$total")" "$REBOOTS"
+        total=$(( $(date +%s) - START_TS ))
+        printf '   Total: %s, %d reboots observed.\n\n' "$(fmt_dur "$total")" "$REBOOTS"
+        # Re-arm cleanup so it doesn't try to leave alt screen twice.
+        trap - EXIT
         exit 0
       fi
       CONSECUTIVE_FAILS=$((CONSECUTIVE_FAILS+1))
