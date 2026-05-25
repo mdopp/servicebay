@@ -739,40 +739,53 @@ ${SERVICEBAY_SSH_PRIV}
           # the driver may not be present.
           if ! /usr/sbin/lspci 2>/dev/null | grep -qi 'NVIDIA Corporation'; then
               echo "install-nvidia: no NVIDIA GPU detected, skipping" >&2
-              # Mark both stages done so we don't keep retrying.
-              touch /var/lib/install-nvidia-driver-done /var/lib/install-nvidia-cdi-done
+              # Mark every stage done so we don't keep retrying.
+              touch /var/lib/install-nvidia-repos-done /var/lib/install-nvidia-driver-done /var/lib/install-nvidia-cdi-done
               exit 0
           fi
 
           FEDORA_VERSION=$(/usr/bin/rpm -E %fedora)
 
-          # Stage 1: layer the packages. RPM Fusion ships the driver
-          # build; `nvidia-container-toolkit` provides `nvidia-ctk` for
-          # CDI generation (the standard podman-NVIDIA bridge as of
-          # Container Toolkit ≥1.14). The open kernel modules
-          # (`kmod-nvidia-open-dkms`) are NVIDIA's recommended path
-          # for Turing+ GPUs — covers Ada Lovelace (RTX 2000/4000 Ada).
-          if [ ! -f /var/lib/install-nvidia-driver-done ]; then
-              echo "install-nvidia: layering NVIDIA driver + container toolkit..."
+          # Stage 1 — layer the RPM Fusion release packages. These ship
+          # the repo .repo files for the nonfree NVIDIA driver build.
+          # rpm-ostree CANNOT install packages from a repo whose .repo
+          # file is part of a pending (not-yet-active) deployment — so
+          # `rpm-ostree install nvidia-package` in the same script run
+          # fails with "Packages not found". Split repo layering from
+          # driver layering with a reboot between.
+          if [ ! -f /var/lib/install-nvidia-repos-done ]; then
+              echo "install-nvidia: stage 1 — layering RPM Fusion repos..."
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
                   "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
                   "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm"
+              touch /var/lib/install-nvidia-repos-done
+              echo "install-nvidia: RPM Fusion repos staged, scheduling reboot to activate."
+              /usr/bin/systemctl reboot
+              exit 0
+          fi
+
+          # Stage 2 — install the NVIDIA driver + container toolkit.
+          # Open kernel modules (`kmod-nvidia-open-dkms`) are NVIDIA's
+          # recommended path for Turing+ GPUs — covers Ada Lovelace
+          # (RTX 2000/4000 Ada). `nvidia-container-toolkit` provides
+          # `nvidia-ctk` for CDI generation (the standard podman-NVIDIA
+          # bridge as of Container Toolkit ≥1.14).
+          if [ ! -f /var/lib/install-nvidia-driver-done ]; then
+              echo "install-nvidia: stage 2 — layering NVIDIA driver + container toolkit..."
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
                   kmod-nvidia-open-dkms \
                   xorg-x11-drv-nvidia-cuda \
                   nvidia-container-toolkit
               touch /var/lib/install-nvidia-driver-done
-              echo "install-nvidia: packages staged, scheduling reboot to load kmod"
-              # rpm-ostree changes apply on next boot. Stage 2 picks up
-              # there.
+              echo "install-nvidia: driver staged, scheduling reboot to load kmod"
               /usr/bin/systemctl reboot
               exit 0
           fi
 
-          # Stage 2: kernel module should be live now. Verify, then
+          # Stage 3 — kernel module should be live now. Verify, then
           # generate the CDI config that podman reads for GPU passthrough.
           if [ ! -f /var/lib/install-nvidia-cdi-done ]; then
-              echo "install-nvidia: stage 2 — checking nvidia kernel module..."
+              echo "install-nvidia: stage 3 — checking nvidia kernel module..."
               for i in $(/usr/bin/seq 1 30); do
                   if /usr/sbin/lsmod | grep -q '^nvidia '; then break; fi
                   sleep 2

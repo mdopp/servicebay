@@ -30,40 +30,56 @@ if ! /usr/sbin/lspci 2>/dev/null | grep -qi 'NVIDIA Corporation'; then
 fi
 
 FEDORA_VERSION="$(/usr/bin/rpm -E %fedora)"
+REPOS_MARKER=/var/lib/install-nvidia-repos-done
 DRIVER_MARKER=/var/lib/install-nvidia-driver-done
 CDI_MARKER=/var/lib/install-nvidia-cdi-done
 
-# Stage 1: layer the packages. RPM Fusion's nonfree repo ships the
-# NVIDIA proprietary driver build; nvidia-container-toolkit provides
-# `nvidia-ctk` for CDI generation (the standard podman-NVIDIA bridge).
-# Open kernel modules (`kmod-nvidia-open-dkms`) are NVIDIA's
-# recommended path for Turing+ GPUs (covers Ada Lovelace).
-if [[ ! -f "$DRIVER_MARKER" ]]; then
-    echo "enable-nvidia: layering RPM Fusion + NVIDIA driver + container toolkit..."
-    /usr/bin/rpm-ostree install --idempotent --allow-inactive \
-        "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
-        "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm"
-    /usr/bin/rpm-ostree install --idempotent --allow-inactive \
-        kmod-nvidia-open-dkms \
-        xorg-x11-drv-nvidia-cuda \
-        nvidia-container-toolkit
-    touch "$DRIVER_MARKER"
+prompt_reboot() {
+    local next_stage="$1"
     echo
-    echo "enable-nvidia: packages staged. REBOOT REQUIRED to load the kmod."
-    echo "After reboot, re-run this script to generate the CDI config:"
-    echo
-    echo "    sudo bash enable-nvidia.sh"
+    echo "enable-nvidia: REBOOT REQUIRED to ${next_stage}."
+    echo "After reboot, re-run:  sudo bash enable-nvidia.sh"
     echo
     read -r -p "Reboot now? [y/N]: " ans
     if [[ "${ans^^}" == "Y" ]]; then
         /usr/bin/systemctl reboot
     fi
     exit 0
+}
+
+# Stage 1 — layer the RPM Fusion release packages. These ship the repo
+# definitions for the nonfree NVIDIA driver build. rpm-ostree CANNOT
+# install packages from a repo whose .repo file is part of a pending
+# (not-yet-active) deployment — `rpm-ostree install nvidia-package` in
+# the same script invocation would fail with "Packages not found", so
+# we split repo layering from driver layering with a reboot between.
+if [[ ! -f "$REPOS_MARKER" ]]; then
+    echo "enable-nvidia: stage 1 — layering RPM Fusion repos..."
+    /usr/bin/rpm-ostree install --idempotent --allow-inactive \
+        "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
+        "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm"
+    touch "$REPOS_MARKER"
+    prompt_reboot "activate the RPM Fusion repos before installing the NVIDIA driver"
 fi
 
-# Stage 2: post-reboot CDI generation.
+# Stage 2 — install the NVIDIA driver + container toolkit. Open kernel
+# modules (`kmod-nvidia-open-dkms`) are NVIDIA's recommended path for
+# Turing+ GPUs (covers Ada Lovelace). nvidia-container-toolkit ships
+# `nvidia-ctk` for CDI generation (the standard podman-NVIDIA bridge).
+if [[ ! -f "$DRIVER_MARKER" ]]; then
+    echo "enable-nvidia: stage 2 — layering NVIDIA driver + container toolkit..."
+    /usr/bin/rpm-ostree install --idempotent --allow-inactive \
+        kmod-nvidia-open-dkms \
+        xorg-x11-drv-nvidia-cuda \
+        nvidia-container-toolkit
+    touch "$DRIVER_MARKER"
+    prompt_reboot "load the nvidia kernel module so CDI generation has something to introspect"
+fi
+
+# Stage 3 — generate the CDI config. nvidia-ctk needs the kmod loaded
+# to enumerate the device.
 if [[ ! -f "$CDI_MARKER" ]]; then
-    echo "enable-nvidia: waiting for nvidia kernel module..."
+    echo "enable-nvidia: stage 3 — waiting for nvidia kernel module..."
     for _ in $(seq 1 30); do
         /usr/sbin/lsmod | grep -q '^nvidia ' && break
         sleep 2
