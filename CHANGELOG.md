@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.25.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.8...servicebay-v4.25.0) (2026-05-25)
+
+
+### Features
+
+* **hermes:** add skills and notes volume mounts for Oscar Phase 3 ([1ade1c6](https://github.com/mdopp/servicebay/commit/1ade1c612f3724e3558f3f013e337b9778ad3cdc))
+* **hermes:** fold OSCAR MVP into ServiceBay ([033b2c4](https://github.com/mdopp/servicebay/commit/033b2c4e60d2a2ea0ddd31e3439269dc794416e7))
+* **hermes:** fold OSCAR MVP into ServiceBay ([a8b930d](https://github.com/mdopp/servicebay/commit/a8b930d251968031568d1a679f74962aa04117ad))
+* **oscar:** add oscar-household template, post-deploy tests, and stack inclusion ([4720635](https://github.com/mdopp/servicebay/commit/4720635542126ff57a62ff26abe723c6a5d5fd67))
+
 ## [4.24.8](https://github.com/mdopp/servicebay/compare/servicebay-v4.24.7...servicebay-v4.24.8) (2026-05-25)
 
 
