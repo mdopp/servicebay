@@ -746,34 +746,50 @@ ${SERVICEBAY_SSH_PRIV}
 
           FEDORA_VERSION=$(/usr/bin/rpm -E %fedora)
 
-          # Stage 1 — layer the RPM Fusion release packages. These ship
-          # the repo .repo files for the nonfree NVIDIA driver build.
+          # Stage 1 — layer the RPM Fusion release packages and drop the
+          # nvidia-container-toolkit repo file. RPM Fusion ships the
+          # nonfree NVIDIA driver; the container toolkit lives in
+          # NVIDIA's own libnvidia-container repo, which we have to add
+          # ourselves (Fedora does not ship it).
+          #
           # rpm-ostree CANNOT install packages from a repo whose .repo
           # file is part of a pending (not-yet-active) deployment — so
           # `rpm-ostree install nvidia-package` in the same script run
           # fails with "Packages not found". Split repo layering from
           # driver layering with a reboot between.
           if [ ! -f /var/lib/install-nvidia-repos-done ]; then
-              echo "install-nvidia: stage 1 — layering RPM Fusion repos..."
+              echo "install-nvidia: stage 1 — layering RPM Fusion repos + NVIDIA container-toolkit repo..."
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
                   "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
                   "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm"
+              cat > /etc/yum.repos.d/nvidia-container-toolkit.repo <<'NVCT'
+          [nvidia-container-toolkit]
+          name=nvidia-container-toolkit
+          baseurl=https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch
+          enabled=1
+          repo_gpgcheck=1
+          gpgcheck=1
+          gpgkey=https://nvidia.github.io/libnvidia-container/gpgkey
+          NVCT
               touch /var/lib/install-nvidia-repos-done
-              echo "install-nvidia: RPM Fusion repos staged, scheduling reboot to activate."
+              echo "install-nvidia: RPM Fusion repos staged + nvidia-container-toolkit.repo dropped, scheduling reboot to activate."
               /usr/bin/systemctl reboot
               exit 0
           fi
 
           # Stage 2 — install the NVIDIA driver + container toolkit.
-          # Open kernel modules (`kmod-nvidia-open-dkms`) are NVIDIA's
-          # recommended path for Turing+ GPUs — covers Ada Lovelace
-          # (RTX 2000/4000 Ada). `nvidia-container-toolkit` provides
-          # `nvidia-ctk` for CDI generation (the standard podman-NVIDIA
-          # bridge as of Container Toolkit ≥1.14).
+          # `akmod-nvidia-open` is RPM Fusion's auto-kmod for NVIDIA's
+          # open kernel modules — the recommended path for Turing+
+          # GPUs including Ada Lovelace (RTX 2000/4000 Ada). Fedora has
+          # no native dkms; akmod rebuilds the module against the
+          # running kernel on first boot.  `nvidia-container-toolkit`
+          # ships `nvidia-ctk` (CDI generator, the podman-NVIDIA bridge
+          # since Container Toolkit ≥1.14) from NVIDIA's own repo
+          # dropped in stage 1.
           if [ ! -f /var/lib/install-nvidia-driver-done ]; then
               echo "install-nvidia: stage 2 — layering NVIDIA driver + container toolkit..."
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
-                  kmod-nvidia-open-dkms \
+                  akmod-nvidia-open \
                   xorg-x11-drv-nvidia-cuda \
                   nvidia-container-toolkit
               touch /var/lib/install-nvidia-driver-done
