@@ -582,7 +582,7 @@ storage:
     # The split means a stage change only rewrites a tiny TSV file, the
     # SPA in the browser persists across the whole install, and the
     # operator sees both the current stage AND a live tail of activity.
-    # The same status.txt is consumed by scripts/watch-install.sh on the
+    # The same status.txt is consumed by scripts/install-tui.sh on the
     # operator's machine — no HTML scraping required.
     #
     # Takeover detection: when servicebay.service activates, its
@@ -876,9 +876,19 @@ storage:
           [Unit]
           Description=ServiceBay boot-time splash page (#775)
           After=network-online.target
-          # Stop ourselves as soon as the real ServiceBay is ready to
-          # bind the port — the Conflicts= on servicebay.container
-          # makes that handoff atomic from systemd's perspective.
+          # Only meaningful while installation is in progress. Once the
+          # install completes (install-nvidia-cdi.sh on GPU boxes, or
+          # install-nvidia.sh stage-0 on no-GPU boxes touches the marker),
+          # there is no install left to show — skip cleanly via
+          # ConditionPathExists so subsequent boots don't briefly start
+          # the splash just to immediately get killed by servicebay's
+          # ExecStartPre. On reinstall, this marker is wiped via the
+          # config-merge / setup-raid path, so splash re-engages.
+          # The unit still appears in `systemctl --user list-units --all`
+          # post-install but as "inactive (dead) / Condition: no" — the
+          # idiomatic systemd state for "this unit's job is done".
+          ConditionPathExists=!/var/lib/installation-ready
+          # Hand off to the real ServiceBay when it becomes available.
           Before=servicebay.service
 
           [Container]

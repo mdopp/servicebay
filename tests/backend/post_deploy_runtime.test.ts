@@ -32,6 +32,12 @@ function pythonAvailable(): boolean {
 
 describe('post-deploy.py runtime smoke tests', () => {
   const testFn = pythonAvailable() ? it : it.skip;
+  // 30 s timeout (vs vitest's 5 s default). The Python suite itself runs
+  // in <1 s on a warm machine, but cold-cache python3 + unittest spawn
+  // on a GHA runner has been observed to exceed 5 s, triggering false
+  // "Test timed out" failures on push:main runs (introduced by #972).
+  // Bumping to 30 s gives ~30x headroom over normal runtime while still
+  // catching a genuinely-hung Python process.
   testFn('every script passes its unittest cases', () => {
     const result = spawnSync(
       'python3',
@@ -47,5 +53,5 @@ describe('post-deploy.py runtime smoke tests', () => {
     }
     // unittest prints to stderr by default; the trailing OK confirms success.
     expect(result.stderr).toMatch(/\nOK\b/);
-  });
+  }, 30_000);
 });

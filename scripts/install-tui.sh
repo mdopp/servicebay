@@ -5,15 +5,8 @@
 # Mirrors what the in-browser splash SPA shows: current stage + description,
 # connection status, elapsed-at-stage timer, and a live tail of the
 # install log (rpm-ostree progress, nvidia-ctk enumeration, etc.).
-# Refreshes every 1 s.
-#
-# Differences vs scripts/watch-install.sh:
-#   - TUI clears + redraws the screen each tick. No scrollback of the
-#     log itself — use watch-install.sh if you want a chronological log
-#     in the terminal scrollback that you can grep / copy.
-#   - Shows the live tail of the splash's /log.txt (the same content
-#     the browser sees), not just stage titles.
-#   - Higher update frequency (1 s vs 2 s).
+# Refreshes every 1 s, redraws via alt-screen buffer + per-line clear
+# so there's no full-screen-clear flicker between ticks.
 #
 # Auto-discovers the target from build/fcos/install-settings.env if present,
 # or accepts HOST + PORT positional args (or SB_HOST / SB_PORT env vars).
