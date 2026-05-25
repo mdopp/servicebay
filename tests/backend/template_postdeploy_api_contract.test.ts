@@ -42,7 +42,7 @@ import { describe, it, expect } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
-const API_ROOT = path.join(REPO_ROOT, 'src', 'app', 'api');
+const API_ROOT = path.join(REPO_ROOT, 'packages', 'frontend', 'src', 'app', 'api');
 
 interface EndpointRef {
   template: string;

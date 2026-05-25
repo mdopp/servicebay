@@ -24,7 +24,7 @@
  * however it likes.
  */
 
-import Mustache from 'mustache';
+import { renderTemplate } from '../template/render';
 import type { VariableMeta } from '@/lib/registry';
 import { expandForwardAuthSentinel } from './forwardAuth';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
@@ -73,16 +73,10 @@ function renderProxyConfig(
   // {{PUBLIC_DOMAIN}} / {{AUTHELIA_PORT}} placeholders still get
   // substituted from `view`.
   const expanded = expandForwardAuthSentinel(proxyConfig.advanced_config) ?? proxyConfig.advanced_config;
-  const savedEscape = Mustache.escape;
-  Mustache.escape = (text: string) => text;
-  try {
-    return {
-      ...proxyConfig,
-      advanced_config: Mustache.render(expanded, view),
-    };
-  } finally {
-    Mustache.escape = savedEscape;
-  }
+  return {
+    ...proxyConfig,
+    advanced_config: renderTemplate(expanded, view),
+  };
 }
 
 /** Build the proxy-host list from subdomain-typed variables. Exported

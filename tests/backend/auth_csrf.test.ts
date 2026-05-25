@@ -30,20 +30,20 @@ function makeReq(opts: {
 
 describe('proxy CSRF check', () => {
   it('allows GET regardless of origin', async () => {
-    const { proxy } = await import('../../src/proxy');
+    const { proxy } = await import('../../packages/frontend/src/proxy');
     const res = await proxy(makeReq({ method: 'GET', pathname: '/api/services' }));
     // No session cookie → 401 (auth check, not CSRF)
     expect(res.status).toBe(401);
   });
 
   it('rejects unsafe method without Origin or Referer', async () => {
-    const { proxy } = await import('../../src/proxy');
+    const { proxy } = await import('../../packages/frontend/src/proxy');
     const res = await proxy(makeReq({ method: 'POST', pathname: '/api/services' }));
     expect(res.status).toBe(403);
   });
 
   it('rejects unsafe method with cross-origin Origin', async () => {
-    const { proxy } = await import('../../src/proxy');
+    const { proxy } = await import('../../packages/frontend/src/proxy');
     const res = await proxy(makeReq({
       method: 'POST',
       pathname: '/api/services',
@@ -53,7 +53,7 @@ describe('proxy CSRF check', () => {
   });
 
   it('allows unsafe method with matching Origin', async () => {
-    const { proxy } = await import('../../src/proxy');
+    const { proxy } = await import('../../packages/frontend/src/proxy');
     const res = await proxy(makeReq({
       method: 'POST',
       pathname: '/api/services',
@@ -64,7 +64,7 @@ describe('proxy CSRF check', () => {
   });
 
   it('falls back to Referer when Origin is missing', async () => {
-    const { proxy } = await import('../../src/proxy');
+    const { proxy } = await import('../../packages/frontend/src/proxy');
     const res = await proxy(makeReq({
       method: 'POST',
       pathname: '/api/services',
@@ -74,7 +74,7 @@ describe('proxy CSRF check', () => {
   });
 
   it('allows POST to public endpoint with matching Origin', async () => {
-    const { proxy } = await import('../../src/proxy');
+    const { proxy } = await import('../../packages/frontend/src/proxy');
     const { NextResponse } = await import('next/server');
     const spy = vi.spyOn(NextResponse, 'next');
     await proxy(makeReq({
@@ -87,7 +87,7 @@ describe('proxy CSRF check', () => {
   });
 
   it('blocks POST to public endpoint when cross-origin', async () => {
-    const { proxy } = await import('../../src/proxy');
+    const { proxy } = await import('../../packages/frontend/src/proxy');
     const res = await proxy(makeReq({
       method: 'POST',
       pathname: '/api/auth/login',

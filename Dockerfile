@@ -79,13 +79,14 @@ RUN useradd --system --uid 1001 nextjs
 
 # Runtime dependencies (libc) are standard in debian
 
-COPY --from=builder /app/public ./public
+COPY --from=builder /app/packages/frontend/public ./public
+COPY --from=builder /app/packages/frontend/public ./packages/frontend/public
 
 # Copy the full Next build output. We deliberately do NOT use `output: 'standalone'`
 # because we run our own custom server (server.ts) that wires Socket.IO, MCP, and
 # PTY sessions around `next()`. Standalone rearranges `.next/` in a way that
 # breaks `app.prepare()` from a custom-server entry point under Next 16.
-COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/packages/frontend/.next ./packages/frontend/.next
 
 # Copy templates and stacks
 COPY --from=builder /app/templates ./templates
@@ -96,7 +97,7 @@ COPY --from=builder /app/stacks ./stacks
 # route reads `process.cwd()/src/content/help/<id>.md`, so the files must
 # exist at that exact path inside the runner image. Without this copy,
 # every help fetch returns "Help content not found".
-COPY --from=builder /app/src/content ./src/content
+COPY --from=builder /app/packages/frontend/src/content ./src/content
 COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
 
 # Copy the pre-bundled custom server (CJS, runs under plain node — no tsx).

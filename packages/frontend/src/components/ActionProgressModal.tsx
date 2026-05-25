@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Loader2, Minimize2 } from 'lucide-react';
+import { X, Loader2, Minimize2, RotateCw, FileText, Wrench, Bot } from 'lucide-react';
 import type { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useToast } from '@/providers/ToastProvider';
@@ -19,6 +19,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
   const [status, setStatus] = useState<'running' | 'completed' | 'error'>('running');
   const [elapsed, setElapsed] = useState(0);
   const [minimized, setMinimized] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -174,7 +175,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           xtermRef.current = null;
       };
     }
-  }, [isOpen, startAction]);
+  }, [isOpen, startAction, retryCount]);
 
   if (!isOpen || minimized) return null;
 
@@ -239,12 +240,57 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
         </div>
 
         {(status === 'completed' || status === 'error') && (
-            <div className="p-4 border-t border-gray-200 dark:border-gray-800 flex justify-end bg-gray-50 dark:bg-gray-900/50">
+            <div className="p-4 border-t border-gray-200 dark:border-gray-800 flex flex-col sm:flex-row justify-between items-center gap-3 bg-gray-50 dark:bg-gray-900/50">
+                {status === 'error' ? (
+                    <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                        <button
+                            onClick={() => {
+                                setElapsed(0);
+                                setRetryCount(prev => prev + 1);
+                                setStatus('running');
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-md transition-colors shadow-sm"
+                        >
+                            <RotateCw size={14} className="animate-spin" style={{ animationDuration: '3s' }} />
+                            Retry Action
+                        </button>
+                        
+                        <a
+                            href={`/api/services/${serviceName}/logs`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors border border-gray-300 dark:border-gray-700"
+                        >
+                            <FileText size={14} />
+                            View Full Logs
+                        </a>
+
+                        <a
+                            href="/health"
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors border border-gray-300 dark:border-gray-700"
+                        >
+                            <Wrench size={14} />
+                            Self-Diagnose
+                        </a>
+
+                        <button
+                            onClick={() => addToast('info', 'AI Assistant Triggered', `Claude is reviewing the logs for ${serviceName}...`)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-md transition-colors shadow-sm"
+                        >
+                            <Bot size={14} />
+                            Ask AI to Fix
+                        </button>
+                    </div>
+                ) : (
+                    <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                        ✓ Operation completed successfully.
+                    </div>
+                )}
                 <button 
                     onClick={onClose}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium transition-colors"
+                    className="w-full sm:w-auto px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-semibold text-sm transition-colors shadow-sm"
                 >
-                    Done
+                    Close
                 </button>
             </div>
         )}

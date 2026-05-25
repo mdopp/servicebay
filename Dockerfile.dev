@@ -36,17 +36,18 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 # Pre-built artifacts from the host. `dev-container.sh` ensures these exist.
-COPY .next ./.next
+COPY packages/frontend/.next ./packages/frontend/.next
 COPY dist-server ./dist-server
-COPY public ./public
+COPY packages/frontend/public ./public
+COPY packages/frontend/public ./packages/frontend/public
 COPY templates ./templates
 COPY stacks ./stacks
 
 # Python agent (streamed over SSH and executed on each managed node) and its
 # parser helper. Read at runtime by src/lib/agent/handler.ts; not bundled into
 # dist-server because it's a Python source file, not JS.
-COPY src/lib/agent/v4/agent.py ./src/lib/agent/v4/agent.py
-COPY src/lib/agent/v4/quadlet_parser.py ./src/lib/agent/v4/quadlet_parser.py
+COPY packages/backend/src/lib/agent/v4/agent.py ./src/lib/agent/v4/agent.py
+COPY packages/backend/src/lib/agent/v4/quadlet_parser.py ./src/lib/agent/v4/quadlet_parser.py
 
 EXPOSE 3000
 

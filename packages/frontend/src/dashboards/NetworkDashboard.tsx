@@ -719,7 +719,7 @@ const edgeTypes = {
   custom: CustomEdge,
 };
 
-const DEFAULT_EDGE_COLOR = '#b1b1b7';
+const DEFAULT_EDGE_COLOR = 'rgba(148, 163, 184, 0.2)';
 const DOWN_EDGE_COLOR = '#ef4444';
 const DOWN_EDGE_DASHES = '6 3';
 
@@ -729,9 +729,9 @@ const DOWN_EDGE_DASHES = '6 3';
 // author says this exists" (declared, dashed amber) so an operator never
 // confuses the two. Down-target dashes still win — service-down is a
 // stronger signal than provenance.
-const DECLARED_EDGE_COLOR = '#d97706'; // amber-600
+const DECLARED_EDGE_COLOR = '#64748b'; // Slate
 const DECLARED_EDGE_DASHES = '4 4';
-const OBSERVED_EDGE_COLOR = '#0ea5e9'; // sky-500 — subtly distinct from default grey
+const OBSERVED_EDGE_COLOR = '#3b82f6'; // Clean blue
 
 function styleForEdgeKind(kind: string | undefined, base: React.CSSProperties | undefined): React.CSSProperties | undefined {
     if (kind === 'declared') {
@@ -1234,11 +1234,10 @@ export default function NetworkDashboard() {
             },
             parentId: n.parentNode,
             extent: n.parentNode ? 'parent' : undefined,
+            className: isGroup ? 'border border-dashed border-slate-300 dark:border-white/10 bg-slate-500/[0.02] dark:bg-white/[0.01] rounded-2xl backdrop-blur-[2px]' : undefined,
             style: isGroup ? { 
                 width: 400, // Initial guess, ELK will resize
                 height: 200,
-                backgroundColor: 'rgba(0,0,0,0.05)',
-                border: '1px dashed #ccc'
             } : undefined
         };
       });

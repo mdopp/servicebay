@@ -6,6 +6,20 @@ import { logger } from '@/lib/logger';
 import { shellQuoteAll } from '../util/shellQuote';
 import { currentTraceId } from '../util/traceContext';
 
+export class CommandError extends Error {
+  code: number;
+  stdout: string;
+  stderr: string;
+
+  constructor(message: string, code: number, stdout: string, stderr: string) {
+    super(message);
+    this.code = code;
+    this.stdout = stdout;
+    this.stderr = stderr;
+    this.name = 'CommandError';
+  }
+}
+
 export class AgentExecutor implements Executor {
   private agent: AgentHandler;
 
@@ -31,15 +45,7 @@ export class AgentExecutor implements Executor {
     const res = await this.agent.sendCommand('exec', { command: taggedCommand }, { timeoutMs: options.timeoutMs });
     // Agent returns { code, stdout, stderr }
     if (res.code !== 0) {
-        // Mimic child_process.exec error
-        const err = new Error(`Command failed: ${command}\n${res.stderr}`);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (err as any).code = res.code;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (err as any).stdout = res.stdout;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (err as any).stderr = res.stderr;
-        throw err;
+        throw new CommandError(`Command failed: ${command}\n${res.stderr}`, res.code, res.stdout, res.stderr);
     }
     return { stdout: res.stdout, stderr: res.stderr };
   }

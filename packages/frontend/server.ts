@@ -16,37 +16,38 @@ process.on('unhandledRejection', (reason) => {
 import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';
+import path from 'path';
 import { Server } from 'socket.io';
-import { setUpdaterIO, scheduleUpdateNotifier } from './packages/backend/src/lib/updater';
-import { runWithTrace, newTraceId, currentTraceId } from './packages/backend/src/lib/util/traceContext';
-import { setTraceProvider } from './packages/backend/src/lib/logger';
+import { setUpdaterIO, scheduleUpdateNotifier } from '../backend/src/lib/updater';
+import { runWithTrace, newTraceId, currentTraceId } from '../backend/src/lib/util/traceContext';
+import { setTraceProvider } from '../backend/src/lib/logger';
 import crypto from 'crypto';
 // Monitoring init moved to Agent logic in V4
-import { HealthService } from './packages/backend/src/lib/health/service';
-import { initCapabilities } from './packages/backend/src/lib/capabilities/init';
-import { agentManager } from './packages/backend/src/lib/agent/manager';
-import { AgentHandler } from './packages/backend/src/lib/agent/handler';
-import { listNodes } from './packages/backend/src/lib/nodes';
-import { AgentEvent } from './packages/backend/src/lib/agent/handler';
-import { DigitalTwinStore, NodeTwin } from './packages/backend/src/lib/store/twin';
-import { AgentMessage } from './packages/backend/src/lib/agent/types';
-import { GatewayPoller } from './packages/backend/src/lib/gateway/poller';
-import { startFlowSampler } from './packages/backend/src/lib/network/flowSampler';
-import { logger } from './packages/backend/src/lib/logger';
-import { migrateConfig, getConfig, updateConfig } from './packages/backend/src/lib/config';
-import { syncRegistries } from './packages/backend/src/lib/registry';
-import { reconcileLanIp } from './packages/backend/src/lib/lanIp';
-import { lazyInitializeExpiry as initBootstrapTokenExpiry } from './packages/backend/src/lib/mcp/bootstrapToken';
-import { createMcpServer } from './packages/backend/src/lib/mcp/server';
-import { scheduleBackup } from './packages/backend/src/lib/backup/service';
+import { HealthService } from '../backend/src/lib/health/service';
+import { initCapabilities } from '../backend/src/lib/capabilities/init';
+import { agentManager } from '../backend/src/lib/agent/manager';
+import { AgentHandler } from '../backend/src/lib/agent/handler';
+import { listNodes } from '../backend/src/lib/nodes';
+import { AgentEvent } from '../backend/src/lib/agent/handler';
+import { DigitalTwinStore, NodeTwin } from '../backend/src/lib/store/twin';
+import { AgentMessage } from '../backend/src/lib/agent/types';
+import { GatewayPoller } from '../backend/src/lib/gateway/poller';
+import { startFlowSampler } from '../backend/src/lib/network/flowSampler';
+import { logger } from '../backend/src/lib/logger';
+import { migrateConfig, getConfig, updateConfig } from '../backend/src/lib/config';
+import { syncRegistries } from '../backend/src/lib/registry';
+import { reconcileLanIp } from '../backend/src/lib/lanIp';
+import { lazyInitializeExpiry as initBootstrapTokenExpiry } from '../backend/src/lib/mcp/bootstrapToken';
+import { createMcpServer } from '../backend/src/lib/mcp/server';
+import { scheduleBackup } from '../backend/src/lib/backup/service';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { TerminalSessionManager } from './packages/backend/src/lib/terminal/sessionManager';
-import { ResourceBroadcast } from './packages/backend/src/lib/health/resourceBroadcast';
-import { CharRingBuffer } from './packages/backend/src/lib/util/ringBuffer';
-import { SSHConnectionPool } from './packages/backend/src/lib/ssh/pool';
-import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './packages/backend/src/lib/auth/session';
-import { setIo as setInstallSocketIo } from './packages/backend/src/lib/install/socketBridge';
-import { markCrashedOnStartup as markCrashedInstallsOnStartup } from './packages/backend/src/lib/install/jobStore';
+import { TerminalSessionManager } from '../backend/src/lib/terminal/sessionManager';
+import { ResourceBroadcast } from '../backend/src/lib/health/resourceBroadcast';
+import { CharRingBuffer } from '../backend/src/lib/util/ringBuffer';
+import { SSHConnectionPool } from '../backend/src/lib/ssh/pool';
+import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from '../backend/src/lib/auth/session';
+import { setIo as setInstallSocketIo } from '../backend/src/lib/install/socketBridge';
+import { markCrashedOnStartup as markCrashedInstallsOnStartup } from '../backend/src/lib/install/jobStore';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
@@ -70,7 +71,7 @@ const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
 const port = parseInt(process.env.PORT || '3000', 10);
 // when using a Next.js proxy (formerly middleware), `hostname` and `port` must be provided below
-const app = next({ dev, hostname, port });
+const app = next({ dev, hostname, port, dir: path.join(process.cwd(), 'packages', 'frontend') });
 const handle = app.getRequestHandler();
 
 const formatAgentIdSuffix = (agent?: AgentHandler) => {
@@ -133,7 +134,7 @@ setTraceProvider(currentTraceId);
 setTimeout(() => {
   void (async () => {
     try {
-      const { provisionPortalRouting } = await import('./packages/backend/src/lib/portal/provisioner');
+      const { provisionPortalRouting } = await import('../backend/src/lib/portal/provisioner');
       await provisionPortalRouting();
     } catch (e) {
       logger.warn('Server', 'Portal routing provisioner failed:', e);
@@ -210,11 +211,11 @@ app.prepare().then(() => {
         //   2. Cookie: session=...                      — full-access (legacy)
         // Token path is preferred; cookie kept for back-compat with clients
         // that connected before tokens existed.
-        const { verifyToken } = await import('./packages/backend/src/lib/mcp/tokens');
-        const { verifyBootstrapToken } = await import('./packages/backend/src/lib/mcp/bootstrapToken');
+        const { verifyToken } = await import('../backend/src/lib/mcp/tokens');
+        const { verifyBootstrapToken } = await import('../backend/src/lib/mcp/bootstrapToken');
         const authHeader = req.headers.authorization || '';
         const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
-        let auth: { user: string; scopes: import('./packages/backend/src/lib/mcp/tokens').ApiScope[]; tokenId?: string } | null = null;
+        let auth: { user: string; scopes: import('../backend/src/lib/mcp/tokens').ApiScope[]; tokenId?: string } | null = null;
         let authError: string | null = null;
         try {
           if (bearerMatch) {
@@ -476,8 +477,8 @@ app.prepare().then(() => {
     const TRASH_PURGE_INTERVAL_MS = 12 * 60 * 60 * 1000;
     const purgeTrashAcrossNodes = async () => {
       try {
-        const { listNodes: lN } = await import('./packages/backend/src/lib/nodes');
-        const { ServiceManager: SM } = await import('./packages/backend/src/lib/services/ServiceManager');
+        const { listNodes: lN } = await import('../backend/src/lib/nodes');
+        const { ServiceManager: SM } = await import('../backend/src/lib/services/ServiceManager');
         const nodes = await lN();
         for (const n of nodes) {
           try {
@@ -593,9 +594,9 @@ app.prepare().then(() => {
     setTimeout(() => {
       void (async () => {
         try {
-          const { getConfig } = await import('./packages/backend/src/lib/config');
-          const { getExecutor } = await import('./packages/backend/src/lib/executor');
-          const { applyUpdateWindow, applyLocks } = await import('./packages/backend/src/lib/updateWindow');
+          const { getConfig } = await import('../backend/src/lib/config');
+          const { getExecutor } = await import('../backend/src/lib/executor');
+          const { applyUpdateWindow, applyLocks } = await import('../backend/src/lib/updateWindow');
           const config = await getConfig();
           const win = config.updateWindow;
           const executor = getExecutor();
@@ -624,7 +625,7 @@ app.prepare().then(() => {
     // the UI, never block boot.
     (async () => {
       try {
-        const { syncDomainChecks } = await import('./packages/backend/src/lib/health/domainChecks');
+        const { syncDomainChecks } = await import('../backend/src/lib/health/domainChecks');
         await syncDomainChecks();
       } catch (err) {
         logger.warn('Server', `Domain-check sync failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -639,7 +640,7 @@ app.prepare().then(() => {
     // up any legacy `letsdebug:<domain>` checks from prior versions.
     (async () => {
       try {
-        const { syncDnsRoutingChecks } = await import('./packages/backend/src/lib/health/dnsRoutingChecks');
+        const { syncDnsRoutingChecks } = await import('../backend/src/lib/health/dnsRoutingChecks');
         await syncDnsRoutingChecks();
       } catch (err) {
         logger.warn('Server', `DNS-routing sync failed: ${err instanceof Error ? err.message : String(err)}`);

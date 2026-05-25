@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const manifestPath = path.resolve(here, '..', '.next', 'routes-manifest.json');
+const manifestPath = path.resolve(here, '..', 'packages', 'frontend', '.next', 'routes-manifest.json');
 
 const raw = await readFile(manifestPath, 'utf8');
 const manifest = JSON.parse(raw);

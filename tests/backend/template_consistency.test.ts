@@ -30,7 +30,7 @@ import { describe, it, expect } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
-const SRC_DIR = path.join(REPO_ROOT, 'src');
+const SRC_DIR = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
 // Phase 3.3 (#764): backend code moved out of src/lib into the workspace
 // package. Tests that grep for source patterns now look here.
 const BACKEND_SRC = path.join(REPO_ROOT, 'packages', 'backend', 'src');

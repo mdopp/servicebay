@@ -18,7 +18,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const API_ROOT = path.join(REPO_ROOT, 'src', 'app', 'api');
+const API_ROOT = path.join(REPO_ROOT, 'packages', 'frontend', 'src', 'app', 'api');
 
 // Mirror of PUBLIC_API_RULES in src/proxy.ts. Keep in sync.
 interface PublicRule { prefix: string; methods?: ReadonlySet<string> }
@@ -49,7 +49,7 @@ const MUTATING = ['POST', 'PATCH', 'PUT', 'DELETE'] as const;
 
 function fileToApiPath(file: string): string {
   // src/app/api/foo/[id]/bar/route.ts → /api/foo/[id]/bar
-  const rel = path.relative(path.join(REPO_ROOT, 'src', 'app'), file);
+  const rel = path.relative(path.join(REPO_ROOT, 'packages', 'frontend', 'src', 'app'), file);
   return '/' + rel.replace(/\/route\.ts$/, '');
 }
 

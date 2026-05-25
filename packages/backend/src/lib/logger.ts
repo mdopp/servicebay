@@ -307,9 +307,9 @@ class Logger {
     }
     
     if (filter.search) {
-        query += ' AND (message LIKE ? OR tag LIKE ?)';
+        query += ' AND (message LIKE ? OR tag LIKE ? OR trace_id = ?)';
         const term = `%${filter.search}%`;
-        params.push(term, term);
+        params.push(term, term, filter.search);
     }
 
     if (filter.traceId) {

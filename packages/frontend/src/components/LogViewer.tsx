@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCw, Download, ChevronRight, ChevronDown, Info, Settings, Copy, Pause, Play, ListFilter } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/providers/ToastProvider';
@@ -17,6 +17,7 @@ interface LogEntry {
   tag: string;
   message: string;
   args?: unknown[];
+  traceId?: string;
 }
 
 interface LogFilter {
@@ -104,6 +105,23 @@ const formatBytes = (bytes: number, decimals = 1) => {
 
 const LogMessage = ({ message }: { message: string }) => {
   const [expanded, setExpanded] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const embeddedRef = useRef<HTMLDivElement>(null);
+  const [contentHeight, setContentHeight] = useState<number | string>(0);
+  const [embeddedHeight, setEmbeddedHeight] = useState<number | string>(0);
+
+  useEffect(() => {
+    const handle = requestAnimationFrame(() => {
+      if (expanded) {
+        setContentHeight(contentRef.current?.scrollHeight ?? 'auto');
+        setEmbeddedHeight(embeddedRef.current?.scrollHeight ?? 'auto');
+      } else {
+        setContentHeight(0);
+        setEmbeddedHeight(0);
+      }
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [expanded]);
 
   // Try to parse the message as JSON if it looks like one
   const trimmed = message.trim();
@@ -139,11 +157,19 @@ const LogMessage = ({ message }: { message: string }) => {
             <span className="font-mono">JSON Payload <span className="text-slate-400">({formatBytes(jsonSize)})</span> {expanded ? '' : '(click to expand)'}</span>
           </button>
           
-          {expanded && (
-            <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div
+            ref={contentRef}
+            className="overflow-hidden"
+            style={{
+              maxHeight: expanded ? (contentHeight === 'auto' ? 'auto' : `${contentHeight}px`) : '0px',
+              opacity: expanded ? 1 : 0,
+              transition: 'max-height 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1)'
+            }}
+          >
+            <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700">
               <code>{JSON.stringify(parsedJson, null, 2)}</code>
             </pre>
-          )}
+          </div>
         </div>
       );
   }
@@ -184,11 +210,19 @@ const LogMessage = ({ message }: { message: string }) => {
                 <span className="font-mono">JSON Data <span className="text-slate-400">({formatBytes(embeddedSize)})</span></span>
               </button>
               
-              {expanded && (
-                <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700 animate-in fade-in slide-in-from-top-1 duration-200">
+              <div
+                ref={embeddedRef}
+                className="overflow-hidden"
+                style={{
+                  maxHeight: expanded ? (embeddedHeight === 'auto' ? 'auto' : `${embeddedHeight}px`) : '0px',
+                  opacity: expanded ? 1 : 0,
+                  transition: 'max-height 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1)'
+                }}
+              >
+                <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700">
                   <code>{JSON.stringify(embeddedJson, null, 2)}</code>
                 </pre>
-              )}
+              </div>
             </div>
           </div>
         );
@@ -610,6 +644,19 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
                       >
                         {effectiveRunId}
                       </span>
+                    )}
+                    {log.traceId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFilter(f => ({ ...f, search: log.traceId }));
+                          addToast('success', 'Trace ID Filtered', `Isolating transaction: ${log.traceId}`);
+                        }}
+                        className="mt-1 inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[9px] font-mono break-all bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-all select-all text-left"
+                        title={`Click to filter logs by Trace ID: ${log.traceId}`}
+                      >
+                        trace: {log.traceId.slice(0, 8)}...
+                      </button>
                     )}
                   </div>
                 </div>

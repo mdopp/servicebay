@@ -1,8 +1,7 @@
-'use client';
-
-import React from 'react';
-import { Mail } from 'lucide-react';
-import { Input } from '../WizardUI';
+import React, { useState } from 'react';
+import { Mail, CheckCircle, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react';
+import { Input, Button } from '../WizardUI';
+import { saveEmailConfig } from '@/app/actions/onboarding';
 
 interface EmailConfig {
     host: string;
@@ -20,6 +19,53 @@ interface EmailStepProps {
 }
 
 export function EmailStep({ emailConfig, setEmailConfig }: EmailStepProps) {
+    const [testing, setTesting] = useState(false);
+    const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+    const handleTestEmail = async () => {
+        setTesting(true);
+        setTestResult(null);
+        try {
+            // 1. Save SMTP settings in the background
+            await saveEmailConfig(emailConfig);
+
+            // 2. Validate first recipient email address format
+            const recipientsArray = emailConfig.recipients.split(',').map(s => s.trim()).filter(Boolean);
+            const firstRecipient = recipientsArray[0];
+
+            if (!firstRecipient) {
+                setTestResult({ ok: false, message: 'Please specify at least one recipient email address.' });
+                return;
+            }
+
+            // 3. Send test POST
+            const res = await fetch('/api/system/notifications/email/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ to: firstRecipient }),
+            });
+            const data = await res.json().catch(() => ({}));
+            
+            if (res.ok && data.ok) {
+                setTestResult({ ok: true, message: `Test email sent to ${firstRecipient}! Check your inbox.` });
+            } else {
+                setTestResult({
+                    ok: false,
+                    message: data.error || `SMTP error: HTTP ${res.status}`
+                });
+            }
+        } catch (e) {
+            setTestResult({
+                ok: false,
+                message: e instanceof Error ? e.message : 'Network error while testing SMTP connection.'
+            });
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    const canTest = emailConfig.host.trim().length > 0 && emailConfig.user.trim().length > 0 && emailConfig.recipients.trim().length > 0;
+
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex items-center gap-3">
@@ -59,6 +105,32 @@ export function EmailStep({ emailConfig, setEmailConfig }: EmailStepProps) {
                       </div>
                  </div>
                  <Input label="Recipients (comma separated)" value={emailConfig.recipients} onChange={(v: string) => setEmailConfig(c => ({...c, recipients: v}))} placeholder="admin@example.com" />
+
+                 <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-150 dark:border-white/5">
+                     <Button
+                         type="button"
+                         onClick={handleTestEmail}
+                         disabled={!canTest || testing}
+                         variant="outline"
+                         className="!py-2 !px-4 !text-xs flex items-center gap-2"
+                     >
+                         {testing
+                             ? <Loader2 className="w-4 h-4 animate-spin" />
+                             : <ShieldCheck className="w-4 h-4" />}
+                         Verify SMTP & Send Test Alert
+                     </Button>
+                     {testResult?.ok && (
+                         <span className="flex items-center gap-2 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20">
+                             <CheckCircle className="w-4 h-4" /> {testResult.message}
+                         </span>
+                     )}
+                     {testResult && !testResult.ok && (
+                         <span className="flex items-start gap-2 text-xs font-medium text-red-600 dark:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-xl border border-red-500/20 max-w-lg">
+                             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                             <span>{testResult.message}</span>
+                         </span>
+                     )}
+                 </div>
             </div>
         </div>
     );

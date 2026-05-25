@@ -170,8 +170,8 @@ host_build() {
   # under WSL reliably OOMs and crashes the WSL VM. Building on the host is
   # both faster and safer.
   if [ -n "${SERVICEBAY_DEV_SKIP_HOST_BUILD:-}" ]; then
-    log "SERVICEBAY_DEV_SKIP_HOST_BUILD set — reusing existing .next/ + dist-server/"
-    [ -d "$REPO_ROOT/.next" ] && [ -f "$REPO_ROOT/dist-server/server.cjs" ] || \
+    log "SERVICEBAY_DEV_SKIP_HOST_BUILD set — reusing existing packages/frontend/.next/ + dist-server/"
+    [ -d "$REPO_ROOT/packages/frontend/.next" ] && [ -f "$REPO_ROOT/dist-server/server.cjs" ] || \
       die "no prior build found; run without SERVICEBAY_DEV_SKIP_HOST_BUILD once"
     return
   fi

@@ -717,21 +717,30 @@ export default function OnboardingWizard() {
   // `config.notifications.email.to[0]` — the operator already gave us
   // this during bootstrap so they don't have to retype.
   useEffect(() => {
-    // Network step prefill (#662 — S3): pull publicDomain so the
-    // operator sees the install-script-baked or previously-saved value
-    // rather than an empty box. Same source as install-confirm uses.
     if (currentStep !== 'network') return;
-    if (publicDomain) return;
     let cancelled = false;
-    fetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
-      if (cancelled) return;
-      const baked = s?.reverseProxy?.publicDomain;
-      if (typeof baked === 'string' && baked.length > 0) {
-        setPublicDomain(baked);
-      }
-    }).catch(() => { /* silent — operator can type the value */ });
+
+    if (!publicDomain) {
+      fetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
+        if (cancelled) return;
+        const baked = s?.reverseProxy?.publicDomain;
+        if (typeof baked === 'string' && baked.length > 0) {
+          setPublicDomain(baked);
+        }
+      }).catch(() => {});
+    }
+
+    if (gwHost === 'fritz.box' || !gwHost) {
+      fetch('/api/system/gateway/detect').then(r => r.ok ? r.json() : null).then(d => {
+        if (cancelled) return;
+        if (d?.gateway && d.gateway !== 'fritz.box') {
+          setGwHost(d.gateway);
+        }
+      }).catch(() => {});
+    }
+
     return () => { cancelled = true; };
-  }, [currentStep, publicDomain]);
+  }, [currentStep, publicDomain, gwHost]);
 
   useEffect(() => {
     if (currentStep !== 'install-confirm') return;

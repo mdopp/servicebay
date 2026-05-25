@@ -55,7 +55,7 @@ const external = [
 ];
 
 await build({
-  entryPoints: [path.join(repoRoot, 'server.ts')],
+  entryPoints: [path.join(repoRoot, 'packages', 'frontend', 'server.ts')],
   bundle: true,
   platform: 'node',
   format: 'cjs',
@@ -67,7 +67,7 @@ await build({
   // Phase 3.3 (#764) moved `@/lib/*` into packages/backend/.
   alias: {
     '@/lib': path.join(repoRoot, 'packages', 'backend', 'src', 'lib'),
-    '@': path.join(repoRoot, 'src'),
+    '@': path.join(repoRoot, 'packages', 'frontend', 'src'),
     '@servicebay/api-client': path.join(repoRoot, 'packages', 'api-client', 'src', 'index.ts'),
   },
   // Emit reasonable error messages from rejected promises etc.

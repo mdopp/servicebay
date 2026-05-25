@@ -37,8 +37,8 @@ vi.mock('@/lib/api/requireSession', () => ({
 // ----------------------------------------------------------------------
 // 2. Import the Handlers
 // ----------------------------------------------------------------------
-import { POST } from '../../src/app/api/containers/[id]/action/route';
-import { GET } from '../../src/app/api/containers/route';
+import { POST } from '../../packages/frontend/src/app/api/containers/[id]/action/route';
+import { GET } from '../../packages/frontend/src/app/api/containers/route';
 
 describe('Container API', () => {
 

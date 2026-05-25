@@ -7,8 +7,13 @@
       "@/hooks/*": ["./src/hooks/*"],
       "@/dashboards/*": ["./src/dashboards/*"],
       "@/providers/*": ["./src/providers/*"],
-      "@/app/*": ["../../src/app/*"],
-      "@servicebay/api-client": ["../api-client/src/index.ts"]
+      "@/app/*": ["./src/app/*"],
+      "@/lib/*": ["../backend/src/lib/*"],
+      "@/*": ["./src/*"],
+      "@servicebay/api-client": ["../api-client/src/index.ts"],
+      "@servicebay/api-client/*": ["../api-client/src/*"],
+      "@servicebay/frontend/*": ["./src/*"],
+      "@servicebay/backend/*": ["../backend/src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]

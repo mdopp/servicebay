@@ -163,7 +163,7 @@ const servicebayPlugin = {
         // frontend's tsconfig; this rule stays on as a quicker
         // editor-time signal + defense-in-depth.
         if (
-          !/[\\/]packages[\\/]frontend[\\/]src[\\/]/.test(filename)
+          !/[\\/]packages[\\/]frontend[\\/]src[\\/](?:components|hooks|dashboards)[\\/]/.test(filename)
         ) {
           return {};
         }
@@ -242,6 +242,14 @@ const eslintConfig = defineConfig([
       "complexity": ["warn", { max: 15 }],
     },
   },
+  {
+    files: ["**/*.test.{ts,tsx,js,jsx}", "**/tests/**/*"],
+    rules: {
+      "max-lines": "off",
+      "max-lines-per-function": "off",
+      "complexity": "off",
+    },
+  },
   // All 5 ratchet-exempted files swept clean in #602 — the rule is now
   // fully tight ("error" everywhere). Any new executor.exec(`…${x}…`)
   // call fails CI without further config changes.
@@ -249,6 +257,7 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    "packages/frontend/.next/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

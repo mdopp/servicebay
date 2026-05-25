@@ -20,7 +20,7 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"],
+      "@/*": ["./packages/frontend/src/*"],
       "@/lib/*": ["./packages/backend/src/lib/*"],
       "@/components/*": ["./packages/frontend/src/components/*"],
       "@/config/*": ["./packages/frontend/src/config/*"],

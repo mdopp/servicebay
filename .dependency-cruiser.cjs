@@ -49,9 +49,9 @@ module.exports = {
                     '(^|/)next-env\\.d\\.ts$',
                     // Next.js App Router conventions — these are resolved by the
                     // framework, not via static imports.
-                    '^src/app/(page|layout|loading|error|not-found|globals\\.css)\\.tsx?$',
-                    '^src/app/.*/(page|layout|loading|error|not-found)\\.tsx?$',
-                    '^src/app/api/.*/route\\.ts$',
+                    '(^|/)src/app/(page|layout|loading|error|not-found|globals\\.css)\\.tsx?$',
+                    '(^|/)src/app/.*/(page|layout|loading|error|not-found)\\.tsx?$',
+                    '(^|/)src/app/api/.*/route\\.ts$',
                     // public/ files are loaded by the browser at runtime
                     // (service workers, favicons), not imported from JS.
                     '(^|/)public/',
@@ -107,11 +107,9 @@ module.exports = {
                 'import mustache directly for the moment — `install/runner.ts` and the ' +
                 'stackInstall family will migrate to renderTemplate() in a follow-up.',
             from: {
+                path: '^packages/backend/src/lib/',
                 pathNot: [
                     '^packages/backend/src/lib/template/render\\.ts$',
-                    '^packages/backend/src/lib/install/runner\\.ts$',
-                    '^packages/backend/src/lib/install/jobStore\\.ts$',
-                    '^packages/backend/src/lib/stackInstall/',
                 ],
             },
             to: { path: '^node_modules/mustache(/|$)' },

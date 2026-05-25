@@ -110,3 +110,39 @@ body {
   transform: translateY(0);
   transition: opacity 300ms, transform 300ms;
 }
+
+/* Global scrollbar theme matching dark/light modes */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.15); /* Slate outline */
+  border-radius: 99px;
+  transition: background 250ms ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.35);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Global theme switching fluid transitions */
+*, *::before, *::after {
+  transition: background-color 300ms cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 300ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sidebar-transition {
+  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+

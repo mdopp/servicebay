@@ -20,7 +20,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
-const SRC = path.join(REPO_ROOT, 'src');
+const SRC = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
 const BACKEND_SRC = path.join(REPO_ROOT, 'packages', 'backend', 'src');
 
 interface Violation {
@@ -95,7 +95,7 @@ const SECURITY_PATHS = [
     'src/lib/agent/executor.ts',
     'src/proxy.ts',
 ];
-const SECURITY_AS_ANY_BUDGET = 3;
+const SECURITY_AS_ANY_BUDGET = 0;
 
 async function checkSecurityAnyBudget() {
     let count = 0;

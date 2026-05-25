@@ -24,7 +24,7 @@
  * `crashed` by `jobStore.markCrashedOnStartup()` (see server.ts).
  */
 import crypto from 'node:crypto';
-import Mustache from 'mustache';
+import { renderTemplate } from '../template/render';
 // Direct lib imports (#600) — the actions.ts wrappers are RPC bridges
 // for client components, not appropriate for server-side lib code.
 import {
@@ -370,10 +370,8 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     const isRegenerated = !ctx.reusedSecretNames.has('LLDAP_ADMIN_PASSWORD');
     view['LLDAP_FORCE_LDAP_USER_PASS_RESET'] = isRegenerated ? 'true' : 'false';
   }
-  // Disable HTML escaping — Mustache renders YAML and config files, not HTML.
-  const savedEscape = Mustache.escape;
-  Mustache.escape = (text: string) => text;
-  const yamlContent = Mustache.render(item.yaml, view);
+  // Render YAML with unified template renderer
+  const yamlContent = renderTemplate(item.yaml, view);
   const kubeContent =
     `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
 
@@ -387,7 +385,6 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     for (const m of cf.content.matchAll(refRe)) refs.add(m[1]);
     const missing = [...refs].filter(r => !(r in view) || view[r] === '');
     if (missing.length > 0) {
-      Mustache.escape = savedEscape;
       const msg = `Cannot deploy ${item.name}: ${cf.filename} references variable(s) with no value: ${missing.join(', ')}. ` +
         `Go back to the Configure step and fill them in (or check the template's variables.json defaults).`;
       await log(jobId, `❌ ${msg}`);
@@ -398,8 +395,8 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   const extraFiles = (item.configFiles || [])
     .filter(cf => cf.targetPath)
     .map(cf => ({
-      path: Mustache.render(cf.targetPath!, view),
-      content: Mustache.render(cf.content, view),
+      path: renderTemplate(cf.targetPath!, view),
+      content: renderTemplate(cf.content, view),
     }));
 
   // Optional per-template post-deploy.py — server runs it after the unit
@@ -408,7 +405,7 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   let postDeployScript: string | undefined;
   try {
     const raw = await getTemplatePostDeployScript(item.name, input.templateSource);
-    if (raw) postDeployScript = Mustache.render(raw, view);
+    if (raw) postDeployScript = renderTemplate(raw, view);
   } catch { /* template ships no script — fine */ }
 
   // Migration chain — discover via upgrade-preview, render any selected
@@ -428,7 +425,6 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
         const scripts = await getTemplateMigrationScripts(item.name, input.templateSource);
         const result = selectMigrationChain(installedVersion, targetVersion, scripts);
         if (!result.ok) {
-          Mustache.escape = savedEscape;
           const msg = result.reason === 'missing-step'
             ? `Migration chain for ${item.name} is incomplete: no script for v${result.from}→v${result.expectedNext} (have ${result.available.length === 0 ? 'none' : result.available.map(v => `v${v}`).join(', ')}). Aborting deploy.`
             : `Migration chain for ${item.name} has overlapping/invalid steps (${result.conflicts.map(c => `v${c.fromVersion}→v${c.toVersion}`).join(', ')}). Aborting deploy.`;
@@ -440,7 +436,7 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
             filename: s.filename,
             fromVersion: s.fromVersion,
             toVersion: s.toVersion,
-            content: Mustache.render(s.content, view),
+            content: renderTemplate(s.content, view),
           }));
         }
       }
@@ -449,7 +445,6 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     if (e instanceof Error && e.message.startsWith('Migration chain for')) throw e;
     await log(jobId, `⚠️ ${item.name}: could not check migration chain (${e instanceof Error ? e.message : String(e)}). Continuing without migrations.`);
   }
-  Mustache.escape = savedEscape;
 
   const postDeployEnv: Record<string, string> = {};
   for (const v of input.variables) {

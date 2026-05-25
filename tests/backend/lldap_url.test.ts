@@ -15,7 +15,7 @@ vi.mock('@/lib/config', () => ({
   getConfig: vi.fn(() => Promise.resolve(mockConfig)),
 }));
 
-import { GET } from '../../src/app/api/auth/lldap-url/route';
+import { GET } from '../../packages/frontend/src/app/api/auth/lldap-url/route';
 
 const req = () => new NextRequest('http://test/api/auth/lldap-url');
 

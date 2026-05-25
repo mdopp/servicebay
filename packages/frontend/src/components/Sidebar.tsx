@@ -84,10 +84,10 @@ export default function Sidebar() {
   }, []);
 
   return (
-    <div className={`${isCollapsed ? 'w-16' : 'w-64'} flex flex-col transition-all duration-300 h-full shrink-0`}>
+    <div className={`${isCollapsed ? 'w-16' : 'w-64'} flex flex-col sidebar-transition h-full shrink-0`}>
         <div className="h-16 flex items-center justify-between px-4">
             {!isCollapsed && (
-                <div className="flex items-center gap-3.5 overflow-hidden">
+                <div className="flex items-center gap-3.5 overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">
                     <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 shadow-inner shrink-0">
                         <ServiceBayLogo size={22} className="text-blue-600 dark:text-blue-400 shrink-0" />
                     </div>
@@ -153,7 +153,7 @@ export default function Sidebar() {
                                 <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                             )}
                         </div>
-                        {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden">Setup</span>}
+                        {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">Setup</span>}
                     </button>
                 );
             })()}
@@ -172,7 +172,7 @@ export default function Sidebar() {
                         title={isCollapsed ? p.name : ''}
                     >
                         <Icon size={20} className={`shrink-0 ${isActive ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-500'}`} />
-                        {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden">{p.name}</span>}
+                        {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">{p.name}</span>}
                     </button>
                 );
             })}
@@ -186,7 +186,7 @@ export default function Sidebar() {
                 >
                     <Users size={20} className="shrink-0 text-gray-500 dark:text-gray-500" />
                     {!isCollapsed && (
-                        <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5">
+                        <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
                             Users & Groups
                             <ExternalLink size={12} className="text-gray-400" />
                         </span>
@@ -202,7 +202,7 @@ export default function Sidebar() {
             >
                 <Home size={20} className="shrink-0 text-gray-500 dark:text-gray-500" />
                 {!isCollapsed && (
-                    <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5">
+                    <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
                         View as user
                         <ExternalLink size={12} className="text-gray-400" />
                     </span>
@@ -230,7 +230,7 @@ export default function Sidebar() {
                 title="View on GitHub"
             >
                 <Github size={20} className="shrink-0" />
-                {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden">GitHub Repo</span>}
+                {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">GitHub Repo</span>}
             </a>
         </div>
     </div>

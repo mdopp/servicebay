@@ -11,16 +11,16 @@
   "scripts": {
     "predev": "node scripts/predev.mjs",
     "predev:frontend": "node scripts/predev.mjs",
-    "dev": "fuser -k 3000/tcp || true && tsx server.ts",
-    "dev:frontend": "fuser -k 3001/tcp || true && NEXT_PUBLIC_USE_MOCKS=1 next dev --port 3001",
-    "build": "next build && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
+    "dev": "fuser -k 3000/tcp || true && tsx packages/frontend/server.ts",
+    "dev:frontend": "fuser -k 3001/tcp || true && NEXT_PUBLIC_USE_MOCKS=1 next dev packages/frontend --port 3001",
+    "build": "next build packages/frontend && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
     "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "eslint",
     "knip": "knip",
     "test": "vitest run",
     "gen-template-docs": "tsx scripts/gen-template-docs.ts",
     "check:invariants": "tsx scripts/check-invariants.ts",
-    "check:deps": "depcruise --config .dependency-cruiser.cjs src packages server.ts",
+    "check:deps": "depcruise --config .dependency-cruiser.cjs packages/frontend/src packages/backend/src packages/frontend/server.ts",
     "check:arch": "npm run check:invariants && npm run check:deps",
     "prepare": "husky || true"
   },
@@ -98,13 +98,19 @@
     "workspaces": {
       ".": {
         "entry": [
-          "src/app/**/page.tsx",
-          "src/app/**/layout.tsx",
-          "src/app/**/route.ts",
-          "src/app/**/loading.tsx",
-          "src/app/**/error.tsx",
-          "src/app/**/not-found.tsx",
+          "packages/frontend/src/app/**/page.tsx",
+          "packages/frontend/src/app/**/layout.tsx",
+          "packages/frontend/src/app/**/route.ts",
+          "packages/frontend/src/app/**/loading.tsx",
+          "packages/frontend/src/app/**/error.tsx",
+          "packages/frontend/src/app/**/not-found.tsx",
           "scripts/**/*.{ts,mjs}"
+        ],
+        "ignoreDependencies": [
+          "@servicebay/api-client",
+          "lucide-react",
+          "react-markdown",
+          "socket.io-client"
         ]
       },
       "packages/frontend": {

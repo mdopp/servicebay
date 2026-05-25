@@ -53,7 +53,7 @@ vi.mock('@/lib/api/requireSession', () => ({
   requireSession: vi.fn(async () => ({ user: 'admin', expires: new Date(Date.now() + 86400_000) })),
 }));
 
-import { POST } from '../../src/app/api/system/authelia/oidc-clients/route';
+import { POST } from '../../packages/frontend/src/app/api/system/authelia/oidc-clients/route';
 
 // Minimal Authelia pod YAML with a config volume
 const AUTHELIA_YAML = `

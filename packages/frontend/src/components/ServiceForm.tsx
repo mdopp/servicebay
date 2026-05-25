@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type HumanizedYamlError } from '@servicebay/api-client';
 import { typedFetch, ValidateYamlResponseSchema } from '@servicebay/api-client';
-import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2, RefreshCw } from 'lucide-react';
+import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
@@ -81,6 +81,20 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
   const [cursorLine, setCursorLine] = useState(1);
   const [extractedPorts, setExtractedPorts] = useState<{ host?: string; container: string }[]>([]);
   const [extractedVolumes, setExtractedVolumes] = useState<{ host: string; container: string }[]>([]);
+  const [showParserDetails, setShowParserDetails] = useState(false);
+  const parserDetailsRef = useRef<HTMLDivElement>(null);
+  const [parserDetailsHeight, setParserDetailsHeight] = useState<number | string>(0);
+
+  useEffect(() => {
+    const handle = requestAnimationFrame(() => {
+      if (showParserDetails) {
+        setParserDetailsHeight(parserDetailsRef.current?.scrollHeight ?? 'auto');
+      } else {
+        setParserDetailsHeight(0);
+      }
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [showParserDetails]);
 
   // Rename Modal State
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -806,10 +820,27 @@ WantedBy=default.target`;
                 <div className="flex-1 min-w-0">
                     <div className="text-sm">{yamlError.message}</div>
                     {yamlError.raw && yamlError.raw !== yamlError.message && (
-                        <details className="mt-1">
-                            <summary className="text-[11px] uppercase tracking-wider font-bold cursor-pointer text-red-500/80 dark:text-red-300/70">Parser details</summary>
-                            <pre className="text-[11px] mt-1 font-mono whitespace-pre-wrap break-words text-red-600/80 dark:text-red-300/80">{yamlError.raw}</pre>
-                        </details>
+                        <div className="mt-1">
+                            <button
+                                type="button"
+                                onClick={() => setShowParserDetails(!showParserDetails)}
+                                className="flex items-center gap-1 text-[11px] uppercase tracking-wider font-bold cursor-pointer text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 select-none transition-colors"
+                            >
+                                {showParserDetails ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
+                                <span>Parser details</span>
+                            </button>
+                            <div
+                                ref={parserDetailsRef}
+                                className="overflow-hidden"
+                                style={{
+                                    maxHeight: showParserDetails ? (parserDetailsHeight === 'auto' ? 'auto' : `${parserDetailsHeight}px`) : '0px',
+                                    opacity: showParserDetails ? 1 : 0,
+                                    transition: 'max-height 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1)'
+                                }}
+                            >
+                                <pre className="text-[11px] mt-1 font-mono whitespace-pre-wrap break-words text-red-600/80 dark:text-red-300/80">{yamlError.raw}</pre>
+                            </div>
+                        </div>
                     )}
                 </div>
             </div>

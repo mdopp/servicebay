@@ -180,9 +180,12 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
         body: JSON.stringify({ action }),
       });
 
+      const traceId = res.headers.get('x-trace-id');
+      const traceMsg = traceId ? ` [Trace: ${traceId}]` : '';
+
       if (!res.ok) {
         const data = await res.json();
-        updateToast(toastId, 'error', 'Action failed', data.error);
+        updateToast(toastId, 'error', 'Action failed', `${data.error || 'HTTP ' + res.status}${traceMsg}`);
       } else {
         setShowActions(false);
         updateToast(toastId, 'success', 'Action initiated', `${action} command sent to ${selectedService.name}`);
@@ -190,7 +193,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
       }
     } catch (error) {
       logger.error('useServiceActions', 'Action failed', error);
-      updateToast(addToast('error', 'Action failed', 'An unexpected error occurred.'), 'error', 'Action failed', '');
+      updateToast(toastId, 'error', 'Action failed', 'An unexpected connection error occurred.');
     } finally {
       setActionLoading(false);
       setRunningAction(null);
@@ -201,9 +204,22 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     <>
       <ConfirmModal
         isOpen={deleteModalOpen}
-        title="Delete service"
-        message="Stops the service, removes the .kube and YAML units from disk, and reloads systemd. This cannot be undone — type the service name to confirm."
-        confirmText="Delete"
+        title={`Delete ${serviceToDelete?.name || 'Service'}`}
+        message={
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              You are about to delete <strong className="text-gray-900 dark:text-white">{serviceToDelete?.name}</strong>. 
+              This will permanently stop the service and remove all of its configuration files.
+            </p>
+            <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-700 dark:text-blue-300">
+              ℹ️ <strong>Safety Net Active:</strong> ServiceBay will automatically create a snapshot backup of your configuration before deleting. You can restore this at any time from <strong>Settings &rarr; Backups</strong>.
+            </div>
+            <p className="text-xs text-red-600 dark:text-red-400 font-medium">
+              To proceed, type the name of the service below to confirm deletion.
+            </p>
+          </div>
+        }
+        confirmText="Permanently Delete"
         isDestructive
         resourceName={serviceToDelete?.name ?? ''}
         requireTypedConfirm={Boolean(serviceToDelete?.name)}

@@ -7,7 +7,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 interface ConfirmModalProps {
   isOpen: boolean;
   title: string;
-  message: string;
+  message: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   isDestructive?: boolean;
