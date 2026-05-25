@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.28.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.27.0...servicebay-v4.28.0) (2026-05-25)
+
+
+### Features
+
+* **install:** splash redesign — static SPA shell + status.txt + log.txt ([8d5a243](https://github.com/mdopp/servicebay/commit/8d5a2432229576ad3e5205032b1d156e5c4eecce))
+* **scripts:** add watch-install.sh — terminal-side install monitor ([2854ef8](https://github.com/mdopp/servicebay/commit/2854ef84955b863a7b2de0aab269c66e3dd29551))
+
+
+### Bug Fixes
+
+* **install:** splash-during-install now actually visible — two follow-ups from live reinstall ([ab8403d](https://github.com/mdopp/servicebay/commit/ab8403d2b8d0332d4ed58d2325d13fc2dfbf97fb))
+* **install:** unstick FCoS reinstall — USB demote + NVIDIA CDI retry + per-stage progress page ([1a069b4](https://github.com/mdopp/servicebay/commit/1a069b44150ea7bf30d55163e315f1e3d2c56f52))
+* **install:** unstick NVIDIA on FCoS — kick akmods + dodge SIGPIPE/pipefail bug ([99290f0](https://github.com/mdopp/servicebay/commit/99290f0027c6c938d520606bc252497cbd00c792))
+
 ## [4.27.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.26.0...servicebay-v4.27.0) (2026-05-25)
 
 
