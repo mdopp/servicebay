@@ -9,6 +9,11 @@
     "description": "Model pulled on first start. Use any tag from the Ollama library (https://ollama.com/library). Small CPU-friendly default; bump to a larger model once you have GPU passthrough working. The pull runs once per fresh install — subsequent starts find the model already cached and skip the download.",
     "default": "gemma3:4b"
   },
+  "OLLAMA_VISION_MODEL": {
+    "type": "text",
+    "description": "Optional second model pulled on first start for image-aware skills (e.g. OSCAR's media-ingestion-multimodal skill). Leave blank to skip — the default text model has no vision capability and a multimodal request will get an unhelpful 'I can't see images' answer. Suggested tags: `qwen2.5vl:7b` (Apache-2, fits a 16GB GPU alongside gemma3:4b), `llava:13b` (older but well-tested), `bakllava:7b`. Pulled after the default model; both pulls share OLLAMA_READINESS_TIMEOUT_SECONDS.",
+    "default": ""
+  },
   "OLLAMA_GPU_PASSTHROUGH": {
     "type": "text",
     "description": "Leave blank for CPU-only inference (works everywhere, slower for larger models). Set to any non-blank value (e.g. 'yes') to enable NVIDIA GPU passthrough via CDI — requires a CDI-registered NVIDIA GPU on the host (set up with `nvidia-ctk cdi generate`). When non-blank, the rendered pod manifest gets `resources.limits.nvidia.com/gpu: \"1\"`; podman matches that against the CDI device registry at start time.",

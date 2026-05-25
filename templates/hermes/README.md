@@ -47,6 +47,30 @@ and we write the relevant fields ourselves. The Hermes image's
 entrypoint takes care of bootstrapping the rest (Honcho DB,
 FTS5 index, SOUL.md skeleton) idempotently on each start.
 
+## Multimodal (image-bearing) chats
+
+Hermes' generated `config.yaml` writes a single `model:` block, so
+every turn — text-only or image-bearing — goes through the same
+model tag. If you want OSCAR's `media-ingestion-multimodal` skill
+(book covers, document photos) to actually OCR images instead of
+returning "I can't see images", the model you point `HERMES_LLM_MODEL`
+at must itself be vision-capable.
+
+Two ways to get there:
+
+1. **Single multimodal model.** Pull a vision-capable tag in
+   `ollama` (set `OLLAMA_DEFAULT_MODEL=qwen2.5vl:7b` or similar)
+   and set `HERMES_LLM_MODEL` to the same tag. Vision models
+   handle text-only turns fine, so a single model covers both
+   cases. Simplest setup.
+2. **Two models in parallel (text fast, vision on demand).** Keep
+   `OLLAMA_DEFAULT_MODEL=gemma3:4b` for low-latency text turns and
+   set `OLLAMA_VISION_MODEL=qwen2.5vl:7b` to pre-pull the vision
+   model. Routing image-bearing turns to the vision model is
+   pending upstream Hermes support — until then, point
+   `HERMES_LLM_MODEL` at the vision tag when running the media
+   pipeline.
+
 ## Adding MCP servers
 
 Per the upstream
