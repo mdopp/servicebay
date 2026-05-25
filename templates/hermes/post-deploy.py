@@ -119,6 +119,21 @@ def write_config_yaml(data_dir: str, provider_url: str, model: str) -> str | Non
     except OSError as e:
         jlog("error", "hermes:config", "could not write config.yaml", path=config_path, error=str(e))
         return None
+    # Make the dir traversable and the file readable so OTHER templates'
+    # post-deploys (notably oscar-household) can splice an `mcp_servers:`
+    # block into the same config.yaml. Without this, the hermes container
+    # leaves the dir as 0o700 and downstream post-deploys silently bail
+    # at os.path.exists() with "config.yaml not found" - observed
+    # 2026-05-25 during a household-stack install: ha-mcp + servicebay-mcp
+    # never got wired, so Hermes ran with the model block only and could
+    # neither control Home Assistant nor query ServiceBay logs.
+    # Best-effort: a PermissionError here is non-fatal (other-readability
+    # is a convenience, not a hard requirement for Hermes itself).
+    try:
+        os.chmod(config_dir, 0o755)
+        os.chmod(config_path, 0o644)
+    except OSError as e:
+        jlog("warn", "hermes:config", "could not relax config perms for downstream merges", path=config_dir, error=str(e))
     jlog("info", "hermes:config", "wrote config.yaml", path=config_path, model=model, provider_url=provider_url)
     return config_path
 
