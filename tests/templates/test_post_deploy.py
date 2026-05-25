@@ -778,6 +778,81 @@ class HermesScript(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_adopts_ha_long_lived_token_into_pod_yml(self):
+        """When home-assistant's post-deploy left a long-lived HA token,
+        hermes post-deploy must patch the deployed pod yml's HASS_TOKEN
+        value with that token (so Hermes' native HA gateway uses a
+        credential HA actually recognises). Without this Hermes runs
+        with the random placeholder from `assemble` and `auth_invalid`
+        loops forever. #934."""
+        import tempfile
+        import shutil
+
+        m = load_script("hermes")
+        tmp = tempfile.mkdtemp()
+        try:
+            # Drop the long-lived token file where home-assistant post-deploy
+            # would have written it (DATA_DIR/home-assistant/homeassistant/.oscar-long-lived-token).
+            ha_dir = Path(tmp) / "home-assistant" / "homeassistant"
+            ha_dir.mkdir(parents=True)
+            (ha_dir / ".oscar-long-lived-token").write_text("eyJ.real.long.lived.token.value\n")
+
+            # Fake the hermes pod yml at the path post-deploy expects
+            # (~/.config/containers/systemd/hermes.yml). Use a temp HOME
+            # so we don't clobber the real one.
+            fake_home = Path(tmp) / "home"
+            (fake_home / ".config" / "containers" / "systemd").mkdir(parents=True)
+            pod_yml = fake_home / ".config" / "containers" / "systemd" / "hermes.yml"
+            pod_yml.write_text(
+                "spec:\n"
+                "  containers:\n"
+                "  - name: hermes\n"
+                "    env:\n"
+                "    - name: HASS_URL\n"
+                "      value: \"http://127.0.0.1:8123\"\n"
+                "    - name: HASS_TOKEN\n"
+                "      value: \"random-placeholder-from-assemble\"\n"
+            )
+
+            token = m.adopt_ha_long_lived_token(tmp) if hasattr(m, "adopt_ha_long_lived_token") else None
+            # Resolve the function via the dynamic loader and call with the
+            # patched HOME so os.path.expanduser hits our fake.
+            with mock.patch.dict(os.environ, {"HOME": str(fake_home)}, clear=False):
+                returned = m.adopt_ha_long_lived_token(tmp)
+
+            self.assertEqual(returned, "eyJ.real.long.lived.token.value")
+            patched = pod_yml.read_text()
+            self.assertIn('value: "eyJ.real.long.lived.token.value"', patched)
+            self.assertNotIn("random-placeholder-from-assemble", patched)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_adopt_is_noop_when_long_lived_token_file_missing(self):
+        """Operators who opted out of OSCAR auto-onboarding (or are
+        upgrading from a pre-#934 install) don't have the token file.
+        adopt_ha_long_lived_token must be a no-op in that case rather
+        than overwriting hermes.yml with an empty string."""
+        import tempfile
+        import shutil
+
+        m = load_script("hermes")
+        tmp = tempfile.mkdtemp()
+        try:
+            fake_home = Path(tmp) / "home"
+            (fake_home / ".config" / "containers" / "systemd").mkdir(parents=True)
+            pod_yml = fake_home / ".config" / "containers" / "systemd" / "hermes.yml"
+            original = (
+                "    - name: HASS_TOKEN\n"
+                "      value: \"random-placeholder-from-assemble\"\n"
+            )
+            pod_yml.write_text(original)
+            with mock.patch.dict(os.environ, {"HOME": str(fake_home)}, clear=False):
+                returned = m.adopt_ha_long_lived_token(tmp)
+            self.assertIsNone(returned)
+            self.assertEqual(pod_yml.read_text(), original)
+        finally:
+            shutil.rmtree(tmp)
+
 
 class OscarHouseholdScript(unittest.TestCase):
     def test_happy_path_configures_mcp_and_restarts(self):
@@ -898,6 +973,55 @@ class OscarHouseholdScript(unittest.TestCase):
                 config_content,
             )
             self.assertNotIn("random-unregistered-from-assemble", config_content)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_ha_long_lived_token_file_supersedes_env(self):
+        """When home-assistant's post-deploy has dropped a long-lived
+        token at <DATA_DIR>/home-assistant/homeassistant/.oscar-long-lived-token
+        (the #934 auto-onboarding hand-off), oscar-household's
+        post-deploy must splice THAT into the mcp_servers block instead
+        of HA_MCP_TOKEN from `assemble`. Otherwise ha-mcp 401s and the
+        whole #920 "turn on the kitchen light" loop breaks."""
+        import urllib.request
+        m = load_script("oscar-household")
+        import tempfile
+        import shutil
+
+        tmp = tempfile.mkdtemp()
+        try:
+            hermes_dir = Path(tmp) / "hermes"
+            hermes_dir.mkdir(parents=True, exist_ok=True)
+            (hermes_dir / "config.yaml").write_text("model:\n  provider: custom\n  model: gemma3:4b\n")
+
+            # Drop the LLT file where home-assistant post-deploy would.
+            ha_dir = Path(tmp) / "home-assistant" / "homeassistant"
+            ha_dir.mkdir(parents=True)
+            (ha_dir / ".oscar-long-lived-token").write_text("eyJ.real.long.lived.value\n")
+
+            env = {
+                "DATA_DIR": tmp,
+                "SB_API_URL": "http://localhost:3000",
+                "HERMES_API_PORT": "8642",
+                "HERMES_API_KEY": "hermes-key",
+                "HA_MCP_URL": "http://127.0.0.1:8123/mcp_server/sse",
+                "HA_MCP_TOKEN": "random-from-assemble",  # should be ignored
+                "SERVICEBAY_MCP_URL": "",  # skip servicebay-mcp for this test
+                "OSCAR_DEBUG_MODE": "true",
+                "TZ": "Europe/Berlin",
+            }
+            fake_urlopen = fake_urlopen_factory({
+                "/health": {"status": 200, "body": {"status": "ok"}},
+                "/api/services/hermes/action": {"status": 200, "body": {"ok": True}},
+            })
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch("time.sleep", return_value=None):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            config_content = (hermes_dir / "config.yaml").read_text()
+            self.assertIn('Authorization: "Bearer eyJ.real.long.lived.value"', config_content)
+            self.assertNotIn("random-from-assemble", config_content)
         finally:
             shutil.rmtree(tmp)
 

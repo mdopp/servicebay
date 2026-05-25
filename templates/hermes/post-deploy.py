@@ -34,6 +34,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -153,6 +154,60 @@ def restart_hermes(sb_api: str) -> bool:
     return False
 
 
+def adopt_ha_long_lived_token(data_dir: str) -> str | None:
+    """When home-assistant's post-deploy has auto-onboarded HA (#934), it
+    leaves a long-lived access token at
+    `<DATA_DIR>/home-assistant/homeassistant/.oscar-long-lived-token`.
+    Pick that up over the random placeholder `HASS_TOKEN` from assemble
+    and patch the deployed hermes pod yml so Hermes' native HA gateway
+    can actually authenticate. Returns the token on success, or None
+    when the file is absent (operator opted out of auto-onboarding) or
+    the patch was a no-op."""
+    token_path = os.path.join(data_dir, "home-assistant", "homeassistant", ".oscar-long-lived-token")
+    if not os.path.exists(token_path):
+        return None
+    try:
+        with open(token_path, encoding="utf-8") as f:
+            token = f.read().strip()
+    except OSError as e:
+        jlog("warn", "hermes:ha-token", "could not read HA long-lived token", path=token_path, error=str(e))
+        return None
+    if not token:
+        return None
+    # The hermes pod yml is written by ServiceBay's install runner to the
+    # user-Quadlet directory. Patch the HASS_TOKEN env value in-place so a
+    # subsequent restart picks up the real token. We match the YAML
+    # structure ServiceBay produces:
+    #     - name: HASS_TOKEN
+    #       value: "<random>"
+    pod_yml = os.path.expanduser("~/.config/containers/systemd/hermes.yml")
+    if not os.path.exists(pod_yml):
+        jlog("warn", "hermes:ha-token", "hermes.yml not found at expected path", path=pod_yml)
+        return None
+    try:
+        with open(pod_yml, encoding="utf-8") as f:
+            src = f.read()
+    except OSError as e:
+        jlog("warn", "hermes:ha-token", "could not read hermes.yml", path=pod_yml, error=str(e))
+        return None
+    new = re.sub(
+        r"(- name: HASS_TOKEN\n\s+value: )[^\n]+",
+        lambda m: m.group(1) + '"' + token + '"',
+        src,
+    )
+    if new == src:
+        # Already adopted on a previous run.
+        return token
+    try:
+        with open(pod_yml, "w", encoding="utf-8") as f:
+            f.write(new)
+    except OSError as e:
+        jlog("warn", "hermes:ha-token", "could not write patched hermes.yml", path=pod_yml, error=str(e))
+        return None
+    jlog("info", "hermes:ha-token", "adopted HA long-lived token from home-assistant post-deploy", token_path=token_path)
+    return token
+
+
 def main() -> int:
     data_dir = env("DATA_DIR", "/mnt/data")
     sb_api = env("SB_API_URL", "http://localhost:3000")
@@ -166,7 +221,14 @@ def main() -> int:
     # 1. Write config.yaml with the wizard-picked provider + model.
     config_written = write_config_yaml(data_dir, provider_url, model) is not None
 
-    # 2. Restart so Hermes picks up the new config.
+    # Pick up the real HA long-lived token if home-assistant's post-deploy
+    # auto-onboarded HA. Without this Hermes' native HA gateway runs with
+    # the random placeholder from `assemble` and gets `auth_invalid` from
+    # HA on every call.
+    adopt_ha_long_lived_token(data_dir)
+
+    # 2. Restart so Hermes picks up the new config (and the new env if we
+    # just patched HASS_TOKEN).
     if config_written:
         # Give the pod a few seconds to settle so the restart isn't
         # racing the initial deploy.

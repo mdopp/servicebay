@@ -43,6 +43,7 @@ import tarfile
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 UDEV_RULE_DIR = "/etc/udev/rules.d"
@@ -238,6 +239,194 @@ def _ha_config_dir() -> str:
     onto `/config`; DATA_DIR is passed through to the post-deploy env."""
     base = env("DATA_DIR", "/mnt/data")
     return os.path.join(base, "home-assistant", "homeassistant")
+
+
+# ── HA onboarding + long-lived access token (OSCAR / #934) ───────────────────
+#
+# HA's `/api/onboarding` flow is browser-driven in the UI but the underlying
+# REST endpoints accept headless POSTs. We drive them once on a fresh install
+# so downstream templates (hermes, oscar-household) can authenticate with a
+# real long-lived token instead of the random placeholder that `assemble`
+# generates. Idempotent: if onboarding is already done OR the token file is
+# already present, the steps are skipped.
+
+HA_LONG_LIVED_TOKEN_PATH = "/.oscar-long-lived-token"  # joined with HA config dir
+HA_CONTAINER_NAME = "home-assistant-homeassistant"
+HA_CLIENT_ID = "http://127.0.0.1:8123/"
+
+
+def _onboarding_state() -> dict[str, bool] | None:
+    """Returns {step_name: done} for HA's onboarding steps, or None if the
+    endpoint can't be reached. The `/api/onboarding` endpoint is public
+    (no auth needed) by design."""
+    try:
+        with urllib.request.urlopen(f"{HA_API}/api/onboarding", timeout=10) as resp:
+            steps = json.loads(resp.read())
+        return {s["step"]: s["done"] for s in steps}
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+
+
+def _onboard_admin_user(username: str, password: str) -> str | None:
+    """Create the HA admin user via /api/onboarding/users and exchange the
+    returned auth_code for an access token. Returns the access_token, or
+    None on failure. Pre-onboarding endpoint - no auth header needed."""
+    body = json.dumps({
+        "client_id": HA_CLIENT_ID,
+        "name": "OSCAR Admin",
+        "username": username,
+        "password": password,
+        "language": "en",
+    }).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"{HA_API}/api/onboarding/users",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            auth_code = json.loads(resp.read()).get("auth_code")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        log(f"   ⚠️ HA onboarding/users POST failed: {e}")
+        return None
+    if not auth_code:
+        log("   ⚠️ HA onboarding/users returned no auth_code")
+        return None
+    # Exchange auth_code -> access_token via /auth/token (form-urlencoded).
+    form = urllib.parse.urlencode({
+        "client_id": HA_CLIENT_ID,
+        "grant_type": "authorization_code",
+        "code": auth_code,
+    }).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"{HA_API}/auth/token",
+            data=form,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read()).get("access_token")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        log(f"   ⚠️ HA /auth/token exchange failed: {e}")
+        return None
+
+
+def _complete_remaining_onboarding_steps(access_token: str) -> None:
+    """Complete core_config + analytics + integration onboarding steps so
+    HA stops treating itself as freshly-installed. Best-effort - a failure
+    here only means HA's UI nags the operator on first login."""
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    for step, body in (
+        ("core_config", b"{}"),
+        ("analytics", b"{}"),
+        ("integration", json.dumps({"client_id": HA_CLIENT_ID}).encode("utf-8")),
+    ):
+        try:
+            req = urllib.request.Request(
+                f"{HA_API}/api/onboarding/{step}",
+                data=body,
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+            log(f"   ⚠️ HA onboarding/{step} POST failed: {e}")
+
+
+def _mint_long_lived_token(access_token: str) -> str | None:
+    """HA's long-lived access token API is WebSocket-only. Run a tiny
+    websockets client inside HA's own container - it ships the
+    `websockets` library as a dependency, so we don't need anything
+    extra on the host. Returns the token string, or None on failure."""
+    script = (
+        "import asyncio, json, os, sys, websockets\n"
+        "async def main():\n"
+        "    async with websockets.connect('ws://127.0.0.1:8123/api/websocket') as ws:\n"
+        "        await ws.recv()  # auth_required hello\n"
+        "        await ws.send(json.dumps({'type': 'auth', 'access_token': os.environ['ACCESS']}))\n"
+        "        a = json.loads(await ws.recv())\n"
+        "        if a.get('type') != 'auth_ok':\n"
+        "            sys.stderr.write('auth fail: ' + json.dumps(a)); sys.exit(1)\n"
+        "        await ws.send(json.dumps({'id': 1, 'type': 'auth/long_lived_access_token', 'client_name': 'oscar-hermes', 'lifespan': 3650}))\n"
+        "        r = json.loads(await ws.recv())\n"
+        "        if not r.get('success'):\n"
+        "            sys.stderr.write('mint fail: ' + json.dumps(r)); sys.exit(1)\n"
+        "        print(r['result'])\n"
+        "asyncio.run(main())\n"
+    )
+    try:
+        result = subprocess.run(
+            ["podman", "exec", "-e", f"ACCESS={access_token}", HA_CONTAINER_NAME, "python3", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (subprocess.SubprocessError, OSError) as e:
+        log(f"   ⚠️ HA long-lived token podman exec failed: {e}")
+        return None
+    if result.returncode != 0:
+        log(f"   ⚠️ HA long-lived token mint exited {result.returncode}: {result.stderr.strip()}")
+        return None
+    token = result.stdout.strip()
+    return token or None
+
+
+def _persist_long_lived_token(token: str) -> str | None:
+    """Write the long-lived token under HA's config dir so downstream
+    post-deploys (hermes, oscar-household) can pick it up via a fixed
+    path. Returns the full path on success, None on failure."""
+    target = os.path.join(_ha_config_dir(), HA_LONG_LIVED_TOKEN_PATH.lstrip("/"))
+    try:
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(token + "\n")
+        os.chmod(target, 0o644)
+    except OSError as e:
+        log(f"   ⚠️ Could not persist HA long-lived token at {target}: {e}")
+        return None
+    return target
+
+
+def configure_oscar_ha_onboarding() -> None:
+    """When OSCAR_HA_ADMIN_USERNAME and OSCAR_HA_ADMIN_PASSWORD are set,
+    walk HA's onboarding API on a fresh install and mint a long-lived
+    access token for hermes/oscar-household. No-op when:
+      - either variable is blank (operator opted out / manual setup)
+      - the onboarding user step is already done (idempotent re-run)
+      - the long-lived token file is already present (already done)"""
+    username = env("OSCAR_HA_ADMIN_USERNAME")
+    password = env("OSCAR_HA_ADMIN_PASSWORD")
+    if not username or not password:
+        log("OSCAR_HA_ADMIN_USERNAME / _PASSWORD not set — skipping auto-onboarding.")
+        return
+    token_file = os.path.join(_ha_config_dir(), HA_LONG_LIVED_TOKEN_PATH.lstrip("/"))
+    if os.path.exists(token_file):
+        log(f"✅ HA long-lived token already persisted at {token_file} — skipping onboarding.")
+        return
+    log("Auto-onboarding HA admin user for OSCAR (no operator browser step required)...")
+    state = _onboarding_state()
+    if state is None:
+        log("   ⚠️ Could not reach HA /api/onboarding — skipping auto-onboarding.")
+        return
+    if state.get("user") is True:
+        log("   HA user-onboarding step already done — won't create a second admin. "
+            "Operator can mint a long-lived token via the HA UI or set OSCAR_HA_ADMIN_USERNAME='' to silence this.")
+        return
+    access_token = _onboard_admin_user(username, password)
+    if not access_token:
+        return
+    _complete_remaining_onboarding_steps(access_token)
+    long_lived = _mint_long_lived_token(access_token)
+    if not long_lived:
+        return
+    path = _persist_long_lived_token(long_lived)
+    if path:
+        log(f"✅ HA admin '{username}' created + long-lived token persisted at {path}.")
 
 
 def _strip_first_component(member_path: str) -> str | None:
@@ -437,6 +626,14 @@ def main() -> int:
     log(f"✅ Connect Home Assistant to Z-Wave JS: ws://localhost:{ZWAVEJS_WS_PORT}")
 
     configure_auth_oidc()
+
+    # OSCAR auto-onboarding: only fires when OSCAR_HA_ADMIN_USERNAME +
+    # OSCAR_HA_ADMIN_PASSWORD are both set and HA isn't onboarded yet.
+    # No-op for operators using HA's first-boot UI wizard manually.
+    if _wait_ha_ready():
+        configure_oscar_ha_onboarding()
+    else:
+        log("⚠️ HA did not become reachable in time — skipping OSCAR onboarding.")
 
     # ── Health check ─────────────────────────────────────────────────────────
     # Worked example for docs/TEMPLATE_AUTHORING.md § Health checks.
