@@ -75,6 +75,7 @@ async def _serve() -> None:
             piper_uri=settings.piper_uri,
             devices=settings.voice_pe_devices,
             push_token=settings.push_token,
+            db_path=settings.oscar_db_path if settings.speaker_id_enabled else None,
         ),
         name="push",
     )

@@ -161,6 +161,7 @@ def register_http_check(sb_api: str, sb_token: str, ollama_url: str) -> None:
 def main() -> int:
     port = env("OLLAMA_PORT", "11434")
     model = env("OLLAMA_DEFAULT_MODEL", "gemma3:4b")
+    vision_model = env("OLLAMA_VISION_MODEL", "")
     timeout = int(env("OLLAMA_READINESS_TIMEOUT_SECONDS", "600"))
     sb_api = env("SB_API_URL", "http://localhost:3000")
     sb_token = env("SB_API_TOKEN", "")
@@ -176,9 +177,14 @@ def main() -> int:
         )
         return 0
 
+    started = time.time()
+
+    def remaining_budget() -> int:
+        return max(60, timeout - int(time.time() - started))
+
     if model:
         jlog("info", "ollama:pull", "starting model pull", model=model)
-        ok = pull_model(ollama_url, model, deadline_sec=timeout)
+        ok = pull_model(ollama_url, model, deadline_sec=remaining_budget())
         if not ok:
             jlog(
                 "warn",
@@ -187,9 +193,22 @@ def main() -> int:
                 model=model,
             )
 
+    if vision_model:
+        jlog("info", "ollama:pull", "starting vision-model pull", model=vision_model)
+        ok = pull_model(ollama_url, vision_model, deadline_sec=remaining_budget())
+        if not ok:
+            jlog(
+                "warn",
+                "ollama:pull",
+                "vision-model pull did not complete; OSCAR's media-ingestion-multimodal skill will fall back to text-only. Pull manually with `curl -X POST http://127.0.0.1:%s/api/pull -d '{\"name\":\"%s\"}'` or bump OLLAMA_READINESS_TIMEOUT_SECONDS." % (port, vision_model),
+                model=vision_model,
+            )
+
     register_http_check(sb_api, sb_token, ollama_url)
 
     print(f"✅ Ollama is running on 127.0.0.1:{port}. Default model: {model}.")
+    if vision_model:
+        print(f"   Vision model: {vision_model} (multimodal-capable).")
     print(f"   Other ServiceBay templates (hermes, oscar-household) can reach it at http://127.0.0.1:{port}.")
     return 0
 

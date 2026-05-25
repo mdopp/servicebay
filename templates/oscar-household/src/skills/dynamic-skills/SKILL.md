@@ -1,7 +1,7 @@
 ---
 name: oscar-dynamic-skills
 description: Use when the user requests OSCAR to learn a new capability, write down a fact/note, configure an agent, or when OSCAR needs to self-enhance its knowledge, skills, or peer agent behaviors dynamically. Implements the Phase 4 self-improvement loop.
-version: 1.0.0
+version: 2.0.0
 author: OSCAR
 license: MIT
 ---
@@ -12,7 +12,7 @@ license: MIT
 
 This skill defines the operating procedures for **OSCAR Phase 4** (the Self-Enhancement Loop). It equips the Hermes Agent with instructions to perform:
 1. **Dynamic Knowledge Writing**: Writing or updating structured facts and markdown notes in `/opt/data/notes/` so the hybrid-retrieval system picks them up.
-2. **Dynamic Skill Compiler**: Authoring new skill specifications, sandboxing Python or JavaScript execution to verify them, writing `/opt/data/skills/oscar/<skill-name>/SKILL.md`, and reloading the Hermes service via ServiceBay-MCP.
+2. **Dynamic Skill Drafting**: Authoring new skill specifications into a **pending** directory; an administrator must promote them from the ServiceBay dashboard before they go live. OSCAR never auto-activates a skill it wrote, and never executes scratch scripts in a regular shell.
 3. **Dynamic Agent Configuration**: Direct conversational feedback rules that update Honcho peer templates and custom instructions.
 
 ---
@@ -34,38 +34,54 @@ When the user shares household facts, preferences, or notes (e.g., "Remember tha
 
 ---
 
-## 2. Dynamic Skill Compiler
+## 2. Dynamic Skill Drafting (admin-promotion gate)
 
-When a user requests a new automation or capability (e.g., "Learn how to parse local weather warnings from this specific API"), OSCAR can write a brand-new skill.
+When a user requests a new automation or capability (e.g., "Learn how to parse local weather warnings from this specific API"), OSCAR drafts a brand-new skill **into the pending directory**. The skill does not go live until an administrator promotes it from the ServiceBay dashboard.
 
-### Rules & Sandboxing:
-- **Location**: Write the new skill file to `/opt/data/skills/oscar/<skill-name>/SKILL.md`.
-- **Sandboxing & Testing**:
-  - Before finalizing any custom shell script or python routine, write it to a temporary sandbox file inside `/opt/data/skills/oscar/<skill-name>/scratch/test_run.py`.
-  - Run the test script using `run_command` in a non-interactive sandbox shell.
-  - Verify that the API calls work, standard outputs are correct, and all dependencies are resolved.
-- **Reloading Hermes**:
-  - Once the skill `SKILL.md` is successfully written and verified, trigger a service reload.
-  - Call the ServiceBay-MCP tool `restart_service` with the argument `{"service": "hermes"}`. This forces Hermes to reload all active skills on-the-fly without system downtime.
+### Hard rules — do NOT skip these:
 
-### Example SKILL.md Structure to Generate:
+- **Write only to `/opt/data/skills-pending/<slug>/SKILL.md`.** Never write to `/opt/data/skills/oscar/...` directly. Hermes auto-discovers skills under `/opt/data/skills/oscar`; auto-writing there would make the new skill live with no human review, which is a prompt-injection risk.
+- **Do not execute the skill's scripts.** No `run_command` against generated Python, JavaScript, or shell. Test scripts may be drafted alongside SKILL.md as *files* (e.g. `<slug>/scratch/test_run.py`) for the admin to inspect, but OSCAR never runs them itself in the current Hermes shell. A sandboxed test runtime is a planned follow-up; until it lands, drafted scripts are inert until promotion.
+- **Do not call `restart_service hermes`.** Promotion triggers the restart from the dashboard. OSCAR's job ends at "wrote the SKILL.md to pending".
+- **Use a safe `<slug>`.** Lowercase letters, digits, dashes; no `/`, `..`, leading dots, or whitespace. Reject names that would escape `/opt/data/skills-pending/`.
+
+### Operating Sequence:
+
+1. Create `/opt/data/skills-pending/<slug>/` (mkdir is fine; the directory is auto-created on first write).
+2. Write the SKILL.md frontmatter and body using `write_to_file`. Include:
+   - `name: oscar-custom-<slug>`
+   - `description:` a clear, single-paragraph LLM-router description.
+   - `version: 1.0.0`, `author: OSCAR Dynamic Compiler`, `license: MIT`.
+3. If the skill needs a scratch script, write it to `<slug>/scratch/<file>` as a normal file. Do **not** execute it.
+4. Tell the user *exactly* this shape: *"Ich habe einen Entwurf für die neue Skill `<slug>` unter den ausstehenden Skills abgelegt. Sobald ein Admin sie im ServiceBay-Dashboard freigibt, lerne ich sie."*
+
+### Example SKILL.md to generate:
+
 ```markdown
 ---
-name: oscar-custom-<name>
-description: <detailed description for LLM router>
+name: oscar-custom-weather-warnings
+description: When the user asks about local weather warnings, fetch the DWD warning feed for the configured WARNCELLID and summarize active warnings.
 version: 1.0.0
 author: OSCAR Dynamic Compiler
 license: MIT
 ---
 
-# OSCAR — Custom Skill <Name>
+# OSCAR — Custom Skill: Weather Warnings
 
 ## When to use
-- <Use-case triggers>
+- The user asks about active local weather warnings, storms, or hazards.
 
 ## Operating sequence
-1. <Step-by-step instructions>
+1. Read `/opt/data/notes/fact_address.md` for the WARNCELLID.
+2. GET https://maps.dwd.de/geoserver/dwd/ows?... (the feed URL).
+3. Parse the warnings JSON and reply with the highest-severity active warning in German.
 ```
+
+### What admin promotion does (for context, not actions you take):
+
+1. The ServiceBay dashboard's *Pending OSCAR skills* section lists every directory under `/opt/data/skills-pending/`.
+2. Admin clicks **Promote**: the directory moves to `/opt/data/skills/oscar/<slug>/`, then ServiceBay restarts the `hermes` service so the new skill is loaded.
+3. Admin clicks **Reject**: the directory is deleted from pending. The skill never goes live.
 
 ---
 
@@ -82,6 +98,7 @@ OSCAR operates with peer agents and templates managed under Honcho. When perform
 
 ## Failure Paths & Safety Guards
 
-- **Strict Path Sandboxing**: Never write or edit files outside `/opt/data/` or the designated project workspaces.
-- **Testing Before Merging**: Never write a complex `SKILL.md` without running a validation probe or test execution of the underlying command/API first.
-- **Error Recovery**: If a service reload of `hermes` fails or causes a crash, check logs using `journalctl -u hermes` via ServiceBay-MCP, revert the changes in `SKILL.md`, and reload again.
+- **Strict Path Sandboxing**: Never write or edit files outside `/opt/data/`. For pending skills, restrict writes to `/opt/data/skills-pending/<slug>/`.
+- **No silent self-activation.** Writing under `/opt/data/skills/oscar/...` from this skill is a bug, not a shortcut. If you find yourself reasoning "I should just put it directly so the user doesn't have to wait", stop — that bypasses the admin gate that exists precisely so a jailbroken or prompt-injected session can't grant itself code execution.
+- **No `run_command` for generated scripts.** Drafted scripts are files for human review; they are not executed in the current Hermes shell. A sandboxed runtime for verifying them is a planned follow-up (see ServiceBay issue #940).
+- **Error Recovery**: If a write fails, surface the error to the user (not to the dashboard) and stop. Do not retry against the active skills directory as a workaround.

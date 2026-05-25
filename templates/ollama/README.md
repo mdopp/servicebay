@@ -13,10 +13,15 @@ networking.
 - `OLLAMA_PORT` — host port. Default `11434`. Bound to loopback.
 - `OLLAMA_DEFAULT_MODEL` — model pulled on first install. Default
   `gemma3:4b` (small, CPU-friendly). Any Ollama library tag works.
+- `OLLAMA_VISION_MODEL` — optional second model for image-aware
+  skills (e.g. OSCAR's `media-ingestion-multimodal`). Blank by
+  default; set to `qwen2.5vl:7b`, `llava:13b`, or `bakllava:7b`
+  to enable multimodal flows.
 - `OLLAMA_GPU_PASSTHROUGH` — leave blank for CPU; set non-blank
   for NVIDIA GPU passthrough via CDI.
 - `OLLAMA_READINESS_TIMEOUT_SECONDS` — post-deploy model-pull
-  deadline. Default `600`.
+  deadline. Default `600`. Shared across both default and vision
+  pulls; bump it if you pull two large models on a slow link.
 
 ## CPU vs. GPU
 
@@ -56,10 +61,32 @@ API exposes every loaded model to anyone who reaches it.
    own readiness signal).
 2. POSTs `/api/pull` with `OLLAMA_DEFAULT_MODEL` so the first model
    is ready before the operator's first request.
-3. Logs progress and emits a final "ready" line.
+3. If `OLLAMA_VISION_MODEL` is set, POSTs a second `/api/pull` for
+   that model (sequential to keep network/disk pressure predictable).
+4. Logs progress and emits a final "ready" line.
 
-Idempotent — a second deploy with the same model finds it already
-cached and skips the pull.
+Idempotent — a second deploy with the same models finds them already
+cached and skips the pulls.
+
+## Multimodal (vision) inference
+
+OSCAR's `media-ingestion-multimodal` skill needs a vision-capable
+model to OCR book covers, transcribe photos of documents, etc.
+The default `gemma3:4b` is text-only — sending it an image yields
+an unhelpful "I can't see images" response.
+
+Set `OLLAMA_VISION_MODEL` at install time (or via the wizard's
+reconfigure flow) to pull a vision model alongside the default.
+The model pulls in series after the default; both share the
+`OLLAMA_READINESS_TIMEOUT_SECONDS` budget. Suggested tags:
+
+- `qwen2.5vl:7b` — Apache-2.0, ~6 GB quantised, fits a 16 GB GPU
+  alongside `gemma3:4b`.
+- `llava:13b` — older but well-tested, ~8 GB.
+- `bakllava:7b` — Mistral-based LLaVA variant, ~5 GB.
+
+Hermes' wiring picks up the new model automatically the next time
+its config is regenerated — see `templates/hermes/README.md`.
 
 ## Storage
 

@@ -154,6 +154,107 @@ def restart_hermes(sb_api: str) -> bool:
     return False
 
 
+def write_gateway_env(data_dir: str, entries: dict[str, str]) -> bool:
+    """Merge messaging-gateway credentials into `<DATA_DIR>/hermes/.env`.
+
+    Hermes reads its gateway allowlists and bot tokens from this file at
+    start time (the warning Hermes prints on a fresh install names this
+    exact path: `~/.hermes/.env`). The pod mounts `<DATA_DIR>/hermes` at
+    `/opt/data`, and Hermes' default HOME is `/opt/data` → `.env` here is
+    the same file Hermes loads.
+
+    Merge semantics: read existing key/value lines, overwrite the keys
+    we manage, keep everything else untouched. Empty values clear a key
+    (so an operator who removes a token from the wizard actually rotates
+    the credential out). A run with all-empty inputs and no existing
+    file is a no-op.
+
+    Returns True when the .env file changed (signals the caller to
+    restart the pod), False when it was already up to date.
+    """
+    config_dir = os.path.join(data_dir, "hermes")
+    env_path = os.path.join(config_dir, ".env")
+    managed_keys = {
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_ALLOWED_USERS",
+        "DISCORD_BOT_TOKEN",
+        "DISCORD_ALLOWED_CHANNELS",
+        "SIGNAL_ACCOUNT",
+        "SIGNAL_ALLOWED_USERS",
+    }
+    existing: dict[str, str] = {}
+    order: list[str] = []
+    preamble: list[str] = []
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.rstrip("\n")
+                    if not line.strip() or line.lstrip().startswith("#"):
+                        preamble.append(line)
+                        continue
+                    if "=" not in line:
+                        preamble.append(line)
+                        continue
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    if not key:
+                        preamble.append(line)
+                        continue
+                    if key in managed_keys:
+                        # Drop existing managed lines; they get rewritten below.
+                        continue
+                    existing[key] = value
+                    order.append(key)
+        except OSError as e:
+            jlog("warn", "hermes:env", "could not read .env, will recreate", path=env_path, error=str(e))
+            existing = {}
+            order = []
+            preamble = []
+
+    # Decide whether anything would actually change.
+    new_managed = {k: v for k, v in entries.items() if v}
+    desired_lines: list[str] = []
+    for line in preamble:
+        desired_lines.append(line)
+    for key in order:
+        desired_lines.append(f"{key}={existing[key]}")
+    if new_managed:
+        if desired_lines and desired_lines[-1] != "":
+            desired_lines.append("")
+        for key in sorted(new_managed):
+            desired_lines.append(f"{key}={new_managed[key]}")
+    new_content = "\n".join(desired_lines).rstrip("\n") + ("\n" if desired_lines else "")
+
+    if not os.path.exists(env_path) and not new_managed:
+        return False
+
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            old_content = f.read()
+    except (FileNotFoundError, OSError):
+        old_content = ""
+    if old_content == new_content:
+        return False
+
+    try:
+        os.makedirs(config_dir, exist_ok=True)
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        os.chmod(env_path, 0o600)
+    except OSError as e:
+        jlog("error", "hermes:env", "could not write .env", path=env_path, error=str(e))
+        return False
+    jlog(
+        "info",
+        "hermes:env",
+        "updated messaging-gateway .env",
+        path=env_path,
+        keys=sorted(new_managed.keys()),
+    )
+    return True
+
+
 def adopt_ha_long_lived_token(data_dir: str) -> str | None:
     """When home-assistant's post-deploy has auto-onboarded HA (#934), it
     leaves a long-lived access token at
@@ -227,9 +328,24 @@ def main() -> int:
     # HA on every call.
     adopt_ha_long_lived_token(data_dir)
 
+    # Merge messaging-gateway credentials (Telegram / Discord / Signal
+    # allowlists + bot tokens) into <DATA_DIR>/hermes/.env. Idempotent —
+    # only signals a restart when something actually changed.
+    env_changed = write_gateway_env(
+        data_dir,
+        {
+            "TELEGRAM_BOT_TOKEN": env("TELEGRAM_BOT_TOKEN"),
+            "TELEGRAM_ALLOWED_USERS": env("TELEGRAM_ALLOWED_USERS"),
+            "DISCORD_BOT_TOKEN": env("DISCORD_BOT_TOKEN"),
+            "DISCORD_ALLOWED_CHANNELS": env("DISCORD_ALLOWED_CHANNELS"),
+            "SIGNAL_ACCOUNT": env("SIGNAL_ACCOUNT"),
+            "SIGNAL_ALLOWED_USERS": env("SIGNAL_ALLOWED_USERS"),
+        },
+    )
+
     # 2. Restart so Hermes picks up the new config (and the new env if we
-    # just patched HASS_TOKEN).
-    if config_written:
+    # just patched HASS_TOKEN or rewrote .env).
+    if config_written or env_changed:
         # Give the pod a few seconds to settle so the restart isn't
         # racing the initial deploy.
         time.sleep(3)

@@ -1,7 +1,8 @@
 """Env-driven configuration for the gatekeeper.
 
-Phase 0 keeps the surface small. Phase 2 will add speaker-ID model paths
-and the `gatekeeper_voice_embeddings` DSN.
+Phase 0 (initial release) kept this tiny. Phase 2 (#937) adds the
+SpeechBrain ECAPA model toggle + threshold and the oscar.db path for
+the voice_embeddings table.
 """
 
 from __future__ import annotations
@@ -23,6 +24,9 @@ class Settings:
     push_host: str
     push_port: int
     push_token: str
+    oscar_db_path: str
+    speaker_id_enabled: bool
+    speaker_id_threshold: float
     voice_pe_devices: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -36,6 +40,11 @@ class Settings:
                     devices = {str(k): str(v) for k, v in parsed.items()}
             except json.JSONDecodeError:
                 devices = {}
+        flag = os.environ.get("OSCAR_SPEAKER_ID_ENABLED", "").strip().lower()
+        try:
+            threshold = float(os.environ.get("OSCAR_SPEAKER_ID_THRESHOLD", "0.55"))
+        except ValueError:
+            threshold = 0.55
         return cls(
             gatekeeper_uri=os.environ.get("GATEKEEPER_URI", "tcp://0.0.0.0:10700"),
             whisper_uri=os.environ.get("WHISPER_URI", "tcp://127.0.0.1:10300"),
@@ -49,6 +58,9 @@ class Settings:
             push_host=os.environ.get("PUSH_HOST", "0.0.0.0"),
             push_port=int(os.environ.get("PUSH_PORT", "10750")),
             push_token=os.environ.get("PUSH_TOKEN", ""),
+            oscar_db_path=os.environ.get("OSCAR_DB_PATH", "/var/lib/oscar/oscar.db"),
+            speaker_id_enabled=flag in {"1", "true", "yes", "on"},
+            speaker_id_threshold=threshold,
             voice_pe_devices=devices,
         )
 

@@ -24,8 +24,8 @@ The gatekeeper terminates the Wyoming connection after each turn. Multi-turn / b
 
 | Phase | What this code does |
 |---|---|
-| **0 / 1 (now)** | Pass-through. `uid` hardcoded to `DEFAULT_UID`, `endpoint = voice-pe:<connection-id>`. No speaker ID. |
-| **2** | SpeechBrain ECAPA-TDNN extracts a 256-d embedding from the audio buffer; brute-force cosine k-NN against `voice_embeddings` in `oscar.db` (3–10 rows) resolves the LLDAP `uid`. |
+| **0 / 1 (default)** | Pass-through. `uid` hardcoded to `DEFAULT_UID`, `endpoint = voice-pe:<connection-id>`. No speaker ID. |
+| **2 (framework landed, #937)** | Resolver, k-NN cosine, embeddings store, `POST /enrol` HTTP endpoint, handler wiring all live. ECAPA-TDNN itself is opt-in — see "Enabling Speaker-ID" below. |
 | **4** | Multi-room routing (response goes to the satellite the user is closest to), voice-tone sensor parallel to STT, custom "Oscar" wakeword. |
 
 Long-term target: contribute the Phase 0/1 pass-through path to Hermes as a generic `hermes gateway voice`. The Phase 2+ logic (speaker ID, multi-room, voice-tone) stays here.
@@ -40,9 +40,58 @@ Long-term target: contribute the Phase 0/1 pass-through path to Hermes as a gene
 | `OPENWAKEWORD_URI` | `tcp://127.0.0.1:10400` | openWakeWord (advertised in Info; Phase 0 lets the satellite do wakeword on-device) |
 | `HERMES_URL` | `http://127.0.0.1:8642` | Base URL of Hermes' HTTP API (matches ServiceBay `hermes` template default; both pods use hostNetwork) |
 | `HERMES_TOKEN` | empty | Bearer for Hermes (matches its `API_SERVER_KEY` / surfaced by ServiceBay's `hermes` template as `HERMES_API_KEY`) |
-| `DEFAULT_UID` | `michael` | Hardcoded uid until Phase 2 speaker ID lands |
-| `OSCAR_DB_PATH` | `/var/lib/oscar/oscar.db` | SQLite file (Phase 2: `voice_embeddings` lookup) |
+| `DEFAULT_UID` | `michael` | Fallback uid when speaker-ID is off or doesn't match |
+| `OSCAR_DB_PATH` | `/var/lib/oscar/oscar.db` | SQLite file (Phase 2: `voice_embeddings` read/write) |
+| `OSCAR_SPEAKER_ID_ENABLED` | empty | Set to `1`/`true` to turn on Phase-2 speaker resolution. Off by default — the stock image has no ECAPA model anyway. |
+| `OSCAR_SPEAKER_ID_THRESHOLD` | `0.55` | Cosine similarity threshold above which a k-NN match is accepted. Below it, the resolver falls back to `DEFAULT_UID` (and logs the score). |
+| `OSCAR_SPEAKER_MODEL_CACHE` | `/var/lib/oscar/models/spkrec-ecapa` | Where SpeechBrain caches the pretrained ECAPA weights. ~80 MB on first start. |
 | `OSCAR_DEBUG_MODE` | `false` | Initial verbose-mode default (runtime override comes from `system_settings.debug_mode` in `oscar.db`) |
+
+## Enabling Speaker-ID (Phase 2)
+
+The framework (resolver, store, enrolment endpoint, handler wiring)
+ships in the default image. The ECAPA-TDNN model and its dependencies
+(SpeechBrain + torch, ~1 GB) do **not** ship in the default image —
+adding them would balloon a sidecar that's otherwise ~100 MB.
+
+To activate Phase-2 speaker resolution:
+
+1. Build a custom gatekeeper image that installs the extras:
+
+   ```dockerfile
+   FROM ghcr.io/mdopp/oscar-gatekeeper:latest
+   RUN pip install --no-cache-dir 'oscar-gatekeeper[speaker-id]'
+   ```
+
+2. Point `GATEKEEPER_IMAGE` (the `oscar-household` template variable)
+   at your image tag.
+3. Set `OSCAR_SPEAKER_ID_ENABLED=1` in the wizard.
+4. Enrol each resident through the gatekeeper's HTTP API:
+
+   ```bash
+   curl -X POST http://127.0.0.1:10750/enrol \
+        -H "Authorization: Bearer $PUSH_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{
+              "uid": "alice",
+              "sample_rate": 16000,
+              "sample_width": 2,
+              "channels": 1,
+              "samples": [
+                "<base64 of 16kHz mono int16 PCM clip 1>",
+                "<base64 of clip 2>",
+                "<base64 of clip 3>"
+              ]
+            }'
+   ```
+
+   3–10 clips. The endpoint averages the per-clip ECAPA embeddings
+   and upserts the result. `GET /enrolments` lists enrolled uids;
+   `DELETE /enrolments/<uid>` removes one.
+
+When the env flag is off, deps are missing, or no enrolments exist,
+the handler short-circuits the resolver and uses `DEFAULT_UID`. The
+conversation pipeline is unaffected.
 
 ## Local development
 

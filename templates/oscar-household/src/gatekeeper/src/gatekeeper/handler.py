@@ -15,6 +15,7 @@ turn, like HA's voice pipeline). Multi-turn / streaming is a Phase 4 topic.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -26,7 +27,9 @@ from wyoming.event import Event
 from wyoming.server import AsyncEventHandler
 
 from .config import settings
+from .embeddings_store import list_embeddings, touch_last_seen
 from .hermes import HermesClient
+from .speaker import get_extractor, resolve_speaker
 from .tts import synthesize_to_writer
 
 
@@ -87,10 +90,11 @@ class GatekeeperHandler(AsyncEventHandler):
             return
         log.info("gatekeeper.transcript", trace_id=self.trace_id, text=transcript)
 
+        uid = await self._resolve_uid()
         endpoint = f"voice-pe:{self.client_id or 'unknown'}"
         response = await self._hermes.converse(
             text=transcript,
-            uid=settings.default_uid,
+            uid=uid,
             endpoint=endpoint,
             trace_id=self.trace_id,
         )
@@ -106,6 +110,48 @@ class GatekeeperHandler(AsyncEventHandler):
             return
 
         log.info("gatekeeper.session.close", trace_id=self.trace_id)
+
+    async def _resolve_uid(self) -> str:
+        """Phase 2 speaker resolution. Falls back to default_uid on any
+        gap (feature disabled, no enrolments, model not loaded, empty
+        buffer, embedding extraction failure). The resolver itself is
+        in `speaker.py`; this method orchestrates the pieces and keeps
+        the conversation pipeline working when the ML path is absent."""
+        if not settings.speaker_id_enabled:
+            return settings.default_uid
+        extractor = get_extractor()
+        if extractor is None or self._audio_start is None or not self._audio_buffer:
+            return settings.default_uid
+        pcm = b"".join(c.audio for c in self._audio_buffer)
+        rate = self._audio_start.rate
+        width = self._audio_start.width
+        channels = self._audio_start.channels
+        try:
+            query = await asyncio.to_thread(
+                extractor.extract, pcm, rate=rate, width=width, channels=channels
+            )
+        except Exception as exc:  # noqa: BLE001 — extraction errors degrade gracefully
+            log.warn("gatekeeper.speaker.extract_error", trace_id=self.trace_id, error=str(exc))
+            return settings.default_uid
+        candidates = await asyncio.to_thread(list_embeddings, settings.oscar_db_path)
+        uid, match = resolve_speaker(
+            query,
+            candidates,
+            threshold=settings.speaker_id_threshold,
+            default_uid=settings.default_uid,
+        )
+        if match is not None:
+            log.info(
+                "gatekeeper.speaker.match",
+                trace_id=self.trace_id,
+                uid=uid,
+                best_uid=match.uid,
+                score=round(match.score, 4),
+                above_threshold=match.above_threshold,
+            )
+        if uid != settings.default_uid:
+            await asyncio.to_thread(touch_last_seen, settings.oscar_db_path, uid)
+        return uid
 
     async def _transcribe(self) -> str:
         assert self._audio_start is not None

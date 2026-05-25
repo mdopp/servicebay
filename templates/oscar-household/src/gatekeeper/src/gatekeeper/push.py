@@ -109,6 +109,27 @@ def build_app(
     return app
 
 
+def build_combined_app(
+    *,
+    piper_uri: str,
+    devices: dict[str, str],
+    push_token: str = "",
+    db_path: str | None = None,
+) -> web.Application:
+    """Build the push app and add Phase-2 speaker-ID enrolment routes.
+
+    Defined here (not in __main__) so tests can construct the full
+    aiohttp surface without spinning up the Wyoming server."""
+    app = build_app(piper_uri=piper_uri, devices=devices, push_token=push_token)
+    if db_path:
+        # Imported here to keep speaker.py / enrollment.py out of the
+        # push-only test path that doesn't care about the ML stack.
+        from .enrollment import add_routes as add_enrolment_routes
+
+        add_enrolment_routes(app, db_path=db_path, push_token=push_token)
+    return app
+
+
 async def _push_to_device(piper_uri: str, device_uri: str, text: str) -> int:
     """Open a Wyoming client to the device, write the synthesized audio."""
     async with AsyncClient.from_uri(device_uri) as device:
@@ -126,9 +147,12 @@ async def serve(
     piper_uri: str,
     devices: dict[str, str],
     push_token: str = "",
+    db_path: str | None = None,
 ) -> None:
     """Run the aiohttp app forever. Caller composes this with the Wyoming server."""
-    app = build_app(piper_uri=piper_uri, devices=devices, push_token=push_token)
+    app = build_combined_app(
+        piper_uri=piper_uri, devices=devices, push_token=push_token, db_path=db_path
+    )
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

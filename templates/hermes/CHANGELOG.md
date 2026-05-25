@@ -1,5 +1,23 @@
 # Hermes — template changelog
 
+## v3 — #940
+
+OSCAR's dynamic skill compiler now drafts pending skills into a separate
+host directory that Hermes' loader does not scan. The Hermes pod gets a
+new bind mount, `{{DATA_DIR}}/oscar-household/skills-pending` at
+`/opt/data/skills-pending`, alongside the existing
+`/opt/data/skills/oscar` mount.
+
+Operator impact: none on redeploy. The host directory is auto-created
+(`type: DirectoryOrCreate`) and starts empty. The ServiceBay dashboard
+gains a "Pending OSCAR skills" panel under **Settings → Integrations**
+where the admin promotes or rejects drafts before they go live.
+
+Before v3 the OSCAR `dynamic-skills` skill instructed Hermes to write
+new skills directly under `/opt/data/skills/oscar/...` and to call
+`restart_service hermes`, which auto-activated agent-generated code
+with no human review — a prompt-injection risk. v3 retires that path.
+
 ## v2 — #829
 
 The Hermes web dashboard is now exposed as a real service.
