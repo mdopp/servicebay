@@ -70,23 +70,24 @@ probe_tcp() {
   return 1
 }
 
-probe_title() {
-  # Pull the splash <title>. Strip the leading "ServiceBay setup — " prefix
-  # so the stage shows cleanly. If the title doesn't have that prefix, the
-  # real wizard has taken over.
-  local title
-  title="$(curl -sk -m 3 "http://$HOST:$PORT/" 2>/dev/null \
-           | grep -oE '<title>[^<]+</title>' \
-           | head -1 \
-           | sed -e 's|<title>||' -e 's|</title>||')"
-  printf '%s' "$title"
+probe_status() {
+  # Fetch /status.txt — a single TSV line: <ISO>\t<title>\t<description>.
+  # If 404 / non-200, we're either in the box's very-early boot before
+  # busybox is up, or ServiceBay's Next.js has taken over (status.txt
+  # is not a Next route). Caller distinguishes via probe_root_title().
+  curl -sk -m 3 "http://$HOST:$PORT/status.txt" 2>/dev/null
 }
 
-is_wizard_title() {
-  # The splash always says "ServiceBay setup — …". Anything else means
-  # the real Next.js server has taken over.
-  local t="$1"
-  [[ -n "$t" && "$t" != "ServiceBay setup"* ]]
+probe_root_title() {
+  # When status.txt isn't being served, fetch / and peek at the <title>.
+  # The splash SPA's title is the literal string "ServiceBay setup".
+  # The real wizard's title is the configured hostname (or "ServiceBay"
+  # if the operator hasn't picked one yet) — anything OTHER than the
+  # splash literal means takeover.
+  curl -sk -m 3 "http://$HOST:$PORT/" 2>/dev/null \
+    | grep -oE '<title>[^<]+</title>' \
+    | head -1 \
+    | sed -e 's|<title>||' -e 's|</title>||'
 }
 
 # ──────────────── state machine ────────────────
@@ -96,7 +97,8 @@ REBOOTS=0
 STAGES_SEEN=0
 PREV_ICMP=""
 PREV_TCP=""
-PREV_TITLE=""
+PREV_STAGE=""
+STAGE_START_TS=0      # when the current stage started — drives the (still: …) since-text
 LAST_LINE_TS=0
 
 print_line() {
@@ -159,12 +161,31 @@ FIRST_ITER=1
 while true; do
   if probe_icmp; then icmp="yes"; else icmp="no"; fi
   if [[ "$icmp" == yes ]] && probe_tcp; then tcp="yes"; else tcp="no"; fi
-  if [[ "$tcp"  == yes ]]; then title="$(probe_title)"; else title=""; fi
 
-  # Wizard-takeover check runs before the change-detection so we exit cleanly
+  stage=""; stage_desc=""
+  takeover=0
+  if [[ "$tcp" == yes ]]; then
+    status_line="$(probe_status)"
+    status_line="${status_line%$'\n'}"
+    # Valid splash status.txt is a single TSV line starting with an
+    # ISO 8601 UTC timestamp. Anything else (empty, 404 page from Next.js,
+    # HTML blob, partial write) we treat as "not the splash" and ask
+    # the root to decide whether ServiceBay has taken over.
+    if [[ "$status_line" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z ]]; then
+      stage="${status_line#*$'\t'}"; stage="${stage%%$'\t'*}"
+      stage_desc="${status_line#*$'\t'*$'\t'}"
+    else
+      root_title="$(probe_root_title)"
+      if [[ -n "$root_title" && "$root_title" != "ServiceBay setup"* ]]; then
+        takeover=1
+      fi
+    fi
+  fi
+
+  # Wizard-takeover check runs before change-detection so we exit cleanly
   # regardless of what state we started in.
-  if [[ -n "$title" ]] && is_wizard_title "$title"; then
-    print_line "$icmp" "$tcp" "${C_GREEN}${C_BOLD}→ ServiceBay wizard is live${C_RESET}  ${C_DIM}(title: \"$title\")${C_RESET}"
+  if (( takeover )); then
+    print_line "$icmp" "$tcp" "${C_GREEN}${C_BOLD}→ ServiceBay wizard is live${C_RESET}"
     echo
     printf '   %sSetup wizard:%s  %shttp://%s:%s/setup%s\n' \
       "$C_BOLD" "$C_RESET" "$C_GREEN" "$HOST" "$PORT" "$C_RESET"
@@ -177,12 +198,13 @@ while true; do
   # On the first iteration, print whatever state we found — operator gets
   # immediate context instead of having to wait for a transition.
   state_changed=0
+  now=$(date +%s)
   if (( FIRST_ITER )); then
-    if [[ -n "$title" ]]; then
-      stage="${title#ServiceBay setup — }"
+    if [[ -n "$stage" ]]; then
       print_line "$icmp" "$tcp" "$stage  ${C_DIM}(current)${C_RESET}"
+      STAGE_START_TS=$now
     elif [[ "$tcp" == yes ]]; then
-      print_line "$icmp" "$tcp" "${C_DIM}port :$PORT open, no splash content yet${C_RESET}"
+      print_line "$icmp" "$tcp" "${C_DIM}port :$PORT open, no status yet${C_RESET}"
     elif [[ "$icmp" == yes ]]; then
       print_line "$icmp" "$tcp" "${C_DIM}network reachable, port :$PORT closed${C_RESET}"
     else
@@ -207,29 +229,30 @@ while true; do
       print_line "$icmp" "$tcp" "${C_DIM}port :$PORT closed${C_RESET}"
     fi
     state_changed=1
-  elif [[ "$title" != "$PREV_TITLE" && -n "$title" ]]; then
-    # Stage update — strip the "ServiceBay setup — " prefix.
-    stage="${title#ServiceBay setup — }"
+  elif [[ -n "$stage" && "$stage" != "$PREV_STAGE" ]]; then
+    # Stage advanced.
     print_line "$icmp" "$tcp" "$stage"
     STAGES_SEEN=$((STAGES_SEEN+1))
+    STAGE_START_TS=$now
     state_changed=1
   fi
 
   # Heartbeat: print a dimmed line every 30 s when nothing has changed,
-  # so the operator knows the script is alive.
-  now=$(date +%s)
+  # so the operator knows the script is alive. "since" is the time at
+  # the CURRENT stage (not since the last log line — bug from v1).
   if (( state_changed == 0 )) && (( now - LAST_LINE_TS >= 30 )); then
-    if [[ "$tcp" == yes && -n "$title" ]]; then
-      stage="${title#ServiceBay setup — }"
-      since=$(elapsed_human $(( now - LAST_LINE_TS )))
-      print_line "$icmp" "$tcp" "(still: $stage — $since)" "y"
+    if [[ "$tcp" == yes && -n "$stage" ]]; then
+      since=$(elapsed_human $(( now - STAGE_START_TS )))
+      print_line "$icmp" "$tcp" "(still: $stage — $since at stage)" "y"
+    elif [[ "$icmp" == yes ]]; then
+      print_line "$icmp" "$tcp" "(still: waiting for splash)" "y"
     else
-      print_line "$icmp" "$tcp" "(still: rebooting / waiting)" "y"
+      print_line "$icmp" "$tcp" "(still: rebooting / no signal)" "y"
     fi
   fi
 
   PREV_ICMP="$icmp"
   PREV_TCP="$tcp"
-  PREV_TITLE="$title"
+  PREV_STAGE="$stage"
   sleep 2
 done

@@ -251,7 +251,7 @@ storage:
           # Best-effort status update — the helper may not exist on very
           # early boots where this script runs before /usr/local/bin is
           # writable, hence `|| true`.
-          /usr/local/bin/update-install-status.sh "Setting up data storage" "Detecting + formatting the largest non-OS disk. About 30 seconds." 2>/dev/null || true
+          /usr/local/bin/update-install-status.sh "Setting up data storage" "Detecting + formatting the largest non-OS disk. About 30 seconds." "setup-raid" 2>/dev/null || true
           MOUNT_POINT="${DATA_ROOT}"
           HOST_USER="${HOST_USER}"
 
@@ -566,24 +566,30 @@ storage:
           [Install]
           WantedBy=default.target
 
-    # Boot/install progress page. Tiny busybox httpd serves this static
-    # HTML on ${SERVICEBAY_PORT} during the cold-boot + install window.
-    # Each install script (setup-raid, install-python, install-nvidia
-    # stages 1+2, install-nvidia-cdi) calls /usr/local/bin/update-install-status.sh
-    # at the start of its work to rewrite this file with a stage-specific
-    # message and the current timestamp. The page meta-refreshes every
-    # 5 s so the operator's browser tab transparently follows progress.
+    # Boot/install progress page. Tiny busybox httpd serves three files
+    # from this directory on ${SERVICEBAY_PORT}:
     #
-    # Two handoffs:
-    #   - During install: each stage replaces this file with its own status.
-    #   - When installation completes: install-nvidia-cdi.sh (GPU boxes) or
-    #     install-nvidia.sh stage 0 (no-GPU boxes) touches /var/lib/installation-ready.
-    #     servicebay-trigger.path (user unit) observes the marker and starts
-    #     servicebay.service, which stops this splash via its own
-    #     ExecStartPre and then binds the port.
+    #   index.html  — static SPA shell. Written ONCE by Ignition (this
+    #                 entry) and never rewritten. Has all the JS, polls
+    #                 the two data files below, handles reconnects on
+    #                 reboot, hard-reloads when ServiceBay takes over.
+    #   status.txt  — current stage. Tab-separated single line:
+    #                 <ISO-timestamp>\t<title>\t<description>
+    #                 Atomically rewritten by update-install-status.sh.
+    #   log.txt     — append-only narrative log, capped at ~8 KB.
+    #                 Install scripts tee key command output here.
     #
-    # This file is the FIRST-BOOT fallback shown for the few seconds before
-    # any install service has run. Most operators will only see it briefly.
+    # The split means a stage change only rewrites a tiny TSV file, the
+    # SPA in the browser persists across the whole install, and the
+    # operator sees both the current stage AND a live tail of activity.
+    # The same status.txt is consumed by scripts/watch-install.sh on the
+    # operator's machine — no HTML scraping required.
+    #
+    # Takeover detection: when servicebay.service activates, its
+    # ExecStartPre kills the splash. The SPA's polled fetches start
+    # failing, and after ~5 s of failures it asks for / and checks the
+    # title — if it no longer says "ServiceBay setup", it hard-reloads
+    # so Next.js can take over.
     - path: /var/home/${HOST_USER}/.config/containers/splash/index.html
       mode: 0644
       user:
@@ -594,57 +600,192 @@ storage:
         inline: |
           <!doctype html>
           <html lang="en">
-            <head>
-              <meta charset="utf-8" />
-              <meta http-equiv="refresh" content="5" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>ServiceBay setup</title>
-              <style>
-                :root { color-scheme: dark light; }
-                html, body { margin: 0; height: 100%; }
-                body {
-                  display: flex; align-items: center; justify-content: center;
-                  background: #0f1115; color: #e6e6e6;
-                  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>ServiceBay setup</title>
+          <style>
+          :root { color-scheme: dark light; }
+          html, body { margin: 0; padding: 0; min-height: 100%; }
+          body {
+            background: #0f1115; color: #e6e6e6;
+            font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 2rem 1rem;
+          }
+          main {
+            max-width: 44rem; margin: 0 auto;
+            padding: 1.5rem 2rem;
+            background: #181b22; border: 1px solid #2a2f3a;
+            border-radius: 14px;
+          }
+          h1 { font-size: 1.25rem; margin: 0 0 .5rem; text-align: center; }
+          .desc { color: #a9b0bc; margin: 0 0 1rem; text-align: center; }
+          .spinner {
+            width: 28px; height: 28px; margin: 1rem auto;
+            border: 3px solid #2a2f3a; border-top-color: #6aa6ff;
+            border-radius: 50%; animation: spin 1s linear infinite;
+          }
+          @keyframes spin { to { transform: rotate(360deg); } }
+          .meta { color: #6b7280; font-size: .8rem; text-align: center; margin: 0 0 1rem; }
+          .meta > span { margin: 0 .25rem; }
+          .badge {
+            display: inline-block; padding: .15rem .5rem; border-radius: 6px;
+            background: #1f2937; color: #9ca3af; font-size: .75rem;
+            font-family: ui-monospace, monospace;
+          }
+          .badge.connected { background: #064e3b; color: #6ee7b7; }
+          .badge.disconnected { background: #7f1d1d; color: #fca5a5; }
+          .log-header {
+            font-size: .75rem; color: #6b7280; margin: 1rem 0 .25rem;
+            text-transform: uppercase; letter-spacing: .05em;
+          }
+          pre {
+            margin: 0; padding: .75rem;
+            max-height: 18rem; overflow-y: auto;
+            background: #0a0c0f; border: 1px solid #2a2f3a; border-radius: 8px;
+            font: 11px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+            color: #9ca3af;
+            white-space: pre-wrap; word-break: break-word;
+          }
+          </style>
+          </head>
+          <body>
+          <main>
+          <div class="spinner" aria-hidden="true"></div>
+          <h1 id="title">Booting…</h1>
+          <p class="desc" id="desc">The page refreshes automatically. The box may reboot a few times during setup.</p>
+          <div class="meta">
+            <span id="updated">connecting…</span>
+            <span class="badge" id="conn">offline</span>
+          </div>
+          <div class="log-header">Recent install activity</div>
+          <pre id="log">(waiting for log output)</pre>
+          </main>
+          <script>
+          (function () {
+            var $title = document.getElementById('title');
+            var $desc = document.getElementById('desc');
+            var $updated = document.getElementById('updated');
+            var $conn = document.getElementById('conn');
+            var $log = document.getElementById('log');
+            var lastStatusTs = null;
+            var consecutiveFails = 0;
+            var lastLogText = '';
+
+            function fmtSince(date) {
+              var s = Math.floor((Date.now() - date) / 1000);
+              if (s < 5) return 'just now';
+              if (s < 60) return s + 's ago';
+              if (s < 3600) return Math.floor(s/60) + 'm' + String(s%60).padStart(2,'0') + 's ago';
+              return Math.floor(s/3600) + 'h' + String(Math.floor((s%3600)/60)).padStart(2,'0') + 'm ago';
+            }
+
+            function setBadge(ok) {
+              $conn.textContent = ok ? 'connected' : 'reconnecting…';
+              $conn.className = 'badge ' + (ok ? 'connected' : 'disconnected');
+            }
+
+            async function checkTakeover() {
+              try {
+                var r = await fetch('/', { cache: 'no-store' });
+                if (!r.ok) return false;
+                var html = await r.text();
+                if (html.indexOf('ServiceBay setup') === -1) {
+                  window.location.reload();
+                  return true;
                 }
-                main {
-                  max-width: 36rem; padding: 2rem 2.5rem;
-                  background: #181b22; border: 1px solid #2a2f3a;
-                  border-radius: 14px; text-align: center;
+              } catch (e) { /* still offline */ }
+              return false;
+            }
+
+            async function fetchStatus() {
+              try {
+                var r = await fetch('/status.txt', { cache: 'no-store' });
+                if (!r.ok) throw new Error('http ' + r.status);
+                var txt = (await r.text()).trim();
+                var parts = txt.split('\t');
+                var ts = parts[0], title = parts[1] || 'Installing…', desc = parts[2] || '';
+                $title.textContent = title;
+                $desc.textContent = desc;
+                if (ts) lastStatusTs = new Date(ts);
+                consecutiveFails = 0;
+                setBadge(true);
+              } catch (e) {
+                consecutiveFails++;
+                setBadge(false);
+                if (consecutiveFails > 5) await checkTakeover();
+              }
+            }
+
+            async function fetchLog() {
+              try {
+                var r = await fetch('/log.txt', { cache: 'no-store' });
+                if (!r.ok) return;
+                var txt = await r.text();
+                if (txt !== lastLogText) {
+                  $log.textContent = txt || '(empty)';
+                  lastLogText = txt;
+                  $log.scrollTop = $log.scrollHeight;
                 }
-                h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
-                p  { color: #a9b0bc; margin: .25rem 0; }
-                .spinner {
-                  width: 28px; height: 28px; margin: 1rem auto;
-                  border: 3px solid #2a2f3a; border-top-color: #6aa6ff;
-                  border-radius: 50%; animation: spin 1s linear infinite;
-                }
-                @keyframes spin { to { transform: rotate(360deg); } }
-                .since { color: #6b7280; font-size: .875rem; margin-top: 1rem; }
-              </style>
-            </head>
-            <body>
-              <main>
-                <div class="spinner" aria-hidden="true"></div>
-                <h1>Booting…</h1>
-                <p>This page auto-refreshes. Install progress will appear here in a moment.</p>
-                <p>Please leave this window open. The box may reboot a few times during initial setup.</p>
-              </main>
-            </body>
+              } catch (e) { /* handled by fetchStatus */ }
+            }
+
+            function updateAge() {
+              if (lastStatusTs) $updated.textContent = 'updated ' + fmtSince(lastStatusTs);
+            }
+
+            fetchStatus(); fetchLog();
+            setInterval(fetchStatus, 2000);
+            setInterval(fetchLog, 3000);
+            setInterval(updateAge, 1000);
+          })();
+          </script>
+          </body>
           </html>
 
-    # Status-page helper. Any install script can call:
-    #   /usr/local/bin/update-install-status.sh "Short title" "Optional one-line description"
-    # This rewrites the splash index.html (served by servicebay-splash.container
-    # on :${SERVICEBAY_PORT}) with the new message, the current UTC timestamp,
-    # and the 5 s meta-refresh that ties everything together. The operator's
-    # browser tab follows along without manual reloads.
+    # Initial status.txt — overwritten by update-install-status.sh as
+    # soon as the first install service calls the helper. Has to exist
+    # at Ignition time so the SPA's first poll succeeds (busybox httpd
+    # returns 404 for missing files, which the SPA handles, but a real
+    # value is friendlier on first paint).
+    - path: /var/home/${HOST_USER}/.config/containers/splash/status.txt
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          1970-01-01T00:00:00Z	Booting…	Install services are starting. This page will fill in shortly.
+
+    # Initial log.txt — append-only narrative. Pre-created (empty plus
+    # a single banner line) so busybox can serve it without 404 on
+    # first SPA fetch.
+    - path: /var/home/${HOST_USER}/.config/containers/splash/log.txt
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          (boot — install activity will be logged below)
+
+    # Status-page helpers. Two scripts:
     #
-    # The helper writes via a temp file + atomic rename so the busybox httpd
-    # always serves a complete page (no half-written HTML during the write).
-    # Plain-text args only — angle brackets / ampersands are NOT escaped.
-    # That's fine for the stage messages we send; do not pass user-supplied
-    # data through here.
+    #   update-install-status.sh "Title" "Description" [component]
+    #     - rewrites status.txt (the SPA's current-stage source) atomically
+    #     - appends a line to log.txt
+    #     - keeps log.txt under ~8 KB by tail-truncating
+    #
+    #   append-install-log.sh "component" "message"
+    #     - appends a single line to log.txt (no status change)
+    #     - same truncation discipline
+    #
+    # Either script's output is plain text only — do not pass user
+    # input or shell metacharacters through them. The TSV format in
+    # status.txt sanitizes tabs/newlines defensively, but the goal is
+    # callers stay simple.
     - path: /usr/local/bin/update-install-status.sh
       mode: 0755
       contents:
@@ -654,57 +795,69 @@ storage:
 
           TITLE="${1:-Installing ServiceBay…}"
           DESC="${2:-Please leave this window open. The page refreshes automatically.}"
-          HTML_PATH=/var/home/${HOST_USER}/.config/containers/splash/index.html
-          TMP_PATH="$(/usr/bin/mktemp "$(/usr/bin/dirname "$HTML_PATH")/.index.html.XXXXXX")"
+          COMPONENT="${3:-status}"
+          SPLASH_DIR=/var/home/${HOST_USER}/.config/containers/splash
+          STATUS_FILE="$SPLASH_DIR/status.txt"
+          LOG_FILE="$SPLASH_DIR/log.txt"
           NOW="$(/usr/bin/date -u +%FT%TZ)"
 
-          /usr/bin/cat > "$TMP_PATH" <<HTML
-          <!doctype html>
-          <html lang="en">
-            <head>
-              <meta charset="utf-8" />
-              <meta http-equiv="refresh" content="5" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>ServiceBay setup — $TITLE</title>
-              <style>
-                :root { color-scheme: dark light; }
-                html, body { margin: 0; height: 100%; }
-                body {
-                  display: flex; align-items: center; justify-content: center;
-                  background: #0f1115; color: #e6e6e6;
-                  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                }
-                main {
-                  max-width: 36rem; padding: 2rem 2.5rem;
-                  background: #181b22; border: 1px solid #2a2f3a;
-                  border-radius: 14px; text-align: center;
-                }
-                h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
-                p  { color: #a9b0bc; margin: .25rem 0; }
-                .spinner {
-                  width: 28px; height: 28px; margin: 1rem auto;
-                  border: 3px solid #2a2f3a; border-top-color: #6aa6ff;
-                  border-radius: 50%; animation: spin 1s linear infinite;
-                }
-                @keyframes spin { to { transform: rotate(360deg); } }
-                .since { color: #6b7280; font-size: .875rem; margin-top: 1rem; }
-              </style>
-            </head>
-            <body>
-              <main>
-                <div class="spinner" aria-hidden="true"></div>
-                <h1>$TITLE</h1>
-                <p>$DESC</p>
-                <p class="since">Status updated $NOW (UTC)</p>
-              </main>
-            </body>
-          </html>
-          HTML
+          # Sanitize: status.txt is single-line TSV, so any tab/newline
+          # in the inputs would break parsing on the SPA side. Replace
+          # both with spaces.
+          TITLE_SAFE=$(printf '%s' "$TITLE" | /usr/bin/tr '\t\n' '  ')
+          DESC_SAFE=$(printf '%s' "$DESC" | /usr/bin/tr '\t\n' '  ')
 
-          /usr/bin/chown ${HOST_USER}:${HOST_USER} "$TMP_PATH" 2>/dev/null || true
-          /usr/bin/chmod 0644 "$TMP_PATH"
-          /usr/bin/mv -f "$TMP_PATH" "$HTML_PATH"
-          echo "install-status: $TITLE ($NOW)"
+          # Atomic write of status.txt (temp + rename).
+          TMP="$(/usr/bin/mktemp "$SPLASH_DIR/.status.txt.XXXXXX")"
+          printf '%s\t%s\t%s\n' "$NOW" "$TITLE_SAFE" "$DESC_SAFE" > "$TMP"
+          /usr/bin/chown ${HOST_USER}:${HOST_USER} "$TMP" 2>/dev/null || true
+          /usr/bin/chmod 0644 "$TMP"
+          /usr/bin/mv -f "$TMP" "$STATUS_FILE"
+
+          # Append a line to log.txt (no temp+rename — append is atomic
+          # enough on local disk for our purposes, and busybox httpd
+          # reading mid-append at worst serves a partial last line).
+          printf '%s %s: %s\n' "$NOW" "$COMPONENT" "$TITLE_SAFE" >> "$LOG_FILE"
+
+          # Tail-truncate log.txt to ~8 KB.
+          LOG_SIZE=$(/usr/bin/stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)
+          if [ "$LOG_SIZE" -gt 8192 ]; then
+              TMP2="$(/usr/bin/mktemp "$SPLASH_DIR/.log.txt.XXXXXX")"
+              /usr/bin/tail -c 6144 "$LOG_FILE" > "$TMP2"
+              /usr/bin/chown ${HOST_USER}:${HOST_USER} "$TMP2" 2>/dev/null || true
+              /usr/bin/chmod 0644 "$TMP2"
+              /usr/bin/mv -f "$TMP2" "$LOG_FILE"
+          fi
+
+          echo "install-status: $TITLE_SAFE ($NOW)"
+
+    # Append-to-log helper for install scripts that want to add a line
+    # without changing the headline stage. Useful inside loops or for
+    # arbitrary mid-stage progress notes ("polling lsmod attempt 5/30").
+    - path: /usr/local/bin/append-install-log.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+
+          COMPONENT="${1:-misc}"
+          MESSAGE="${2:-}"
+          SPLASH_DIR=/var/home/${HOST_USER}/.config/containers/splash
+          LOG_FILE="$SPLASH_DIR/log.txt"
+          NOW="$(/usr/bin/date -u +%FT%TZ)"
+          MESSAGE_SAFE=$(printf '%s' "$MESSAGE" | /usr/bin/tr '\n' ' ')
+
+          printf '%s %s: %s\n' "$NOW" "$COMPONENT" "$MESSAGE_SAFE" >> "$LOG_FILE"
+
+          LOG_SIZE=$(/usr/bin/stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)
+          if [ "$LOG_SIZE" -gt 8192 ]; then
+              TMP="$(/usr/bin/mktemp "$SPLASH_DIR/.log.txt.XXXXXX")"
+              /usr/bin/tail -c 6144 "$LOG_FILE" > "$TMP"
+              /usr/bin/chown ${HOST_USER}:${HOST_USER} "$TMP" 2>/dev/null || true
+              /usr/bin/chmod 0644 "$TMP"
+              /usr/bin/mv -f "$TMP" "$LOG_FILE"
+          fi
 
     # Splash Quadlet — runs the busybox httpd as a rootless container
     # under the same `core` user as the real servicebay.container so
@@ -842,10 +995,11 @@ ${SERVICEBAY_SSH_PRIV}
         inline: |
           #!/bin/bash
           set -euo pipefail
-          /usr/local/bin/update-install-status.sh "Installing Python runtime" "Layering python3 for the ServiceBay agent. About 30 seconds." || true
-          echo "install-python: installing python3 via rpm-ostree..."
-          rpm-ostree install --apply-live --allow-inactive python3
-          echo "install-python: done"
+          LOG_FILE=/var/home/${HOST_USER}/.config/containers/splash/log.txt
+          /usr/local/bin/update-install-status.sh "Installing Python runtime" "Layering python3 for the ServiceBay agent. About 30 seconds." "install-python" || true
+          echo "install-python: installing python3 via rpm-ostree..." | /usr/bin/tee -a "$LOG_FILE"
+          rpm-ostree install --apply-live --allow-inactive python3 2>&1 | /usr/bin/tee -a "$LOG_FILE"
+          echo "install-python: done" | /usr/bin/tee -a "$LOG_FILE"
 
     # Systemd unit to install Python3 on first boot
     - path: /etc/systemd/system/install-python.service
@@ -893,7 +1047,7 @@ ${SERVICEBAY_SSH_PRIV}
               # wait on).
               touch /var/lib/install-nvidia-repos-done /var/lib/install-nvidia-driver-done /var/lib/install-nvidia-cdi-done
               touch /var/lib/installation-ready
-              /usr/local/bin/update-install-status.sh "Starting ServiceBay…" "Almost done. The wizard will open in a few seconds." || true
+              /usr/local/bin/update-install-status.sh "Starting ServiceBay…" "Almost done. The wizard will open in a few seconds." "install-nvidia" || true
               exit 0
           fi
 
@@ -910,12 +1064,17 @@ ${SERVICEBAY_SSH_PRIV}
           # `rpm-ostree install nvidia-package` in the same script run
           # fails with "Packages not found". Split repo layering from
           # driver layering with a reboot between.
+          LOG_FILE=/var/home/${HOST_USER}/.config/containers/splash/log.txt
+
           if [ ! -f /var/lib/install-nvidia-repos-done ]; then
-              /usr/local/bin/update-install-status.sh "Adding NVIDIA repositories" "Layering RPM Fusion + NVIDIA container-toolkit repos. About 2 minutes, then the box reboots." || true
-              echo "install-nvidia: stage 1 — layering RPM Fusion repos + NVIDIA container-toolkit repo..."
+              /usr/local/bin/update-install-status.sh "Adding NVIDIA repositories" "Layering RPM Fusion + NVIDIA container-toolkit repos. About 2 minutes, then the box reboots." "install-nvidia" || true
+              echo "install-nvidia: stage 1 — layering RPM Fusion repos + NVIDIA container-toolkit repo..." | /usr/bin/tee -a "$LOG_FILE"
+              # Tee rpm-ostree output to the splash log so the operator sees
+              # download / resolve progress in real time. PIPESTATUS picks up
+              # rpm-ostree's exit even if tee succeeds.
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
                   "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
-                  "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm"
+                  "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm" 2>&1 | /usr/bin/tee -a "$LOG_FILE"
               cat > /etc/yum.repos.d/nvidia-container-toolkit.repo <<'NVCT'
           [nvidia-container-toolkit]
           name=nvidia-container-toolkit
@@ -941,14 +1100,14 @@ ${SERVICEBAY_SSH_PRIV}
           # since Container Toolkit ≥1.14) from NVIDIA's own repo
           # dropped in stage 1.
           if [ ! -f /var/lib/install-nvidia-driver-done ]; then
-              /usr/local/bin/update-install-status.sh "Installing NVIDIA driver + container toolkit" "Layering akmod-nvidia-open + cuda + container-toolkit. About 4 minutes, then the box reboots so the kernel module can build." || true
-              echo "install-nvidia: stage 2 — layering NVIDIA driver + container toolkit..."
+              /usr/local/bin/update-install-status.sh "Installing NVIDIA driver + container toolkit" "Layering akmod-nvidia-open + cuda + container-toolkit. About 4 minutes, then the box reboots so the kernel module can build." "install-nvidia" || true
+              echo "install-nvidia: stage 2 — layering NVIDIA driver + container toolkit..." | /usr/bin/tee -a "$LOG_FILE"
               /usr/bin/rpm-ostree install --idempotent --allow-inactive \
                   akmod-nvidia-open \
                   xorg-x11-drv-nvidia-cuda \
-                  nvidia-container-toolkit
+                  nvidia-container-toolkit 2>&1 | /usr/bin/tee -a "$LOG_FILE"
               touch /var/lib/install-nvidia-driver-done
-              echo "install-nvidia: driver staged, scheduling reboot to load kmod"
+              echo "install-nvidia: driver staged, scheduling reboot to load kmod" | /usr/bin/tee -a "$LOG_FILE"
               /usr/bin/systemctl reboot
               exit 0
           fi
@@ -1020,12 +1179,14 @@ ${SERVICEBAY_SSH_PRIV}
           #!/bin/bash
           set -euo pipefail
 
+          LOG_FILE=/var/home/${HOST_USER}/.config/containers/splash/log.txt
+
           if [ -f /var/lib/install-nvidia-cdi-done ]; then
               echo "install-nvidia-cdi: already done, skipping"
               exit 0
           fi
 
-          /usr/local/bin/update-install-status.sh "Waiting for NVIDIA kernel module" "akmods compiles the nvidia driver against the running kernel. 1 to 10 minutes depending on hardware." || true
+          /usr/local/bin/update-install-status.sh "Waiting for NVIDIA kernel module" "akmods compiles the nvidia driver against the running kernel. 1 to 10 minutes depending on hardware." "install-nvidia-cdi" || true
 
           # Kick akmods --force exactly once if the kmod isn't already
           # loaded and akmodsbuild isn't already running. On Fedora
@@ -1044,7 +1205,8 @@ ${SERVICEBAY_SSH_PRIV}
           if ! /usr/bin/grep -q '^nvidia ' /proc/modules \
                && ! /usr/bin/pgrep -af 'akmodsbuild' >/dev/null 2>&1 \
                && [ ! -f /var/lib/install-nvidia-akmods-kicked ]; then
-              echo "install-nvidia-cdi: kmod not loaded + no akmodsbuild running — kicking akmods --force in background"
+              echo "install-nvidia-cdi: kmod not loaded + no akmodsbuild running — kicking akmods --force in background" | /usr/bin/tee -a "$LOG_FILE"
+              /usr/local/bin/append-install-log.sh "install-nvidia-cdi" "akmods --force kicked in background; build takes ~3-5 min" 2>/dev/null || true
               /usr/bin/touch /var/lib/install-nvidia-akmods-kicked
               /usr/bin/nohup /usr/sbin/akmods --force >/var/log/install-nvidia-akmods.log 2>&1 &
               disown 2>/dev/null || true
@@ -1080,17 +1242,17 @@ ${SERVICEBAY_SSH_PRIV}
               exit 1
           fi
 
-          /usr/local/bin/update-install-status.sh "Configuring GPU passthrough" "Generating CDI descriptor for podman → GPU." || true
+          /usr/local/bin/update-install-status.sh "Configuring GPU passthrough" "Generating CDI descriptor for podman → GPU." "install-nvidia-cdi" || true
 
-          echo "install-nvidia-cdi: nvidia kmod loaded, generating CDI..."
+          echo "install-nvidia-cdi: nvidia kmod loaded, generating CDI..." | /usr/bin/tee -a "$LOG_FILE"
           /usr/bin/mkdir -p /etc/cdi
-          if ! /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml; then
-              echo "install-nvidia-cdi: nvidia-ctk cdi generate failed — retrying via timer in 60 s" >&2
+          if ! /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml 2>&1 | /usr/bin/tee -a "$LOG_FILE"; then
+              echo "install-nvidia-cdi: nvidia-ctk cdi generate failed — retrying via timer in 60 s" | /usr/bin/tee -a "$LOG_FILE" >&2
               exit 1
           fi
 
-          echo "install-nvidia-cdi: CDI config at /etc/cdi/nvidia.yaml"
-          /usr/bin/nvidia-ctk cdi list || true
+          echo "install-nvidia-cdi: CDI config at /etc/cdi/nvidia.yaml" | /usr/bin/tee -a "$LOG_FILE"
+          /usr/bin/nvidia-ctk cdi list 2>&1 | /usr/bin/tee -a "$LOG_FILE" || true
 
           # Marker for ServiceBay's assembler — when present, the
           # OLLAMA_GPU_PASSTHROUGH wizard variable defaults to "yes"
@@ -1106,9 +1268,9 @@ ${SERVICEBAY_SSH_PRIV}
           # servicebay-trigger.path observes this file and triggers
           # servicebay.service, whose ExecStartPre stops the splash
           # before podman binds the port.
-          /usr/local/bin/update-install-status.sh "Starting ServiceBay…" "GPU ready. Handing off to ServiceBay. The wizard will appear in a few seconds." || true
+          /usr/local/bin/update-install-status.sh "Starting ServiceBay…" "GPU ready. Handing off to ServiceBay. The wizard will appear in a few seconds." "install-nvidia-cdi" || true
           touch /var/lib/installation-ready
-          echo "install-nvidia-cdi: done"
+          echo "install-nvidia-cdi: done" | /usr/bin/tee -a "$LOG_FILE"
 
     - path: /etc/systemd/system/install-nvidia-cdi.service
       mode: 0644
