@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, Github, Users, ExternalLink, Sparkles, Home, Wrench } from 'lucide-react';
+import { ChevronLeft, Github, Users, ExternalLink, Sparkles, Home, Wrench, User as UserIcon, LogOut } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import { typedFetch, InstallStatusResponseSchema } from '@servicebay/api-client';
@@ -32,6 +32,9 @@ export default function Sidebar() {
   // Workspace package.json stays at 0.0.0 (release-please only bumps the
   // root). Read the live version from the API instead. (#812)
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  // #1001 — Current Authelia user from the forward-auth Remote-* headers.
+  // null = not yet fetched, false = no session (LAN-direct or dev).
+  const [currentUser, setCurrentUser] = useState<{ displayName: string; username: string; groups: string[] } | null | false>(null);
 
   useEffect(() => {
     if (window.innerWidth < 768) {
@@ -46,6 +49,39 @@ export default function Sidebar() {
       .then(d => { if (d?.version) setAppVersion(d.version); })
       .catch(() => {});
   }, []);
+
+  // #1001 — Identify the signed-in Authelia user via /api/auth/me. The
+  // backend reads Remote-* headers from the forward-auth chain; on a
+  // direct LAN hit those don't exist and the endpoint returns
+  // `{ authenticated: false }`, which we render as "Not signed in".
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.authenticated) {
+          setCurrentUser({
+            displayName: d.displayName || d.username,
+            username: d.username,
+            groups: Array.isArray(d.groups) ? d.groups : [],
+          });
+        } else {
+          setCurrentUser(false);
+        }
+      })
+      .catch(() => setCurrentUser(false));
+  }, []);
+
+  // Derive the Authelia logout URL from the current hostname. Pattern:
+  // admin.dopp.cloud → auth.dopp.cloud/logout. Falls back to /portal if
+  // we can't parse the host (rare; e.g. raw IP). Operator can always
+  // hit auth.<domain>/logout by hand.
+  const logoutHref = (() => {
+    if (typeof window === 'undefined') return '/portal';
+    const host = window.location.host;
+    const dotIdx = host.indexOf('.');
+    if (dotIdx < 0) return '/portal';
+    return `https://auth${host.slice(dotIdx)}/logout`;
+  })();
 
   useEffect(() => {
     fetch('/api/auth/lldap-url')
@@ -211,6 +247,33 @@ export default function Sidebar() {
         </div>
 
         <div className="p-2 space-y-1 border-t border-gray-200/40 dark:border-white/5 pt-3 mt-auto">
+            {/* #1001 — Signed-in user chip + Logout. Falls back to a
+                quiet "Not signed in" hint when the forward-auth
+                headers are absent (direct LAN access). */}
+            {currentUser && (
+                <div className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-gray-100/60 dark:bg-white/[0.03] ${isCollapsed ? 'justify-center' : ''}`}
+                     title={isCollapsed ? `${currentUser.displayName} (${currentUser.groups.join(', ') || 'no groups'})` : ''}>
+                    <div className="shrink-0 w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold text-xs">
+                        {currentUser.displayName.charAt(0).toUpperCase() || <UserIcon size={14} />}
+                    </div>
+                    {!isCollapsed && (
+                        <div className="flex flex-col min-w-0 flex-1">
+                            <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">{currentUser.displayName}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-500 truncate">{currentUser.groups.join(', ') || 'no groups'}</span>
+                        </div>
+                    )}
+                </div>
+            )}
+            {currentUser && (
+                <a
+                    href={logoutHref}
+                    className={`w-full flex items-center px-3.5 py-2.5 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
+                    title="Log out — drops the Authelia session"
+                >
+                    <LogOut size={18} className="shrink-0" />
+                    {!isCollapsed && <span className="text-sm font-semibold whitespace-nowrap overflow-hidden">Log out</span>}
+                </a>
+            )}
             <div className={isCollapsed ? 'flex justify-center' : ''}>
                 <SectionHelp
                     helpId="changelog"
