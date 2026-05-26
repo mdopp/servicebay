@@ -167,9 +167,13 @@ function calculateNodeHeight(node: Node): number | undefined {
     // Details Grid
     // We need to replicate the logic from NetworkDashboard.tsx to count rows
     let detailRows = 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = (data.rawData as any) || {};
-    
+    // #969 — rawData / metadata carry per-node-kind discriminated shapes
+    // (container / service / router / link). Type as Record<string, unknown>;
+    // every field access narrows at the call site with a typeof / truthiness
+    // check, so we don't need (and don't have) a discriminated union here.
+    const raw = (data.rawData as Record<string, unknown> | undefined) ?? {};
+    const metadata = (data.metadata as Record<string, unknown> | undefined) ?? {};
+
     if (node.data.type === 'container') {
         // Created, Status (1 row) + Network (optional)
         detailRows = 1;
@@ -184,16 +188,15 @@ function calculateNodeHeight(node: Node): number | undefined {
     } else if (node.data.type === 'router') {
         // Ext IP, Int IP (1 row) + Uptime (1 row) + DNS (optional 1 row)
         detailRows = 2;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if ((data.metadata as any)?.dnsServers && (data.metadata as any).dnsServers.length > 0) detailRows += 1;
+        const dnsServers = metadata.dnsServers;
+        if (Array.isArray(dnsServers) && dnsServers.length > 0) detailRows += 1;
     }
-    
+
     // Each detail row is approx 40px (label + value + gap)
     height += detailRows * 40;
 
     // Verified Domains (Nginx / Router)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const domains = (data.metadata as any)?.verifiedDomains as string[];
+    const domains = Array.isArray(metadata.verifiedDomains) ? metadata.verifiedDomains as string[] : undefined;
     if (domains && domains.length > 0) {
         height += 25; // Header "Verified Domains"
         height += domains.length * 36; // Each domain row approximation
@@ -204,8 +207,7 @@ function calculateNodeHeight(node: Node): number | undefined {
     if (data.hostname) height += 28;
 
     // Description (line-clamp-2 -> max ~36px)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if ((data.metadata as any)?.description && node.data.type !== 'link') height += 40;
+    if (metadata.description && node.data.type !== 'link') height += 40;
     
     // Footer (Ports)
     const ports = (data.ports as string[]) || [];
@@ -244,8 +246,8 @@ function calculateNodeWidth(node: Node): number {
     }
 
     // Verified Domains
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const domains = (data.metadata as any)?.verifiedDomains as string[];
+    const metadata = (data.metadata as Record<string, unknown> | undefined) ?? {};
+    const domains = Array.isArray(metadata.verifiedDomains) ? metadata.verifiedDomains as string[] : undefined;
     if (domains && domains.length > 0) {
         const maxDomainLen = Math.max(...domains.map(d => d.length));
         if (maxDomainLen > 40) {

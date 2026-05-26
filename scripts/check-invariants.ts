@@ -128,6 +128,49 @@ async function checkSecurityAnyBudget() {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Backend-wide `as any` budget OUTSIDE the security paths.
+//
+// Forward-only ratchet (#969). Tightened from the 79 + uncounted baseline
+// after the cleanup PR landed the 5 module clusters (network/layout,
+// logger, terminal/sessionManager, ssh, plus the test/test.ts/exclusions).
+// Drop this number when each subsequent cluster lands — never raise it
+// without a justification + an issue.
+// ---------------------------------------------------------------------------
+const BACKEND_AS_ANY_BUDGET = 22;
+
+async function checkBackendAnyBudget() {
+    let count = 0;
+    const offenders: string[] = [];
+    const root = path.join(REPO_ROOT, 'packages/backend/src');
+    let files: string[];
+    try {
+        files = await walk(root, isTs);
+    } catch {
+        return;
+    }
+    for (const file of files) {
+        if (isTestFile(file)) continue;
+        const rel = path.relative(REPO_ROOT, file);
+        // Skip files counted by the security ratchet so we don't double-count.
+        if (SECURITY_PATHS.some(p => rel.startsWith(`packages/backend/${p}`) || rel === `packages/backend/${p}`)) {
+            continue;
+        }
+        const content = await readFile(file, 'utf-8');
+        const hits = content.match(/\bas any\b/g)?.length ?? 0;
+        if (hits > 0) {
+            count += hits;
+            offenders.push(`${rel} (${hits})`);
+        }
+    }
+    if (count > BACKEND_AS_ANY_BUDGET) {
+        violations.push({
+            check: 'backend-as-any-budget',
+            detail: `${count} \`as any\` in packages/backend/src (budget ${BACKEND_AS_ANY_BUDGET}). New violations need to be cleared or the budget bumped with a justification. Offenders: ${offenders.join(', ')}`,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 3. executor.exec template-literal interpolation count.
 //
 // The safe path is `executor.execArgv([...])` via shellQuoteAll. Template
@@ -245,6 +288,7 @@ async function main() {
     await Promise.all([
         checkFileSize(),
         checkSecurityAnyBudget(),
+        checkBackendAnyBudget(),
         checkExecTemplateLiterals(),
         checkWithApiHandlerAdoption(),
         checkTwinFanIn(),

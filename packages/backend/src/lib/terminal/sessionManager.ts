@@ -129,13 +129,19 @@ export class TerminalSessionManager {
     logger.info('Server', `Spawning PTY: ${spec.shell} ${spec.args.join(' ')}`);
 
     const cwd = resolveHomeDir();
+    // node-pty's IPtyForkOptions.env is `{ [key: string]: string }`. process.env
+    // is `NodeJS.ProcessEnv` (string | undefined values). Filter the
+    // `undefined`s here so the shape matches without an as-any.
+    const env: Record<string, string> = { TERM: 'xterm-256color' };
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === 'string') env[k] = v;
+    }
     const ptyProcess = pty.spawn(spec.shell, spec.args, {
       name: 'xterm-256color',
       cols,
       rows,
       cwd,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      env: { ...process.env, TERM: 'xterm-256color' } as any,
+      env,
     });
     logger.info('Server', `Spawned new PTY process for ${id} (PID: ${ptyProcess.pid})`);
 
