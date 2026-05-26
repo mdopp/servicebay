@@ -61,15 +61,19 @@ spec:
     # cracked / leaked value. Operators rarely need to know this.
     - name: WEBUI_SECRET_KEY
       value: "{{OPEN_WEBUI_SECRET}}"
-    # Disable signup by default (gives the operator a one-time
-    # admin-bootstrap window via the in-app UI). Family members get
-    # added by the admin from Settings → Users. Flipping this back
-    # on is a deliberate operator decision — Authelia already gates
-    # the URL, so it's safe to re-enable for self-service, but the
-    # default off matches the rest of ServiceBay's "operator
-    # provisions members" model.
+    # Open WebUI's first-account-becomes-admin bootstrap requires
+    # ENABLE_SIGNUP=true at the moment that first signup happens —
+    # there's no headless admin-create API. Setting this to false
+    # before any account exists locks even the operator out of the
+    # initial admin-create form ("You do not have permission to access
+    # this resource" — observed live on 192.168.178.100). Leaving it
+    # true is safe in our threat model because Authelia 1FA gates the
+    # URL: a stranger can't reach the signup form without an LLDAP
+    # account in the first place. After the admin lands, they flip
+    # "Enable New Sign Ups" off via Settings → Users for the
+    # operator-provisions-members policy.
     - name: ENABLE_SIGNUP
-      value: "false"
+      value: "true"
     # Telemetry opt-out, matching the rest of the household stack's
     # privacy-first posture.
     - name: SCARF_NO_ANALYTICS
