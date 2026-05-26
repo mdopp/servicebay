@@ -149,14 +149,22 @@ export async function generateAudiobookshelfDeepLink(serviceName: string, subdom
 }
 
 /**
- * Read the running Syncthing container's device ID via
- * `podman exec file-share-syncthing syncthing --device-id`.
+ * Read the running Syncthing container's device ID via the Syncthing
+ * CLI. Tries the v2 subcommand first (`syncthing device-id`), falling
+ * back to the v1 flag form (`syncthing --device-id`) so a downgrade /
+ * legacy image still works.
  *
  * The container name follows podman play-kube's `<pod>-<container>`
  * convention — the YAML's container is named `syncthing` but the
  * actual podman container is `file-share-syncthing`. Calling it
  * just by `syncthing` returns 404 and the UI ends up hiding the
  * QR with "Syncthing container might not be running yet".
+ *
+ * Syncthing v2.x dropped the `--device-id` flag in favour of a
+ * `device-id` subcommand (observed live 2026-05-26 on a fresh
+ * Syncthing v2.1.0 container — the old call returned `unknown flag
+ * --device-id`, exit 80, which the portal's QR modal surfaced as a
+ * 404). The shell `||` chain tries v2 first, falls back to v1.
  *
  * Returns `null` when the container isn't running, the agent
  * doesn't respond, or the parse fails — the caller treats that as
@@ -170,7 +178,7 @@ export async function fetchSyncthingDeviceId(node: string = 'Local'): Promise<st
     // parsing the XML's myID attribute or matching against the
     // container's hostname; the CLI is one less moving part.
     const res = await agent.sendCommand('exec', {
-      command: 'podman exec file-share-syncthing syncthing --device-id 2>/dev/null',
+      command: 'podman exec file-share-syncthing sh -c "syncthing device-id 2>/dev/null || syncthing --device-id 2>/dev/null"',
     }, { timeoutMs: 6_000 }) as { code?: number; stdout?: string };
     if (res.code !== 0) return null;
     const id = (res.stdout ?? '').trim();
