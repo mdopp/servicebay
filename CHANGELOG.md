@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.35.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.35.0...servicebay-v4.35.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* **portal:** use Syncthing v2 `device-id` subcommand for pair-QR generator ([#1060](https://github.com/mdopp/servicebay/issues/1060)) ([4c6a5c5](https://github.com/mdopp/servicebay/commit/4c6a5c54fbfdfaa65378b08afdbe3277797e9b21))
+
 ## [4.35.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.34.0...servicebay-v4.35.0) (2026-05-26)
 
 
