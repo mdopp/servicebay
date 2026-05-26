@@ -94,6 +94,7 @@ export interface SetupAsset {
 const PORTAL_ICONS = [
   'camera', 'image', 'images',          // photos / gallery
   'folder', 'folder-open', 'files',     // files / sharing
+  'refresh-cw',                         // sync (Syncthing)
   'calendar', 'calendar-days',          // calendar / contacts
   'music', 'headphones', 'book-open',   // music / audiobooks
   'lock', 'shield', 'key-round',        // passwords / vault
@@ -101,6 +102,7 @@ const PORTAL_ICONS = [
   'globe', 'router',                    // network
   'mail', 'message-square',             // mail / chat
   'video', 'film',                      // video / streaming
+  'bot',                                // AI agent (Hermes / OSCAR)
   'package',                            // generic fallback
 ] as const;
 export type PortalIconName = typeof PORTAL_ICONS[number];
