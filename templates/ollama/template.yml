@@ -40,11 +40,16 @@ spec:
     - name: OLLAMA_HOST
       value: "127.0.0.1:{{OLLAMA_PORT}}"
     # GPU passthrough (CDI). Set OLLAMA_GPU_PASSTHROUGH=yes in the
-    # wizard to render the resources block below. Requires a
-    # CDI-registered NVIDIA GPU on the host — the Quadlet generator
-    # passes nvidia.com/gpu through to podman, which then matches it
-    # against the registered CDI device. Falls back to CPU silently
-    # if the host has no GPU.
+    # wizard to render the resources block below. The block is kept
+    # for documentation + as a fallback signal — `podman kube play`
+    # in 5.x silently drops `resources.limits.nvidia.com/gpu`, so the
+    # actual passthrough is done by post-deploy.py's
+    # install_gpu_quadlet_fallback() which swaps this .kube unit for
+    # a `.container` Quadlet with `AddDevice=nvidia.com/gpu=all`
+    # + `SecurityLabelDisable=true`. Both lines are required on
+    # rootless FCoS — the device alone leaves NVML at "Insufficient
+    # Permissions" because SELinux blocks NVML init. See #1026 for
+    # the full diagnostic trail.
     ports:
     - containerPort: {{OLLAMA_PORT}}
     {{#OLLAMA_GPU_PASSTHROUGH}}
