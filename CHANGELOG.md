@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.32.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.32.0...servicebay-v4.32.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* **media:** lowercase folder convention under file-share/data ([#1022](https://github.com/mdopp/servicebay/issues/1022)) ([c627ce9](https://github.com/mdopp/servicebay/commit/c627ce97c1433ebff14ef5d8c744c2a885411514))
+
 ## [4.32.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.31.0...servicebay-v4.32.0) (2026-05-26)
 
 
