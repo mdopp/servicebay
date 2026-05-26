@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.34.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.5...servicebay-v4.34.0) (2026-05-26)
+
+
+### Features
+
+* **hermes:** auto-wire SB-MCP into Hermes config.yaml on install ([#1045](https://github.com/mdopp/servicebay/issues/1045)) ([#1049](https://github.com/mdopp/servicebay/issues/1049)) ([8ddb56b](https://github.com/mdopp/servicebay/commit/8ddb56b16c7ed7ab6c5c753ab77e5ff8d20478f0))
+* **ollama:** pre-pull extras + verify model post-pull ([#1048](https://github.com/mdopp/servicebay/issues/1048)) ([1060381](https://github.com/mdopp/servicebay/commit/1060381dd684ab9895021a156e9f28122968bf10))
+
+
+### Bug Fixes
+
+* **hermes:** wire OPENAI_BASE_URL/_KEY env so /v1/chat/completions actually resolves an inference provider ([#1043](https://github.com/mdopp/servicebay/issues/1043)) ([413eff7](https://github.com/mdopp/servicebay/commit/413eff7523aa0622bc3b31481db741e30a3ff8c5))
+
 ## [4.33.5](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.4...servicebay-v4.33.5) (2026-05-26)
 
 
