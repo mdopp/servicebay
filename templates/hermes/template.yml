@@ -80,6 +80,25 @@ spec:
       value: "{{HASS_URL}}"
     - name: HASS_TOKEN
       value: "{{HASS_TOKEN}}"
+    # OpenAI-compatible inference target for Hermes' API server platform.
+    # The config.yaml `model:` block (provider/base_url/api_key — written
+    # by post-deploy.py) is read by `hermes` CLI / dashboard but NOT by
+    # `gateway run`'s `api_server` platform when resolving credentials
+    # for /v1/chat/completions: `_resolve_runtime_agent_kwargs()` calls
+    # `resolve_runtime_provider(requested=os.getenv('HERMES_INFERENCE_PROVIDER'))`
+    # and that path's `_resolve_named_custom_runtime` short-circuits on
+    # `provider: custom` (config.yaml's value) before ever consulting
+    # `model.base_url`. Without OPENAI_BASE_URL + OPENAI_API_KEY in env,
+    # every chat completion through Open WebUI / OSCAR / external API
+    # hits its auto-detect fallback and raises "No inference provider
+    # configured. Run 'hermes model'…" — observed live 2026-05-26.
+    # Setting these here makes the env path's openrouter-with-custom-
+    # endpoint detection route every API-server chat through Ollama,
+    # matching the `model.base_url` the config.yaml already declares.
+    - name: OPENAI_BASE_URL
+      value: "{{HERMES_LLM_PROVIDER_URL}}"
+    - name: OPENAI_API_KEY
+      value: "ollama"
     ports:
     - containerPort: {{HERMES_API_PORT}}
     volumeMounts:
