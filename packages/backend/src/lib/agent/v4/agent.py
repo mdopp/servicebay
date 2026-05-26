@@ -2091,7 +2091,19 @@ class Agent:
                             # content doesn't appear on the command line
                             # (no length limit, no quoting hazards, no
                             # leak via `ps`).
-                            import subprocess
+                            # NOTE: do NOT re-`import subprocess` here.
+                            # The module-level `import subprocess` at the
+                            # top of the file is already in scope; a
+                            # function-local `import subprocess` would
+                            # make Python treat `subprocess` as a local
+                            # name throughout `handle_command`, which
+                            # then UnboundLocalErrors the earlier
+                            # `subprocess.Popen` call in the exec_stream
+                            # branch. That broke every post-deploy that
+                            # used exec_stream — observed live on
+                            # 192.168.178.100 today, every Open WebUI
+                            # install attempt died with "cannot access
+                            # local variable 'subprocess'".
                             # Ensure the parent dir exists (also via sudo
                             # so we don't EACCES on `mkdir`).
                             parent = os.path.dirname(expanded_path)
