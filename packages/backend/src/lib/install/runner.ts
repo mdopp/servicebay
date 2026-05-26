@@ -31,7 +31,6 @@ import {
   getTemplatePostDeployScript,
   getTemplateMigrationScripts,
   getTemplateYaml,
-  getTemplateVariables,
 } from '@/lib/registry';
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import { parseTemplateManifest } from '@/lib/template/contract';
@@ -40,7 +39,6 @@ import { parseTemplateTier } from '@/lib/templateTier';
 import { selectMigrationChain } from '@/lib/stackInstall/migrations';
 import {
   bootstrapNpmAdmin,
-  buildProxyHosts,
   type StackVariable,
 } from '@/lib/stackInstall/postInstall';
 import { buildCredentialsManifest, mergeCredentials, type Credential } from '@/lib/stackInstall/credentialsManifest';
@@ -59,6 +57,21 @@ import {
   type JobState,
 } from './jobStore';
 import { emitJobLog, emitJobUpdate } from './socketBridge';
+import {
+  clearPendingCredentials,
+  provideCredentials,
+  skipCredentials,
+  waitForCredentials as waitForCredentialsResolve,
+} from './credentialResolver';
+import {
+  ensureProxyHosts,
+  ensureOidcClients,
+} from './postInstallDispatcher';
+
+// Re-export the surface previously exposed from this module so the
+// install route handlers + tests don't have to learn the new file
+// names. The extractions in #975 are structural, not API changes.
+export { provideCredentials, skipCredentials, ensureProxyHosts, ensureOidcClients };
 
 const MAX_DEPLOY_ATTEMPTS = 3;
 const DEPLOY_BACKOFF_MS = [0, 1000, 4000];
@@ -87,14 +100,6 @@ const DEP_READY_POLL_MS = 3_000;
 /** Set by `abortJob`. Checked at top of every deploy-loop iteration and
  *  before each retry attempt so the loop bails out as soon as possible. */
 const abortFlags = new Map<string, boolean>();
-
-/** Pending NPM-credentials prompts. The runner sets `phase=needs_credentials`
- *  on the job, then awaits the promise stored here. The credentials API
- *  route resolves it (with creds, or null to skip). On server restart these
- *  are lost — the corresponding job is flipped to `crashed` on boot. */
-const pendingCredentials = new Map<string, {
-  resolve: (creds: { email: string; password: string } | null) => void;
-}>();
 
 /** Loopback fetch helper. proxy.ts middleware gates state-changing API
  *  calls on either a session cookie OR the X-SB-Internal-Token header
@@ -147,36 +152,13 @@ async function patchJob(
  *  the next iteration and exits cleanly. */
 export function abortJob(jobId: string): void {
   abortFlags.set(jobId, true);
-  const pending = pendingCredentials.get(jobId);
-  if (pending) {
-    pendingCredentials.delete(jobId);
-    pending.resolve(null);
-  }
-}
-
-/** Resume a credentials-paused job with operator-supplied values. */
-export function provideCredentials(
-  jobId: string,
-  creds: { email: string; password: string },
-): boolean {
-  const pending = pendingCredentials.get(jobId);
-  if (!pending) return false;
-  pendingCredentials.delete(jobId);
-  pending.resolve(creds);
-  return true;
-}
-
-/** Resume a credentials-paused job by skipping NPM. */
-export function skipCredentials(jobId: string): boolean {
-  const pending = pendingCredentials.get(jobId);
-  if (!pending) return false;
-  pendingCredentials.delete(jobId);
-  pending.resolve(null);
-  return true;
+  clearPendingCredentials(jobId);
 }
 
 /** Pause the deploy loop until the operator submits NPM credentials or
- *  skips the prompt. Also unblocks on `abortJob`. */
+ *  skips the prompt. Sets the `needs_credentials` phase + fallback on
+ *  the job, then awaits the resolve via credentialResolver. Also
+ *  unblocks on `abortJob` (which calls `clearPendingCredentials`). */
 async function waitForCredentials(
   jobId: string,
   fallback: { email: string; password: string },
@@ -185,9 +167,7 @@ async function waitForCredentials(
     phase: 'needs_credentials',
     needsCredentials: { fallback },
   });
-  return new Promise(resolve => {
-    pendingCredentials.set(jobId, { resolve });
-  });
+  return waitForCredentialsResolve(jobId);
 }
 
 /** Extract every unique container `image:` reference from items the
@@ -572,129 +552,11 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   return false;
 }
 
-/** Consolidated per-service proxy-host provisioning (#807).
- *
- *  The capability bus fires one `feature.installed` per template and the
- *  nginx handler creates only *that* template's subdomain hosts. If any
- *  single per-template emit is skipped or under-produces, the operator
- *  is left with the portal routes (created separately by the portal
- *  provisioner) but no service subdomains — and the failure is silent
- *  because the handler no-ops `{ ok: true }` when it finds nothing of
- *  its own to do.
- *
- *  This pass builds the host list from every subdomain-typed variable
- *  across the whole install and creates them in one batch. The
- *  proxy-hosts route is idempotent (it dedupes by domain), so running
- *  this after the per-template emits is safe — anything the handlers
- *  already created is a no-op, anything they missed gets created here.
- *  The install no longer depends on every per-template emit landing. */
-export async function ensureProxyHosts(
-  jobId: string,
-  variables: StackVariable[],
-  node: string | undefined,
-): Promise<void> {
-  const { domain, hosts } = buildProxyHosts(variables);
-  // No public/LAN domain or no subdomain-typed variables → nothing to
-  // route. A pure-LAN install with no subdomains is a valid no-op.
-  if (!domain || hosts.length === 0) return;
-  try {
-    const res = await apiFetch('/api/system/nginx/proxy-hosts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hosts, publicDomain: domain, node }),
-    });
-    const data = await res.json().catch(() => ({} as Record<string, unknown>));
-    if (!res.ok) {
-      const msg = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
-      await log(jobId, `⚠️ Could not create per-service proxy hosts: ${msg}. Settings → Self-Diagnose → Reprovision will retry.`);
-      return;
-    }
-    const created = Array.isArray(data.created) ? (data.created as string[]) : [];
-    const failed = Array.isArray(data.failed) ? (data.failed as Array<{ domain?: string }>) : [];
-    await log(jobId, `✅ Per-service proxy hosts ensured for ${hosts.length} service domain(s)${created.length ? ` (${created.join(', ')})` : ''}.`);
-    if (failed.length > 0) {
-      const names = failed.map(f => f.domain ?? '?').join(', ');
-      await log(jobId, `⚠️ Some proxy hosts could not be created: ${names}. Self-diagnose → Reprovision will retry.`);
-    }
-  } catch (e) {
-    await log(jobId, `⚠️ Per-service proxy-host creation failed: ${e instanceof Error ? e.message : String(e)}. Settings → Self-Diagnose → Reprovision will retry.`);
-  }
-}
-
-/**
- *  Last-mile guard for Authelia OIDC clients (#989). Mirrors `ensureProxyHosts`:
- *  the capability bus already emits `feature.installed` per template and the
- *  Authelia handler registers that one template's OIDC client(s) — but the
- *  per-template path is fragile (auth pod is restarting between writes, or
- *  the emit happens before `auth` is reachable). When a single handler
- *  invocation under-produces, the operator hits "client not registered" at
- *  SSO time and ends up editing configuration.yml by hand.
- *
- *  This pass walks every template in this install whose variables.json
- *  declares an `oidcClient` and sends them through `/api/system/authelia/oidc-clients`
- *  in ONE batched call — the endpoint is idempotent (skips existing
- *  client_ids), so any client a per-template emit already created is a
- *  no-op here. Anything missed gets added in this single write + restart.
- *  The install no longer depends on every per-template emit landing.
- */
-export async function ensureOidcClients(
-  jobId: string,
-  templateNames: string[],
-  variables: StackVariable[],
-): Promise<void> {
-  const variableMap = variables.reduce<Record<string, string>>((acc, v) => {
-    acc[v.name] = v.value;
-    return acc;
-  }, {});
-  if (!variableMap.PUBLIC_DOMAIN) return; // LAN-only install — no OIDC
-
-  const templatesWithOidc: { name: string }[] = [];
-  for (const name of templateNames) {
-    try {
-      const meta = await getTemplateVariables(name);
-      if (!meta) continue;
-      const hasOidc = Object.values(meta).some(
-        v => v.type === 'subdomain' && v.oidcClient?.client_id,
-      );
-      if (hasOidc) templatesWithOidc.push({ name });
-    } catch {
-      // template not on disk / unparseable — skip it. The per-template
-      // emit would have noticed the same problem and surfaced a diagnose
-      // finding.
-    }
-  }
-  if (templatesWithOidc.length === 0) return;
-
-  try {
-    const res = await apiFetch('/api/system/authelia/oidc-clients', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ templates: templatesWithOidc, variables: variableMap }),
-    });
-    if (res.status === 404) {
-      // Authelia not deployed (e.g. feature-only install on a host where
-      // `auth` was never selected). Soft warning — matches the per-template
-      // handler's 404 behaviour.
-      await log(jobId, `(note) Authelia not deployed — skipped OIDC client reconciliation for ${templatesWithOidc.map(t => t.name).join(', ')}.`);
-      return;
-    }
-    const data = await res.json().catch(() => ({} as Record<string, unknown>));
-    if (!res.ok) {
-      const msg = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
-      await log(jobId, `⚠️ Could not reconcile Authelia OIDC clients: ${msg}. Settings → Self-Diagnose → Reprovision will retry.`);
-      return;
-    }
-    const added = Array.isArray(data.added) ? (data.added as string[]) : [];
-    const skipped = Array.isArray(data.skipped) ? (data.skipped as string[]) : [];
-    if (added.length > 0) {
-      await log(jobId, `✅ Registered ${added.length} Authelia OIDC client(s): ${added.join(', ')}.`);
-    } else if (skipped.length > 0) {
-      await log(jobId, `✅ All ${skipped.length} Authelia OIDC client(s) already registered.`);
-    }
-  } catch (e) {
-    await log(jobId, `⚠️ Authelia OIDC reconciliation failed: ${e instanceof Error ? e.message : String(e)}. Settings → Self-Diagnose → Reprovision will retry.`);
-  }
-}
+// Consolidated per-service proxy-host provisioning (#807) and the
+// Authelia OIDC client reconciliation (#989) moved to
+// `./postInstallDispatcher.ts` in #975 — they're re-exported at the
+// top of this file so the install pipeline + tests don't need to
+// learn the new path.
 
 /** Inner async pipeline — wrapped by `startJob` so the public surface
  *  can stay synchronous (kicks off the work, returns immediately). */
@@ -1481,7 +1343,7 @@ export function startJob(jobId: string): void {
       });
     } finally {
       abortFlags.delete(jobId);
-      pendingCredentials.delete(jobId);
+      clearPendingCredentials(jobId);
     }
   })();
 }
