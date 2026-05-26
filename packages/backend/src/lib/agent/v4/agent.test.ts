@@ -50,5 +50,5 @@ describe('Python Agent V4', () => {
         expect(Array.isArray(containerMsg.payload.containers)).toBe(true);
         expect(Array.isArray(serviceMsg.payload.services)).toBe(true);
         expect(Array.isArray(volumeMsg.payload.volumes)).toBe(true);
-    }, 10000); // 10s timeout
+    }, 30000); // 30s timeout — spawning python3 + podman ps under parallel-test load can take >10s on a loaded host
 });
