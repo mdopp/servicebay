@@ -111,6 +111,36 @@ def detect_honcho(port: str) -> bool:
         return False
 
 
+def _extract_top_level_block(content: str, key: str) -> str:
+    """Extract a top-level YAML block by key from config.yaml content,
+    returning the block (header + indented body) as a string, or '' if
+    not present. Mirrors strip_mcp_servers_block() in
+    templates/oscar-household/post-deploy.py — kept as a separate helper
+    here so this template doesn't import across template directories.
+
+    "Top-level" means the key starts at column 0; the block ends at the
+    next top-level key (or EOF). Comments and blank lines inside the
+    block are preserved.
+    """
+    if not content or not key:
+        return ""
+    out: list[str] = []
+    in_block = False
+    for line in content.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if not in_block:
+            if line[:1] not in (" ", "\t") and stripped.startswith(f"{key}:"):
+                in_block = True
+                out.append(line)
+            continue
+        # In-block: keep blank/indented lines; break on next top-level key.
+        if line.strip() == "" or line[:1] in (" ", "\t"):
+            out.append(line)
+        else:
+            break
+    return "".join(out)
+
+
 def write_config_yaml(
     data_dir: str,
     provider_url: str,
@@ -121,9 +151,26 @@ def write_config_yaml(
     """Write /opt/data/config.yaml's model: block. Returns the path on
     success, None if the write failed. Best-effort — a failure here
     means Hermes falls back to its default config.yaml (likely empty
-    model.base_url), which the operator can fix from the wizard."""
+    model.base_url), which the operator can fix from the wizard.
+
+    Preserves an existing `mcp_servers:` block if present (#1045) — the
+    SB-MCP auto-wiring writes that block once on first install, and
+    every subsequent hermes/post-deploy run would otherwise erase it
+    (the pre-2026-05-26 behaviour the oscar-household README still
+    warns about: "re-deploying the `hermes` template overwrites
+    config.yaml … re-deploy oscar-household afterwards to restore").
+    """
     config_dir = os.path.join(data_dir, "hermes")
     config_path = os.path.join(config_dir, "config.yaml")
+    # Stash the existing mcp_servers block (if any) so the rewrite below
+    # doesn't erase it. See #1045 / the oscar-household README caveat.
+    preserved_mcp_servers = ""
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                preserved_mcp_servers = _extract_top_level_block(f.read(), "mcp_servers")
+        except OSError as e:
+            jlog("warn", "hermes:config", "could not read existing config.yaml for mcp_servers preservation", path=config_path, error=str(e))
     try:
         os.makedirs(config_dir, exist_ok=True)
     except OSError as e:
@@ -183,6 +230,12 @@ def write_config_yaml(
         "display:\n"
         "  personality: default\n"
     )
+    if preserved_mcp_servers:
+        # Append the stashed mcp_servers block so SB-MCP / HA-MCP wiring
+        # survives a hermes-only redeploy. Add a separator blank line so
+        # the block stays visually distinct from `display:` above.
+        sep = "" if preserved_mcp_servers.startswith("\n") else "\n"
+        content += sep + preserved_mcp_servers
     try:
         with open(config_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -206,6 +259,118 @@ def write_config_yaml(
         jlog("warn", "hermes:config", "could not relax config perms for downstream merges", path=config_dir, error=str(e))
     jlog("info", "hermes:config", "wrote config.yaml", path=config_path, model=model, provider_url=provider_url)
     return config_path
+
+
+def provision_sb_mcp_token(sb_api: str, token_name: str = "hermes-mcp") -> str | None:
+    """Mint a long-lived SB-MCP token via the ServiceBay HTTP API and
+    return the bearer secret. Uses the `X-SB-Internal-Token` server-to-
+    server header that `post_json` already plumbs.
+
+    Scopes (#1045):
+      - `read`      — Hermes can introspect ServiceBay state (services,
+                      health, logs, twin) for "what's running?" / "why is
+                      X failing?" questions.
+      - `lifecycle` — Hermes can restart / reload misbehaving services
+                      from chat without bouncing the user back to the
+                      ServiceBay dashboard.
+
+    Returns the freshly-minted secret on success, None on any failure
+    (caller falls back to leaving SB-MCP unwired — chat still works,
+    just without the SB-introspection tool).
+    """
+    status, body = post_json(
+        f"{sb_api}/api/system/mcp-tokens",
+        {"name": token_name, "scopes": ["read", "lifecycle"]},
+        timeout=15,
+    )
+    if status == 200 and isinstance(body, dict):
+        secret = body.get("secret")
+        if isinstance(secret, str) and secret:
+            jlog(
+                "info",
+                "hermes:sb-mcp",
+                "minted SB-MCP token for Hermes auto-wiring",
+                name=token_name,
+                id=(body.get("token") or {}).get("id") if isinstance(body.get("token"), dict) else None,
+            )
+            return secret
+    jlog(
+        "warn",
+        "hermes:sb-mcp",
+        "could not mint SB-MCP token via SB API — SB-MCP will not be auto-wired into config.yaml; mint from Settings → Integrations → MCP and add the entry by hand",
+        status=status,
+    )
+    return None
+
+
+def ensure_sb_mcp_servers_block(config_path: str, sb_api: str) -> bool:
+    """Append a `mcp_servers.servicebay:` entry to config.yaml when one
+    is not already present. Mints a fresh SB-MCP token via the API and
+    writes the entry inline. Idempotent: re-runs of post-deploy.py see
+    the existing block (preserved by `write_config_yaml`) and skip.
+
+    Returns True when the file was mutated (signals the caller to
+    trigger a restart so Hermes re-reads the config).
+
+    Note for OSCAR coexistence: oscar-household's post-deploy currently
+    *rewrites* the entire `mcp_servers:` block, which would overwrite
+    this entry. The follow-up to make OSCAR preserve existing entries
+    instead of rewriting is tracked in the same #1045 thread.
+    """
+    if not os.path.exists(config_path):
+        # write_config_yaml failed — nothing for us to do here.
+        return False
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            existing = f.read()
+    except OSError as e:
+        jlog("warn", "hermes:sb-mcp", "could not read config.yaml", path=config_path, error=str(e))
+        return False
+
+    existing_mcp = _extract_top_level_block(existing, "mcp_servers")
+    # If the block already contains a `servicebay:` key (at any indent
+    # that's deeper than column 0), assume it's wired and bail. The
+    # cheap substring check is safe here because YAML keys at column 2
+    # or deeper are unambiguous — comments don't get a `key:` form.
+    if "servicebay:" in existing_mcp:
+        return False
+
+    secret = provision_sb_mcp_token(sb_api)
+    if not secret:
+        return False
+
+    new_entry_lines = [
+        "  servicebay:\n",
+        '    url: "http://127.0.0.1:5888/mcp"\n',
+        "    headers:\n",
+        f'      Authorization: "Bearer {secret}"\n',
+    ]
+
+    if existing_mcp:
+        # Append into the existing block: replace the existing block
+        # with itself + the new entry (preserves any other entries like
+        # `home_assistant:` that OSCAR may have written).
+        appended = existing_mcp.rstrip("\n") + "\n" + "".join(new_entry_lines)
+        new_content = existing.replace(existing_mcp, appended, 1)
+    else:
+        # No existing mcp_servers — append a fresh block at EOF.
+        sep = "" if existing.endswith("\n\n") or existing.endswith("\n") else "\n"
+        new_content = existing + sep + "mcp_servers:\n" + "".join(new_entry_lines)
+
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+    except OSError as e:
+        jlog("error", "hermes:sb-mcp", "could not write config.yaml after appending servicebay entry", path=config_path, error=str(e))
+        return False
+
+    jlog(
+        "info",
+        "hermes:sb-mcp",
+        "wrote mcp_servers.servicebay block — Hermes will reach SB-MCP at http://127.0.0.1:5888/mcp on next start",
+        path=config_path,
+    )
+    return True
 
 
 def restart_hermes(sb_api: str) -> bool:
@@ -465,10 +630,21 @@ def main() -> int:
 
     # 1. Write config.yaml with the wizard-picked provider + model, and
     # the memory provider chosen by detect-then-configure (#1004).
-    config_written = write_config_yaml(
+    config_path = write_config_yaml(
         data_dir, provider_url, model,
         honcho_port=honcho_port, honcho_api_key=honcho_api_key,
-    ) is not None
+    )
+    config_written = config_path is not None
+
+    # 1b. SB-MCP auto-wiring (#1045). Mint a fresh SB-MCP token and
+    # append a `mcp_servers.servicebay:` entry to config.yaml so Hermes
+    # can introspect ServiceBay / restart misbehaving services from
+    # chat without operator setup. Idempotent — re-runs see the
+    # existing entry (preserved across rewrites by write_config_yaml's
+    # mcp_servers stash) and skip.
+    sb_mcp_changed = False
+    if config_path:
+        sb_mcp_changed = ensure_sb_mcp_servers_block(config_path, sb_api)
 
     # Pick up the real HA long-lived token if home-assistant's post-deploy
     # auto-onboarded HA. Without this Hermes' native HA gateway runs with
@@ -493,7 +669,7 @@ def main() -> int:
 
     # 2. Restart so Hermes picks up the new config (and the new env if we
     # just patched HASS_TOKEN or rewrote .env).
-    if config_written or env_changed:
+    if config_written or env_changed or sb_mcp_changed:
         # Give the pod a few seconds to settle so the restart isn't
         # racing the initial deploy.
         time.sleep(3)
