@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.33.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.32.1...servicebay-v4.33.0) (2026-05-26)
+
+
+### Features
+
+* **open-webui:** family chat UI at chat.&lt;domain&gt; ([#1031](https://github.com/mdopp/servicebay/issues/1031)) ([27529c1](https://github.com/mdopp/servicebay/commit/27529c10f5b7a7a117c5bcdb13cf5cc4c184715b))
+
+
+### Bug Fixes
+
+* **gatekeeper:** add version arg to AsrProgram/AsrModel/TtsProgram ([#1027](https://github.com/mdopp/servicebay/issues/1027)) ([50bf647](https://github.com/mdopp/servicebay/commit/50bf64714b2a841505dd89c41b1acc20a18009e3))
+* **ollama:** rootless GPU passthrough via .container Quadlet fallback ([#1029](https://github.com/mdopp/servicebay/issues/1029)) ([aecfd3f](https://github.com/mdopp/servicebay/commit/aecfd3fc606f1d63d4098392c43a741d7d69c463))
+
 ## [4.32.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.32.0...servicebay-v4.32.1) (2026-05-26)
 
 
