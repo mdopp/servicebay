@@ -44,11 +44,13 @@
   },
   "HASS_TOKEN": {
     "type": "secret",
-    "description": "Optional: Home Assistant long-lived access token. When set, turns on Hermes' native Home Assistant integration for zero-code device control."
+    "noAutoGenerate": true,
+    "description": "Optional: Home Assistant long-lived access token. Auto-populated from home-assistant's onboarding flow (see post-deploy adoption logic) — leave blank in the wizard. Manually setting a value here pins it and disables the adoption."
   },
   "TELEGRAM_BOT_TOKEN": {
     "type": "secret",
-    "description": "Optional: Telegram bot token from @BotFather. When set, Hermes' Telegram gateway starts and routes inbound chats to OSCAR. Pair with TELEGRAM_ALLOWED_USERS — without an allowlist Hermes denies every message and logs `No user allowlists configured`."
+    "noAutoGenerate": true,
+    "description": "Optional: Telegram bot token from @BotFather. When set, Hermes' Telegram gateway starts and routes inbound chats to OSCAR. Pair with TELEGRAM_ALLOWED_USERS — without an allowlist Hermes denies every message and logs `No user allowlists configured`. Leave blank if you don't use Telegram (post-deploy skips writing the .env entry; gateway stays off)."
   },
   "TELEGRAM_ALLOWED_USERS": {
     "type": "text",
@@ -57,7 +59,8 @@
   },
   "DISCORD_BOT_TOKEN": {
     "type": "secret",
-    "description": "Optional: Discord bot token from the Discord developer portal. When set, Hermes' Discord gateway starts. Pair with DISCORD_ALLOWED_CHANNELS to allowlist the channels Hermes responds in."
+    "noAutoGenerate": true,
+    "description": "Optional: Discord bot token from the Discord developer portal. When set, Hermes' Discord gateway starts. Pair with DISCORD_ALLOWED_CHANNELS to allowlist the channels Hermes responds in. Leave blank if you don't use Discord."
   },
   "DISCORD_ALLOWED_CHANNELS": {
     "type": "text",

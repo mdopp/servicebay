@@ -102,9 +102,22 @@ def write_config_yaml(data_dir: str, provider_url: str, model: str) -> str | Non
     except OSError as e:
         jlog("error", "hermes:config", "could not create config dir", path=config_dir, error=str(e))
         return None
-    # Minimal, idempotent: a single model block targeting the
-    # OpenAI-compatible endpoint. Yaml-by-hand because we don't want a
-    # PyYAML dependency in post-deploy scripts.
+    # #1002 — ServiceBay defaults table. Six overrides on top of
+    # Hermes' upstream defaults that swing the box from "developer
+    # laptop" toward "household appliance" semantics. See the
+    # discussion thread on #1002 for the why of each:
+    #   - memory.provider=holographic — local store, no external deps.
+    #     Switch to honcho when the honcho template lands (#1004).
+    #   - tts.provider=piper — local voice. Falls back to '' (silent)
+    #     when piper isn't installed yet; never the upstream `edge`
+    #     (Microsoft online) default.
+    #   - browser.engine=disabled — agents inside a container almost
+    #     never want a real browser. Skills that need it flip it on.
+    #   - model_catalog.enabled=false — don't phone the upstream
+    #     catalog endpoint every 24h. Privacy-by-default.
+    #   - network.force_ipv4=true — FritzBox + IPv6 has bitten other
+    #     services (#415). Skip AAAA records in aiohttp.
+    #   - display.personality=default — household assistant, not anime.
     content = (
         "# Written by ServiceBay's hermes template post-deploy.py.\n"
         "# Edit via the wizard's reconfigure flow or hand-edit and restart the hermes service.\n"
@@ -113,6 +126,18 @@ def write_config_yaml(data_dir: str, provider_url: str, model: str) -> str | Non
         f"  model: {model}\n"
         f"  base_url: {provider_url}\n"
         f"  api_key: \"none\"\n"
+        "memory:\n"
+        "  provider: holographic\n"
+        "tts:\n"
+        "  provider: piper\n"
+        "browser:\n"
+        "  engine: disabled\n"
+        "model_catalog:\n"
+        "  enabled: false\n"
+        "network:\n"
+        "  force_ipv4: true\n"
+        "display:\n"
+        "  personality: default\n"
     )
     try:
         with open(config_path, "w", encoding="utf-8") as f:
@@ -255,25 +280,71 @@ def write_gateway_env(data_dir: str, entries: dict[str, str]) -> bool:
     return True
 
 
+def _wait_for_ha_token(token_path: str, deadline_secs: int = 90) -> str | None:
+    """#1002 — Poll for the HA long-lived token file. HA's post-deploy
+    auto-onboards the `oscar` user and writes this file near the end of
+    its run; if hermes' post-deploy is racing it (even with
+    servicebay.dependencies: home-assistant) the file may not exist yet
+    on first check. Returns the token once present + non-empty, or None
+    if the deadline passes."""
+    deadline = time.time() + deadline_secs
+    while time.time() < deadline:
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, encoding="utf-8") as f:
+                    token = f.read().strip()
+                if token:
+                    return token
+            except OSError:
+                pass
+        time.sleep(3)
+    return None
+
+
+def _wait_for_ha_api(token: str, timeout_secs: int = 60) -> bool:
+    """#1002 — Probe HA's /api/ with the new token until it answers 200.
+    Avoids the first reconnect-loop iteration where Hermes' HA gateway
+    fires before HA's listener is fully up (the "Cannot connect to host
+    127.0.0.1:8123" error in the v4.29.x install logs). Best-effort —
+    we still restart even on timeout, since Hermes will retry on its
+    own."""
+    deadline = time.time() + timeout_secs
+    last_status = 0
+    while time.time() < deadline:
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:8123/api/",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                last_status = resp.status
+                if 200 <= resp.status < 300:
+                    return True
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+            pass
+        time.sleep(3)
+    jlog("warn", "hermes:ha-ready", "HA /api/ not 200 within deadline; restart anyway", last_status=last_status, deadline_secs=timeout_secs)
+    return False
+
+
 def adopt_ha_long_lived_token(data_dir: str) -> str | None:
     """When home-assistant's post-deploy has auto-onboarded HA (#934), it
     leaves a long-lived access token at
     `<DATA_DIR>/home-assistant/homeassistant/.oscar-long-lived-token`.
-    Pick that up over the random placeholder `HASS_TOKEN` from assemble
-    and patch the deployed hermes pod yml so Hermes' native HA gateway
-    can actually authenticate. Returns the token on success, or None
-    when the file is absent (operator opted out of auto-onboarding) or
-    the patch was a no-op."""
+    Pick that up over the placeholder `HASS_TOKEN` from assemble and
+    patch the deployed hermes pod yml so Hermes' native HA gateway can
+    actually authenticate. Returns the token on success, or None when
+    the file never appears (operator opted out of auto-onboarding) or
+    the patch was a no-op.
+
+    #1002: now retries (up to 90s) for the token file and probes HA's
+    /api/ before signalling ready. The previous one-shot read missed
+    the file on every install where HA's auto-onboarding hadn't yet
+    written it, leaving HASS_TOKEN as the placeholder."""
     token_path = os.path.join(data_dir, "home-assistant", "homeassistant", ".oscar-long-lived-token")
-    if not os.path.exists(token_path):
-        return None
-    try:
-        with open(token_path, encoding="utf-8") as f:
-            token = f.read().strip()
-    except OSError as e:
-        jlog("warn", "hermes:ha-token", "could not read HA long-lived token", path=token_path, error=str(e))
-        return None
-    if not token:
+    token = _wait_for_ha_token(token_path)
+    if token is None:
+        jlog("info", "hermes:ha-token", "no HA long-lived token after retry — likely operator opted out of HA auto-onboarding", path=token_path)
         return None
     # The hermes pod yml is written by ServiceBay's install runner to the
     # user-Quadlet directory. Patch the HASS_TOKEN env value in-place so a
@@ -306,6 +377,13 @@ def adopt_ha_long_lived_token(data_dir: str) -> str | None:
         jlog("warn", "hermes:ha-token", "could not write patched hermes.yml", path=pod_yml, error=str(e))
         return None
     jlog("info", "hermes:ha-token", "adopted HA long-lived token from home-assistant post-deploy", token_path=token_path)
+
+    # #1002 — Wait for HA's /api/ to answer 200 with this token before
+    # we restart hermes. Without this gate Hermes' first HA-gateway
+    # reconnect lands during HA's startup window and gets
+    # "Cannot connect to host 127.0.0.1:8123" — operator-visible noise
+    # that has nothing to do with the actual config.
+    _wait_for_ha_api(token)
     return token
 
 
