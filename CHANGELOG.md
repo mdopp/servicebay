@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.33.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.3...servicebay-v4.33.4) (2026-05-26)
+
+
+### Bug Fixes
+
+* **portal:** stop bouncing anonymous /portal visits to /login ([#1039](https://github.com/mdopp/servicebay/issues/1039)) ([d1ad3d3](https://github.com/mdopp/servicebay/commit/d1ad3d3898165508714d41c43495d1fc22b558c9))
+
 ## [4.33.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.2...servicebay-v4.33.3) (2026-05-26)
 
 
