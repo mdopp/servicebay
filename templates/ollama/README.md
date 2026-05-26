@@ -12,21 +12,29 @@ networking.
 
 - `OLLAMA_PORT` — host port. Default `11434`. Bound to loopback.
 - `OLLAMA_DEFAULT_MODEL` — primary model. The tag Hermes' `model.model`
-  points at after install. Default `gemma4:e4b` (~10 GB, fits 100% on
-  a 16 GB GPU, fast). Any Ollama library tag works, plus user-namespaced
-  tags like `VladimirGav/gemma4-26b-16GB-VRAM:latest`.
+  points at after install. Default `gemma4:e4b` — 8B params @ Q4_K_M,
+  ~10 GB on disk, fits 100% on a 16 GB GPU, AND ships native multimodal
+  (`ollama show gemma4:e4b` reports `completion, vision, audio, tools,
+  thinking`). That single default backs OSCAR's multimodal-ingestion
+  path without a separate vision pull. Any Ollama library tag works,
+  plus user-namespaced tags like `VladimirGav/gemma4-26b-16GB-VRAM:latest`.
 - `OLLAMA_EXTRA_MODELS` — comma-separated list of additional models
-  pre-pulled at install time on top of the default. The point is to
-  give the operator one-click switchable choices in Hermes' Models tab
-  without a fresh download. Default ships
-  `VladimirGav/gemma4-26b-16GB-VRAM:latest` — a quantized 26B that
-  still fits 100% on a 16 GB GPU, complementing the smaller default.
-  Each extra adds 10–20 minutes to the install on a typical home link.
-  Set to empty string to skip.
-- `OLLAMA_VISION_MODEL` — optional second model for image-aware
-  skills (e.g. OSCAR's `media-ingestion-multimodal`). Blank by
-  default; set to `qwen2.5vl:7b`, `llava:13b`, or `bakllava:7b`
-  to enable multimodal flows.
+  pre-pulled at install time on top of the default. Gives the operator
+  one-click switchable choices in Hermes' Models tab without a fresh
+  download. Default ships `VladimirGav/gemma4-26b-16GB-VRAM:latest` —
+  a quantized 26B that still fits 100% on a 16 GB GPU, complementing
+  the smaller default for harder text reasoning. **Caveat:** the 16
+  GB quant strips vision and audio from its `Capabilities` block — it's
+  text-only. Switching the active model to it drops multimodal; switch
+  back to `gemma4:e4b` (or pull plain `gemma4:26b` ~17 GB with partial
+  CPU offload) for OCR / voice-note flows. Each extra adds 10–20
+  minutes to the install on a typical home link. Set to empty string
+  to skip.
+- `OLLAMA_VISION_MODEL` — historical, mostly unused now that the
+  default `gemma4:e4b` ships vision + audio natively. Set this only if
+  you've changed `OLLAMA_DEFAULT_MODEL` to a text-only tag and still
+  want a vision backend for OSCAR's `media-ingestion-multimodal` skill.
+  Suggested non-default tags: `qwen2.5vl:7b`, `llava:13b`, `bakllava:7b`.
 - `OLLAMA_GPU_PASSTHROUGH` — leave blank for CPU; set non-blank
   for NVIDIA GPU passthrough via CDI.
 - `OLLAMA_READINESS_TIMEOUT_SECONDS` — post-deploy model-pull
@@ -79,20 +87,24 @@ API exposes every loaded model to anyone who reaches it.
 Idempotent — a second deploy with the same models finds them already
 cached and skips the pulls.
 
-## Multimodal (vision) inference
+## Multimodal (vision + audio) inference
 
-OSCAR's `media-ingestion-multimodal` skill needs a vision-capable
-model to OCR book covers, transcribe photos of documents, etc.
-The default `gemma3:4b` is text-only — sending it an image yields
-an unhelpful "I can't see images" response.
+The default `OLLAMA_DEFAULT_MODEL=gemma4:e4b` is natively multimodal —
+`ollama show gemma4:e4b` reports `completion, vision, audio, tools,
+thinking`. OSCAR's `media-ingestion-multimodal` skill calls into it
+without a separate vision pull.
 
-Set `OLLAMA_VISION_MODEL` at install time (or via the wizard's
-reconfigure flow) to pull a vision model alongside the default.
-The model pulls in series after the default; both share the
-`OLLAMA_READINESS_TIMEOUT_SECONDS` budget. Suggested tags:
+Where the tag matters: the `OLLAMA_EXTRA_MODELS` default ships
+`VladimirGav/gemma4-26b-16GB-VRAM:latest`, which **drops vision and
+audio** in its 16 GB quant. An operator who switches Hermes' active
+model to that tag for "smarter text reasoning" gives up multimodal
+until they switch back to `gemma4:e4b` (or pull plain `gemma4:26b`,
+~17 GB with partial CPU offload, which keeps vision).
 
-- `qwen2.5vl:7b` — Apache-2.0, ~6 GB quantised, fits a 16 GB GPU
-  alongside `gemma3:4b`.
+`OLLAMA_VISION_MODEL` is the explicit override for setups where the
+default has been changed to a text-only tag. Suggested alternatives:
+
+- `qwen2.5vl:7b` — Apache-2.0, ~6 GB quantised, fits a 16 GB GPU.
 - `llava:13b` — older but well-tested, ~8 GB.
 - `bakllava:7b` — Mistral-based LLaVA variant, ~5 GB.
 
