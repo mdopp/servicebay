@@ -220,29 +220,25 @@ class Logger {
   debug(tag: string, message: string, ...args: unknown[]) {
       if (!this.shouldLog('debug')) return;
       const entry = this.format('debug', tag, message, args);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      console.debug(...(this.formatConsole('debug', entry) as any[]));
+      console.debug(...this.formatConsole('debug', entry));
   }
 
   info(tag: string, message: string, ...args: unknown[]) {
       if (!this.shouldLog('info')) return;
       const entry = this.format('info', tag, message, args);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      console.info(...(this.formatConsole('info', entry) as any[]));
+      console.info(...this.formatConsole('info', entry));
   }
 
   warn(tag: string, message: string, ...args: unknown[]) {
       if (!this.shouldLog('warn')) return;
       const entry = this.format('warn', tag, message, args);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      console.warn(...(this.formatConsole('warn', entry) as any[]));
+      console.warn(...this.formatConsole('warn', entry));
   }
 
   error(tag: string, message: string, ...args: unknown[]) {
       // Always log errors
       const entry = this.format('error', tag, message, args);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      console.error(...(this.formatConsole('error', entry) as any[]));
+      console.error(...this.formatConsole('error', entry));
   }
 
   /**
@@ -331,8 +327,19 @@ class Logger {
     }
     
     try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rows = this.db.prepare(query).all(...params) as any[];
+        interface LogRow {
+            id: number;
+            // SQLite returns the column as either number or string depending
+            // on column affinity; LogEntry's contract is string. Cast at
+            // mapping.
+            timestamp: string;
+            level: string;
+            tag: string;
+            message: string;
+            args: string | null;
+            trace_id: string | null;
+        }
+        const rows = this.db.prepare(query).all(...params) as LogRow[];
         return rows.map(row => ({
             id: row.id,
             timestamp: row.timestamp,

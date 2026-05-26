@@ -81,8 +81,12 @@ export async function setupSSHKey(host: string, port: number, user: string, pass
         logs.push(`Warning: Could not create ${homeSshDir}: ${e}`);
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const env = { ...process.env } as any;
+    // Filter undefined values so the shape matches node-pty's
+    // IPtyForkOptions.env (`{ [key: string]: string }`) without an as-any.
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === 'string') env[k] = v;
+    }
 
     const proc = pty.spawn(cmd, args, {
       name: 'xterm-color',
