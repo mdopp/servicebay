@@ -340,6 +340,10 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
 
   // Helper to get display details based on type
   const getDetails = (): DetailItem[] => {
+      // rawData carries a discriminated union of per-node-kind shapes
+      // (container / service / link / gateway / device). Until the
+      // backend's GraphNode types are exported as a union, we keep the
+      // cast — see #976 reader API refactor for the proper fix.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const raw = (data.rawData || {}) as any;
       const common: DetailItem[] = [];
@@ -1150,7 +1154,6 @@ export default function NetworkDashboard() {
          const data = await res.json();
          setRawData(data);
      } catch (e) {
-         console.error('Failed to fetch graph', e);
          const message = e instanceof Error ? e.message : 'Unable to reload network map';
          resolveReloadToast('error', message);
      }
@@ -1377,8 +1380,7 @@ export default function NetworkDashboard() {
                 if (!cancelled) {
                      resolveReloadToast('success', 'Latest network topology is ready');
                 }
-          } catch (error) {
-                console.error('Failed to process network graph', error);
+          } catch {
                 if (!cancelled) {
                      resolveReloadToast('error', 'Unable to render network map');
                 }
@@ -1487,8 +1489,7 @@ export default function NetworkDashboard() {
                  }
              });
         }
-    } catch (error) {
-        console.error('Failed to update link', error);
+    } catch {
         addToast('error', 'Failed to update link');
     }
   };

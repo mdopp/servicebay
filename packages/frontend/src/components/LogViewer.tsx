@@ -281,7 +281,9 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
               setCurrentSystemLogLevel(data.logLevel);
           }
       } catch (e) {
-          console.error('Failed to fetch system log level', e);
+          // Background prefetch — toast would spam if the API is briefly
+          // unavailable on first render. Keep dev-only.
+          console.error('[LogViewer] Failed to fetch system log level', e);
       }
   };
 
@@ -293,7 +295,8 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
             setAvailableTags(data.tags);
         }
     } catch (err) {
-        console.error('Failed to load tags:', err);
+        // Tag filter is a convenience; failure degrades to free-text only.
+        console.error('[LogViewer] Failed to load tags:', err);
     }
   };
 
@@ -306,7 +309,8 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
         setLogDates(data.files.map((f: {name: string}) => f.name));
       }
     } catch (err) {
-        console.error('Failed to load log dates:', err);
+        // Date picker fallback is empty list — visible to operator.
+        console.error('[LogViewer] Failed to load log dates:', err);
     }
   };
 
@@ -334,7 +338,6 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
         setLogs([]);
       }
     } catch (err) {
-      console.error('Failed to load logs:', err);
       const { title, detail } = humanizeError(err, 'Failed to load logs');
       addToast('error', title, detail);
     } finally {

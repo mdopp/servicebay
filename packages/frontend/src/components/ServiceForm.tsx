@@ -126,8 +126,16 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
     }
   }, [initialData]);
 
-  const updateCursorPosition = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
-    const textarea = e.currentTarget;
+  // react-simple-code-editor types onSelect/onClick/onKeyUp against its
+  // wrapper <div>, but the underlying focus target is the inner textarea.
+  // Walk to it via the event-source DOM rather than asserting element
+  // types — that lets the three handlers share one signature without
+  // `as any` while still pulling selection state off the textarea.
+  const updateCursorPosition = (e: React.SyntheticEvent) => {
+    const root = e.currentTarget as HTMLElement | null;
+    const textarea = root instanceof HTMLTextAreaElement
+        ? root
+        : root?.querySelector('textarea') ?? null;
     if (textarea) {
         const val = textarea.value.substr(0, textarea.selectionStart);
         const line = val.split('\n').length;
@@ -713,12 +721,9 @@ WantedBy=default.target`;
                         }}
                         textareaClassName="focus:outline-none"
                         placeholder="apiVersion: v1&#10;kind: Pod&#10;metadata:&#10;  name: my-service..."
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        onSelect={updateCursorPosition as any}
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        onClick={updateCursorPosition as any}
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        onKeyUp={updateCursorPosition as any}
+                        onSelect={updateCursorPosition}
+                        onClick={updateCursorPosition}
+                        onKeyUp={updateCursorPosition}
                         />
                             </div>
                         </div>

@@ -123,8 +123,10 @@ export default function HealthDashboard() {
       if (checksRes.ok) setChecks(await checksRes.json());
       setNodes(nodeList);
     } catch (error) {
-      console.error('Failed to fetch data', error);
-      // addToast('error', 'Failed to fetch health data'); // Suppress error toast on bg sync?
+      // Background sync — toast intentionally suppressed (would spam on
+      // every poll if the server briefly blips). Operator sees the
+      // staleness via the dashboard's own "last updated" indicator.
+      console.error('[HealthDashboard] Failed to fetch data', error);
     } finally {
       // if (!silent) setLoading(false);
       isFetchingRef.current = false;
@@ -171,7 +173,9 @@ export default function HealthDashboard() {
                 setSystemServices(system.map((s: { unit: string }) => s.unit));
             }
         } catch (e) {
-            console.error('Failed to fetch node resources', e);
+            // Background resources fetch — keep silent (the panel
+            // shows its own "no data" state when this fails).
+            console.error('[HealthDashboard] Failed to fetch node resources', e);
         } finally {
             setResourcesLoading(false);
         }
@@ -324,8 +328,7 @@ export default function HealthDashboard() {
       if (res.ok) {
         setHistoryData(await res.json());
       }
-    } catch (error) {
-      console.error('Failed to fetch history', error);
+    } catch {
       addToast('error', 'Failed to fetch history');
     } finally {
       setHistoryLoading(false);

@@ -917,13 +917,13 @@ export default function OnboardingWizard() {
         }
         setStackDeviceOptions(opts);
       } catch (err) {
-        console.error('Failed to fetch devices:', err);
+        addToast('error', 'Could not list devices for the selected node', err instanceof Error ? err.message : String(err));
       } finally {
         setStackLoadingDevices(false);
       }
     };
     fetchDevices();
-  }, [stackSelectedNode]);
+  }, [stackSelectedNode, addToast]);
 
   // RAID detection
   useEffect(() => {
@@ -936,11 +936,11 @@ export default function OnboardingWizard() {
           setRaidArrays((raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint));
         }
       } catch (err) {
-        console.error('Failed to fetch RAID:', err);
+        addToast('error', 'Could not detect RAID arrays', err instanceof Error ? err.message : String(err));
       }
     };
     fetchRaid();
-  }, [stackSelectedNode]);
+  }, [stackSelectedNode, addToast]);
 
   const handleGenerateKey = async () => {
     setLoading(true);
