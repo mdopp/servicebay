@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.33.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.2...servicebay-v4.33.3) (2026-05-26)
+
+
+### Bug Fixes
+
+* **open-webui+portal:** ENABLE_SIGNUP=true (admin bootstrap) + CTA above grid ([#1037](https://github.com/mdopp/servicebay/issues/1037)) ([ed4220c](https://github.com/mdopp/servicebay/commit/ed4220cbf7a74c99650365b26cfbdbcf904d1862))
+
 ## [4.33.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.1...servicebay-v4.33.2) (2026-05-26)
 
 
