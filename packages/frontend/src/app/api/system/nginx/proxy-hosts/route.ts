@@ -279,7 +279,7 @@ async function ensureLanAccessList(baseUrl: string, token: string, nodeIp: strin
  * domain isn't reported as a failure when the host already exists
  * from a prior install / re-trigger of the provisioner.
  */
-async function findProxyHostByDomain(baseUrl: string, token: string, domain: string): Promise<{ id: number } | null> {
+async function findProxyHostByDomain(baseUrl: string, token: string, domain: string): Promise<{ id: number; advanced_config?: string } | null> {
     try {
         const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts?expand=owner,access_list,certificate`, {
             method: 'GET',
@@ -287,11 +287,59 @@ async function findProxyHostByDomain(baseUrl: string, token: string, domain: str
             signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) return null;
-        const list = (await res.json()) as Array<{ id: number; domain_names?: string[] }>;
+        const list = (await res.json()) as Array<{ id: number; domain_names?: string[]; advanced_config?: string }>;
         const existing = list.find(h => Array.isArray(h.domain_names) && h.domain_names.includes(domain));
-        return existing ? { id: existing.id } : null;
+        return existing ? { id: existing.id, advanced_config: existing.advanced_config ?? '' } : null;
     } catch {
         return null;
+    }
+}
+
+/**
+ * #991 — Reconcile an existing NPM proxy host's `advanced_config` with
+ * what the template's `variables.json` currently declares. The legacy
+ * "exists → return as-is" path leaves a stale config in place when a
+ * template is updated post-install (e.g. file-share added Authelia
+ * forward-auth in v3 → existing host has no `Remote-User` rewrite →
+ * filebrowser logs "username is empty"). This narrow update keeps
+ * manual operator customisations untouched: we only PUT when the
+ * existing config does NOT already contain `auth_request` AND the new
+ * config does. Anything else (manual edits, hosts that legitimately
+ * shouldn't carry forward-auth) is left alone.
+ *
+ * Failures are logged but non-fatal — install proceeds with the stale
+ * config in place, the diagnose probe surfaces the drift, operator can
+ * retry from Settings → Self-Diagnose → Reprovision.
+ */
+async function patchProxyHostAdvancedConfig(
+    baseUrl: string,
+    token: string,
+    hostId: number,
+    existingAdvancedConfig: string,
+    newAdvancedConfig: string,
+    domain: string,
+): Promise<{ updated: boolean }> {
+    if (!newAdvancedConfig) return { updated: false };
+    if (existingAdvancedConfig === newAdvancedConfig) return { updated: false };
+    const hasForwardAuth = (s: string) => /auth_request\s+\/authelia/.test(s);
+    if (!hasForwardAuth(newAdvancedConfig)) return { updated: false };
+    if (hasForwardAuth(existingAdvancedConfig)) return { updated: false }; // already wired — leave manual edits alone
+    try {
+        const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ advanced_config: newAdvancedConfig }),
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+            logger.warn('ProxyHosts', `Failed to backfill advanced_config for ${domain} (NPM PUT returned ${res.status})`);
+            return { updated: false };
+        }
+        logger.info('ProxyHosts', `Backfilled advanced_config for ${domain} (added Authelia forward-auth that was missing on the existing host)`);
+        return { updated: true };
+    } catch (e) {
+        logger.warn('ProxyHosts', `Failed to backfill advanced_config for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
+        return { updated: false };
     }
 }
 
@@ -310,7 +358,19 @@ async function findProxyHostByDomain(baseUrl: string, token: string, domain: str
 async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRequest, accessListId: number = 0) {
     const existing = await findProxyHostByDomain(baseUrl, token, host.domain);
     if (existing) {
-        return existing;
+        // #991 — Reconcile advanced_config when the template now ships
+        // forward-auth but the live host predates that change. Narrow
+        // policy in patchProxyHostAdvancedConfig leaves manual edits
+        // alone.
+        await patchProxyHostAdvancedConfig(
+            baseUrl,
+            token,
+            existing.id,
+            existing.advanced_config ?? '',
+            host.proxyConfig?.advanced_config ?? '',
+            host.domain,
+        );
+        return { id: existing.id };
     }
 
     const pc = host.proxyConfig || {};

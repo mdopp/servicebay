@@ -34,7 +34,7 @@
       "allow_websocket_upgrade": true,
       "block_exploits": true,
       "ssl_forced": true,
-      "advanced_config": "__authelia_forward_auth__"
+      "advanced_config": "__authelia_forward_auth__\nproxy_set_header Host 127.0.0.1:{{HERMES_DASHBOARD_PORT}};"
     }
   },
   "HASS_URL": {
