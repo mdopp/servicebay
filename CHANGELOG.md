@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.29.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.29.0...servicebay-v4.29.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* **boot:** prepend sudo -n to efibootmgr calls in reinstall wizard ([#992](https://github.com/mdopp/servicebay/issues/992)) ([dd7c780](https://github.com/mdopp/servicebay/commit/dd7c780d3f4840fcfebdc1fb9edae316d59b25a4)), closes [#984](https://github.com/mdopp/servicebay/issues/984)
+* **install:** auto-provision operator LLDAP user + ensure OIDC clients ([#993](https://github.com/mdopp/servicebay/issues/993)) ([76c31ce](https://github.com/mdopp/servicebay/commit/76c31ce8c76f7aa5385a8b865ba51ced3d9ee63a))
+* **proxy:** reconcile advanced_config + rewrite hermes Host header ([#994](https://github.com/mdopp/servicebay/issues/994)) ([382f37a](https://github.com/mdopp/servicebay/commit/382f37a9f03de2040f75b67f6f44386dbc177995))
+
 ## [4.29.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.28.0...servicebay-v4.29.0) (2026-05-26)
 
 
