@@ -4,11 +4,11 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  BookOpen, Calendar, CalendarDays, Camera,
+  BookOpen, Bot, Calendar, CalendarDays, Camera,
   Download, ExternalLink, Files, Film, Folder, FolderOpen, Globe,
   Headphones, House, Image as ImageIcon, Images, KeyRound, Lightbulb,
   Lightbulb as LightbulbIcon, Loader2, Lock, Mail, MessageSquare,
-  Music, Package, QrCode, Router, Shield, Smartphone, Video,
+  Music, Package, QrCode, RefreshCw, Router, Shield, Smartphone, Video,
   Sparkles, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -27,6 +27,7 @@ const PORTAL_ICON_MAP: Record<PortalIconName, IconComponent> = {
   'folder': Folder,
   'folder-open': FolderOpen,
   'files': Files,
+  'refresh-cw': RefreshCw,
   'calendar': Calendar,
   'calendar-days': CalendarDays,
   'music': Music,
@@ -43,6 +44,7 @@ const PORTAL_ICON_MAP: Record<PortalIconName, IconComponent> = {
   'message-square': MessageSquare,
   'video': Video,
   'film': Film,
+  'bot': Bot,
   'package': Package,
 };
 

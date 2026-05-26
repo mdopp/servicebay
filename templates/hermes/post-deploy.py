@@ -90,7 +90,34 @@ def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tu
         return 0, None
 
 
-def write_config_yaml(data_dir: str, provider_url: str, model: str) -> str | None:
+def _honcho_health_timeout() -> int:
+    return int(os.environ.get("HONCHO_PROBE_TIMEOUT", "5"))
+
+
+def detect_honcho(port: str) -> bool:
+    """#1004 — Probe http://127.0.0.1:<HONCHO_PORT>/health. Returns True
+    when reachable + 2xx, False otherwise. Short timeout: the honcho
+    template's own post-deploy already waited for /health, so by the
+    time hermes' post-deploy runs we either get an immediate green
+    answer or we accept that honcho isn't installed."""
+    timeout = _honcho_health_timeout()
+    if timeout <= 0 or not port:
+        return False
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/health")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+        return False
+
+
+def write_config_yaml(
+    data_dir: str,
+    provider_url: str,
+    model: str,
+    honcho_port: str = "",
+    honcho_api_key: str = "",
+) -> str | None:
     """Write /opt/data/config.yaml's model: block. Returns the path on
     success, None if the write failed. Best-effort — a failure here
     means Hermes falls back to its default config.yaml (likely empty
@@ -106,8 +133,11 @@ def write_config_yaml(data_dir: str, provider_url: str, model: str) -> str | Non
     # Hermes' upstream defaults that swing the box from "developer
     # laptop" toward "household appliance" semantics. See the
     # discussion thread on #1002 for the why of each:
-    #   - memory.provider=holographic — local store, no external deps.
-    #     Switch to honcho when the honcho template lands (#1004).
+    #   - memory.provider — `honcho` when the honcho template is up
+    #     (#1004 detect-then-configure below); `holographic` otherwise.
+    #     Holographic is local-only with no external deps and is fine
+    #     for a single-operator install. Honcho gives per-LLDAP-user
+    #     memory isolation for multi-resident households.
     #   - tts.provider=piper — local voice. Falls back to '' (silent)
     #     when piper isn't installed yet; never the upstream `edge`
     #     (Microsoft online) default.
@@ -118,6 +148,21 @@ def write_config_yaml(data_dir: str, provider_url: str, model: str) -> str | Non
     #   - network.force_ipv4=true — FritzBox + IPv6 has bitten other
     #     services (#415). Skip AAAA records in aiohttp.
     #   - display.personality=default — household assistant, not anime.
+    honcho_ready = bool(honcho_port) and detect_honcho(honcho_port)
+    if honcho_ready:
+        jlog("info", "hermes:config", "honcho /health reachable — memory.provider=honcho", port=honcho_port)
+        memory_block = (
+            "memory:\n"
+            "  provider: honcho\n"
+            "  honcho:\n"
+            f"    api_url: http://127.0.0.1:{honcho_port}\n"
+            f"    api_key: \"{honcho_api_key}\"\n"
+        )
+    else:
+        memory_block = (
+            "memory:\n"
+            "  provider: holographic\n"
+        )
     content = (
         "# Written by ServiceBay's hermes template post-deploy.py.\n"
         "# Edit via the wizard's reconfigure flow or hand-edit and restart the hermes service.\n"
@@ -126,8 +171,7 @@ def write_config_yaml(data_dir: str, provider_url: str, model: str) -> str | Non
         f"  model: {model}\n"
         f"  base_url: {provider_url}\n"
         f"  api_key: \"none\"\n"
-        "memory:\n"
-        "  provider: holographic\n"
+        + memory_block +
         "tts:\n"
         "  provider: piper\n"
         "browser:\n"
@@ -416,9 +460,15 @@ def main() -> int:
     provider_url = env("HERMES_LLM_PROVIDER_URL", "http://127.0.0.1:11434/v1")
     model = env("HERMES_LLM_MODEL", "gemma3:4b")
     dashboard_port = env("HERMES_DASHBOARD_PORT")
+    honcho_port = env("HONCHO_PORT")
+    honcho_api_key = env("HONCHO_API_KEY")
 
-    # 1. Write config.yaml with the wizard-picked provider + model.
-    config_written = write_config_yaml(data_dir, provider_url, model) is not None
+    # 1. Write config.yaml with the wizard-picked provider + model, and
+    # the memory provider chosen by detect-then-configure (#1004).
+    config_written = write_config_yaml(
+        data_dir, provider_url, model,
+        honcho_port=honcho_port, honcho_api_key=honcho_api_key,
+    ) is not None
 
     # Pick up the real HA long-lived token if home-assistant's post-deploy
     # auto-onboarded HA. Without this Hermes' native HA gateway runs with

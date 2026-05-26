@@ -3,6 +3,7 @@ import ServiceBayLogo from '@/components/ServiceBayLogo';
 import { buildPortalCards } from '@/lib/portal/services';
 import { verifyAutheliaSession } from '@/lib/portal/auth';
 import PortalGrid from './PortalGrid';
+import PortalLogoutLink from './PortalLogoutLink';
 import RequestAccessButton from './RequestAccessButton';
 
 export const revalidate = 0;
@@ -40,6 +41,7 @@ export default async function PortalPage() {
             ? `Welcome back, ${firstName} — pick a service below to get started.`
             : 'Pick a service below to get started.'}
         </p>
+        {isLoggedIn && <PortalLogoutLink />}
       </header>
 
       {cards.length === 0 ? (
