@@ -12,7 +12,11 @@ metadata:
     # default port. The wizard topo-sorts based on this annotation so
     # ollama lands first and the http://127.0.0.1:11434 target resolves
     # on first Hermes start.
-    servicebay.dependencies: "ollama"
+    # home-assistant must come up before us so the post-deploy can pick up
+    # `.oscar-long-lived-token` (#1002 fix for the timing race that left
+    # HASS_TOKEN as a placeholder). ollama is the LLM provider Hermes
+    # talks to on startup.
+    servicebay.dependencies: "ollama,home-assistant"
     # Continuous health probe (#628). The Hermes API server requires an
     # API_SERVER_KEY for every endpoint, so an unauthenticated HTTP
     # probe would always get 401. A raw TCP connect proves the listener

@@ -309,6 +309,14 @@ export async function assembleManifest(
     if (!value && meta?.type === 'secret') {
       if (storedValues[name]) {
         value = storedValues[name];
+      } else if (meta.noAutoGenerate) {
+        // #1002 — Some `type: secret` variables are operator-supplied
+        // externally (Telegram/Discord bot tokens, HA long-lived
+        // token, etc.). Auto-generating them as random strings
+        // creates garbage that the third-party service rejects on
+        // every reconnect attempt. Leave empty; the consumer
+        // post-deploy must handle absent values gracefully.
+        value = '';
       } else {
         value = generateRandomSecret();
         newlyGenerated.push({ name, value });

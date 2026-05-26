@@ -421,6 +421,17 @@ export interface VariableMeta {
   description?: string;
   default?: string;
   /**
+   * #1002 — For `type: secret`, opt out of the install-time random
+   * auto-generation. Use for operator-supplied externally-issued
+   * secrets (Telegram/Discord bot tokens, HA long-lived tokens) where
+   * a generated random string would be rejected by the third-party
+   * service on every reconnect, creating tight error loops in the
+   * consumer's log. The consumer post-deploy must handle an empty
+   * value gracefully (skip writing the .env entry, don't enable the
+   * gateway, etc.).
+   */
+  noAutoGenerate?: boolean;
+  /**
    * Concrete example value shown next to the input in the Configure
    * step (small grey hint text). Use for fields whose `description`
    * tells the user *what* but not what a *valid value looks like* —
