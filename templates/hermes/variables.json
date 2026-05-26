@@ -29,6 +29,7 @@
     "default": "hermes",
     "exposure": "internal",
     "proxyPort": "HERMES_DASHBOARD_PORT",
+    "loopbackOnly": true,
     "proxyConfig": {
       "allow_websocket_upgrade": true,
       "block_exploits": true,

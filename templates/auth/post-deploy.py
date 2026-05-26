@@ -216,6 +216,16 @@ def main() -> int:
             else:
                 log(f"⚠️ Could not fully seed LLDAP groups after {SEED_MAX_ATTEMPTS} attempts: {err}")
 
+    # ── Swap Authelia's notifier from `filesystem` to `smtp` if the
+    # operator configured email at install time. The mustache template
+    # ships the filesystem notifier (Authelia writes notifications to
+    # /data/notification.txt) as the safe default for boxes without
+    # email; but that means password-reset / 2FA / OTP mails never
+    # actually reach the user. Read the operator's SMTP config from
+    # ServiceBay's on-disk config.json and rewrite the notifier block
+    # in place, then signal Authelia to hot-reload. #987.
+    rewrite_authelia_smtp_notifier(sb_api)
+
     # ── Authelia portal URL — credential entry only (no admin user; auth
     # via LLDAP) ─────────────────────────────────────────────────────────
     if public_domain:
@@ -229,6 +239,197 @@ def main() -> int:
         )
 
     return 0
+
+
+# ── Authelia SMTP notifier wiring ────────────────────────────────────
+# Lives at the bottom of the file so the main() flow stays readable;
+# these helpers do one job (read ServiceBay's email config, rewrite
+# the notifier block on disk, signal reload) and nothing else.
+
+# Path conventions:
+#   - ServiceBay's config.json lives on host at /mnt/data/servicebay/config.json
+#     (DATA_ROOT in install-fedora-coreos.sh). Post-deploy runs on the host
+#     as the user that owns this script; that's root on Fedora CoreOS.
+#   - Authelia's configuration.yml is at
+#     /mnt/data/stacks/auth/authelia-config/configuration.yml — written by the
+#     mustache rendering step before this script runs.
+#   - Authelia hot-reloads SIGHUP, but with podman quadlet the cleanest
+#     reload signal is `systemctl --user restart auth` (the pod) — sub-second.
+SB_CONFIG_PATH = "/mnt/data/servicebay/config.json"
+AUTHELIA_CONFIG_PATH = "/mnt/data/stacks/auth/authelia-config/configuration.yml"
+
+
+def _sb_email_config(sb_api: str):
+    """
+    Returns the operator's SMTP config as a dict with keys
+    {host, port, secure, user, pass, from}, or None if email isn't
+    configured / can't be read.
+
+    Tries the ServiceBay API first (the public-correct path); falls back
+    to reading config.json directly off disk if the API call fails
+    (post-deploy runs before user-systemd reaches `default.target` on
+    some install timing paths).
+    """
+    # Path 1: API (auth-gated; templates have SB_API_TOKEN injected by
+    # the install runner so this Just Works).
+    token = env("SB_API_TOKEN")
+    if token:
+        try:
+            req = urllib.request.Request(
+                f"{sb_api}/api/settings",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if 200 <= resp.status < 300:
+                    cfg = json.loads(resp.read().decode("utf-8"))
+                    em = (cfg.get("notifications") or {}).get("email") or {}
+                    if em.get("host") and em.get("user") and em.get("pass") and em.get("from"):
+                        return em
+        except Exception:
+            pass
+
+    # Path 2: read config.json directly off disk.
+    try:
+        with open(SB_CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        em = (cfg.get("notifications") or {}).get("email") or {}
+        if em.get("host") and em.get("user") and em.get("pass") and em.get("from"):
+            return em
+    except Exception:
+        pass
+
+    return None
+
+
+def _yaml_quote(s: str) -> str:
+    """
+    Single-quote a string for embedding in Authelia's YAML config.
+    Authelia is strict about quoting in the notifier block — values with
+    `@`, `:`, or whitespace fail to parse without quotes. Single-quotes
+    require doubling internal single-quotes, no other escaping.
+    """
+    if s is None:
+        return "''"
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def _smtp_notifier_block(em: dict) -> str:
+    """Render the YAML for Authelia's smtp notifier, ready to drop in."""
+    host = em["host"]
+    port = int(em.get("port") or 587)
+    secure = em.get("secure")
+    # Authelia uses `disable_starttls` (default False = STARTTLS on).
+    # ServiceBay's `secure: True` means "use implicit TLS" (port 465);
+    # `secure: False` means STARTTLS (587). Map accordingly.
+    submission_uri = f"submissions://{host}:{port}" if secure else f"submission://{host}:{port}"
+    lines = [
+        "notifier:",
+        "  disable_startup_check: false",
+        "  smtp:",
+        f"    address: {_yaml_quote(submission_uri)}",
+        f"    timeout: 10s",
+        f"    username: {_yaml_quote(em['user'])}",
+        f"    password: {_yaml_quote(em['pass'])}",
+        f"    sender: {_yaml_quote(em['from'])}",
+        f"    identifier: localhost",
+        f"    subject: \"[Authelia] {{title}}\"",
+        f"    startup_check_address: {_yaml_quote(em['user'])}",
+        f"    disable_require_tls: false",
+        f"    disable_html_emails: false",
+        f"    tls:",
+        f"      server_name: {_yaml_quote(host)}",
+        f"      skip_verify: false",
+        f"      minimum_version: TLS1.2",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def rewrite_authelia_smtp_notifier(sb_api: str) -> None:
+    """
+    If the operator configured SMTP, rewrite Authelia's notifier block
+    from `filesystem:` to `smtp:` (or no-op if SMTP isn't configured —
+    a fresh install without email keeps the filesystem notifier, which
+    at least logs to /data/notification.txt so the operator can see
+    what Authelia would have sent).
+
+    The rewrite is idempotent: a second run that sees the smtp block
+    already present and matching the operator's current creds skips.
+
+    Failures here are warnings, not errors — Authelia keeps working
+    with whatever notifier it has; only the email-sending half of
+    password-reset / 2FA / OTP flows is affected.
+    """
+    em = _sb_email_config(sb_api)
+    if not em:
+        log("ℹ️ No SMTP config found in ServiceBay settings — leaving Authelia's filesystem notifier in place. Configure email in Settings → Notifications + redeploy auth to enable Authelia email.")
+        return
+
+    try:
+        with open(AUTHELIA_CONFIG_PATH, "r", encoding="utf-8") as f:
+            current = f.read()
+    except FileNotFoundError:
+        log(f"⚠️ Authelia config not at {AUTHELIA_CONFIG_PATH} — skipping notifier rewrite.")
+        return
+    except Exception as e:
+        log(f"⚠️ Couldn't read {AUTHELIA_CONFIG_PATH}: {e} — skipping notifier rewrite.")
+        return
+
+    new_block = _smtp_notifier_block(em)
+
+    # Find the `notifier:` block and replace until the next top-level key.
+    # Top-level keys are lines starting at column 0 with `<name>:` (the
+    # next section header). We scan forward from `notifier:` for the next
+    # such line and replace the slice.
+    lines = current.splitlines(keepends=True)
+    start = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("notifier:"):
+            start = i
+            break
+    if start is None:
+        log(f"⚠️ No `notifier:` block found in {AUTHELIA_CONFIG_PATH} — appending one. Authelia config may need manual review.")
+        new_content = current.rstrip("\n") + "\n\n" + new_block
+    else:
+        end = len(lines)
+        for j in range(start + 1, len(lines)):
+            stripped = lines[j].rstrip("\n")
+            if stripped and not stripped.startswith((" ", "\t", "#")):
+                end = j
+                break
+        new_content = "".join(lines[:start]) + new_block + ("\n" if lines[end - 1].rstrip() else "") + "".join(lines[end:])
+
+    if new_content == current:
+        log("ℹ️ Authelia SMTP notifier already in sync with ServiceBay's email settings — no rewrite needed.")
+        return
+
+    # Atomic write (temp + rename) so a partial write can't leave Authelia
+    # with malformed YAML that crashes the pod.
+    tmp_path = AUTHELIA_CONFIG_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        os.replace(tmp_path, AUTHELIA_CONFIG_PATH)
+    except Exception as e:
+        log(f"⚠️ Failed to write updated Authelia config: {e} — leaving original in place.")
+        try: os.unlink(tmp_path)
+        except Exception: pass
+        return
+
+    log(f"✅ Rewrote Authelia notifier from `filesystem:` to `smtp:` ({em['host']}:{em.get('port', 587)}, user {em['user']}). Restarting auth pod to load the change…")
+
+    # Hot-reload: simpler to restart the user-systemd auth unit than to
+    # find Authelia's PID inside the pod. ServiceBay's HOST_USER is set
+    # by the install runner.
+    host_user = env("HOST_USER", "core")
+    try:
+        import subprocess
+        subprocess.run(
+            ["systemctl", "--user", "--machine", f"{host_user}@.host", "restart", "auth"],
+            check=False, timeout=20,
+        )
+        log("✅ auth pod restarted — password-reset / 2FA / OTP emails should now arrive.")
+    except Exception as e:
+        log(f"⚠️ Couldn't restart auth pod ({e}). The new notifier config is on disk; restart manually with: systemctl --user restart auth")
 
 
 if __name__ == "__main__":
