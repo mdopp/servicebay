@@ -33,6 +33,16 @@ import { EmailStep } from './wizard/steps/EmailStep';
 import { MachineStep } from './wizard/steps/MachineStep';
 import { StacksStep } from './wizard/steps/StacksStep';
 import { FinishStep } from './wizard/steps/FinishStep';
+import {
+  clearPersistedWizardState,
+  loadPersistedWizardState,
+  normalizeStepHistory,
+  savePersistedWizardState,
+  type PersistedWizardState,
+  type StackSubStep,
+  type StepHistoryEntry,
+  type WizardStep,
+} from './wizard/persistence';
 
 // Steps definition
 // Wizard flow:
@@ -53,7 +63,8 @@ import { FinishStep } from './wizard/steps/FinishStep';
 //                     config. Reached via "Pick stacks" from install-
 //                     confirm.
 //   finish          → summary
-type WizardStep = 'welcome' | 'network' | 'email' | 'install-confirm' | 'stacks' | 'finish';
+// `WizardStep` lives in ./wizard/persistence so the persistence module
+// + this component share a single source of truth.
 
 interface ConfigFile {
   filename: string;
@@ -97,82 +108,6 @@ async function fetchExistingServices(node?: string): Promise<Set<string>> {
   } catch {
     return new Set();
   }
-}
-
-const WIZARD_STATE_KEY = 'sb.onboarding.v1';
-
-/**
- * stepHistory entry. The substep field (#691) lets the back-walk
- * restore both the outer step AND the inner stacks substep in one
- * pop — drops the special-case substep-rewind logic that used to
- * live in handleBack and that was the original reason for the
- * inline Back affordances the audit doc flagged.
- *
- * Old entries (plain WizardStep) are migrated forward on load so a
- * partially-completed wizard from a pre-fix session keeps working.
- */
-type StackSubStep = 'select' | 'services' | 'flow';
-interface StepHistoryEntry {
-  step: WizardStep;
-  subStep: StackSubStep;
-}
-
-interface PersistedWizardState {
-  currentStep: WizardStep;
-  // Allow both shapes on load; we normalize to StepHistoryEntry[]
-  // before the React state ever sees it. Keep `unknown` here so
-  // historical sessions don't blow up the JSON.parse.
-  stepHistory: StepHistoryEntry[] | WizardStep[];
-  subStep?: StackSubStep;
-  selection: {
-    gateway: boolean;
-    ssh: boolean;
-    updates: boolean;
-    registries: boolean;
-    email: boolean;
-    stacks: boolean;
-  };
-  gwHost: string;
-  gwUser: string;
-  emailHost: string;
-  emailPort: number;
-  emailSecure: boolean;
-  emailUser: string;
-  emailFrom: string;
-  emailRecipients: string;
-}
-
-function normalizeStepHistory(raw: PersistedWizardState['stepHistory'] | undefined): StepHistoryEntry[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map(entry => {
-    if (typeof entry === 'string') {
-      // Pre-fix sessions stored a bare WizardStep — the substep
-      // wasn't tracked, so default it to 'select' (the stacks step's
-      // landing). Worst-case the operator walks back into the picker
-      // instead of restoring a sub-state; that's strictly better than
-      // crashing when the back button is clicked.
-      return { step: entry, subStep: 'select' };
-    }
-    return entry;
-  });
-}
-
-function loadPersistedWizardState(): PersistedWizardState | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.sessionStorage.getItem(WIZARD_STATE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as PersistedWizardState;
-  } catch {
-    return null;
-  }
-}
-
-function clearPersistedWizardState() {
-  if (typeof window === 'undefined') return;
-  try {
-    window.sessionStorage.removeItem(WIZARD_STATE_KEY);
-  } catch { /* noop */ }
 }
 
 export default function OnboardingWizard() {
@@ -572,9 +507,7 @@ export default function OnboardingWizard() {
       emailFrom: emailConfig.from,
       emailRecipients: emailConfig.recipients,
     };
-    try {
-      window.sessionStorage.setItem(WIZARD_STATE_KEY, JSON.stringify(snapshot));
-    } catch { /* quota / disabled storage */ }
+    savePersistedWizardState(snapshot);
   }, [isOpen, currentStep, stepHistory, wizardSubStep, selection, gwHost, gwUser, emailConfig.host, emailConfig.port, emailConfig.secure, emailConfig.user, emailConfig.from, emailConfig.recipients]);
 
   // #694: pin the activeSteps count at the moment the operator commits
