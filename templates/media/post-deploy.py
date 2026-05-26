@@ -25,9 +25,10 @@ What this does for Jellyfin:
   3. Authenticate against /Users/AuthenticateByName to get a token.
   4. POST /QuickConnect/Enable so mobile apps can pair without
      shared passwords.
-  5. Add /media/Music as a "Music" virtual folder so the library scan
-     starts immediately. Other subdirs (Movies/, TV/, Audiobooks/)
+  5. Add /media/music as a "Music" virtual folder so the library scan
+     starts immediately. Other subdirs (movies/, tv/, audiobooks/)
      stay un-imported — operator adds them by hand if wanted.
+     Lowercase folder names are the convention per #1018.
 
 Best-effort throughout: each step that fails just logs a clear
 breadcrumb so the operator can finish the setup manually in the
@@ -326,14 +327,16 @@ def jellyfin_enable_quick_connect(base_url: str, token: str) -> None:
 
 
 def jellyfin_add_music_library(base_url: str, token: str, music_path: str) -> None:
-    """Register a 'Music' collection pointing at /media/Music inside the
-    container (which is the mounted host {{JELLYFIN_MEDIA_PATH}}/Music).
+    """Register a 'Music' collection pointing at /media/music inside the
+    container (which is the mounted host {{JELLYFIN_MEDIA_PATH}}/music).
+    Lowercase by convention per #1018 so the folder sits cleanly alongside
+    `audiobooks/`, `podcasts/`, and `notes/` under the same data root.
     Idempotent: a 400 with `LibraryAlreadyExists` is treated as success."""
     # The path that Jellyfin sees — /media is the container-side mount
     # of JELLYFIN_MEDIA_PATH on the host. The wizard's MEDIA_PATH
-    # default is /mnt/data/stacks/file-share/data so /media/Music maps
-    # to /mnt/data/stacks/file-share/data/Music on the host.
-    container_path = "/media/Music"
+    # default is /mnt/data/stacks/file-share/data so /media/music maps
+    # to /mnt/data/stacks/file-share/data/music on the host.
+    container_path = "/media/music"
     qs = f"?name=Music&collectionType=music&paths={container_path}&refreshLibrary=true"
     code, body = request_json(
         "POST", f"{base_url}/Library/VirtualFolders{qs}",
@@ -348,10 +351,11 @@ def jellyfin_add_music_library(base_url: str, token: str, music_path: str) -> No
         log("ℹ️ Music library already registered — leaving as-is.")
     else:
         log(f"(note) Could not auto-add Music library (HTTP {code}). Add it manually in Dashboard → Libraries.")
-    # Operator hint: tell them how to wire Movies/TV/etc. The post-deploy
+    # Operator hint: tell them how to wire movies/tv/etc. The post-deploy
     # doesn't auto-add those — Jellyfin's metadata sources differ per
-    # library type and we don't want to commit to a default.
-    log(f"   (Add Movies/TV/Photos libraries later from Dashboard → Libraries → Add Media Library; mount points live under /media/ inside the container — same tree as {music_path} on the host.)")
+    # library type and we don't want to commit to a default. Lowercase
+    # folder names match the file-share convention (#1018).
+    log(f"   (Add movies/tv/photos libraries later from Dashboard → Libraries → Add Media Library; mount points live under /media/ inside the container — same tree as {music_path} on the host.)")
 
 
 def configure_abs_oidc(

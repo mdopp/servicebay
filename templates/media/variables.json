@@ -20,13 +20,13 @@
   },
   "ABS_AUDIOBOOKS_PATH": {
     "type": "text",
-    "description": "Host path to your audiobook library. Defaults to the file-share Samba volume.",
-    "default": "/mnt/data/stacks/file-share/data/Audiobooks"
+    "description": "Host path to your audiobook library. Defaults to the file-share Samba volume. Folder name is lowercase by convention (matches `notes/` + `podcasts/` siblings) per #1018.",
+    "default": "/mnt/data/stacks/file-share/data/audiobooks"
   },
   "ABS_PODCASTS_PATH": {
     "type": "text",
-    "description": "Host path where Audiobookshelf will download podcast episodes.",
-    "default": "/mnt/data/stacks/file-share/data/Podcasts"
+    "description": "Host path where Audiobookshelf will download podcast episodes. Lowercase by convention — see #1018.",
+    "default": "/mnt/data/stacks/file-share/data/podcasts"
   },
   "ABS_OIDC_SECRET": {
     "type": "secret",
