@@ -12,12 +12,21 @@ or Signal gateways.
 1. **Runs Open WebUI's pod** behind NPM + Authelia at the operator's
    `<OPEN_WEBUI_SUBDOMAIN>` (default `chat`). One-factor login via
    Authelia is enough — there's no second auth wall once you're in.
-2. **Pre-wires the LLM backend** to the local Ollama on host
-   loopback (`OLLAMA_BASE_URL=http://127.0.0.1:<OLLAMA_PORT>`). The
-   model list in the chat UI mirrors whatever's in `ollama list`.
+2. **Routes through Hermes** via the OpenAI-compatible API:
+   `OPENAI_API_BASE_URL=http://127.0.0.1:<HERMES_API_PORT>/v1` with
+   the auto-generated `HERMES_API_KEY` as the bearer token. Every
+   chat goes through Hermes' agent loop — tool calls, holographic /
+   honcho memory, `cloud_audit` logging (#921), the OSCAR skill
+   set. Hermes in turn talks to the local Ollama; the underlying
+   model is whatever Hermes' `config.yaml` has set.
 3. **Bootstraps the admin account** on first visit — the first user
    to create an account becomes the in-app admin. Subsequent users
    are added from Settings → Users.
+
+The direct-to-Ollama Open WebUI integration is explicitly disabled
+(`ENABLE_OLLAMA_API=false`, `OLLAMA_BASE_URL=""`) so the chat
+surface can't accidentally bypass Hermes — that bypass would skip
+the audit log, the memory layer, and any OSCAR-authored skill.
 
 ## Why we ship this
 
@@ -40,7 +49,8 @@ internal service already trusts, so it's the smallest possible
 
 ## Dependencies
 
-- `ollama` (LLM backend)
+- `hermes` (agent loop; the actual backend Open WebUI talks to)
+- `ollama` (Hermes uses it underneath; included for topo-sort sanity)
 - `nginx` (NPM proxy)
 - `auth` (Authelia + LLDAP)
 
@@ -53,10 +63,11 @@ internal service already trusts, so it's the smallest possible
   self-register — the admin adds them from Settings → Users. Flip it
   back on (env var on the pod) if you want self-service; the
   Authelia layer still gates the URL either way.
-- The model list inside Open WebUI is whatever `ollama list` returns
-  at the time of the chat session start. Pulling a new model from
-  Ollama (`ollama pull <name>`) makes it available without a UI
-  restart.
+- The model dropdown inside Open WebUI surfaces whatever Hermes'
+  `/v1/models` returns — today that's a single `hermes-agent` entry.
+  Hermes' `config.yaml` controls the underlying ollama model; change
+  it via `hermes config set model.model <ollama-tag>` and restart
+  Hermes. The Open WebUI side doesn't need a restart.
 
 ## Out of scope
 
