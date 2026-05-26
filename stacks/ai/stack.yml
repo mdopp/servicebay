@@ -9,12 +9,15 @@ metadata:
   selfHeal:
     ollama: env_override
     hermes: env_override
-    open-webui: env_override
+    hermes-webui: env_override
 spec:
   # Three-template stack: ollama is the LLM runtime, hermes is the
-  # operator-flavored agent dashboard, open-webui is the family-facing
-  # chat surface at chat.<domain> (#1030). Install order is derived
-  # from each template's `servicebay.dependencies` — ollama first,
-  # then hermes + open-webui (both depend on ollama and on
-  # nginx + auth from the basic stack).
-  templates: [ollama, hermes, open-webui]
+  # operator-flavored agent dashboard at hermes.<domain>, hermes-webui
+  # is the family-facing chat surface at chat.<domain>. Replaces the
+  # earlier open-webui stop-gap (#1030) with the Hermes-native UI
+  # from nesquena/hermes-webui (#1044) — same chat URL, but the
+  # Skills/Sessions/Profiles/Cron features actually surface now.
+  # Install order is derived from each template's
+  # `servicebay.dependencies` — ollama first, then hermes, then
+  # hermes-webui (depends on hermes' API server).
+  templates: [ollama, hermes, hermes-webui]
