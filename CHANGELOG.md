@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.33.5](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.4...servicebay-v4.33.5) (2026-05-26)
+
+
+### Bug Fixes
+
+* **portal:** pass X-Original-URL on Authelia /api/verify ([#1041](https://github.com/mdopp/servicebay/issues/1041)) ([80e7b05](https://github.com/mdopp/servicebay/commit/80e7b05424a37dca94cb2507816001f304588d72))
+
 ## [4.33.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.3...servicebay-v4.33.4) (2026-05-26)
 
 
