@@ -16,7 +16,7 @@ async function getAgent() {
 export const GET = withApiHandler({}, async () => {
   try {
     const agent = await getAgent();
-    const res = await agent.sendCommand('exec', { command: 'efibootmgr -v' }) as { code?: number; stdout?: string };
+    const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -v' }) as { code?: number; stdout?: string };
     if (res.code !== 0) {
       return NextResponse.json({ error: 'Failed to query efibootmgr' }, { status: 500 });
     }
@@ -86,7 +86,7 @@ export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
     let bootNum = body.bootNum;
     
     if (!bootNum) {
-      const res = await agent.sendCommand('exec', { command: 'efibootmgr -v' }) as { code?: number; stdout?: string };
+      const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -v' }) as { code?: number; stdout?: string };
       if (res.code === 0) {
         const stdout = res.stdout ?? '';
         const lines = stdout.split('\n');
@@ -111,10 +111,10 @@ export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
     }
     
     logger.info('api:system:boot:usb-next', `Activating UEFI boot entry Boot${bootNum}`);
-    await agent.sendCommand('exec', { command: `efibootmgr -A -b ${bootNum}` });
-    
+    await agent.sendCommand('exec', { command: `sudo -n efibootmgr -A -b ${bootNum}` });
+
     logger.info('api:system:boot:usb-next', `Setting UEFI BootNext to ${bootNum}`);
-    const resBootNext = await agent.sendCommand('exec', { command: `efibootmgr -n ${bootNum}` }) as { code?: number; stderr?: string };
+    const resBootNext = await agent.sendCommand('exec', { command: `sudo -n efibootmgr -n ${bootNum}` }) as { code?: number; stderr?: string };
     if (resBootNext.code !== 0) {
       return NextResponse.json({ error: `Failed to set BootNext: ${resBootNext.stderr}` }, { status: 500 });
     }
@@ -140,7 +140,7 @@ export const DELETE = withApiHandler({}, async () => {
   try {
     const agent = await getAgent();
     logger.info('api:system:boot:usb-next', 'Clearing UEFI BootNext setting');
-    const res = await agent.sendCommand('exec', { command: 'efibootmgr -N' }) as { code?: number; stderr?: string };
+    const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -N' }) as { code?: number; stderr?: string };
     if (res.code !== 0) {
       return NextResponse.json({ error: `Failed to clear BootNext: ${res.stderr}` }, { status: 500 });
     }

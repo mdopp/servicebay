@@ -1051,7 +1051,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         const agent = agentManager.getAgent(nodeName);
         
         if (action === 'clear') {
-          const res = await agent.sendCommand('exec', { command: 'efibootmgr -N' }) as { code?: number; stderr?: string };
+          const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -N' }) as { code?: number; stderr?: string };
           if (res.code !== 0) {
             return errorResult(`Failed to clear BootNext: ${res.stderr}`);
           }
@@ -1059,7 +1059,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         }
         
         if (action === 'list') {
-          const res = await agent.sendCommand('exec', { command: 'efibootmgr -v' }) as { code?: number; stdout?: string };
+          const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -v' }) as { code?: number; stdout?: string };
           if (res.code !== 0) {
             return errorResult('Failed to query efibootmgr');
           }
@@ -1105,7 +1105,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         // action === 'set'
         let targetBootNum = bootNum;
         if (!targetBootNum) {
-          const res = await agent.sendCommand('exec', { command: 'efibootmgr -v' }) as { code?: number; stdout?: string };
+          const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -v' }) as { code?: number; stdout?: string };
           if (res.code === 0) {
             const stdout = res.stdout ?? '';
             const lines = stdout.split('\n');
@@ -1129,8 +1129,8 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
           return errorResult('No USB boot entry found or specified');
         }
         
-        await agent.sendCommand('exec', { command: `efibootmgr -A -b ${targetBootNum}` });
-        const resBootNext = await agent.sendCommand('exec', { command: `efibootmgr -n ${targetBootNum}` }) as { code?: number; stderr?: string };
+        await agent.sendCommand('exec', { command: `sudo -n efibootmgr -A -b ${targetBootNum}` });
+        const resBootNext = await agent.sendCommand('exec', { command: `sudo -n efibootmgr -n ${targetBootNum}` }) as { code?: number; stderr?: string };
         if (resBootNext.code !== 0) {
           return errorResult(`Failed to set BootNext: ${resBootNext.stderr}`);
         }
