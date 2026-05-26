@@ -4,6 +4,13 @@ import io, { Socket } from 'socket.io-client';
 
 let socket: Socket;
 
+/** Pathnames where an `unauthorized` socket error must NOT bounce the
+ *  browser to /login. /login itself (the redirect target) and /portal
+ *  (anonymous-readable family surface) — every other path is admin-
+ *  flavored and the bounce is desirable. Kept in sync with the REST
+ *  401 handler in DigitalTwinProvider. */
+const ANONYMOUS_PATHS = new Set(['/login', '/portal']);
+
 export const useSocket = () => {
   const [isConnected, setIsConnected] = useState(false);
 
@@ -31,15 +38,20 @@ export const useSocket = () => {
     // re-authenticates. Only the auth error redirects; transient network
     // `connect_error`s must keep retrying silently.
     //
-    // The path guard prevents an infinite reload loop on /login itself:
-    // the root layout mounts DigitalTwinProvider unconditionally, so the
-    // socket also connects from the login page; without the guard, every
-    // failed connect would redirect the browser back to /login (#854).
+    // The path guard prevents an infinite reload loop on /login itself
+    // (#854) AND prevents the family portal from bouncing anonymous
+    // visitors to the admin login: /portal is intentionally
+    // anonymous-readable, but the root layout still mounts
+    // DigitalTwinProvider, which opens a socket connection that fails
+    // `unauthorized` for visitors without an SB session cookie. Without
+    // the /portal guard here, every anonymous /portal visit got
+    // redirected to /login a few hundred ms after landing.
     function onConnectError(err: Error) {
       if (
         err?.message === 'unauthorized' &&
         typeof window !== 'undefined' &&
-        window.location.pathname !== '/login'
+        !ANONYMOUS_PATHS.has(window.location.pathname) &&
+        !window.location.pathname.startsWith('/portal/')
       ) {
         window.location.href = '/login';
       }
