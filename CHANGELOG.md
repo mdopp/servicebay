@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.29.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.28.0...servicebay-v4.29.0) (2026-05-26)
+
+
+### Features
+
+* **dashboard:** show GPU details + fix disk field-name mismatch; retire splash quadlet after install ([2787163](https://github.com/mdopp/servicebay/commit/278716383e0721ae53f76893f48fb02dbefc5e6a))
+* **scripts:** add install-tui.sh — full-screen dashboard view of the install ([ed96cf0](https://github.com/mdopp/servicebay/commit/ed96cf0e8a5ae89dde1f43edfa843bde679d87d1))
+
+
+### Bug Fixes
+
+* hermes 502 (NPM upstream now loopback) + authelia smtp notifier ([3d1f58c](https://github.com/mdopp/servicebay/commit/3d1f58c3737d273e8a168a7b0d0d42e6dabb6379))
+* **scripts:** install-tui — reduce flicker via alt-screen + per-line clear ([62bec38](https://github.com/mdopp/servicebay/commit/62bec38d612fbbdbc5fca3a1f61ed581c48b3a36))
+
 ## [4.28.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.27.0...servicebay-v4.28.0) (2026-05-25)
 
 
