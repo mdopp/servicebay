@@ -26,6 +26,14 @@ export const dynamic = 'force-dynamic';
  *       resolved → "Welcome! Set your password" card
  *       (otherwise) → default Request-access button
  *   - signed in → no request CTA at all, just the user chip + logout
+ *
+ * The CTA + status panel sits between the welcome header and the
+ * service grid. Anonymous visitors land on it first (the whole point
+ * of the page for them is "how do I get access?"), and signed-in
+ * visitors don't see it at all so the grid stays the focal point.
+ * Pre-#1037 the CTA was after the grid; that pushed the
+ * Request-access button below the fold on any portal with more than
+ * a handful of cards.
  */
 export default async function PortalPage() {
   const hdrs = await headers();
@@ -55,6 +63,12 @@ export default async function PortalPage() {
         {isLoggedIn && <PortalLogoutLink />}
       </header>
 
+      {!isLoggedIn && (
+        <div className="mb-10">
+          <AccessRequestStatusCTA fallback={<RequestAccessButton />} />
+        </div>
+      )}
+
       {cards.length === 0 ? (
         <div className="text-center text-gray-500 dark:text-gray-400 py-16">
           <p className="text-lg">No services available yet.</p>
@@ -64,10 +78,6 @@ export default async function PortalPage() {
         </div>
       ) : (
         <PortalGrid cards={cards} />
-      )}
-
-      {!isLoggedIn && (
-        <AccessRequestStatusCTA fallback={<RequestAccessButton />} />
       )}
     </main>
   );

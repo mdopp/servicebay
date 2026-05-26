@@ -59,10 +59,11 @@ internal service already trusts, so it's the smallest possible
 - On first visit at `https://chat.<publicDomain>/` Authelia challenges
   for a 1FA login; once authenticated, Open WebUI asks for an admin
   account name + password. The first account created is the admin.
-- `ENABLE_SIGNUP` is `false` by default, so subsequent visitors can't
-  self-register — the admin adds them from Settings → Users. Flip it
-  back on (env var on the pod) if you want self-service; the
-  Authelia layer still gates the URL either way.
+- `ENABLE_SIGNUP` ships **on** because Open WebUI's first-account
+  bootstrap requires it — there's no headless admin-create API.
+  After your admin lands, flip "Enable New Sign Ups" off via the
+  in-app Settings → Users panel if you want the operator-provisions-
+  members policy. The Authelia layer gates the URL regardless.
 - The model dropdown inside Open WebUI surfaces whatever Hermes'
   `/v1/models` returns — today that's a single `hermes-agent` entry.
   Hermes' `config.yaml` controls the underlying ollama model; change
