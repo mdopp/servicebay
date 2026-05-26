@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.32.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.31.0...servicebay-v4.32.0) (2026-05-26)
+
+
+### Features
+
+* **portal:** state-aware access-request CTAs + user chip with avatar ([#1019](https://github.com/mdopp/servicebay/issues/1019)) ([09b4374](https://github.com/mdopp/servicebay/commit/09b437432780b4ff531f4ccce960437f30e48366))
+
 ## [4.31.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.30.0...servicebay-v4.31.0) (2026-05-26)
 
 
