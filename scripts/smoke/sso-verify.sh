@@ -312,6 +312,14 @@ declare -A USER_APPS=(
   [files]=""
   [sync]=""
   [caldav]=""
+  # Hermes' dashboard is uvicorn-backed and rejects requests whose Host
+  # header doesn't match its bind address — caught here as HTTP 400 with
+  # `{"detail":"Invalid Host header. ..."}` when NPM forwards
+  # `Host: hermes.dopp.cloud` without the `proxy_set_header Host
+  # 127.0.0.1:9119;` rewrite from the template's advanced_config. Signature
+  # is the literal dashboard title so the test also catches a "200 with
+  # wrong content" regression (proxy half-broken).
+  [hermes]="Hermes Agent"
 )
 
 for h in "${!USER_APPS[@]}"; do

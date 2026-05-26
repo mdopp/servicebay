@@ -424,6 +424,33 @@ describe('probeHttpStatus (#611)', () => {
     expect(r.status).toBe('warn');
   });
 
+  it('302 to a relative path → ok (Navidrome / HA / Radicale same-origin)', async () => {
+    // music.dopp.cloud → /web/ (Navidrome), home.dopp.cloud → /onboarding.html (HA),
+    // caldav.dopp.cloud → /.web (Radicale). All are healthy "go to my UI" redirects.
+    for (const path of ['/web/', '/onboarding.html', '/.web']) {
+      const r = await probe(
+        'music.example.com',
+        'example.com',
+        fakeFetch(new Response('', { status: 302, headers: { location: path } })),
+      );
+      expect(r.status).toBe('ok');
+      expect(r.detail).toMatch(/same-origin/);
+    }
+  });
+
+  it('302 to an absolute same-host URL → ok', async () => {
+    const r = await probe(
+      'music.example.com',
+      'example.com',
+      fakeFetch(new Response('', {
+        status: 302,
+        headers: { location: 'https://music.example.com/web/' },
+      })),
+    );
+    expect(r.status).toBe('ok');
+    expect(r.detail).toMatch(/same-origin/);
+  });
+
   it('401 → ok (auth-gated)', async () => {
     const r = await probe('x.example.com', 'example.com', fakeFetch(new Response('', { status: 401 })));
     expect(r.status).toBe('ok');

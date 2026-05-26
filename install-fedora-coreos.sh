@@ -953,8 +953,19 @@ storage:
           QUADLET=/var/home/${HOST_USER}/.config/containers/systemd/servicebay-splash.container
           RETIRED="$QUADLET.retired"
 
+          # servicebay.service's ExecStartPre stopped the splash via
+          # SIGTERM → SIGKILL (status=137), which leaves the unit in the
+          # `failed` state. systemctl daemon-reload doesn't clear that.
+          # Reset it here so `systemctl --user --failed` doesn't keep
+          # surfacing the splash as a problem for the lifetime of the
+          # box — this is the intended end state, not a real failure.
+          # Idempotent: reset-failed against a non-failed / unknown unit
+          # is a no-op + exit 0.
+          /usr/bin/systemctl --user reset-failed servicebay-splash.service 2>/dev/null || true
+
           if [ ! -f "$QUADLET" ]; then
-              # Already retired (subsequent boots) — nothing to do.
+              # Already retired (subsequent boots) — nothing left to do
+              # after the reset-failed above.
               exit 0
           fi
 

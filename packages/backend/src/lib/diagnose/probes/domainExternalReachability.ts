@@ -148,9 +148,12 @@ interface HttpStatusResult {
  *
  * Classification:
  *   - 2xx → ok
- *   - 302/303/307/308 → ok if Location points at `auth.<publicDomain>`
- *     (Authelia forward-auth redirect for unauthenticated visitors).
- *     Other redirects → warn.
+ *   - 3xx → ok if Location is same-origin (a relative path, or an
+ *     absolute URL whose host equals `domain`) — Navidrome's `/web/`,
+ *     Radicale's `/.web`, Home Assistant's `/onboarding.html` are the
+ *     normal "go to my UI" redirects from a healthy backend. Also ok
+ *     when Location points at `auth.<publicDomain>` (Authelia
+ *     forward-auth). Cross-origin redirects to anywhere else → warn.
  *   - 401 / 403 → ok (auth-gated endpoint serving an unauthenticated
  *     request; the proxy is healthy, the app just wants creds).
  *   - 5xx → fail with the status code in the detail.
@@ -165,6 +168,20 @@ interface HttpStatusResult {
  * external-reachability question for cases where the upstream firewall
  * itself is the problem.
  */
+/** True when `location` resolves under `domain`. Accepts either a
+ *  relative path (no scheme → always same-origin) or an absolute URL
+ *  whose hostname equals `domain` exactly. */
+function isSameOrigin(location: string, domain: string): boolean {
+  if (!location) return false;
+  // Relative — path-only redirect, always same-origin.
+  if (!/^https?:\/\//i.test(location)) return true;
+  try {
+    return new URL(location).hostname.toLowerCase() === domain.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 export async function probeHttpStatus(
   domain: string,
   publicDomain: string | null,
@@ -187,6 +204,13 @@ export async function probeHttpStatus(
       const authHost = publicDomain ? `auth.${publicDomain}` : null;
       if (authHost && location.includes(authHost)) {
         return { status: 'ok', detail: `HTTP ${code} → ${authHost} (forward-auth)` };
+      }
+      // Same-origin redirects (relative path, or absolute URL whose host
+      // matches the probed domain) are how Navidrome / Radicale / Home
+      // Assistant tell a fresh client "go to my UI" — proxy + backend are
+      // healthy, not a misroute.
+      if (location && isSameOrigin(location, domain)) {
+        return { status: 'ok', detail: `HTTP ${code} → ${location} (same-origin)` };
       }
       return { status: 'warn', detail: `HTTP ${code} → ${location || 'no Location header'}` };
     }
