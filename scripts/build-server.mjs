@@ -55,7 +55,7 @@ const external = [
 ];
 
 await build({
-  entryPoints: [path.join(repoRoot, 'packages', 'frontend', 'server.ts')],
+  entryPoints: [path.join(repoRoot, 'packages', 'backend', 'src', 'server.ts')],
   bundle: true,
   platform: 'node',
   format: 'cjs',
