@@ -23,5 +23,19 @@
     "type": "text",
     "description": "How long post-deploy waits for the first model pull to finish. Multi-GB models on a slow connection can take 10+ minutes; the default leaves slack. Tune down for tiny models on fast links if you want faster install feedback.",
     "default": "600"
+  },
+  "OLLAMA_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for the Ollama API. Internal exposure — gets a cert and a LAN-only access list, plus Authelia forward-auth on top because Ollama itself ships no auth. Use https://<OLLAMA_SUBDOMAIN>.<PUBLIC_DOMAIN>/api/generate from any LAN client; mobile/external clients get a 403 from NPM and a 302-to-Authelia from any in-LAN unauthenticated request.",
+    "default": "ollama",
+    "exposure": "internal",
+    "proxyPort": "OLLAMA_PORT",
+    "loopbackOnly": true,
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
+    }
   }
 }

@@ -75,7 +75,7 @@ ssh_cmd() {
 RESOLVE_FLAGS=""
 build_resolve_flags() {
   local hosts=(auth ldap admin nginx dns)
-  hosts+=(vault photos music books home files caldav sync hermes zwave www)
+  hosts+=(vault photos music books home files caldav sync hermes ollama zwave www)
   hosts+=("")  # bare apex
   RESOLVE_FLAGS=""
   for h in "${hosts[@]}"; do
@@ -320,6 +320,11 @@ declare -A USER_APPS=(
   # is the literal dashboard title so the test also catches a "200 with
   # wrong content" regression (proxy half-broken).
   [hermes]="Hermes Agent"
+  # Ollama API behind Authelia forward-auth (#1003). The browser-flow
+  # session reaches /api/tags via NPM; non-LAN IPs get 403 from the
+  # access list. No content signature — Ollama responds with JSON that
+  # changes per installed-model set.
+  [ollama]=""
 )
 
 for h in "${!USER_APPS[@]}"; do
