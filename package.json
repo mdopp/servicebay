@@ -11,7 +11,7 @@
   "scripts": {
     "predev": "node scripts/predev.mjs",
     "predev:frontend": "node scripts/predev.mjs",
-    "dev": "fuser -k 3000/tcp || true && tsx packages/frontend/server.ts",
+    "dev": "fuser -k 3000/tcp || true && tsx packages/backend/src/server.ts",
     "dev:frontend": "fuser -k 3001/tcp || true && NEXT_PUBLIC_USE_MOCKS=1 next dev packages/frontend --port 3001",
     "build": "next build packages/frontend && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
     "start": "NODE_ENV=production node dist-server/server.cjs",
@@ -20,7 +20,7 @@
     "test": "vitest run",
     "gen-template-docs": "tsx scripts/gen-template-docs.ts",
     "check:invariants": "tsx scripts/check-invariants.ts",
-    "check:deps": "depcruise --config .dependency-cruiser.cjs packages/frontend/src packages/backend/src packages/frontend/server.ts",
+    "check:deps": "depcruise --config .dependency-cruiser.cjs packages/frontend/src packages/backend/src",
     "check:arch": "npm run check:invariants && npm run check:deps",
     "prepare": "husky || true"
   },
@@ -115,7 +115,6 @@
           "src/app/**/loading.tsx",
           "src/app/**/error.tsx",
           "src/app/**/not-found.tsx",
-          "server.ts",
           "src/mocks/browser.ts",
           "src/**/*.{ts,tsx}"
         ]

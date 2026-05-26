@@ -135,8 +135,15 @@ async function checkSecurityAnyBudget() {
 // logger, terminal/sessionManager, ssh, plus the test/test.ts/exclusions).
 // Drop this number when each subsequent cluster lands — never raise it
 // without a justification + an issue.
+//
+// 2026-05-26 (#974): bumped 22 → 24 to absorb the two pre-existing casts in
+// the relocated server.ts (Partial<NodeTwin> coercion on SYNC_PARTIAL /
+// SYNC_DIFF payloads + the agentManager.agents Map peek for the periodic
+// health sync). Both predate this move; the scanner just couldn't see
+// them while the file lived in packages/frontend. Drop back to 22 once
+// the bootstrap-layer casts get typed properly.
 // ---------------------------------------------------------------------------
-const BACKEND_AS_ANY_BUDGET = 22;
+const BACKEND_AS_ANY_BUDGET = 24;
 
 async function checkBackendAnyBudget() {
     let count = 0;
@@ -246,7 +253,9 @@ async function checkWithApiHandlerAdoption() {
 //
 // Scans both `src/` (Next.js routes / pages / components) and
 // `packages/backend/src/` (extracted backend library). The store itself
-// (`store/twin.ts`) and the encapsulation layer (`store/repository.ts`)
+// (`store/twin.ts`), the encapsulation layer (`store/repository.ts`),
+// and the process entry point (`server.ts`, the bootstrap site that
+// constructs the singleton and broadcasts twin:state to the socket)
 // are the only allowed call sites.
 // ---------------------------------------------------------------------------
 const TWIN_GETINSTANCE_MAX = 0;
@@ -262,6 +271,9 @@ async function checkTwinFanIn() {
         // Skip the store itself and the encapsulation layer.
         if (file.endsWith(path.join('store', 'twin.ts'))) continue;
         if (file.endsWith(path.join('store', 'repository.ts'))) continue;
+        // Skip the process entry point — bootstrap legitimately gets the
+        // singleton once and wires the twin:state socket broadcast.
+        if (file.endsWith(path.join('backend', 'src', 'server.ts'))) continue;
         const content = await readFile(file, 'utf-8');
         const hits = content.match(/\bDigitalTwinStore\.getInstance\(\)/g)?.length ?? 0;
         count += hits;
