@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.30.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.29.1...servicebay-v4.30.0) (2026-05-26)
+
+
+### Features
+
+* **auth:** surface signed-in user in sidebar + Logout link ([#1001](https://github.com/mdopp/servicebay/issues/1001) MVP) ([#1011](https://github.com/mdopp/servicebay/issues/1011)) ([ebc9db0](https://github.com/mdopp/servicebay/commit/ebc9db0ced835d650b2e0bd5e2cd5f16715d3330))
+* **ollama:** add OLLAMA_SUBDOMAIN — internal NPM host gated by Authelia forward-auth ([#1006](https://github.com/mdopp/servicebay/issues/1006)) ([1a5f88e](https://github.com/mdopp/servicebay/commit/1a5f88e1f60ad5f9a1abd29a31e7e2bb30fadbbd))
+
+
+### Bug Fixes
+
+* **hermes:** ship sane defaults — HA token retry, noAutoGenerate gateway secrets, ServiceBay config.yaml ([#1008](https://github.com/mdopp/servicebay/issues/1008)) ([0f1eee4](https://github.com/mdopp/servicebay/commit/0f1eee4948b2e209569c8bd3b1686a964286b6fd))
+* **install:** reset servicebay-splash failed state after retire ([#998](https://github.com/mdopp/servicebay/issues/998)) ([61b4889](https://github.com/mdopp/servicebay/commit/61b488930eda987f62ef536986fe7cabf95e2e57))
+* **proxy:** land Authelia headers + strict-upstream-host in location block; agent gains sudo write_file ([#1007](https://github.com/mdopp/servicebay/issues/1007)) ([c14de93](https://github.com/mdopp/servicebay/commit/c14de935fe84311aa128f0f96dbad89d4bc90f59))
+
 ## [4.29.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.29.0...servicebay-v4.29.1) (2026-05-26)
 
 
