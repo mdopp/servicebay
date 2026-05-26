@@ -1,73 +1,32 @@
 import { NetworkGraph, NetworkNode, NetworkEdge, PortMapping as GraphPortMapping } from './types';
 import { NodeFactory } from './factory';
 import { listNodes, PodmanConnection } from '../nodes';
-import { getConfig } from '../config';
 import { NetworkStore } from './store';
 import { getActiveEdges } from './flowsStore';
 import { parseTemplateDependencies } from '../stackInstall/dependencies';
 import { checkDomains } from './dns';
 import watcher from '../watcher';
-import { getGateway, getNodeTwin } from '../store/repository';
+import { getNodeTwin } from '../store/repository';
 import { logger } from '../logger';
 import yaml from 'js-yaml'; // Helper: YAML parser
 import { EnrichedContainer, PortMapping, ServiceUnit, WatchedFile } from '../agent/types';
-import { buildExternalLinkPorts, getExternalLinkNodeId, normalizeExternalTargets, parseTargetHostPort } from './externalLinks';
-
-const resolvePortNumber = (value: unknown): number | undefined => {
-    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-        return value;
-    }
-
-    if (typeof value === 'string') {
-        const parsed = parseInt(value, 10);
-        if (!Number.isNaN(parsed) && parsed > 0) {
-            return parsed;
-        }
-    }
-
-    return undefined;
-};
-
-// Helper functions for external links are defined in ./externalLinks
-
-interface KubePodSpec {
-    spec?: {
-        containers?: {
-            ports?: {
-                hostPort?: number;
-                containerPort?: number;
-                hostIp?: string;
-                protocol?: string;
-            }[];
-        }[];
-    };
-}
-
-type PortLike = number | {
-    host?: number | string;
-    hostPort?: number | string;
-    port?: number | string;
-    containerPort?: number | string;
-    hostIp?: string;
-    ip?: string;
-};
-
-interface FritzPortMapping {
-    enabled?: boolean;
-    targetIp?: string;
-    internalClient?: string;
-    internalPort?: number | string;
-    externalPort?: number | string;
-    hostPort?: number | string;
-    port?: number | string;
-    containerPort?: number | string;
-    targetPort?: number | string;
-}
+import {
+    getExternalLinkNodeId,
+    normalizeExternalTargets,
+    parseTargetHostPort,
+} from './externalLinks';
+import { buildGlobalInfrastructure } from './topologyAssembler';
+import {
+    resolvePortNumber,
+    type FritzPortMapping,
+    type KubePodSpec,
+    type PortLike,
+} from './topologyTypes';
 
 export class NetworkService {
   async getGraph(targetNode?: string): Promise<NetworkGraph> {
     // 1. Get Global Infrastructure (Internet, Router, External Links) - ONLY ONCE
-    const { nodes: globalNodes, edges: globalEdges, config, fbStatus } = await this.getGlobalInfrastructure();
+    const { nodes: globalNodes, edges: globalEdges, config, fbStatus } = await buildGlobalInfrastructure();
     
     const allNodes: NetworkNode[] = [...globalNodes];
     const allEdges: NetworkEdge[] = [...globalEdges];
@@ -334,125 +293,9 @@ export class NetworkService {
   }
 
   // Helper: Get Global Infrastructure (Internet, Router)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async getGlobalInfrastructure(): Promise<{ nodes: NetworkNode[], edges: NetworkEdge[], config: any, fbStatus: any }> {
-    const nodes: NetworkNode[] = [];
-    const edges: NetworkEdge[] = [];
-    
-    const config = await getConfig();
-    
-    // SSOT: Use Digital Twin Gateway State
-    const gw = getGateway();
-
-    // Map Twin State to legacy fbStatus format for compatibility
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const normalizedPortMappings = (gw.portMappings || []).map((mapping: any) => {
-        const externalPort = resolvePortNumber(mapping.externalPort ?? mapping.hostPort ?? mapping.port);
-        const internalPort = resolvePortNumber(mapping.internalPort ?? mapping.containerPort ?? mapping.targetPort);
-        const targetIp = mapping.targetIp || mapping.internalClient || undefined;
-
-        return {
-            ...mapping,
-            externalPort,
-            internalPort,
-            targetIp,
-            internalClient: mapping.internalClient || targetIp
-        };
-    });
-
-    const fbStatus = {
-        connected: gw.upstreamStatus === 'up',
-        externalIP: gw.publicIp,
-        internalIP: gw.internalIp,
-        uptime: gw.uptime || 0,
-        portMappings: normalizedPortMappings,
-        dnsServers: gw.dnsServers,
-        upstreamStatus: gw.upstreamStatus
-    };
-
-    // --- Add Synthetic Nodes (Gateway, Internet) ---
-    // These must ALWAYS be present in the graph for visualization
-    const domain = config.domain || 'node';
-    
-    // Internet Node
-    nodes.push({
-      id: 'internet',
-      label: 'Internet',
-      type: 'internet',
-      status: 'up',
-      node: 'global',
-      metadata: {
-        host: '0.0.0.0',
-        url: 'https://' + domain
-      }
-    });
-
-    // Gateway Node
-    nodes.push({
-      id: 'gateway',
-      label: gw.provider === 'fritzbox' ? 'FritzBox Gateway' : 'Gateway',
-      type: 'gateway',
-      status: gw.upstreamStatus === 'up' ? 'up' : 'down',
-      node: 'global',
-      metadata: {
-        host: config.gateway?.host || '192.168.178.1',
-        url: `http://${config.gateway?.host || 'fritz.box'}`,
-        stats: fbStatus
-      },
-      rawData: gw // EXPOSE RICH DATA
-    });
-
-    edges.push({
-      id: 'edge-internet-gateway',
-      source: 'internet',
-      target: 'gateway',
-      protocol: 'https',
-      port: 443,
-      state: 'active'
-    });
-    
-    // External Links (Bookmarks)
-    if (config.externalLinks) {
-        for (const link of config.externalLinks) {
-            const nodeId = getExternalLinkNodeId(link);
-            const ipTargets = normalizeExternalTargets(link.ipTargets || []);
-            const parsedPorts = buildExternalLinkPorts(ipTargets);
-
-            let inferredPort: number | undefined = parsedPorts[0]?.host;
-            if (!inferredPort && link.url) {
-                try {
-                    const parsed = new URL(link.url);
-                    inferredPort = parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === 'https:' ? 443 : 80);
-                } catch {
-                    inferredPort = undefined;
-                }
-            }
-
-            nodes.push({
-                id: nodeId,
-                label: link.name,
-                type: 'service',
-                status: 'up',
-                node: 'global',
-                metadata: {
-                    url: link.url,
-                    icon: link.icon,
-                    description: link.description,
-                    isExternal: true,
-                    ipTargets
-                },
-                rawData: {
-                    ...link,
-                    ipTargets,
-                    ports: parsedPorts
-                }
-            });
-
-        }
-    }
-
-    return { nodes, edges, config, fbStatus };
-  }
+  // The global-infrastructure assembly moved to ./topologyAssembler.ts
+  // in #973. NetworkService.getGraph calls buildGlobalInfrastructure()
+  // directly; no wrapper needed.
 
   // Helper: Get Graph for a specific Node (Server)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -476,7 +319,7 @@ export class NetworkService {
 
     // Prefix IDs with nodeName to avoid collisions (except for global nodes like 'router')
     const prefix = (id: string) => (nodeName === 'local' ? id : `${nodeName}:${id}`);
-    const routerId = 'gateway'; // Global ID (Matched with getGlobalInfrastructure)
+    const routerId = 'gateway'; // Global ID (matches the synthetic gateway node from buildGlobalInfrastructure)
 
     // 0. Prepare Data for this Node
     
