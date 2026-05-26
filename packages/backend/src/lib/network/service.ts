@@ -106,11 +106,11 @@ export class NetworkService {
             });
 
             try {
-                console.log(`[NetworkService] Fetching graph for node: ${target.name}`);
+                logger.info('NetworkService', `Fetching graph for node: ${target.name}`);
                 const nodeGraph = await this.getNodeGraph(target.name, target.connection, config, fbStatus);
                 return { success: true as const, name: target.name, nodeGraph };
             } catch (error) {
-                console.error(`[NetworkService] Failed to fetch graph for node ${target.name}:`, error);
+                logger.error('NetworkService', `Failed to fetch graph for node ${target.name}:`, error);
                 return { success: false as const, name: target.name, error };
             }
         })
@@ -256,7 +256,7 @@ export class NetworkService {
     for (const edge of allEdges) {
         if (edge.isManual) {
             if (!nodeIds.has(edge.source)) {
-                console.warn(`[NetworkService] Restoring missing source for manual edge: ${edge.source}`);
+                logger.warn('NetworkService', `Restoring missing source for manual edge: ${edge.source}`);
                 allNodes.push({
                     id: edge.source,
                     type: 'device',
@@ -276,7 +276,7 @@ export class NetworkService {
             }
             
             if (!nodeIds.has(edge.target)) {
-                console.warn(`[NetworkService] Restoring missing target for manual edge: ${edge.target}`);
+                logger.warn('NetworkService', `Restoring missing target for manual edge: ${edge.target}`);
                 allNodes.push({
                     id: edge.target,
                     type: 'device',
@@ -313,7 +313,7 @@ export class NetworkService {
     // Validate parent nodes
     for (const node of allNodes) {
         if (node.parentNode && !nodeIds.has(node.parentNode)) {
-            console.warn(`[NetworkService] Node ${node.id} has missing parent ${node.parentNode}. Detaching.`);
+            logger.warn('NetworkService', `Node ${node.id} has missing parent ${node.parentNode}. Detaching.`);
             node.parentNode = undefined;
             node.extent = undefined;
         }
@@ -715,7 +715,7 @@ export class NetworkService {
             const domainStatuses = await checkDomains(nginxConfig, fbStatus, nodeIPs);
             verifiedDomains = domainStatuses.filter(d => d.matches).map(d => d.domain);
          } catch (e) {
-             console.warn(`[NetworkService] Failed to check domains via Enriched Twin data`, e);
+             logger.warn('NetworkService', `Failed to check domains via Enriched Twin data`, e);
          }
     } else if (agentProxyRoutes && agentProxyRoutes.length > 0) {
         // Fallback: Manually construct if not enriched (should not happen with new TwinStore)

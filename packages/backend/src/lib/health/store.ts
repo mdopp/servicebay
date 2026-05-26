@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { CheckConfig, CheckResult } from './types';
 import { DATA_DIR } from '../dirs';
+import { logger } from '../logger';
 
 const CONFIG_DIR = DATA_DIR;
 const CHECKS_FILE = path.join(CONFIG_DIR, 'checks.json');
@@ -36,7 +37,7 @@ export class HealthStore {
     try {
       return JSON.parse(fs.readFileSync(CHECKS_FILE, 'utf-8'));
     } catch (e) {
-      console.error('Failed to read checks config', e);
+      logger.error('store', 'Failed to read checks config', e);
       return [];
     }
   }
@@ -78,7 +79,7 @@ export class HealthStore {
     try {
         fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
     } catch (e) {
-        console.error(`[HealthStore] Failed to save result for ${result.check_id}:`, e);
+        logger.error('HealthStore', `Failed to save result for ${result.check_id}:`, e);
     }
   }
 

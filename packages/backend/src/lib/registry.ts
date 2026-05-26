@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import { getConfig, RegistryConfig } from './config';
 import { readManifestAnnotations } from './template/contract';
 import { parseStackManifest, type StackManifest } from './template/stackContract';
+import { logger } from './logger';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -121,7 +122,7 @@ async function readTemplateMeta(
       // listing — surface defaults so the operator still sees the stack
       // (with a broken-manifest warning the consistency lint will catch
       // at build time).
-      console.warn(`[registry] failed to load stack manifest for ${name}:`, e);
+      logger.warn('registry', `failed to load stack manifest for ${name}:`, e);
     }
     return { tier: undefined, dependencies: [] };
   }
@@ -163,7 +164,7 @@ async function fetchDir(dirPath: string, type: 'template' | 'stack', source: str
         };
     }));
   } catch (e) {
-      console.error(`Error fetching ${type}s from ${source}:`, e);
+      logger.error('registry', `Error fetching ${type}s from ${source}:`, e);
       return [];
   }
 }
@@ -215,7 +216,7 @@ export async function syncRegistries() {
     // ServiceBay; only external registry sync is unavailable. Log once
     // and skip rather than fail every server start.
     if (!(await isGitAvailable())) {
-        console.log('Registry sync skipped: git not available (built-in templates still served).');
+        logger.info('registry', 'Registry sync skipped: git not available (built-in templates still served).');
         return;
     }
 
@@ -235,13 +236,13 @@ export async function syncRegistries() {
             try {
                 await fs.access(path.join(regPath, '.git'));
                 // Exists — fetch latest and reset (shallow clones can't reliably git pull)
-                console.log(`Updating registry ${reg.name}...`);
+                logger.info('registry', `Updating registry ${reg.name}...`);
                 const branch = reg.branch || 'main';
                 await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath });
                 await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath });
             } catch {
                 // Doesn't exist, clone
-                console.log(`Cloning registry ${reg.name}...`);
+                logger.info('registry', `Cloning registry ${reg.name}...`);
                 try {
                     await cloneSparse(reg.url, regPath, ['templates', 'stacks']);
                 } catch {
@@ -251,7 +252,7 @@ export async function syncRegistries() {
             }
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.warn(`Registry ${reg.name} (${reg.url}) sync failed — skipping (other registries continue): ${msg}`);
+            logger.warn('registry', `Registry ${reg.name} (${reg.url}) sync failed — skipping (other registries continue): ${msg}`);
         }
     }
 }

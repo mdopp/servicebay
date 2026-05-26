@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { getExecutor } from './executor';
 import { PodmanConnection } from './nodes';
+import { logger } from './logger';
 
 // New helper to get enriched container data (unified source of truth)
 export async function getEnrichedContainers(connection?: PodmanConnection) {
@@ -66,7 +67,7 @@ export async function getEnrichedContainers(connection?: PodmanConnection) {
                 if (inspect?.State?.Pid) {
                     const ports = hostPorts.get(inspect.State.Pid);
                     if (ports && ports.length > 0) {
-                        console.log(`[Manager] Uses dynamic host ports for ${c.Names?.[0] || c.Id}: ${ports.map((p: any) => p.hostPort).join(', ')}`);
+                        logger.info('Manager', `Uses dynamic host ports for ${c.Names?.[0] || c.Id}: ${ports.map((p: any) => p.hostPort).join(', ')}`);
 
                         // 1. Update Ports (Podman PS format)
                         c.Ports = ports;
@@ -114,7 +115,7 @@ async function getAllContainersInspect(connection?: PodmanConnection) {
     const { stdout } = await executor.execArgv(['podman', 'inspect', ...ids.split('\n').filter(Boolean)]);
     return JSON.parse(stdout);
   } catch (e) {
-    console.error('Error inspecting all containers:', e);
+    logger.error('manager', 'Error inspecting all containers:', e);
     return [];
   }
 }
@@ -138,7 +139,7 @@ export async function getPodmanPs(connection?: PodmanConnection) {
         return c;
     });
   } catch (e) {
-    console.error('Error fetching podman ps:', e);
+    logger.error('manager', 'Error fetching podman ps:', e);
     return [];
   }
 }
@@ -161,7 +162,7 @@ export async function getAllSystemServices(connection?: PodmanConnection) {
         };
       });
   } catch (e) {
-    console.error('Failed to list system services', e);
+    logger.error('manager', 'Failed to list system services', e);
     return [];
   }
 }
@@ -196,7 +197,7 @@ async function getHostPortsForPids(pids: number[], connection?: PodmanConnection
         const map = new Map<number, any[]>();
         const targetPids = new Set(pids);
 
-        console.log(`[HostPorts] Scanning for PIDs (and children): [${pids.join(', ')}]`);
+        logger.info('HostPorts', `Scanning for PIDs (and children): [${pids.join(', ')}]`);
 
         stdout.split('\n').forEach(line => {
              const parts = line.trim().split(/\s+/);
@@ -256,11 +257,11 @@ async function getHostPortsForPids(pids: number[], connection?: PodmanConnection
              }
         });
 
-        map.forEach((ports, pid) => console.log(`[HostPorts] PID ${pid} found ports: ${ports.length}`));
+        map.forEach((ports, pid) => logger.info('HostPorts', `PID ${pid} found ports: ${ports.length}`));
 
         return map;
     } catch (e) {
-        console.warn('Failed to get host ports', e);
+        logger.warn('manager', 'Failed to get host ports', e);
         return new Map<number, any[]>();
     }
 }

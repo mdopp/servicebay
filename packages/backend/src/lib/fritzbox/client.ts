@@ -238,7 +238,7 @@ ${argsXml}
             if (text.includes('NoSuchEntryInArray') || text.includes('SpecifiedArrayIndexInvalid')) return null; // End of list
             
             // Log other 500 errors for debugging
-            if (!silent) console.warn(`FritzBox SOAP 500 Error for ${action}:`, text);
+            if (!silent) logger.warn('client', `FritzBox SOAP 500 Error for ${action}:`, text);
         }
         throw new Error(`SOAP Error ${res.status}: ${res.statusText}`);
       }
@@ -286,7 +286,7 @@ ${argsXml}
         this.sid = sid;
         return sid;
     } catch (e) {
-        console.warn('[FritzBox] Lua Login failed:', e);
+        logger.warn('FritzBox', 'Lua Login failed:', e);
         throw e;
     }
   }
@@ -328,7 +328,7 @@ ${argsXml}
           
           return null;
       } catch (e) {
-          console.warn('[FritzBox] Failed to get Lua DNS:', e);
+          logger.warn('FritzBox', 'Failed to get Lua DNS:', e);
           return null;
       }
   }
@@ -388,7 +388,7 @@ ${argsXml}
           
           return null;
       } catch (e) {
-          console.warn('[FritzBox] Lua GetDeviceLog failed:', e);
+          logger.warn('FritzBox', 'Lua GetDeviceLog failed:', e);
           return null;
       }
   }

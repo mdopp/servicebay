@@ -85,7 +85,7 @@ export async function initializeDefaultChecks() {
         }
     }
   } catch (e) {
-    console.error('Failed to list managed services for auto-discovery', e);
+    logger.error('init', 'Failed to list managed services for auto-discovery', e);
   }
 
   // Phase 3b singleton checks (#484): four former diagnose probes

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { DATA_DIR } from './dirs';
+import { logger } from './logger';
 
 const SECRET_KEY_PATH = path.join(DATA_DIR, 'secret.key');
 const ALGORITHM = 'aes-256-gcm';
@@ -106,11 +107,9 @@ export function decrypt(text: string): string {
   } catch (e) {
     if (!DECRYPT_MISMATCH_WARNED) {
       DECRYPT_MISMATCH_WARNED = true;
-      console.warn(
-        '[secrets] decrypt failed — secret.key likely regenerated since this value was sealed. ' +
+      logger.warn('secrets', '[secrets] decrypt failed — secret.key likely regenerated since this value was sealed. ' +
         'Affected fields are returning empty; saved-secrets cache will be refreshed by the next install. ' +
-        `Underlying error: ${e instanceof Error ? e.message : String(e)}`,
-      );
+        `Underlying error: ${e instanceof Error ? e.message : String(e)}`,);
     }
     return '';
   }

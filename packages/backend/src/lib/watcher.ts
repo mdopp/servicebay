@@ -5,6 +5,7 @@ import os from 'os';
 import { EventEmitter } from 'events';
 import { SSHConnectionPool } from './ssh/pool';
 import { listNodes, PodmanConnection } from './nodes';
+import { logger } from './logger';
 
 const SYSTEMD_DIR = path.join(os.homedir(), '.config/containers/systemd');
 
@@ -28,7 +29,7 @@ class ServiceWatcher extends EventEmitter {
     if (this.isWatching) return;
     this.isWatching = true;
 
-    console.log('[Watcher] Starting monitoring...');
+    logger.info('Watcher', 'Starting monitoring...');
 
     // 1. Watch File System
     try {
@@ -38,12 +39,12 @@ class ServiceWatcher extends EventEmitter {
       
       fs.watch(SYSTEMD_DIR, (eventType, filename) => {
         if (filename && (filename.endsWith('.kube') || filename.endsWith('.yml') || filename.endsWith('.yaml'))) {
-          console.log(`[Watcher] File changed: ${filename}`);
+          logger.info('Watcher', `File changed: ${filename}`);
           this.emit('change', { type: 'config', message: `Config changed: ${filename}` });
         }
       });
     } catch (e) {
-      console.error('[Watcher] Failed to watch directory:', e);
+      logger.error('Watcher', 'Failed to watch directory:', e);
     }
 
     // 2. Watch Podman Events
@@ -57,7 +58,7 @@ class ServiceWatcher extends EventEmitter {
       await this.startRemotePodmanWatcher();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[Watcher] Podman watcher unavailable via SSH: ${message}`);
+      logger.error('Watcher', `Podman watcher unavailable via SSH: ${message}`);
       this.podmanWatcherActive = false;
       this.scheduleWatcherRestart();
     }
@@ -69,7 +70,7 @@ class ServiceWatcher extends EventEmitter {
       if (!nodes.length) return null;
       return nodes.find((n) => n.Default) || nodes[0];
     } catch (error) {
-      console.error('[Watcher] Failed to read nodes.json:', error);
+      logger.error('Watcher', 'Failed to read nodes.json:', error);
       return null;
     }
   }
@@ -94,21 +95,21 @@ class ServiceWatcher extends EventEmitter {
         }
 
         this.podmanWatcherActive = true;
-        console.log(`[Watcher] Monitoring Podman events via SSH node ${node.Name}`);
+        logger.info('Watcher', `Monitoring Podman events via SSH node ${node.Name}`);
 
         stream.on('data', (data: Buffer) => this.processPodmanChunk(node.Name, data));
         stream.stderr.on('data', (data: Buffer) => {
-          console.error(`[Watcher][${node.Name}] Podman stderr: ${data}`);
+          logger.error('Watcher', `[${node.Name}] Podman stderr: ${data}`);
         });
 
         stream.on('close', (code: number) => {
-          console.log(`[Watcher] Remote Podman watcher closed for ${node.Name} (code=${code})`);
+          logger.info('Watcher', `Remote Podman watcher closed for ${node.Name} (code=${code})`);
           this.podmanWatcherActive = false;
           this.scheduleWatcherRestart();
         });
 
         stream.on('error', (errorStream: Error) => {
-          console.error(`[Watcher] Remote Podman watcher error (${node.Name}):`, errorStream);
+          logger.error('Watcher', `Remote Podman watcher error (${node.Name}):`, errorStream);
           this.podmanWatcherActive = false;
           this.scheduleWatcherRestart();
         });
@@ -140,7 +141,7 @@ class ServiceWatcher extends EventEmitter {
 
           // First occurrence in the window: log + emit immediately.
           if (count === 1) {
-            console.log(`[Watcher] Podman event (${source}): ${event.Status} on ${event.Name}`);
+            logger.info('Watcher', `Podman event (${source}): ${event.Status} on ${event.Name}`);
             this.emit('change', { type: 'container', message: `Container ${event.Name} ${event.Status}` });
 
             const timer = setTimeout(() => {
@@ -148,7 +149,7 @@ class ServiceWatcher extends EventEmitter {
               this.eventCounts.delete(key);
               this.eventFlushTimers.delete(key);
               if (total > 1) {
-                console.log(`[Watcher] Podman event (${source}): ${event.Status} on ${event.Name} ×${total} (coalesced over ${this.EVENT_COALESCE_MS / 1000}s)`);
+                logger.info('Watcher', `Podman event (${source}): ${event.Status} on ${event.Name} ×${total} (coalesced over ${this.EVENT_COALESCE_MS / 1000}s)`);
               }
             }, this.EVENT_COALESCE_MS);
             this.eventFlushTimers.set(key, timer);

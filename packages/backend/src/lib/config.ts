@@ -9,6 +9,7 @@ import { normalizeExternalTargets } from './network/externalLinks';
 import { ConfigTransformer } from './config/transformer';
 import type { BackupConfig } from './backup/types';
 import type { MigrationAuditEntry } from './stackInstall/auditTypes';
+import { logger } from './logger';
 
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -624,7 +625,7 @@ export async function migrateConfig(): Promise<void> {
     // saveConfig automatically handles encryption of all sensitive keys
     await saveConfig(config);
   } catch (error) {
-    console.warn('Failed to migrate/encrypt config on startup:', error);
+    logger.warn('config', 'Failed to migrate/encrypt config on startup:', error);
   }
 }
 
