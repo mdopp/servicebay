@@ -280,15 +280,29 @@ def write_gateway_env(data_dir: str, entries: dict[str, str]) -> bool:
     return True
 
 
-def _wait_for_ha_token(token_path: str, deadline_secs: int = 90) -> str | None:
+# #1002 — Timeouts read lazily so the test suite can shrink them via
+# env without import-order gymnastics. Mirrors the `LLDAP_READY_TIMEOUT`
+# pattern in templates/auth/post-deploy.py.
+def _ha_token_timeout() -> int:
+    return int(os.environ.get("HA_TOKEN_TIMEOUT", "90"))
+
+
+def _ha_api_timeout() -> int:
+    return int(os.environ.get("HA_API_TIMEOUT", "60"))
+
+
+def _wait_for_ha_token(token_path: str, deadline_secs: int | None = None) -> str | None:
     """#1002 — Poll for the HA long-lived token file. HA's post-deploy
     auto-onboards the `oscar` user and writes this file near the end of
     its run; if hermes' post-deploy is racing it (even with
     servicebay.dependencies: home-assistant) the file may not exist yet
     on first check. Returns the token once present + non-empty, or None
-    if the deadline passes."""
+    if the deadline passes. A deadline of 0 means "check once, then
+    give up" — used by the test suite to avoid the polling delay."""
+    if deadline_secs is None:
+        deadline_secs = _ha_token_timeout()
     deadline = time.time() + deadline_secs
-    while time.time() < deadline:
+    while True:
         if os.path.exists(token_path):
             try:
                 with open(token_path, encoding="utf-8") as f:
@@ -297,17 +311,23 @@ def _wait_for_ha_token(token_path: str, deadline_secs: int = 90) -> str | None:
                     return token
             except OSError:
                 pass
+        if time.time() >= deadline:
+            return None
         time.sleep(3)
-    return None
 
 
-def _wait_for_ha_api(token: str, timeout_secs: int = 60) -> bool:
+def _wait_for_ha_api(token: str, timeout_secs: int | None = None) -> bool:
     """#1002 — Probe HA's /api/ with the new token until it answers 200.
     Avoids the first reconnect-loop iteration where Hermes' HA gateway
     fires before HA's listener is fully up (the "Cannot connect to host
     127.0.0.1:8123" error in the v4.29.x install logs). Best-effort —
     we still restart even on timeout, since Hermes will retry on its
-    own."""
+    own. A deadline of 0 means "skip the probe entirely" — used by the
+    test suite."""
+    if timeout_secs is None:
+        timeout_secs = _ha_api_timeout()
+    if timeout_secs <= 0:
+        return False
     deadline = time.time() + timeout_secs
     last_status = 0
     while time.time() < deadline:

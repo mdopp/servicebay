@@ -733,6 +733,10 @@ class HermesScript(unittest.TestCase):
                 "HERMES_LLM_PROVIDER_URL": "http://127.0.0.1:11434/v1",
                 "HERMES_LLM_MODEL": "gemma3:4b",
                 "HERMES_DASHBOARD_PORT": "9119",
+                # #1002 — Tests have no HA token file + no HA running.
+                # Default 90s+60s waits would hang the suite.
+                "HA_TOKEN_TIMEOUT": "0",
+                "HA_API_TIMEOUT": "0",
             }
 
             fake_urlopen = fake_urlopen_factory({
@@ -816,8 +820,10 @@ class HermesScript(unittest.TestCase):
 
             token = m.adopt_ha_long_lived_token(tmp) if hasattr(m, "adopt_ha_long_lived_token") else None
             # Resolve the function via the dynamic loader and call with the
-            # patched HOME so os.path.expanduser hits our fake.
-            with mock.patch.dict(os.environ, {"HOME": str(fake_home)}, clear=False):
+            # patched HOME so os.path.expanduser hits our fake. HA_*_TIMEOUT=0
+            # skips the (real-time, not sleep-mockable) polling loops added
+            # in #1002.
+            with mock.patch.dict(os.environ, {"HOME": str(fake_home), "HA_TOKEN_TIMEOUT": "0", "HA_API_TIMEOUT": "0"}, clear=False):
                 returned = m.adopt_ha_long_lived_token(tmp)
 
             self.assertEqual(returned, "eyJ.real.long.lived.token.value")
@@ -846,7 +852,7 @@ class HermesScript(unittest.TestCase):
                 "      value: \"random-placeholder-from-assemble\"\n"
             )
             pod_yml.write_text(original)
-            with mock.patch.dict(os.environ, {"HOME": str(fake_home)}, clear=False):
+            with mock.patch.dict(os.environ, {"HOME": str(fake_home), "HA_TOKEN_TIMEOUT": "0", "HA_API_TIMEOUT": "0"}, clear=False):
                 returned = m.adopt_ha_long_lived_token(tmp)
             self.assertIsNone(returned)
             self.assertEqual(pod_yml.read_text(), original)
