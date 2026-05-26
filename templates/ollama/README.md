@@ -11,8 +11,18 @@ networking.
 ## Variables
 
 - `OLLAMA_PORT` — host port. Default `11434`. Bound to loopback.
-- `OLLAMA_DEFAULT_MODEL` — model pulled on first install. Default
-  `gemma3:4b` (small, CPU-friendly). Any Ollama library tag works.
+- `OLLAMA_DEFAULT_MODEL` — primary model. The tag Hermes' `model.model`
+  points at after install. Default `gemma4:e4b` (~10 GB, fits 100% on
+  a 16 GB GPU, fast). Any Ollama library tag works, plus user-namespaced
+  tags like `VladimirGav/gemma4-26b-16GB-VRAM:latest`.
+- `OLLAMA_EXTRA_MODELS` — comma-separated list of additional models
+  pre-pulled at install time on top of the default. The point is to
+  give the operator one-click switchable choices in Hermes' Models tab
+  without a fresh download. Default ships
+  `VladimirGav/gemma4-26b-16GB-VRAM:latest` — a quantized 26B that
+  still fits 100% on a 16 GB GPU, complementing the smaller default.
+  Each extra adds 10–20 minutes to the install on a typical home link.
+  Set to empty string to skip.
 - `OLLAMA_VISION_MODEL` — optional second model for image-aware
   skills (e.g. OSCAR's `media-ingestion-multimodal`). Blank by
   default; set to `qwen2.5vl:7b`, `llava:13b`, or `bakllava:7b`
@@ -20,8 +30,9 @@ networking.
 - `OLLAMA_GPU_PASSTHROUGH` — leave blank for CPU; set non-blank
   for NVIDIA GPU passthrough via CDI.
 - `OLLAMA_READINESS_TIMEOUT_SECONDS` — post-deploy model-pull
-  deadline. Default `600`. Shared across both default and vision
-  pulls; bump it if you pull two large models on a slow link.
+  deadline. Default `600`. Shared per-pull (not summed across the
+  default + extras + vision); bump it if you pull large models on a
+  slow link.
 
 ## CPU vs. GPU
 

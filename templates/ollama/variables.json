@@ -6,8 +6,13 @@
   },
   "OLLAMA_DEFAULT_MODEL": {
     "type": "text",
-    "description": "Model pulled on first start. Use any tag from the Ollama library (https://ollama.com/library). Small CPU-friendly default; bump to a larger model once you have GPU passthrough working. The pull runs once per fresh install — subsequent starts find the model already cached and skip the download.",
-    "default": "gemma3:4b"
+    "description": "Primary model — the one Hermes' `model.model` points at after install. Use any tag from the Ollama library (https://ollama.com/library) or a user-namespaced tag like `VladimirGav/gemma4-26b-16GB-VRAM:latest`. Default `gemma4:e4b` is a small/fast everyday model (~10 GB, fits 100% on a 16 GB GPU). The pull runs once per fresh install — subsequent starts find the model already cached and skip the download.",
+    "default": "gemma4:e4b"
+  },
+  "OLLAMA_EXTRA_MODELS": {
+    "type": "text",
+    "description": "Additional models to pre-pull on first install (comma-separated tags), on top of OLLAMA_DEFAULT_MODEL. Default includes a quantized 26B model that still fits 100% on a 16 GB GPU — gives the operator a 'smarter but slower' choice that's switchable in one click via Hermes' Models tab, without a fresh download. Set to empty string to skip extras. Each pull is gated by OLLAMA_READINESS_TIMEOUT_SECONDS so a slow link doesn't stall install indefinitely.",
+    "default": "VladimirGav/gemma4-26b-16GB-VRAM:latest"
   },
   "OLLAMA_VISION_MODEL": {
     "type": "text",
