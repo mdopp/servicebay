@@ -7,17 +7,39 @@ import { getActiveDomain } from '@/lib/mode';
 /**
  * Routes that bypass the session-cookie check. Each rule can pin
  * which HTTP methods are public — without `methods`, every method
- * is allowed.
+ * is allowed. A rule with `pattern` is a regex match against the
+ * full pathname; otherwise `prefix` matches the path exactly or as
+ * the start of a deeper segment.
  *
  * `/api/system/access-requests` POST is public so the anonymous
  * family-portal visitor can submit a request without a session;
- * GET/PATCH/DELETE on the same path stay admin-only (#242 follow-up).
+ * GET/PATCH/DELETE on the same prefix stay admin-only (#242
+ * follow-up). The `[id]/status` pattern below is the one GET
+ * exception — the visitor needs to poll their own request status
+ * to render the pending / approved CTA (#1001), and the response
+ * carries only first-name + status + the (already-public) auth URL.
  */
-const PUBLIC_API_RULES: Array<{ prefix: string; methods?: ReadonlySet<string> }> = [
+type PublicApiRule = {
+  /** Match by prefix — `pathname === prefix` OR starts with `prefix + '/'`. */
+  prefix?: string;
+  /** Match by full-pathname regex. Mutually exclusive with prefix. */
+  pattern?: RegExp;
+  methods?: ReadonlySet<string>;
+};
+
+const PUBLIC_API_RULES: PublicApiRule[] = [
   { prefix: '/api/auth/login' },
   { prefix: '/api/auth/oidc' },
   { prefix: '/api/auth/lldap-url' },
   { prefix: '/api/system/access-requests', methods: new Set(['POST']) },
+  // #1001 — GET status of one access request by id, public-readable
+  // because the submitter has no session yet. Tight regex anchors the
+  // UUID-shaped id segment so deeper admin paths under [id]/ (PATCH /
+  // DELETE / /welcome / /approve) stay session-gated.
+  {
+    pattern: /^\/api\/system\/access-requests\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/status$/i,
+    methods: new Set(['GET']),
+  },
   // Family-portal setup assets (#242). GET-only — the route handler
   // also gates by mode (LAN-only) and validates the service +
   // asset-kind path params before producing anything.
@@ -35,7 +57,12 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 function isPublicApi(pathname: string, method: string): boolean {
   return PUBLIC_API_RULES.some(rule => {
-    const matches = pathname === rule.prefix || pathname.startsWith(rule.prefix + '/');
+    let matches = false;
+    if (rule.prefix !== undefined) {
+      matches = pathname === rule.prefix || pathname.startsWith(rule.prefix + '/');
+    } else if (rule.pattern !== undefined) {
+      matches = rule.pattern.test(pathname);
+    }
     if (!matches) return false;
     return !rule.methods || rule.methods.has(method);
   });

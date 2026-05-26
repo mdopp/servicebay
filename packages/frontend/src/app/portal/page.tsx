@@ -4,6 +4,8 @@ import { buildPortalCards } from '@/lib/portal/services';
 import { verifyAutheliaSession } from '@/lib/portal/auth';
 import PortalGrid from './PortalGrid';
 import PortalLogoutLink from './PortalLogoutLink';
+import PortalUserChip from './PortalUserChip';
+import AccessRequestStatusCTA from './AccessRequestStatusCTA';
 import RequestAccessButton from './RequestAccessButton';
 
 export const revalidate = 0;
@@ -13,10 +15,17 @@ export const dynamic = 'force-dynamic';
  * /portal — read-only card grid surfacing every running, feature-tier
  * service that ships a `user-guide.md`. Anonymous-readable per the
  * #242 design conversation, but recognizes signed-in Authelia sessions
- * (#417) to hide the "Request access" button and greet the visitor by
- * name. Reachable directly at `/portal` and via the apex/www host
- * rewrite in `proxy.ts`. Same UX in public-domain mode — visitors
- * typing the apex see the family portal regardless of mode.
+ * (#417) to greet the visitor by name and surface a logout affordance.
+ * Reachable directly at `/portal` and via the apex/www host rewrite in
+ * `proxy.ts`. Same UX in public-domain mode — visitors typing the
+ * apex see the family portal regardless of mode.
+ *
+ * CTA state-machine for anonymous visitors (#1001):
+ *   - localStorage-stored access-request id → poll status →
+ *       pending  → "Your request is being reviewed" card
+ *       resolved → "Welcome! Set your password" card
+ *       (otherwise) → default Request-access button
+ *   - signed in → no request CTA at all, just the user chip + logout
  */
 export default async function PortalPage() {
   const hdrs = await headers();
@@ -25,10 +34,12 @@ export default async function PortalPage() {
     verifyAutheliaSession(hdrs.get('cookie')),
   ]);
   const isLoggedIn = Boolean(visitor.user);
-  const firstName = visitor.name?.trim().split(/\s+/)[0] ?? null;
+  const displayName = visitor.name?.trim() || visitor.user || null;
+  const firstName = displayName?.split(/\s+/)[0] ?? null;
 
   return (
-    <main className="max-w-6xl mx-auto px-6 py-12">
+    <main className="relative max-w-6xl mx-auto px-6 py-12">
+      {isLoggedIn && displayName && <PortalUserChip displayName={displayName} />}
       <header className="mb-10 text-center">
         <div className="flex items-center justify-center gap-3">
           <ServiceBayLogo size={36} className="text-blue-600 dark:text-blue-400 shrink-0" />
@@ -55,7 +66,9 @@ export default async function PortalPage() {
         <PortalGrid cards={cards} />
       )}
 
-      {!isLoggedIn && <RequestAccessButton />}
+      {!isLoggedIn && (
+        <AccessRequestStatusCTA fallback={<RequestAccessButton />} />
+      )}
     </main>
   );
 }

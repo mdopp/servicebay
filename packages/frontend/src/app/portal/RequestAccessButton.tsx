@@ -67,6 +67,18 @@ export default function RequestAccessButton() {
         setError(typeof data.error === 'string' ? data.error : `Submission failed (${res.status}).`);
         return;
       }
+      // #1001 — persist the request id so the portal's state-aware CTA
+      // can render "Your request is being reviewed" on subsequent
+      // visits without a session. The status endpoint flips this to a
+      // "Set your password" link once the admin approves.
+      if (typeof data.id === 'string') {
+        try {
+          window.localStorage.setItem(
+            'sb.portal.lastAccessRequest',
+            JSON.stringify({ id: data.id, submittedAt: new Date().toISOString() }),
+          );
+        } catch { /* quota / disabled storage — non-fatal */ }
+      }
       setSubmitted(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Network error.');
