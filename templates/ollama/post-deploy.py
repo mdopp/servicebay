@@ -98,8 +98,35 @@ def wait_for_ready(ollama_url: str, deadline_sec: int) -> bool:
     return False
 
 
+def model_present(ollama_url: str, model: str) -> bool:
+    """Return True iff Ollama's /api/tags lists `model` (exact match against
+    `name`). Used as a defensive post-pull check (#1047): the `ollama pull`
+    CLI is known to exit 0 even when manifest write fails, and the HTTP
+    /api/pull streaming endpoint can also report `success` while leaving
+    the manifest unwritten if the underlying filesystem perms are wrong
+    (e.g. a `library/<namespace>/` dir left root-owned by an earlier
+    rootful run, biting the next rootless pull). Always re-check via
+    /api/tags before declaring a pull successful."""
+    try:
+        with urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8") or "{}")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        jlog("warn", "ollama:verify", "/api/tags probe failed", error=str(e))
+        return False
+    for entry in payload.get("models", []) or []:
+        if str(entry.get("name") or "") == model:
+            return True
+    return False
+
+
 def pull_model(ollama_url: str, model: str, deadline_sec: int) -> bool:
-    """Trigger a streaming pull and wait for the done line."""
+    """Trigger a streaming pull and wait for the done line.
+
+    Post-pull verifies via /api/tags (#1047) — neither the CLI nor the
+    HTTP streaming endpoint reliably surfaces manifest-write failures.
+    A pull that reports `success` but never lands the model in /api/tags
+    is treated as a failure here so callers can fall back / fail loud
+    instead of leaving the operator with a 404-on-first-chat box."""
     body = json.dumps({"name": model, "stream": True}).encode("utf-8")
     req = urllib.request.Request(
         f"{ollama_url}/api/pull",
@@ -126,11 +153,19 @@ def pull_model(ollama_url: str, model: str, deadline_sec: int) -> bool:
                 if chunk.get("error"):
                     jlog("error", "ollama:pull", "pull error", model=model, error=str(chunk.get("error")))
                     return False
-        jlog("info", "ollama:pull", "model ready", model=model, elapsed_sec=int(time.time() - started))
-        return True
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
         jlog("error", "ollama:pull", "pull failed", model=model, error=str(e))
         return False
+    if not model_present(ollama_url, model):
+        jlog(
+            "error",
+            "ollama:pull",
+            "stream reported success but model is not in /api/tags — manifest write likely failed silently (#1047). Check `ls -la /mnt/data/stacks/ollama/models/manifests/registry.ollama.ai/library/` for non-`core:core` ownership on the host.",
+            model=model,
+        )
+        return False
+    jlog("info", "ollama:pull", "model ready", model=model, elapsed_sec=int(time.time() - started))
+    return True
 
 
 def register_http_check(sb_api: str, sb_token: str, ollama_url: str) -> None:
@@ -304,7 +339,9 @@ def install_gpu_quadlet_fallback(port: str, data_dir: str) -> bool:
 
 def main() -> int:
     port = env("OLLAMA_PORT", "11434")
-    model = env("OLLAMA_DEFAULT_MODEL", "gemma3:4b")
+    model = env("OLLAMA_DEFAULT_MODEL", "gemma4:e4b")
+    extra_models_raw = env("OLLAMA_EXTRA_MODELS", "")
+    extra_models = [m.strip() for m in extra_models_raw.split(",") if m.strip()]
     vision_model = env("OLLAMA_VISION_MODEL", "")
     timeout = int(env("OLLAMA_READINESS_TIMEOUT_SECONDS", "600"))
     sb_api = env("SB_API_URL", "http://localhost:3000")
@@ -352,6 +389,22 @@ def main() -> int:
                 model=model,
             )
 
+    # Extras (#1046): one-click-switchable alternatives the operator can
+    # pick from Hermes' Models tab without a fresh download. Failures are
+    # warn-not-fatal — the default model is the only one the install
+    # depends on; extras enrich the choice set.
+    for extra in extra_models:
+        if extra == model:
+            continue  # already covered above
+        jlog("info", "ollama:pull", "starting extra-model pull", model=extra)
+        if not pull_model(ollama_url, extra, deadline_sec=remaining_budget()):
+            jlog(
+                "warn",
+                "ollama:pull",
+                "extra-model pull did not complete; it will not be selectable from Hermes' Models tab until pulled manually. Run `curl -X POST http://127.0.0.1:%s/api/pull -d '{\"name\":\"%s\"}'`." % (port, extra),
+                model=extra,
+            )
+
     if vision_model:
         jlog("info", "ollama:pull", "starting vision-model pull", model=vision_model)
         ok = pull_model(ollama_url, vision_model, deadline_sec=remaining_budget())
@@ -366,6 +419,8 @@ def main() -> int:
     register_http_check(sb_api, sb_token, ollama_url)
 
     print(f"✅ Ollama is running on 127.0.0.1:{port}. Default model: {model}.")
+    if extra_models:
+        print(f"   Extra models pulled: {', '.join(extra_models)}.")
     if vision_model:
         print(f"   Vision model: {vision_model} (multimodal-capable).")
     print(f"   Other ServiceBay templates (hermes, oscar-household) can reach it at http://127.0.0.1:{port}.")

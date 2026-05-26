@@ -6,7 +6,7 @@ metadata:
     app: ollama
   annotations:
     servicebay.label: "Ollama (Local LLM Server)"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
     servicebay.ports: "{{OLLAMA_PORT}}/tcp"
     # No `servicebay.tier` — Ollama is opt-in AI infrastructure, not a
     # platform foundation. Bind it to 127.0.0.1 by default (see
