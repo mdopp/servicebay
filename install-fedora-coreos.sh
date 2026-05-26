@@ -559,6 +559,17 @@ storage:
           # don't want servicebay activation to fail just because there's
           # no splash to stop.
           ExecStartPre=-/usr/bin/systemctl --user stop servicebay-splash.service
+          # On the first successful servicebay activation, retire the
+          # splash Quadlet so it no longer appears in `systemctl --user
+          # list-units --all` on subsequent boots. The retire script
+          # renames the .container file (Quadlet's generator only
+          # processes files literally named *.container, so a renamed
+          # one is invisible). On reinstall, fresh Ignition writes a
+          # new .container file and splash re-engages — the retirement
+          # is per-install, not persistent across reinstalls.
+          # The leading `-` and the script's own idempotency mean a
+          # second run does nothing and never fails servicebay startup.
+          ExecStartPost=-/bin/bash /usr/local/bin/retire-splash-quadlet.sh
           # Retry restart if it fails (e.g. socket not ready)
           Restart=always
           RestartSec=5
@@ -919,6 +930,37 @@ storage:
 
           [Install]
           WantedBy=default.target
+
+    # Splash-quadlet retire helper. Called once via servicebay.service's
+    # ExecStartPost when the install completes (so first successful
+    # start of the real ServiceBay). Renames the .container so the
+    # Quadlet generator stops emitting servicebay-splash.service on
+    # subsequent boots — the unit disappears entirely from
+    # `systemctl --user list-units --all` instead of lingering as
+    # "inactive (dead)" forever.
+    #
+    # Idempotent: a second run finds the renamed file and exits 0.
+    # Reversible: on reinstall, fresh Ignition writes a new .container
+    # file at the original path, so splash re-engages automatically.
+    # Runs as the `core` user (servicebay.service is user-level) so no
+    # sudo or polkit needed — `core` owns its own .config directory.
+    - path: /usr/local/bin/retire-splash-quadlet.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+          QUADLET=/var/home/${HOST_USER}/.config/containers/systemd/servicebay-splash.container
+          RETIRED="$QUADLET.retired"
+
+          if [ ! -f "$QUADLET" ]; then
+              # Already retired (subsequent boots) — nothing to do.
+              exit 0
+          fi
+
+          /usr/bin/mv -f "$QUADLET" "$RETIRED"
+          /usr/bin/systemctl --user daemon-reload || true
+          echo "retire-splash-quadlet: renamed $QUADLET → $RETIRED"
 
     # Path unit that waits for /var/lib/installation-ready and starts
     # servicebay.service the moment it appears. Lives in user systemd

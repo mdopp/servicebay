@@ -29,6 +29,23 @@ export interface SystemResources {
     family: string; // IPv4 or IPv6
     internal: boolean;
   }[]>;
+  /** GPUs detected on the host. Empty / undefined on hosts without
+   *  one. Memory fields are in bytes (consistent with disks). For now
+   *  populated by nvidia-smi only; other vendors can hang off the
+   *  same shape later. */
+  gpus?: {
+    vendor: string;       // "nvidia" today; future "amd" / "intel"
+    name: string;         // e.g. "NVIDIA GeForce RTX 2000 Ada Generation"
+    uuid?: string | null;
+    driver?: string | null;
+    memoryTotal?: number | null;  // bytes
+    memoryUsed?: number | null;   // bytes
+    utilizationGpu?: number | null;     // 0..100 %
+    utilizationMemory?: number | null;  // 0..100 %
+    temperatureC?: number | null;
+    powerDraw?: number | null;          // watts
+    powerLimit?: number | null;         // watts
+  }[];
 }
 
 export interface PortMapping {

@@ -137,6 +137,10 @@ class SystemResources:
     network: Optional[Dict[str, Any]] = None
     disks: Optional[List[Dict[str, Any]]] = None
     cpu: Optional[Dict[str, Any]] = None
+    # GPUs detected via `nvidia-smi --query-gpu=...` when present. Empty
+    # list on hosts without NVIDIA (or without the kernel module loaded).
+    # Other vendor support (AMD, Intel) can hang off the same field shape.
+    gpus: Optional[List[Dict[str, Any]]] = None
 
 @dataclass
 class NodeStateSnapshot:
@@ -1279,12 +1283,21 @@ def get_disk_partitions_and_usage():
                 percent_str = parts[5].replace('%', '')
                 use_pcent = float(percent_str)
 
+                # Field names must match packages/backend/src/lib/agent/types.ts
+                # (the TwinNode.disks interface) — frontend's
+                # SystemInfoDashboard reads `mountpoint` and `type`. Previously
+                # this sent `mount`/`fstype` (psutil convention), which the TS
+                # interface didn't know about, so the dashboard showed blank
+                # name/type labels next to each disk's size+used.
+                total_bytes = total_k * 1024
+                used_bytes = used_k * 1024
                 disks.append({
                     'device': parts[0],
-                    'mount': mount_point,
-                    'fstype': fs_type,
-                    'total': total_k * 1024,
-                    'used': used_k * 1024,
+                    'mountpoint': mount_point,
+                    'type': fs_type,
+                    'total': total_bytes,
+                    'used': used_bytes,
+                    'free': total_bytes - used_bytes,
                     'usePercent': use_pcent
                 })
             except ValueError:
@@ -1294,6 +1307,82 @@ def get_disk_partitions_and_usage():
         pass
         
     return disks
+
+def get_gpus():
+    """
+    Detect NVIDIA GPUs via nvidia-smi. Returns a list of dicts shaped to
+    packages/backend/src/lib/agent/types.ts's TwinNode.gpus field.
+
+    Returns an empty list on hosts where:
+      - nvidia-smi isn't on PATH (no NVIDIA driver layered)
+      - nvidia-smi exits non-zero (driver layered but kmod not loaded)
+      - nvidia-smi has no GPUs to report (rare — but possible on a host
+        with the driver installed but no card detected by udev)
+
+    Other vendors (AMD ROCm, Intel iGPU) could hang off the same field
+    shape later — for now only NVIDIA is implemented because that's
+    what ServiceBay's GPU passthrough (#919 / install-nvidia stack)
+    actually supports.
+    """
+    gpus = []
+    try:
+        # --query-gpu fields documented at:
+        #   https://nvidia.custhelp.com/app/answers/detail/a_id/3751/
+        # CSV output, one row per GPU. Skip header line via --format=csv,noheader.
+        # `nounits` strips the trailing " MiB" / " W" / " %".
+        out = subprocess.check_output(
+            [
+                'nvidia-smi',
+                '--query-gpu=name,uuid,driver_version,memory.total,memory.used,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit',
+                '--format=csv,noheader,nounits',
+            ],
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        ).decode('utf-8', errors='replace')
+        for line in out.strip().splitlines():
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) < 10:
+                continue
+            name, uuid, driver, mem_total, mem_used, util_gpu, util_mem, temp, power_draw, power_limit = parts
+
+            def _i(s):
+                try: return int(s)
+                except Exception: return None
+
+            def _f(s):
+                try: return float(s)
+                except Exception: return None
+
+            # memory.total / memory.used are in MiB; expose as bytes for
+            # parity with disks (lets the frontend reuse formatBytes()).
+            mem_total_mib = _i(mem_total)
+            mem_used_mib  = _i(mem_used)
+            gpus.append({
+                'name': name,
+                'uuid': uuid,
+                'driver': driver,
+                'memoryTotal': (mem_total_mib * 1024 * 1024) if mem_total_mib is not None else None,
+                'memoryUsed':  (mem_used_mib  * 1024 * 1024) if mem_used_mib  is not None else None,
+                'utilizationGpu':    _i(util_gpu),     # %
+                'utilizationMemory': _i(util_mem),     # %
+                'temperatureC': _i(temp),              # °C
+                'powerDraw':  _f(power_draw),          # W
+                'powerLimit': _f(power_limit),         # W
+                'vendor': 'nvidia',
+            })
+    except FileNotFoundError:
+        # nvidia-smi not installed — host has no NVIDIA stack.
+        return []
+    except subprocess.TimeoutExpired:
+        # nvidia-smi can hang briefly during driver init; tolerable.
+        return []
+    except subprocess.CalledProcessError:
+        # Driver layered but kmod not loaded yet (e.g., install-nvidia-cdi
+        # still polling). Don't surface as an error; just no GPUs this tick.
+        return []
+    except Exception:
+        return []
+    return gpus
 
 def get_cpu_usage():
     try:
@@ -1476,7 +1565,7 @@ def get_sys_resources():
             if primary is not None:
                 break
     if primary is None:
-        candidates = [d for d in disks if d.get('fstype') not in PSEUDO_FSTYPES and d.get('total', 0) > 0]
+        candidates = [d for d in disks if d.get('type') not in PSEUDO_FSTYPES and d.get('total', 0) > 0]
         if candidates:
             best = max(candidates, key=lambda d: d['total'])
             primary = best.get('usePercent')
@@ -1496,7 +1585,8 @@ def get_sys_resources():
         os=os_info,
         disks=disks,
         network=network_info,
-        cpu=res_cpu_info
+        cpu=res_cpu_info,
+        gpus=get_gpus(),
     ))
 
 # --- Proxy Inspector ---

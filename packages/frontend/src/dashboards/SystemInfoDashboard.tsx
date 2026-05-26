@@ -19,10 +19,31 @@ interface UpdateInfo {
 }
 
 interface DiskInfo {
-    mountpoint: string; 
-    type: string; 
-    total: number; 
-    used: number; 
+    /** the kernel device path, e.g. `/dev/nvme0n1p3` or `/dev/md0`. Surfaces in the row's subline */
+    device?: string;
+    /** the mount path, e.g. `/var/mnt/data`. Operator-visible primary label */
+    mountpoint: string;
+    /** filesystem type, e.g. `xfs`, `ext4`, `btrfs` */
+    type: string;
+    total: number;
+    used: number;
+}
+
+/**
+ * Human-readable label for what a mount is FOR — derived from the
+ * mountpoint path. Operators looking at the dashboard want "Data
+ * (RAID)" or "OS root" more than the bare path. Falls back to "" so
+ * the path itself is the only label if we can't classify.
+ */
+function describeMountRole(mountpoint: string): string {
+    if (!mountpoint) return '';
+    if (mountpoint === '/') return 'OS root';
+    if (mountpoint === '/sysroot') return 'OS sysroot';
+    if (mountpoint === '/boot' || mountpoint === '/boot/efi') return 'Boot';
+    if (mountpoint === '/var') return 'OS state';
+    if (mountpoint === '/var/mnt/data' || mountpoint === '/mnt/data') return 'Data (RAID)';
+    if (mountpoint.startsWith('/var/home/')) return 'Home';
+    return '';
 }
 
 interface NetworkAddr {
@@ -132,7 +153,7 @@ export function SystemInfoContent() {
       );
   }
 
-  const { cpuUsage, memoryUsage, totalMemory, os, disks, network, cpu } = resources;
+  const { cpuUsage, memoryUsage, totalMemory, os, disks, network, cpu, gpus } = resources;
 
   const formatBytes = (bytes: number) => {
       if (bytes === 0) return '0 B';
@@ -276,17 +297,29 @@ export function SystemInfoContent() {
                     <HardDrive size={20} /> Storage ({disks?.length || 0} mounts)
                 </h3>
                 
-                <div className="space-y-4 max-h-60 overflow-y-auto pr-2">
+                <div className="space-y-4 max-h-72 overflow-y-auto pr-2">
                     {disks && disks.map((disk: DiskInfo, i: number) => {
                         const percent = disk.total > 0 ? Math.round((disk.used / disk.total) * 100) : 0;
+                        const role = describeMountRole(disk.mountpoint);
                         return (
                         <div key={i} className="text-sm">
-                            <div className="flex justify-between mb-1">
-                                <span className="font-medium truncate max-w-[150px]" title={disk.mountpoint}>{disk.mountpoint}</span>
-                                <span className="text-xs text-gray-500">{disk.type}</span>
+                            <div className="flex justify-between items-baseline mb-0.5">
+                                <span className="font-medium truncate" title={disk.mountpoint}>{disk.mountpoint}</span>
+                                {role && (
+                                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-2 shrink-0">{role}</span>
+                                )}
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1 truncate" title={disk.device}>
+                                {disk.type}
+                                {disk.device && (
+                                    <>
+                                        <span className="mx-1">·</span>
+                                        <span className="font-mono">{disk.device}</span>
+                                    </>
+                                )}
                             </div>
                             <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 relative">
-                                <div 
+                                <div
                                     className={`absolute left-0 h-2 rounded-full transition-all duration-500 ${percent > 90 ? 'bg-red-500' : percent > 80 ? 'bg-amber-500' : 'bg-green-600'}`}
                                     style={{ width: `${Math.min(percent, 100)}%` }}
                                 ></div>
@@ -302,6 +335,69 @@ export function SystemInfoContent() {
                     )}
                 </div>
             </div>
+
+            {/* GPUs — only shown when the agent reports at least one. CPU-only
+                hosts get nothing here so the grid stays compact. */}
+            {gpus && gpus.length > 0 && (
+                <div className="md:col-span-2 bg-white dark:bg-gray-800 p-5 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                    <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
+                        <Cpu size={20} /> Graphics ({gpus.length})
+                    </h3>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        {gpus.map((gpu, i) => {
+                            const memUsedFrac = (gpu.memoryUsed != null && gpu.memoryTotal && gpu.memoryTotal > 0)
+                                ? Math.round((gpu.memoryUsed / gpu.memoryTotal) * 100) : null;
+                            return (
+                                <div key={gpu.uuid ?? i} className="text-sm">
+                                    <div className="font-medium truncate" title={gpu.name}>{gpu.name}</div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2 flex flex-wrap gap-x-3">
+                                        <span className="uppercase">{gpu.vendor}</span>
+                                        {gpu.driver && <span>driver {gpu.driver}</span>}
+                                        {gpu.uuid && <span className="font-mono truncate" title={gpu.uuid}>{gpu.uuid.slice(0, 18)}…</span>}
+                                    </div>
+                                    {/* Memory bar */}
+                                    {gpu.memoryTotal && gpu.memoryTotal > 0 && (
+                                        <div className="mb-2">
+                                            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-0.5">
+                                                <span>VRAM</span>
+                                                <span>{formatBytes(gpu.memoryUsed ?? 0)} / {formatBytes(gpu.memoryTotal)}{memUsedFrac != null && ` (${memUsedFrac}%)`}</span>
+                                            </div>
+                                            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 relative">
+                                                <div
+                                                    className={`absolute left-0 h-2 rounded-full transition-all duration-500 ${(memUsedFrac ?? 0) > 90 ? 'bg-red-500' : (memUsedFrac ?? 0) > 80 ? 'bg-amber-500' : 'bg-green-600'}`}
+                                                    style={{ width: `${Math.min(memUsedFrac ?? 0, 100)}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {/* Compute bar */}
+                                    {gpu.utilizationGpu != null && (
+                                        <div className="mb-2">
+                                            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-0.5">
+                                                <span>Compute</span>
+                                                <span>{gpu.utilizationGpu}%</span>
+                                            </div>
+                                            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 relative">
+                                                <div
+                                                    className="absolute left-0 h-2 rounded-full transition-all duration-500 bg-blue-500"
+                                                    style={{ width: `${Math.min(gpu.utilizationGpu, 100)}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {/* Compact metadata row */}
+                                    <div className="text-xs text-gray-500 dark:text-gray-400 flex flex-wrap gap-x-3 mt-1">
+                                        {gpu.temperatureC != null && <span>{gpu.temperatureC}°C</span>}
+                                        {gpu.powerDraw != null && gpu.powerLimit != null && (
+                                            <span>{gpu.powerDraw.toFixed(0)} / {gpu.powerLimit.toFixed(0)} W</span>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
 
             {/* Network Interfaces */}
             <div className="md:col-span-2 bg-white dark:bg-gray-800 p-5 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
