@@ -111,6 +111,81 @@ def detect_honcho(port: str) -> bool:
         return False
 
 
+def enumerate_ollama_tags(provider_url: str) -> list[str]:
+    """Query the Ollama HTTP API for the list of installed model tags.
+
+    `provider_url` is the OpenAI-compatible base (e.g.
+    `http://127.0.0.1:11434/v1`). Ollama's native list endpoint lives at
+    `<host>/api/tags`, one level up from the OpenAI surface — strip the
+    trailing `/v1` if present.
+
+    Returns a list of `name:tag` strings, or `[]` on any failure
+    (caller falls back to leaving custom_providers.models empty, which
+    Hermes will then auto-detect via /v1/models — slower but functional).
+    """
+    if not provider_url:
+        return []
+    base = provider_url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    try:
+        with urllib.request.urlopen(f"{base}/api/tags", timeout=8) as resp:
+            payload = json.loads(resp.read().decode("utf-8") or "{}")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        jlog("warn", "hermes:ollama-tags", "could not enumerate ollama tags — Hermes' Models tab will fall back to auto-detect via /v1/models", error=str(e))
+        return []
+    tags: list[str] = []
+    for entry in payload.get("models", []) or []:
+        name = entry.get("name")
+        if isinstance(name, str) and name:
+            tags.append(name)
+    return sorted(set(tags))
+
+
+def render_custom_providers_block(provider_url: str, tags: list[str]) -> str:
+    """Build a YAML `custom_providers:` block that lists every Ollama tag
+    on the host under a single `ollama` named provider, so Hermes'
+    dashboard Models tab surfaces them as one-click switches.
+
+    The format matches the documented schema at
+    https://hermes-agent.nousresearch.com/docs/integrations/providers#named-custom-providers:
+
+        custom_providers:
+          - name: ollama
+            base_url: http://127.0.0.1:11434/v1
+            api_key: none
+            models:
+              gemma4:e4b: {}
+              VladimirGav/gemma4-26b-16GB-VRAM:latest: {}
+
+    Empty per-model mappings leave context_length / api_mode for Hermes
+    to auto-detect via `/v1/models`. The point of explicitly listing the
+    tags is solely that the dashboard's typeahead surfaces them — the
+    Hermes Models tab doesn't query `/v1/models` for tag enumeration,
+    it reads from the model_catalog + custom_providers.
+
+    Returns '' if there are no tags (caller skips the block — an empty
+    block is YAML-invalid because `models:` would have no children).
+    """
+    if not tags or not provider_url:
+        return ""
+    out = [
+        "custom_providers:\n",
+        "  - name: ollama\n",
+        f"    base_url: {provider_url}\n",
+        '    api_key: "none"\n',
+        "    models:\n",
+    ]
+    for tag in tags:
+        # YAML keys containing `:` are unambiguous when they're the
+        # entire key (no flow context, no anchors), but a literal `: `
+        # mid-value would terminate the key. Ollama tags only use `:`
+        # as a name/tag separator (`gemma4:e4b`); no space follows. Safe
+        # to emit unquoted. Empty mapping `{}` means "no overrides".
+        out.append(f"      {tag}: {{}}\n")
+    return "".join(out)
+
+
 def _extract_top_level_block(content: str, key: str) -> str:
     """Extract a top-level YAML block by key from config.yaml content,
     returning the block (header + indented body) as a string, or '' if
@@ -210,6 +285,15 @@ def write_config_yaml(
             "memory:\n"
             "  provider: holographic\n"
         )
+    # Enumerate Ollama tags so the dashboard Models tab can show them as
+    # switchable entries — without an explicit `custom_providers.ollama.models`
+    # list, the tab's typeahead falls back to remote provider catalogs
+    # only and local Ollama tags are invisible. `[]` (probe failed) is
+    # fine — we just skip the block and the operator works around it
+    # via `hermes config set model.model <tag>` like before.
+    ollama_tags = enumerate_ollama_tags(provider_url)
+    custom_providers_block = render_custom_providers_block(provider_url, ollama_tags)
+
     content = (
         "# Written by ServiceBay's hermes template post-deploy.py.\n"
         "# Edit via the wizard's reconfigure flow or hand-edit and restart the hermes service.\n"
@@ -230,6 +314,8 @@ def write_config_yaml(
         "display:\n"
         "  personality: default\n"
     )
+    if custom_providers_block:
+        content += "\n" + custom_providers_block
     if preserved_mcp_servers:
         # Append the stashed mcp_servers block so SB-MCP / HA-MCP wiring
         # survives a hermes-only redeploy. Add a separator blank line so
