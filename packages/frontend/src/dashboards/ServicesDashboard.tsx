@@ -29,105 +29,20 @@ import type { EnrichedContainer } from '@servicebay/api-client';
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
 import { Plus, RefreshCw, Activity, Trash2, Power, Box, Search, X, AlertCircle, FileCode, ArrowRight, ShieldCheck, Terminal as TerminalIcon, Eraser, RotateCcw } from 'lucide-react';
-import { ServiceBundle, BundleValidation, BundleStackArtifacts, BundlePortSummary, BundleContainerSummary, generateBundleStackArtifacts, sanitizeBundleName } from '@servicebay/api-client';
-
-interface MigrationPlan {
-    filesToCreate: string[];
-    filesToBackup: string[];
-    servicesToStop: string[];
-    targetName: string;
-    backupDir: string;
-    backupArchive?: string;
-    stackPreview?: string;
-    validations?: BundleValidation[];
-    fileMappings?: Array<{ source: string; action: 'backup' | 'migrate'; target?: string }>;
-}
-
-type LinkFormState = {
-    name: string;
-    url: string;
-    description: string;
-    monitor: boolean;
-    ipTargetsText?: string;
-};
-
-const bundleWizardSteps: Array<{ key: 'assets' | 'stack' | 'backup'; label: string; description: string; tooltip: string }> = [
-    {
-        key: 'assets',
-        label: 'Assets',
-        description: 'Review linked services, files, and containers',
-        tooltip: 'Verify every unmanaged unit, container, and config before generating the managed stack. See the Merge Workflow guide for full context.'
-    },
-    {
-        key: 'stack',
-        label: 'Stack',
-        description: 'Validate the generated pod stack',
-        tooltip: 'Inspect the synthesized .kube unit, Pod YAML, and config references before dry-running the plan.'
-    },
-    {
-        key: 'backup',
-        label: 'Backup Plan',
-        description: 'Confirm backups and execution plan',
-        tooltip: 'Dry run podman kube play, review tar/gzip backups, and note rollback instructions prior to executing the merge.'
-    }
-];
-
-const dedupeValidations = (entries: BundleValidation[]): BundleValidation[] => {
-    const map = new Map<string, BundleValidation>();
-    entries.forEach(entry => {
-        const key = `${entry.level}-${entry.scope || 'global'}-${entry.message}`;
-        if (!map.has(key)) {
-            map.set(key, entry);
-        }
-    });
-    return Array.from(map.values());
-};
-
-const bundleSeverityClasses: Record<ServiceBundle['severity'], string> = {
-    critical: 'border-red-200 dark:border-red-800',
-    warning: 'border-amber-200 dark:border-amber-800',
-    info: 'border-gray-200 dark:border-gray-800'
-};
-
-const MERGE_HELP_ID = 'merge-wizard';
+import { ServiceBundle, BundleStackArtifacts, BundlePortSummary, BundleContainerSummary, BundleValidation, generateBundleStackArtifacts, sanitizeBundleName } from '@servicebay/api-client';
+import {
+    MERGE_HELP_ID,
+    bundleSeverityClasses,
+    bundleWizardSteps,
+    dedupeValidations,
+    type ApiLinkPayload,
+    type LinkFormState,
+    type MigrationPlan,
+    type RawLinkPort,
+    type RawLinkVolume,
+} from './_lib/servicesDashboard';
 
 const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
-
-type ApiLinkPayload = {
-    id?: string;
-    name: string;
-    nodeName?: string;
-    description?: string;
-    active?: boolean;
-    status?: string;
-    activeState?: string;
-    subState?: string;
-    kubePath?: string;
-    yamlPath?: string | null;
-    type?: string;
-    ports?: RawLinkPort[];
-    volumes?: RawLinkVolume[];
-    monitor?: boolean;
-    url?: string;
-    labels?: Record<string, string>;
-    verifiedDomains?: string[];
-    ipTargets?: string[];
-};
-
-type RawLinkPort = {
-    host?: string | number;
-    hostPort?: string | number;
-    container?: string | number;
-    containerPort?: string | number;
-    hostIp?: string;
-    protocol?: string;
-    source?: string;
-};
-
-type RawLinkVolume = {
-    host?: string;
-    container?: string;
-};
 
 export default function ServicesDashboard() {
     const { data: twin, isConnected, lastUpdate, isNodeSynced } = useDigitalTwin();

@@ -47,91 +47,18 @@ import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkI
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
-
-interface GraphNodeData extends Record<string, unknown> {
-  id?: string;
-  type: string; 
-  label: string;
-  subLabel?: string;
-  node?: string; // Node name
-  hostname?: string;
-  targetHandlePosition?: Position;
-  sourceHandlePosition?: Position;
-  collapsed?: boolean;
-  onToggle?: (id: string, expanded?: boolean) => void;
-  onCreateExternalLink?: (node: GraphNodeData) => void; 
-  status?: string;
-  ip?: string;
-  parentId?: string;
-  summary?: {
-    portMap?: PortMapping[];
-    totalContainers?: number;
-    activeContainers?: number;
-    totalServices?: number;
-    activeServices?: number;
-    status?: string;
-    verifiedDomains?: string[];
-  };
-  metadata?: {
-    nodeIPs?: string[];
-    verifiedDomains?: string[];
-    externalTargetIp?: string;
-    externalTargetPort?: number;
-    description?: string;
-    link?: string;
-    stats?: {
-      externalIP?: string;
-      internalIP?: string;
-      dnsServers?: string[];
-    };
-    [key: string]: unknown;
-  };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  rawData?: any;
-}
-
-interface LegacyPortMapping extends PortMapping {
-    IP?: string;
-    host?: number;
-    container?: number;
-}
-
-interface HealthData {
-    connected?: boolean;
-    externalIP?: string;
-    uptime?: number;
-    dnsServers?: string[];
-    deviceLog?: string;
-    [key: string]: unknown;
-}
-
-const deriveNodeNameFromGraph = (node?: GraphNodeData | null): string | undefined => {
-    if (!node) return undefined;
-    const raw = node.rawData as { nodeName?: string; node?: string } | undefined;
-    const candidates = [
-        typeof raw?.nodeName === 'string' ? raw.nodeName : undefined,
-        typeof raw?.node === 'string' ? raw.node : undefined,
-        typeof node.node === 'string' ? node.node : undefined,
-        typeof node.id === 'string' && node.id.includes(':') ? node.id.split(':')[0] : undefined,
-    ];
-
-    const resolved = candidates.find((value): value is string => Boolean(value && value.trim().length > 0));
-    return resolved?.trim();
-};
-
-const buildServiceEditHref = (node: GraphNodeData): string => {
-    const serviceName = typeof node.rawData?.name === 'string' ? node.rawData.name : '';
-    if (!serviceName) return '/services';
-
-    const base = `/edit/${encodeURIComponent(serviceName)}`;
-    const nodeName = deriveNodeNameFromGraph(node);
-
-    if (nodeName && nodeName.toLowerCase() !== 'local') {
-        return `${base}?node=${encodeURIComponent(nodeName)}`;
-    }
-
-    return base;
-};
+import {
+  buildServiceEditHref,
+  DEFAULT_EDGE_COLOR,
+  DOWN_EDGE_COLOR,
+  DOWN_EDGE_DASHES,
+  deriveNodeNameFromGraph,
+  labelForEdgeKind,
+  styleForEdgeKind,
+  type GraphNodeData,
+  type HealthData,
+  type LegacyPortMapping,
+} from './_lib/networkDashboard';
 
 // Custom Edge Component
 const CustomEdge = ({
@@ -723,43 +650,10 @@ const edgeTypes = {
   custom: CustomEdge,
 };
 
-const DEFAULT_EDGE_COLOR = 'rgba(148, 163, 184, 0.2)';
-const DOWN_EDGE_COLOR = '#ef4444';
-const DOWN_EDGE_DASHES = '6 3';
-
-// Edge-kind styling (#813). The backend stamps each edge with `kind`
-// (gateway | proxy | observed | declared | manual). The map must render
-// "I just saw this TCP flow" (observed, solid grey) and "the template
-// author says this exists" (declared, dashed amber) so an operator never
-// confuses the two. Down-target dashes still win — service-down is a
-// stronger signal than provenance.
-const DECLARED_EDGE_COLOR = '#64748b'; // Slate
-const DECLARED_EDGE_DASHES = '4 4';
-const OBSERVED_EDGE_COLOR = '#3b82f6'; // Clean blue
-
-function styleForEdgeKind(kind: string | undefined, base: React.CSSProperties | undefined): React.CSSProperties | undefined {
-    if (kind === 'declared') {
-        return {
-            ...(base || {}),
-            stroke: DECLARED_EDGE_COLOR,
-            strokeDasharray: DECLARED_EDGE_DASHES,
-        };
-    }
-    if (kind === 'observed') {
-        return {
-            ...(base || {}),
-            stroke: OBSERVED_EDGE_COLOR,
-        };
-    }
-    return base;
-}
-
-function labelForEdgeKind(kind: string | undefined, baseLabel: string | undefined): string | undefined {
-    if (kind === 'declared') {
-        return baseLabel ? `${baseLabel} (declared)` : 'declared';
-    }
-    return baseLabel;
-}
+// Edge-kind styling constants and helpers moved to
+// `./_lib/networkDashboard.ts` in #961's first decomposition step.
+// `styleForEdgeKind`, `labelForEdgeKind`, the edge-color tokens, and
+// the DOWN/DECLARED/OBSERVED palette all live in that module now.
 
 type LinkFormState = {
     name: string;
