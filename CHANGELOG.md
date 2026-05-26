@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.35.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.34.0...servicebay-v4.35.0) (2026-05-26)
+
+
+### Features
+
+* **hermes-webui:** replace open-webui with nesquena/hermes-webui template ([#1044](https://github.com/mdopp/servicebay/issues/1044)) ([#1054](https://github.com/mdopp/servicebay/issues/1054)) ([1f7f3ba](https://github.com/mdopp/servicebay/commit/1f7f3babf3ebc14092b8cdefd414fab27984486b))
+* **hermes:** enumerate local Ollama tags under custom_providers so Models tab surfaces them ([#1053](https://github.com/mdopp/servicebay/issues/1053)) ([d30169e](https://github.com/mdopp/servicebay/commit/d30169e1a3b09bbc0160a8d22618566f914f358f))
+
 ## [4.34.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.5...servicebay-v4.34.0) (2026-05-26)
 
 
