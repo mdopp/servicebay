@@ -1,0 +1,25 @@
+{
+  "OPEN_WEBUI_PORT": {
+    "type": "text",
+    "description": "Host loopback port for Open WebUI's HTTP server. Bound to 127.0.0.1; NPM + Authelia forward-auth proxy the public side at https://<OPEN_WEBUI_SUBDOMAIN>.<domain>. Default 8081 to leave 8080 free for other services that grab the convention.",
+    "default": "8081"
+  },
+  "OPEN_WEBUI_SECRET": {
+    "type": "secret",
+    "description": "WEBUI_SECRET_KEY — signs the in-app session cookie. Auto-generated; rotating it logs every active user out, so the wizard handles it transparently and the operator shouldn't need to touch it."
+  },
+  "OPEN_WEBUI_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for the family chat UI. Internal exposure — NPM binds the LAN-only access list, Authelia forward-auth gates entry, real LE cert. `chat` is the convention family members will guess (see #1030).",
+    "default": "chat",
+    "exposure": "internal",
+    "proxyPort": "OPEN_WEBUI_PORT",
+    "loopbackOnly": true,
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
+    }
+  }
+}

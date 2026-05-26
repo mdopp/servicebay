@@ -7,5 +7,9 @@ metadata:
     servicebay.tier: "feature"
     servicebay.depends-on-stacks: "basic"
 spec:
-  # Bundled templates: Home Assistant (device control), Voice (STT/TTS puck gateway), Ollama (Local LLM), Hermes (Conversational Agent), Oscar Household (Wyoming Bridge + Speaker-ID)
-  templates: [home-assistant, voice, ollama, hermes, oscar-household]
+  # Bundled templates: Home Assistant (device control), Voice (STT/TTS
+  # puck gateway), Ollama (Local LLM), Hermes (Conversational Agent),
+  # Oscar Household (Wyoming Bridge + Speaker-ID), Open WebUI (family
+  # chat at chat.<domain>, #1030 — gives residents a web chat path
+  # that doesn't require Discord/Telegram/Signal bot tokens).
+  templates: [home-assistant, voice, ollama, hermes, oscar-household, open-webui]

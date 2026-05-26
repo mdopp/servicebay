@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: open-webui
+  labels:
+    app: open-webui
+  annotations:
+    servicebay.label: "Open WebUI (Family Chat)"
+    servicebay.schema-version: "1"
+    servicebay.ports: "{{OPEN_WEBUI_PORT}}/tcp"
+    # ollama must be reachable on host loopback for the default
+    # backend wiring (OLLAMA_BASE_URL). Open WebUI starts without it
+    # but the chat list is empty until Ollama responds, which the
+    # operator will read as "broken". Topo-sort the deploy.
+    servicebay.dependencies: "ollama,nginx,auth"
+    servicebay.healthcheck: |
+      url: http://127.0.0.1:{{OPEN_WEBUI_PORT}}/health
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
+spec:
+  # hostNetwork so the bare 127.0.0.1:OLLAMA_PORT call works out of the
+  # box — same pattern hermes uses to reach ollama. NPM proxies the
+  # public-side chat.<domain> down to OPEN_WEBUI_PORT on the host
+  # loopback behind Authelia forward-auth.
+  hostNetwork: true
+  containers:
+  - name: open-webui
+    image: ghcr.io/open-webui/open-webui:main
+    env:
+    # Talk to the local Ollama on host loopback (two hostNetwork pods
+    # share the netns, so 127.0.0.1 resolves to the same host).
+    - name: OLLAMA_BASE_URL
+      value: "http://127.0.0.1:{{OLLAMA_PORT}}"
+    # Bind only to the loopback that NPM proxies. Direct LAN hits to
+    # this port would bypass Authelia, which we explicitly don't want
+    # — chat history surfaces every conversation, treat it like the
+    # Hermes dashboard.
+    - name: HOST
+      value: "127.0.0.1"
+    - name: PORT
+      value: "{{OPEN_WEBUI_PORT}}"
+    # Signed JWT secret for the in-app session cookie. Auto-generated
+    # by the wizard so a teardown + reinstall doesn't reuse a
+    # cracked / leaked value. Operators rarely need to know this.
+    - name: WEBUI_SECRET_KEY
+      value: "{{OPEN_WEBUI_SECRET}}"
+    # Disable signup by default (gives the operator a one-time
+    # admin-bootstrap window via the in-app UI). Family members get
+    # added by the admin from Settings → Users. Flipping this back
+    # on is a deliberate operator decision — Authelia already gates
+    # the URL, so it's safe to re-enable for self-service, but the
+    # default off matches the rest of ServiceBay's "operator
+    # provisions members" model.
+    - name: ENABLE_SIGNUP
+      value: "false"
+    # Telemetry opt-out, matching the rest of the household stack's
+    # privacy-first posture.
+    - name: SCARF_NO_ANALYTICS
+      value: "true"
+    - name: DO_NOT_TRACK
+      value: "true"
+    - name: ANONYMIZED_TELEMETRY
+      value: "false"
+    ports:
+    - containerPort: {{OPEN_WEBUI_PORT}}
+    volumeMounts:
+    - mountPath: /app/backend/data
+      name: open-webui-data
+  volumes:
+  - name: open-webui-data
+    hostPath:
+      path: {{DATA_DIR}}/open-webui
+      type: DirectoryOrCreate
