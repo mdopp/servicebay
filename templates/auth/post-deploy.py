@@ -109,10 +109,23 @@ def wait_for_lldap(sb_api: str, port: int) -> bool:
     return False
 
 
+def derive_operator_uid(email: str) -> str:
+    """
+    Derive a safe LLDAP uid from the operator's email local-part.
+    LLDAP user IDs are lowercase alphanumeric + `_`/`.`/`-`; strip
+    anything else and lowercase the rest. Falls back to "operator" if
+    the local-part sanitizes to empty.
+    """
+    local = (email.split("@", 1)[0] if "@" in email else email).lower()
+    cleaned = "".join(ch for ch in local if ch.isalnum() or ch in {"_", ".", "-"})
+    return cleaned or "operator"
+
+
 def main() -> int:
     host = env("HOST", "<server-ip>")
     sb_api = env("SB_API_URL", "http://localhost:3000")
     public_domain = env("PUBLIC_DOMAIN")
+    operator_email = env("OPERATOR_EMAIL")
 
     lldap_password = env("LLDAP_ADMIN_PASSWORD")
     lldap_port = env("LLDAP_PORT", "17170")
@@ -175,10 +188,28 @@ def main() -> int:
         )
     else:
         log("Seeding LLDAP groups...")
+        # #988 — pass the operator email so seed also pre-creates the
+        # operator's LLDAP user + adds them to `admins`. No password is
+        # set (LLDAP uses OPAQUE) — they finish via "Set password" in
+        # the LLDAP UI on first sign-in.
+        operator_payload: dict[str, object] = {}
+        if operator_email:
+            operator_payload = {
+                "operator": {
+                    "uid": derive_operator_uid(operator_email),
+                    "email": operator_email,
+                    "displayName": "Operator",
+                },
+            }
         for attempt in range(1, SEED_MAX_ATTEMPTS + 1):
             seed_status, seed_body = post_json(
                 f"{sb_api}/api/system/lldap/seed",
-                {"host": "localhost", "port": int(lldap_port), "password": lldap_password},
+                {
+                    "host": "localhost",
+                    "port": int(lldap_port),
+                    "password": lldap_password,
+                    **operator_payload,
+                },
                 timeout=15,
             )
             ok = seed_status == 200 and isinstance(seed_body, dict)
@@ -201,6 +232,40 @@ def main() -> int:
                 else:
                     reason = admin_grant.get("reason", "no reason returned")
                     log(f"⚠️ Could not grant LLDAP `admin` the `admins` group ({reason}). Add it manually in LLDAP's web UI or you'll get HTTP 403 from ldap.<domain>.")
+
+                # #988 — operator user provisioning result
+                op_prov = (seed_body or {}).get("operatorProvision") or {}
+                if operator_email and op_prov.get("ok"):
+                    op_uid = op_prov.get("uid") or derive_operator_uid(operator_email)
+                    state = "created" if op_prov.get("created") else "already present"
+                    log(f"✅ Operator LLDAP user `{op_uid}` ({state}) is in `admins`.")
+                    # Surface the next step as a credential entry. The
+                    # LLDAP URL is `http://{host}:{lldap_port}` here —
+                    # post-install rendering picks up the NPM-mapped
+                    # `https://ldap.{public_domain}/user/{uid}` once the
+                    # subdomain is wired, but we point at LAN here for
+                    # the operator's first run when SSO may not yet be
+                    # fully reachable.
+                    lldap_user_url = f"http://{host}:{lldap_port}/user/{op_uid}"
+                    if public_domain:
+                        lldap_user_url = f"https://ldap.{public_domain}/user/{op_uid}"
+                    emit_credential(
+                        service="Operator LLDAP user (set password to finish)",
+                        url=lldap_user_url,
+                        username=op_uid,
+                        password="(set via LLDAP UI — click your user, then \"Set password\")",
+                        importance="critical",
+                        notes=(
+                            "Your LLDAP user is pre-created and in the `admins` group. "
+                            "LLDAP uses OPAQUE for passwords, so we can't seed one — sign in "
+                            "to LLDAP's web UI as `admin` (see the credential above), open "
+                            "this user, click \"Set password\", then log in to any "
+                            f"{(public_domain or 'service')} subdomain as yourself."
+                        ),
+                    )
+                elif operator_email and op_prov:
+                    reason = op_prov.get("reason", "no reason returned")
+                    log(f"⚠️ Could not auto-provision LLDAP user for OPERATOR_EMAIL ({reason}). Create it manually in LLDAP's web UI and add to the `admins` group.")
                 break
             # The seed endpoint is idempotent (it reports `existing` for
             # groups already present), so retrying a partial/failed run

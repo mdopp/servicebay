@@ -28,11 +28,28 @@ const LLDAP_GRAPHQL_USER_GROUPS = `
   }
 `;
 
+const LLDAP_GRAPHQL_CREATE_USER = `
+  mutation CreateUser($user: CreateUserInput!) {
+    createUser(user: $user) { id displayName email }
+  }
+`;
+
 interface SeedRequest {
   host?: string;
   port?: number;
   password: string;
   groups?: string[];
+  /** Optional operator-user spec (#988). When provided, the seed route
+   *  also creates this LLDAP user and adds them to `admins` so the
+   *  operator skips the "log in to LLDAP as admin, find your user,
+   *  add to admins" catch-22 on first run. The password must be set
+   *  separately via the LLDAP UI — LLDAP uses OPAQUE, so passwords
+   *  can't be set over GraphQL. */
+  operator?: {
+    uid: string;
+    email: string;
+    displayName?: string;
+  };
 }
 
 const DEFAULT_GROUPS = ['admins', 'family'];
@@ -163,7 +180,17 @@ export const POST = withApiHandler({}, async ({ request }) => {
     adminGrant = await grantAdminGroup(baseUrl, auth.token);
   }
 
-  return NextResponse.json({ created, existing, failed, adminGrant });
+  // #988 — auto-provision the operator user in `admins` so the operator
+  // can reach every protected domain on first login. Without this they
+  // hit a catch-22: the LLDAP UI (where they'd add themselves to
+  // admins) is itself behind the admin-only Authelia rule. Best-effort:
+  // a failure here is logged but doesn't fail the seed.
+  let operatorProvision: { ok: boolean; uid?: string; created?: boolean; reason?: string } = { ok: false };
+  if (body.operator?.uid && body.operator?.email) {
+    operatorProvision = await provisionOperatorUser(baseUrl, auth.token, body.operator);
+  }
+
+  return NextResponse.json({ created, existing, failed, adminGrant, operatorProvision });
 });
 
 /**
@@ -220,5 +247,102 @@ async function grantAdminGroup(baseUrl: string, token: string): Promise<{ ok: bo
     return { ok: addData?.data?.addUserToGroup?.ok === true };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * #988 — Provision an LLDAP user for the operator (typically derived
+ * from `OPERATOR_EMAIL` captured in the wizard) and add them to the
+ * `admins` group. Idempotent: a pre-existing user is treated as
+ * success and the group membership is reconciled.
+ *
+ * Password is NOT set here. LLDAP uses the OPAQUE protocol for
+ * passwords; they cannot be set over GraphQL with a plaintext value.
+ * The operator finishes provisioning by clicking their user in the
+ * LLDAP UI and using "Set password" — but the catch-22 (needing
+ * admin-domain access to reach the UI) is gone because the LLDAP
+ * built-in `admin` user is already in `admins` via the seed flow.
+ */
+async function provisionOperatorUser(
+  baseUrl: string,
+  token: string,
+  operator: { uid: string; email: string; displayName?: string },
+): Promise<{ ok: boolean; uid?: string; created?: boolean; reason?: string }> {
+  try {
+    // 1) Create. LLDAP returns a duplicate-key error if the user
+    // already exists — treat that as success-with-created=false.
+    let created = false;
+    const createRes = await fetch(`${baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        query: LLDAP_GRAPHQL_CREATE_USER,
+        variables: {
+          user: {
+            id: operator.uid,
+            email: operator.email,
+            displayName: operator.displayName ?? operator.uid,
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!createRes.ok) {
+      return { ok: false, uid: operator.uid, reason: `createUser HTTP ${createRes.status}` };
+    }
+    const createData = await createRes.json();
+    if (createData?.errors?.length) {
+      const msg: string = createData.errors[0]?.message ?? '';
+      const lower = msg.toLowerCase();
+      if (!(lower.includes('already exists') || lower.includes('duplicate') || lower.includes('unique constraint'))) {
+        return { ok: false, uid: operator.uid, reason: msg };
+      }
+      // user already exists — fall through to group add
+    } else if (createData?.data?.createUser?.id) {
+      created = true;
+    }
+
+    // 2) Add to `admins` (idempotent; reuses the same lookup pattern
+    // as grantAdminGroup above).
+    const memberRes = await fetch(`${baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ query: LLDAP_GRAPHQL_USER_GROUPS, variables: { userId: operator.uid } }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (memberRes.ok) {
+      const data = await memberRes.json();
+      const groupsForUser: Array<{ displayName?: string }> = data?.data?.user?.groups ?? [];
+      if (groupsForUser.some(g => g.displayName === 'admins')) {
+        return { ok: true, uid: operator.uid, created };
+      }
+    }
+    const listRes = await fetch(`${baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ query: LLDAP_GRAPHQL_LIST_GROUPS }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!listRes.ok) return { ok: false, uid: operator.uid, reason: `groups query HTTP ${listRes.status}` };
+    const listData = await listRes.json();
+    const allGroups: Array<{ id: number; displayName: string }> = listData?.data?.groups ?? [];
+    const adminGroup = allGroups.find(g => g.displayName === 'admins');
+    if (!adminGroup) return { ok: false, uid: operator.uid, reason: '`admins` group not found' };
+
+    const addRes = await fetch(`${baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        query: LLDAP_GRAPHQL_ADD_USER_TO_GROUP,
+        variables: { userId: operator.uid, groupId: adminGroup.id },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!addRes.ok) return { ok: false, uid: operator.uid, reason: `addUserToGroup HTTP ${addRes.status}` };
+    const addData = await addRes.json();
+    if (addData?.errors?.length) return { ok: false, uid: operator.uid, reason: addData.errors[0]?.message ?? 'unknown' };
+    return { ok: addData?.data?.addUserToGroup?.ok === true, uid: operator.uid, created };
+  } catch (e) {
+    return { ok: false, uid: operator.uid, reason: e instanceof Error ? e.message : String(e) };
   }
 }
