@@ -12,6 +12,7 @@ from gatekeeper.logging import log
 from wyoming.info import AsrModel, AsrProgram, Attribution, Info, TtsProgram
 from wyoming.server import AsyncServer
 
+from . import __version__ as GATEKEEPER_VERSION
 from .config import settings
 from .handler import GatekeeperHandler
 from .push import serve as serve_push
@@ -23,6 +24,12 @@ def _info() -> Info:
     Phase 0 advertises the gatekeeper as a combined ASR+TTS pipeline server.
     The underlying models are configured via env vars (Whisper + Piper);
     satellite clients see one logical endpoint here.
+
+    `version` is required by wyoming>=1.6 on AsrProgram, AsrModel, and
+    TtsProgram. Before that release it was Optional and the call sites
+    here omitted it; the image now pins wyoming>=1.9 (see pyproject.toml)
+    so the omission would be a TypeError on every Wyoming connection —
+    see #1024 for the live failure mode it caused.
     """
     return Info(
         asr=[
@@ -33,6 +40,7 @@ def _info() -> Info:
                     name="OSCAR", url="https://github.com/mdopp/servicebay"
                 ),
                 installed=True,
+                version=GATEKEEPER_VERSION,
                 models=[
                     AsrModel(
                         name="oscar-gatekeeper",
@@ -41,6 +49,7 @@ def _info() -> Info:
                             name="OSCAR", url="https://github.com/mdopp/servicebay"
                         ),
                         installed=True,
+                        version=GATEKEEPER_VERSION,
                         languages=["de", "en"],
                     )
                 ],
@@ -54,6 +63,7 @@ def _info() -> Info:
                     name="OSCAR", url="https://github.com/mdopp/servicebay"
                 ),
                 installed=True,
+                version=GATEKEEPER_VERSION,
                 voices=[],
             )
         ],

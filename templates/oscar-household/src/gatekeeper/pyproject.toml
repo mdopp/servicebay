@@ -11,7 +11,13 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Michael Dopp", email = "mdopp79@gmail.com" }]
 dependencies = [
-  "wyoming>=1.5.0",
+  # wyoming>=1.6 made `version` a required positional on AsrProgram /
+  # AsrModel / TtsProgram. The previous `>=1.5.0` open pin meant fresh
+  # image builds installed 1.9.x and the missing kwarg crashed every
+  # connection (#1024). Pin to >=1.9 explicitly so the constructor
+  # contract matches the call sites in __main__.py; widen back when a
+  # 2.x release stabilises the shape.
+  "wyoming>=1.9.0,<2.0",
   "httpx>=0.27",
   "aiohttp>=3.9",
 ]
