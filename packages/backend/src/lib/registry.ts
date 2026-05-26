@@ -368,6 +368,17 @@ export interface ProxyConfig {
   ssl_forced?: boolean;
   /** Custom nginx directives injected into the server block */
   advanced_config?: string;
+  /**
+   * #999 — Set to true for upstreams that reject requests whose Host
+   * header doesn't match their bind address (uvicorn's TrustedHost
+   * middleware is the canonical example — hermes dashboard). The
+   * proxy-hosts route's post-create patcher inlines NPM's proxy.conf
+   * inside the `location /` block AND appends a `proxy_set_header
+   * Host <forwardHost>:<forwardPort>;` so the upstream sees its own
+   * bind address. Default (false / unset) keeps NPM's `Host $host`,
+   * which is what most upstreams want.
+   */
+  strictUpstreamHost?: boolean;
 }
 
 export interface OidcClientConfig {

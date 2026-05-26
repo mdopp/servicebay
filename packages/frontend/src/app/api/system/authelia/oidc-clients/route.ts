@@ -211,7 +211,18 @@ export const POST = withApiHandler({}, async ({ request }) => {
     autheliaConfig.identity_providers.oidc.clients = existingClients;
 
     const newConfig = yaml.dump(autheliaConfig, { lineWidth: -1, quotingType: "'", forceQuotes: false });
-    await agent.sendCommand('write_file', { path: configFilePath, content: newConfig });
+    // #1000 — configuration.yml is owned by Authelia's in-container UID
+    // (~525287 on the FCoS layout). The `core` user that the agent runs
+    // as can't write it directly → EACCES → the install-time OIDC
+    // reconciler silently failed and SSO clients never got registered
+    // (root cause for the live-box manifestation of #989). The agent's
+    // write_file now accepts a `sudo` flag, same shape as #984/#992's
+    // efibootmgr -n.
+    await agent.sendCommand('write_file', {
+      path: configFilePath,
+      content: newConfig,
+      sudo: true,
+    });
 
     // Restart Authelia to pick up changes
     try {
