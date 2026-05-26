@@ -2066,15 +2066,47 @@ class Agent:
             elif cmd == 'write_file':
                 path = msg.get('payload', {}).get('path')
                 content = msg.get('payload', {}).get('content')
+                use_sudo = bool(msg.get('payload', {}).get('sudo'))
                 if not path or content is None:
                     reply(error="Missing path or content")
                 else:
                     try:
                         expanded_path = os.path.expanduser(path)
-                        os.makedirs(os.path.dirname(expanded_path), exist_ok=True)
-                        with open(expanded_path, 'w') as f:
-                            f.write(content)
-                        reply(result="ok")
+                        if use_sudo:
+                            # #1000 — paths owned by container UIDs (e.g.
+                            # Authelia's configuration.yml under
+                            # /mnt/data/stacks/auth/...) are not writable
+                            # by `core` directly. FCoS gives `core`
+                            # passwordless sudo by default; -n fails fast
+                            # if that ever changes. tee -a NOT used —
+                            # we want overwrite semantics matching the
+                            # non-sudo branch. Write via stdin so the
+                            # content doesn't appear on the command line
+                            # (no length limit, no quoting hazards, no
+                            # leak via `ps`).
+                            import subprocess
+                            # Ensure the parent dir exists (also via sudo
+                            # so we don't EACCES on `mkdir`).
+                            parent = os.path.dirname(expanded_path)
+                            subprocess.run(
+                                ['sudo', '-n', 'mkdir', '-p', parent],
+                                check=False, timeout=10,
+                            )
+                            proc = subprocess.run(
+                                ['sudo', '-n', 'tee', expanded_path],
+                                input=content.encode('utf-8'),
+                                capture_output=True, timeout=30,
+                            )
+                            if proc.returncode != 0:
+                                err = proc.stderr.decode('utf-8', errors='replace').strip() or 'unknown sudo tee failure'
+                                reply(error=f"sudo write_file failed: {err}")
+                            else:
+                                reply(result="ok")
+                        else:
+                            os.makedirs(os.path.dirname(expanded_path), exist_ok=True)
+                            with open(expanded_path, 'w') as f:
+                                f.write(content)
+                            reply(result="ok")
                     except Exception as e:
                         reply(error=str(e))
             elif cmd == 'read_file':

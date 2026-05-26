@@ -5,6 +5,9 @@ import { getNodeTwins, getNodeTwin } from '@/lib/store/repository';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
+import { agentManager } from '@/lib/agent/manager';
+import { listNodes } from '@/lib/nodes';
+import { AUTHELIA_LOCATION_HEADERS } from '@/lib/stackInstall/forwardAuth';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,6 +59,18 @@ interface ProxyHostRequest {
         ssl_forced?: boolean;
         /** Custom nginx directives injected into the server block */
         advanced_config?: string;
+        /**
+         * #999 — Set to true for upstreams that reject requests whose
+         * Host header doesn't match their bind address (uvicorn's
+         * TrustedHost middleware is the canonical example — hermes
+         * dashboard). When true, the post-create file-patcher inlines
+         * NPM's proxy.conf inside the location / block AND appends a
+         * `proxy_set_header Host <forwardHost>:<forwardPort>;`
+         * directive so the upstream sees its own bind address. Default
+         * (false / unset) keeps NPM's `Host $host` behaviour, which is
+         * what 90% of upstreams want.
+         */
+        strictUpstreamHost?: boolean;
     };
 }
 
@@ -340,6 +355,105 @@ async function patchProxyHostAdvancedConfig(
     } catch (e) {
         logger.warn('ProxyHosts', `Failed to backfill advanced_config for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
         return { updated: false };
+    }
+}
+
+/**
+ * #999 — Inject location-level proxy_set_header directives into the
+ * generated NPM proxy_host config file. nginx's inheritance rules drop
+ * server-level `proxy_set_header` (where NPM's `advanced_config` ends
+ * up) when the `location /` block has any of its own — and NPM's
+ * bundled proxy.conf always sets `Host $host` plus X-Forwarded-*,
+ * which means the Authelia headers from advanced_config never reach
+ * the upstream.
+ *
+ * Live observation (logged in #991, #990): filebrowser saw empty
+ * Remote-User → 500 "username is empty"; hermes' uvicorn TrustedHost
+ * saw `Host: hermes.dopp.cloud` → 400 "Invalid Host header." The
+ * same fix (Remote-* inside `location /`, + for hermes a Host
+ * rewrite that wins over proxy.conf's `Host $host`) made the live box
+ * fully green.
+ *
+ * Patches the .conf via `sudo write_file` (#1000) because NPM's
+ * container writes the file as root from the host's perspective.
+ * Idempotent: skips if Remote-User is already present, or if the
+ * server-level advanced_config doesn't contain `auth_request`.
+ */
+async function patchProxyHostConfFile(
+    hostId: number,
+    domain: string,
+    upstreamHostHeader: string | undefined,
+    node: string | undefined,
+): Promise<{ patched: boolean; reason?: string }> {
+    const confPath = `/mnt/data/stacks/nginx-proxy-manager/data/nginx/proxy_host/${hostId}.conf`;
+    try {
+        const nodes = await listNodes();
+        const nodeName = node ?? nodes[0]?.Name ?? 'Local';
+        const agent = agentManager.getAgent(nodeName);
+        const readRes = await agent.sendCommand('read_file', { path: confPath }) as { content?: string; error?: string };
+        const content = readRes?.content;
+        if (!content) {
+            return { patched: false, reason: `could not read ${confPath}` };
+        }
+        // Skip if not a forward-auth proxy_host.
+        if (!/auth_request\s+\/authelia/.test(content)) {
+            return { patched: false, reason: 'no forward-auth' };
+        }
+        // Skip if Remote-User is already inside the location / block.
+        const locationMatch = content.match(/location\s+\/\s*\{[\s\S]*?\n\s*\}/);
+        if (!locationMatch) {
+            return { patched: false, reason: 'no `location /` block' };
+        }
+        const locationBlock = locationMatch[0];
+        const needsHeaders = !/proxy_set_header\s+Remote-User/.test(locationBlock);
+        const needsHostRewrite = !!upstreamHostHeader && !locationBlock.includes(`proxy_set_header Host ${upstreamHostHeader}`);
+        if (!needsHeaders && !needsHostRewrite) {
+            return { patched: false, reason: 'already patched' };
+        }
+        let patchedLocation = locationBlock;
+        if (needsHeaders) {
+            // Inject before `include conf.d/include/proxy.conf;`. The
+            // include is where NPM lays down Host $host; doing the
+            // Remote-* set BEFORE the include keeps the standard
+            // X-Forwarded-* chain intact and lets nginx's "all
+            // proxy_set_header in this location" rule pick up our
+            // additions.
+            patchedLocation = patchedLocation.replace(
+                /(\s+)(include conf\.d\/include\/proxy\.conf;)/,
+                `$1${AUTHELIA_LOCATION_HEADERS}$1$2`,
+            );
+        }
+        if (needsHostRewrite) {
+            // For uvicorn-style strict-host upstreams (hermes), proxy.conf
+            // sets `Host $host` which conflicts with our override. Strip
+            // proxy.conf's Host line by inlining proxy.conf without it,
+            // then add our Host directive at the end.
+            const PROXY_CONF_INLINE = [
+                '    add_header       X-Served-By $host;',
+                '    proxy_set_header X-Forwarded-Scheme $x_forwarded_scheme;',
+                '    proxy_set_header X-Forwarded-Proto  $x_forwarded_proto;',
+                '    proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;',
+                '    proxy_set_header X-Real-IP          $remote_addr;',
+                '    proxy_pass       $forward_scheme://$server:$port$request_uri;',
+            ].join('\n');
+            patchedLocation = patchedLocation
+                .replace(/(\s+)include conf\.d\/include\/proxy\.conf;/, `$1${PROXY_CONF_INLINE}\n    proxy_set_header Host ${upstreamHostHeader};`);
+        }
+        const newContent = content.replace(locationBlock, patchedLocation);
+        if (newContent === content) {
+            return { patched: false, reason: 'no replacement needed' };
+        }
+        const writeRes = await agent.sendCommand('write_file', { path: confPath, content: newContent, sudo: true }) as { result?: string; error?: string };
+        if (writeRes?.error) {
+            logger.warn('ProxyHosts', `Failed to patch ${confPath} for ${domain}: ${writeRes.error}`);
+            return { patched: false, reason: writeRes.error };
+        }
+        // Reload nginx to pick up the change.
+        await agent.sendCommand('exec', { command: 'podman exec nginx-nginx-proxy-manager nginx -s reload' }).catch(() => {});
+        logger.info('ProxyHosts', `Patched ${domain} location / with forward-auth headers${upstreamHostHeader ? ` + Host=${upstreamHostHeader}` : ''}`);
+        return { patched: true };
+    } catch (e) {
+        return { patched: false, reason: e instanceof Error ? e.message : String(e) };
     }
 }
 
@@ -658,6 +772,22 @@ export const POST = withApiHandler({}, async ({ request }) => {
                 createdHost = await createProxyHost(npm.apiUrl, token, host, accessListId);
                 results.push({ domain: host.domain, success: true, lanRestricted: accessListId !== 0 });
                 logger.info('ProxyHosts', `Created proxy host: ${host.domain} → ${host.forwardHost}:${host.forwardPort} (exposure=${host.exposure ?? 'lan'}${accessListId !== 0 ? ', LAN-only via access list' : ''})`);
+                // #999 — When the host needs forward-auth or a strict
+                // upstream Host header, patch the generated .conf file
+                // to land the directives in the LOCATION block where
+                // nginx will actually honour them. The server-level
+                // advanced_config alone is silently dropped by NPM's
+                // location-level proxy.conf include.
+                if (typeof createdHost?.id === 'number') {
+                    const wantsForwardAuth = /auth_request\s+\/authelia|__authelia_forward_auth__/.test(host.proxyConfig?.advanced_config ?? '');
+                    const wantsStrictHost = !!host.proxyConfig?.strictUpstreamHost;
+                    if (wantsForwardAuth || wantsStrictHost) {
+                        const upstreamHostHeader = wantsStrictHost
+                            ? `${host.forwardHost ?? '127.0.0.1'}:${host.forwardPort}`
+                            : undefined;
+                        await patchProxyHostConfFile(createdHost.id, host.domain, upstreamHostHeader, node);
+                    }
+                }
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 results.push({ domain: host.domain, success: false, error: msg });

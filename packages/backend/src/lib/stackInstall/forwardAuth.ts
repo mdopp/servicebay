@@ -19,6 +19,24 @@
 export const AUTHELIA_FORWARD_AUTH_SENTINEL = '__authelia_forward_auth__';
 
 /**
+ * #999 — proxy_set_header directives we want on the UPSTREAM request
+ * (Remote-User et al. coming back from Authelia's auth-request). nginx
+ * inheritance drops server-level proxy_set_header when the location /
+ * block has any of its own (which NPM's bundled proxy.conf always
+ * does), so these must land inside `location / { }` to actually reach
+ * the upstream. Used by the post-create reconciler in
+ * `/api/system/nginx/proxy-hosts/route.ts` to patch the generated
+ * .conf via sudo write_file — see #999 for the architectural notes
+ * on why the location is the right place.
+ */
+export const AUTHELIA_LOCATION_HEADERS = [
+  'proxy_set_header Remote-User $user;',
+  'proxy_set_header Remote-Groups $groups;',
+  'proxy_set_header Remote-Name $name;',
+  'proxy_set_header Remote-Email $email;',
+].join('\n    ');
+
+/**
  * The actual nginx config block. References `{{PUBLIC_DOMAIN}}` and
  * `{{AUTHELIA_PORT}}` so it survives the Mustache pass that turns
  * cross-template placeholders into concrete values at install time.

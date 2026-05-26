@@ -67,6 +67,7 @@ function renderProxyConfig(
   view: Record<string, string>,
 ): VariableMeta['proxyConfig'] | undefined {
   if (!proxyConfig) return proxyConfig;
+  // strictUpstreamHost is a pass-through boolean — no Mustache expansion needed
   if (!proxyConfig.advanced_config) return proxyConfig;
   // Expand the `__authelia_forward_auth__` sentinel into the shared
   // nginx snippet before the Mustache pass so the snippet's own
