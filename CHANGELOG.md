@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.31.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.30.0...servicebay-v4.31.0) (2026-05-26)
+
+
+### Features
+
+* portal logout + bot/refresh-cw icons + honcho memory template ([#1012](https://github.com/mdopp/servicebay/issues/1012)) ([4477cd9](https://github.com/mdopp/servicebay/commit/4477cd9454468db70bf0c8a6aa50787c915d6765))
+
 ## [4.30.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.29.1...servicebay-v4.30.0) (2026-05-26)
 
 
