@@ -1,5 +1,6 @@
 import { Node, Edge, Position } from '@xyflow/react';
 import ELK, { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
+import { logger } from '../logger';
 
 const elk = new ELK();
 
@@ -82,7 +83,7 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
 
     return { nodes: layoutedNodes, edges };
   } catch (error) {
-    console.error('ELK Layout Error:', error);
+    logger.error('layout', 'ELK Layout Error:', error);
     return { nodes, edges };
   }
 };

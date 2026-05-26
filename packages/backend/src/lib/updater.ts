@@ -17,11 +17,11 @@ export function setUpdaterIO(socketIo: Server) {
 }
 
 function emitProgress(step: string, progress: number, message: string) {
-  console.log(`[Update Progress] ${step}: ${progress}% - ${message}`);
+  logger.info('updater', `${step}: ${progress}% - ${message}`);
   if (global.updaterIO) {
     global.updaterIO.emit('update:progress', { step, progress, message });
   } else {
-    console.warn('[Update] Socket.IO instance not set, cannot emit progress');
+    logger.warn('Update', 'Socket.IO instance not set, cannot emit progress');
   }
 }
 
@@ -68,7 +68,7 @@ export async function checkForUpdates() {
 
   if (!latest || !latest.tag_name) {
     if (latest && !latest.tag_name) {
-      console.warn('[Updater] Latest release found but missing tag_name:', latest);
+      logger.warn('Updater', 'Latest release found but missing tag_name:', latest);
     }
     return { hasUpdate: false, current, latest: null };
   }
@@ -84,7 +84,7 @@ export async function checkForUpdates() {
   try {
       hasUpdate = semver.gt(latestClean, currentClean);
   } catch (err) {
-      console.warn(`[Updater] Invalid version comparison: ${latestClean} vs ${currentClean}`, err);
+      logger.warn('Updater', `Invalid version comparison: ${latestClean} vs ${currentClean}`, err);
       return { hasUpdate: false, current, latest: null };
   }
 
@@ -170,7 +170,7 @@ export async function performUpdate(version: string) {
     const executor = getExecutor('Local');
     
     // 1. Pull new image
-    console.log(`Pulling new image for version ${version}...`);
+    logger.info('updater', `Pulling new image for version ${version}...`);
     emitProgress('download', 0, 'Pulling new image...');
     
     // Pulls can take time on slower links; extend timeout to avoid premature failure
@@ -181,14 +181,14 @@ export async function performUpdate(version: string) {
     emitProgress('download', 100, downloadMessage);
 
     // 2. Restart via systemd instead of auto-update to ensure deterministic restart
-    console.log('Restarting service...');
+    logger.info('updater', 'Restarting service...');
     emitProgress('restart', 0, 'Restarting service via systemctl --user restart --no-block servicebay.service');
     await executor.exec('systemctl --user restart --no-block servicebay.service');
     emitProgress('restart', 100, 'Restart triggered. ServiceBay will restart with the new image.');
 
     return { success: true };
   } catch (e) {
-    console.error('Update failed:', e);
+    logger.error('updater', 'Update failed:', e);
     const message = e instanceof Error ? e.message : 'Unknown error';
     if (global.updaterIO) global.updaterIO.emit('update:error', { error: message });
     throw new Error(`Update failed: ${message}`);

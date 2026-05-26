@@ -243,6 +243,23 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // #968 — backend lib code must route through @/lib/logger (trace-id
+    // propagation, JSON line format, SQLite tail). console.* in
+    // packages/backend/src/lib/** silently drops these. The Logger class
+    // itself and the agent-handler's fallback paths are allowed via
+    // file-level overrides below.
+    files: ["packages/backend/src/lib/**/*.{ts,tsx}"],
+    ignores: [
+      "packages/backend/src/lib/logger.ts",
+      "packages/backend/src/lib/logger-client.ts",
+      "packages/backend/src/lib/agent/handler.ts",
+      "**/*.test.ts",
+    ],
+    rules: {
+      "no-console": "error",
+    },
+  },
+  {
     files: ["**/*.test.{ts,tsx,js,jsx}", "**/tests/**/*"],
     rules: {
       "max-lines": "off",

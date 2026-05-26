@@ -23,6 +23,7 @@ import { getExecutor, Executor } from './executor';
 import { PodmanConnection } from './nodes';
 import path from 'path';
 import type { ServiceBundle } from './unmanaged/bundleShared';
+import { logger } from './logger';
 
 export function getSystemdDir() {
     // V4: All operations go through the agent which runs on the host.
@@ -40,7 +41,7 @@ export async function inspectItem(executor: Executor, id: string, type: 'contain
         const data = JSON.parse(stdout);
         return Array.isArray(data) ? data[0] : data;
     } catch (e) {
-        console.warn(`Failed to inspect ${type} ${id}`, e);
+        logger.warn('discovery', `Failed to inspect ${type} ${id}`, e);
         return null;
     }
 }
@@ -140,7 +141,7 @@ export async function discoverSystemdServices(connection?: PodmanConnection): Pr
             }
 
         } catch (e) {
-            console.error(`Failed to inspect service ${serviceName}`, e);
+            logger.error('discovery', `Failed to inspect service ${serviceName}`, e);
         }
 
         // Determine Type
@@ -226,7 +227,7 @@ export async function deleteBundleResources(bundle: ServiceBundle, connection?: 
             await executor.execArgv(['systemctl', '--user', 'reset-failed', unit]);
             stoppedUnits.push(unit);
         } catch (error) {
-            console.warn(`Failed to disable unmanaged unit ${unit}`, error);
+            logger.warn('discovery', `Failed to disable unmanaged unit ${unit}`, error);
         }
     }
 
@@ -237,7 +238,7 @@ export async function deleteBundleResources(bundle: ServiceBundle, connection?: 
             const { stdout } = await executor.exec('echo $HOME');
             homeDir = stdout.trim() || undefined;
         } catch (error) {
-            console.warn('Unable to resolve remote home directory for bundle deletion', error);
+            logger.warn('discovery', 'Unable to resolve remote home directory for bundle deletion', error);
         }
     }
 
@@ -272,14 +273,14 @@ export async function deleteBundleResources(bundle: ServiceBundle, connection?: 
             await executor.rm(absolutePath);
             removedFiles.push(absolutePath);
         } catch (error) {
-            console.warn(`Failed to remove bundle asset ${absolutePath}`, error);
+            logger.warn('discovery', `Failed to remove bundle asset ${absolutePath}`, error);
         }
     }
 
     try {
         await executor.exec('systemctl --user daemon-reload');
     } catch (error) {
-        console.warn('Failed to reload systemd after deleting unmanaged bundle', error);
+        logger.warn('discovery', 'Failed to reload systemd after deleting unmanaged bundle', error);
     }
 
     return { stoppedUnits, removedFiles, missingFiles };

@@ -4,6 +4,7 @@ import { NginxConfig, NginxServerBlock, NginxLocation } from './types';
 import { exec } from 'node:child_process';
 import { promisify } from 'util';
 import { Executor } from '../executor';
+import { logger } from '../logger';
 
 const execAsync = promisify(exec);
 
@@ -101,7 +102,7 @@ export class NginxParser {
     try {
       await this.parseFile(mainConfigPath, servers);
     } catch (e) {
-      console.warn(`Failed to parse nginx config at ${mainConfigPath}:`, e);
+      logger.warn('parser', `Failed to parse nginx config at ${mainConfigPath}:`, e);
     }
 
     return { servers };
@@ -130,7 +131,7 @@ export class NginxParser {
       if (err.message && (err.message.includes('container state improper') || err.message.includes('not running'))) {
         return;
       }
-      console.warn(`[NginxParser] Failed to read file ${filePath}:`, e);
+      logger.warn('NginxParser', `Failed to read file ${filePath}:`, e);
       return; // File not found or not readable
     }
 
@@ -196,7 +197,7 @@ export class NginxParser {
                             const { stdout } = await this.executor.execArgv(['podman', 'exec', this.containerId, 'sh', '-c', innerCmd]);
                             files = stdout.split('\n').map(f => f.trim()).filter(f => f);
                         } catch (e) {
-                            console.warn(`[NginxParser] Failed to list files in ${dir} inside container ${this.containerId}`, e);
+                            logger.warn('NginxParser', `Failed to list files in ${dir} inside container ${this.containerId}`, e);
                         }
                     } else {
                         files = await this.executor.readdir(dir);
@@ -206,7 +207,7 @@ export class NginxParser {
                         const { stdout } = await execAsync(`podman exec ${this.containerId} sh -c "ls -1 ${dir} 2>/dev/null || true"`);
                         files = stdout.split('\n').map(f => f.trim()).filter(f => f);
                     } catch (e) {
-                        console.warn(`[NginxParser] Failed to list files in ${dir} inside container ${this.containerId}`, e);
+                        logger.warn('NginxParser', `Failed to list files in ${dir} inside container ${this.containerId}`, e);
                     }
                 } else {
                     try {
@@ -214,7 +215,7 @@ export class NginxParser {
                     } catch (e) {
                          const err = e as { code?: string };
                         if (err.code !== 'ENOENT') {
-                            console.warn(`[NginxParser] Failed to readdir ${dir}:`, e);
+                            logger.warn('NginxParser', `Failed to readdir ${dir}:`, e);
                         }
                         files = [];
                     }
@@ -234,13 +235,13 @@ export class NginxParser {
                     }
                 }
              } catch (e) {
-                 console.error(`[NginxParser] failed to expand glob:`, e);
+                 logger.error('NginxParser', `failed to expand glob:`, e);
              }
           } else {
              try {
                 await this.parseFile(globPattern, servers);
              } catch (e) {
-                console.warn(`[NginxParser] Failed to parse included file ${globPattern}:`, e);
+                logger.warn('NginxParser', `Failed to parse included file ${globPattern}:`, e);
              }
           }
           continue;

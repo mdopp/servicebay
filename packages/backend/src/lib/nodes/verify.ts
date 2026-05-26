@@ -11,6 +11,7 @@
  */
 import { listNodes, normalizeName } from '../nodes';
 import { getExecutor } from '../executor';
+import { logger } from '../logger';
 
 export async function verifyNodeConnection(name: string): Promise<{ success: boolean; error?: string }> {
   try {
@@ -27,7 +28,7 @@ export async function verifyNodeConnection(name: string): Promise<{ success: boo
     return { success: true };
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    console.warn(`Connection check failed for node ${name}:`, e);
+    logger.warn('verify', `Connection check failed for node ${name}:`, e);
     return { success: false, error: errorMessage };
   }
 }

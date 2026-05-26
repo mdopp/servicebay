@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { getConfig } from './config';
+import { logger } from './logger';
 
 /**
  * Operator-facing alert email. Always goes to the operator addresses
@@ -108,8 +109,8 @@ async function sendMailInternal(opts: {
       </div>`
     });
 
-    console.log(`[Email] Sent to ${recipient}`);
+    logger.info('Email', `Sent to ${recipient}`);
   } catch (error) {
-    console.error('[Email] Failed to send:', error);
+    logger.error('Email', 'Failed to send:', error);
   }
 }

@@ -39,6 +39,7 @@ import {
     getBackupDir,
     inspectItem,
 } from './discovery';
+import { logger } from './logger';
 
 export type { DiscoveredService } from './discovery';
 
@@ -287,11 +288,11 @@ async function stopLegacyServices(executor: Executor, services: DiscoveredServic
         const unitName = service.serviceName;
         if (!unitName || stopped.includes(unitName)) continue;
         try {
-            console.log(`Stopping old service ${unitName}...`);
+            logger.info('migration', `Stopping old service ${unitName}...`);
             await executor.execArgv(['systemctl', '--user', 'disable', '--now', unitName]);
             stopped.push(unitName);
         } catch (error) {
-            console.warn(`Failed to stop service ${unitName}`, error);
+            logger.warn('migration', `Failed to stop service ${unitName}`, error);
         }
     }
     return stopped;
@@ -303,7 +304,7 @@ async function rollbackManagedService({ executor, targetUnit, archivePath, stopp
     try {
         await executor.execArgv(['systemctl', '--user', 'disable', '--now', targetUnit]);
     } catch (error) {
-        console.warn(`Failed to stop ${targetUnit} during rollback`, error);
+        logger.warn('migration', `Failed to stop ${targetUnit} during rollback`, error);
         success = false;
     }
 
@@ -311,7 +312,7 @@ async function rollbackManagedService({ executor, targetUnit, archivePath, stopp
         try {
             await executor.execArgv(['tar', '-xzf', archivePath, '-P']);
         } catch (error) {
-            console.warn('Failed to restore backup archive', error);
+            logger.warn('migration', 'Failed to restore backup archive', error);
             success = false;
         }
     }
@@ -319,7 +320,7 @@ async function rollbackManagedService({ executor, targetUnit, archivePath, stopp
     try {
         await executor.exec('systemctl --user daemon-reload');
     } catch (error) {
-        console.warn('Failed to reload systemd during rollback', error);
+        logger.warn('migration', 'Failed to reload systemd during rollback', error);
         success = false;
     }
 
@@ -327,7 +328,7 @@ async function rollbackManagedService({ executor, targetUnit, archivePath, stopp
         try {
             await executor.execArgv(['systemctl', '--user', 'enable', '--now', legacyUnit]);
         } catch (error) {
-            console.warn(`Failed to re-enable ${legacyUnit} during rollback`, error);
+            logger.warn('migration', `Failed to re-enable ${legacyUnit} during rollback`, error);
             success = false;
         }
     }
@@ -364,7 +365,7 @@ function recordMigrationHistory(params: {
         };
         recordMigrationEvent(params.nodeName, entry);
     } catch (error) {
-        console.warn('Failed to record migration history', error);
+        logger.warn('migration', 'Failed to record migration history', error);
     }
 }
 
@@ -398,7 +399,7 @@ async function analyzeRuntimeContext(service: DiscoveredService, executor: Execu
             }
         }
     } catch (error) {
-        console.warn('Failed to inspect runtime context', error);
+        logger.warn('migration', 'Failed to inspect runtime context', error);
     }
 
     return { hostNetwork, privilegedContainers };
@@ -554,7 +555,7 @@ async function collectGeneratedPodSpecs(services: DiscoveredService[], executor:
                 const { stdout } = await executor.execArgv(['podman', 'generate', 'kube', service.podId!]);
                 podYamls.push(yaml.load(stdout));
             } catch (error) {
-                console.warn(`Failed to generate kube for pod ${service.podId}`, error);
+                logger.warn('migration', `Failed to generate kube for pod ${service.podId}`, error);
                 throw error;
             }
         } else if (service.containerIds.length > 0) {
@@ -567,7 +568,7 @@ async function collectGeneratedPodSpecs(services: DiscoveredService[], executor:
             const { stdout } = await executor.execArgv(['podman', 'generate', 'kube', ...standaloneContainerIds]);
             podYamls.push(yaml.load(stdout));
         } catch (error) {
-            console.warn('Failed to generate kube for standalone containers', error);
+            logger.warn('migration', 'Failed to generate kube for standalone containers', error);
             throw error;
         }
     }
@@ -760,7 +761,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
         try {
             await saveSnapshot(path.basename(targetKubePath), content, connection);
         } catch (e) {
-            console.warn('Failed to save history snapshot for kube file', e);
+            logger.warn('migration', 'Failed to save history snapshot for kube file', e);
         }
 
         const yamlMatch = content.match(/Yaml=(.+)/);
@@ -777,7 +778,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
             try {
                 await saveSnapshot(path.basename(targetYamlPath), yamlContent, connection);
             } catch (e) {
-                console.warn('Failed to save history snapshot for yaml file', e);
+                logger.warn('migration', 'Failed to save history snapshot for yaml file', e);
             }
 
             try {
@@ -805,7 +806,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
                     await executor.writeFile(targetYamlPath, yamlContent);
                 }
             } catch (e) {
-                console.warn('Failed to parse/modify source YAML, copying as is', e);
+                logger.warn('migration', 'Failed to parse/modify source YAML, copying as is', e);
                 await executor.writeFile(targetYamlPath, yamlContent);
             }
 
@@ -816,10 +817,10 @@ export async function migrateService(service: DiscoveredService, customName?: st
             // Now that we have copied the configuration, we can safely stop the old service
             if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
                 try {
-                    console.log(`Stopping old service ${service.serviceName}...`);
+                    logger.info('migration', `Stopping old service ${service.serviceName}...`);
                     await executor.execArgv(['systemctl', '--user', 'disable', '--now', service.serviceName]);
                 } catch (e) {
-                    console.warn(`Failed to stop old service ${service.serviceName}`, e);
+                    logger.warn('migration', `Failed to stop old service ${service.serviceName}`, e);
                 }
             }
         } else {
@@ -830,10 +831,10 @@ export async function migrateService(service: DiscoveredService, customName?: st
             // Now that we have copied the configuration, we can safely stop the old service
             if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
                 try {
-                    console.log(`Stopping old service ${service.serviceName}...`);
+                    logger.info('migration', `Stopping old service ${service.serviceName}...`);
                     await executor.execArgv(['systemctl', '--user', 'disable', '--now', service.serviceName]);
                 } catch (e) {
-                    console.warn(`Failed to stop old service ${service.serviceName}`, e);
+                    logger.warn('migration', `Failed to stop old service ${service.serviceName}`, e);
                 }
             }
         }
@@ -880,7 +881,7 @@ export async function migrateService(service: DiscoveredService, customName?: st
                  }
              }
         } catch (e) {
-            console.warn('Failed to inspect items for runtime config', e);
+            logger.warn('migration', 'Failed to inspect items for runtime config', e);
         }
 
         // Parse and modify YAML
@@ -927,17 +928,17 @@ export async function migrateService(service: DiscoveredService, customName?: st
                 await executor.writeFile(targetYamlPath, stdout);
             }
         } catch (e) {
-            console.warn('Failed to parse/modify generated YAML, using raw output', e);
+            logger.warn('migration', 'Failed to parse/modify generated YAML, using raw output', e);
             await executor.writeFile(targetYamlPath, stdout);
         }
 
         // Now that we have generated and written the configuration, we can safely stop the old service
         if (service.serviceName && service.serviceName !== `${cleanName}.service`) {
             try {
-                console.log(`Stopping old service ${service.serviceName}...`);
+                logger.info('migration', `Stopping old service ${service.serviceName}...`);
                 await executor.execArgv(['systemctl', '--user', 'disable', '--now', service.serviceName]);
             } catch (e) {
-                console.warn(`Failed to stop old service ${service.serviceName}`, e);
+                logger.warn('migration', `Failed to stop old service ${service.serviceName}`, e);
             }
         }
 
@@ -1028,7 +1029,7 @@ export async function mergeServices(services: DiscoveredService[], newName: stri
             await saveSnapshot(`${newName}.yml`, content, connection);
             await new Promise(resolve => setTimeout(resolve, 100));
         } catch (e) {
-            console.warn('Failed to save history snapshot', e);
+            logger.warn('migration', 'Failed to save history snapshot', e);
         }
     }
 

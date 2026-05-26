@@ -29,6 +29,7 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
 // re-exported so existing consumers don't change imports.
 export { type PodmanConnection } from './nodes/types';
 import type { PodmanConnection } from './nodes/types';
+import { logger } from './logger';
 
 async function ensureDataDir() {
   try {
@@ -89,7 +90,7 @@ async function loadNodes(): Promise<PodmanConnection[]> {
 
     return nodes;
   } catch (error) {
-    console.error('Failed to load nodes:', error);
+    logger.error('nodes', 'Failed to load nodes:', error);
     return [];
   }
 }

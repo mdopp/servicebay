@@ -13,12 +13,14 @@ type AgentLogLevel = 'info' | 'warn' | 'error' | 'debug';
 type AgentLoggerMethod = (scope: string, msg: string, ...rest: unknown[]) => void;
 type AgentLogger = Record<AgentLogLevel, AgentLoggerMethod>;
 
+ 
 const fallbackLogger: AgentLogger = {
   info: console.info.bind(console),
   warn: console.warn.bind(console),
   error: console.error.bind(console),
   debug: (console.debug ?? console.log).bind(console)
 };
+ 
 
 const bindLoggerMethod = (level: AgentLogLevel): AgentLoggerMethod => {
   const source = logger as unknown as Partial<Record<AgentLogLevel, AgentLoggerMethod>>;
