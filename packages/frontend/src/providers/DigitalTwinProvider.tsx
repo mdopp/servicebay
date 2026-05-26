@@ -24,15 +24,21 @@ const DigitalTwinContext = createContext<DigitalTwinContextType | undefined>(und
 // Intercept 401 responses from API calls and redirect to login.
 // This handles session expiry gracefully instead of showing JSON parse errors.
 //
-// The pathname guard prevents an infinite reload loop on /login itself:
-// the login page calls /api/auth/oidc/status (and similar pre-auth probes)
-// which can transiently 401; without the guard, every 401 from /login would
-// hard-reload the page back to /login forever (#854).
+// The pathname guard prevents an infinite reload loop on /login itself
+// (#854) AND keeps the family portal from bouncing anonymous visitors
+// to the admin login: /portal is intentionally anonymous-readable,
+// but the root layout mounts this provider unconditionally — so a 401
+// from any background fetch on /portal would silently relocate the
+// visitor to /login a few hundred ms after landing. Kept in sync with
+// the socket handler in useSocket.ts.
+const ANONYMOUS_PATHS = new Set(['/login', '/portal']);
 if (typeof window !== 'undefined') {
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (...args: Parameters<typeof fetch>) => {
         const response = await originalFetch(...args);
-        if (response.status === 401 && window.location.pathname !== '/login') {
+        const pathname = window.location.pathname;
+        const isAnonymousPage = ANONYMOUS_PATHS.has(pathname) || pathname.startsWith('/portal/');
+        if (response.status === 401 && !isAnonymousPage) {
             const url = typeof args[0] === 'string' ? args[0] : args[0] instanceof Request ? args[0].url : '';
             // Only redirect for our own API calls, not external fetches
             if (url.startsWith('/api/') || url.startsWith(window.location.origin + '/api/')) {
