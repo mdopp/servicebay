@@ -1,5 +1,27 @@
 # Media (Audiobookshelf + Jellyfin) — template changelog
 
+## Pending — #1018
+
+Folder names under the file-share data root are lowercase by convention
+now (`audiobooks/`, `podcasts/`, `music/`, `movies/`, `tv/`, `photos/`)
+so they sit cleanly alongside the existing `notes/` sibling that
+hermes + the OSCAR skills already use. Variable shape is unchanged
+— only the default values flip. Existing installs keep whatever
+path the operator originally accepted; the variable is
+wizard-overridable.
+
+- `variables.json`: `ABS_AUDIOBOOKS_PATH` default
+  `/mnt/data/stacks/file-share/data/Audiobooks` → `/audiobooks`,
+  `ABS_PODCASTS_PATH` default `…/Podcasts` → `/podcasts`.
+- `post-deploy.py`: `jellyfin_add_music_library` now registers
+  `/media/music` (was `/media/Music`); the operator-hint log line
+  spells `movies/tv/photos` lowercase.
+- `README.md` updated to match.
+
+No schema-version bump — variable names are stable, only defaults
+change. Schemata, on-disk layouts, and other templates are
+unaffected.
+
 ## v4 (breaking) — #618
 
 Swapped Navidrome out for Jellyfin. Audiobookshelf is unchanged.

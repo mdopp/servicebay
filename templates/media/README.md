@@ -13,11 +13,13 @@ Both containers default to reading from the **file-share** stack's shared volume
 
 | Variable | Default |
 |---|---|
-| `ABS_AUDIOBOOKS_PATH`  | `/mnt/data/stacks/file-share/data/Audiobooks` |
-| `ABS_PODCASTS_PATH`    | `/mnt/data/stacks/file-share/data/Podcasts` |
+| `ABS_AUDIOBOOKS_PATH`  | `/mnt/data/stacks/file-share/data/audiobooks` |
+| `ABS_PODCASTS_PATH`    | `/mnt/data/stacks/file-share/data/podcasts` |
 | `JELLYFIN_MEDIA_PATH`  | `/mnt/data/stacks/file-share/data` (whole tree, mounted read-only at `/media`) |
 
-Jellyfin's post-deploy auto-adds `/media/Music` as a "Music" library. Other folders (`Movies/`, `TV/`, `Photos/`) you add manually in **Dashboard → Libraries → Add Media Library** — Jellyfin's metadata sources differ per type, so we don't commit to a default.
+Folder names are lowercase by convention so they sit cleanly alongside the existing `notes/` sibling under the same data root — see #1018. Existing installs (pre-#1018) keep whatever path the operator originally accepted; the variable is wizard-overridable.
+
+Jellyfin's post-deploy auto-adds `/media/music` (lowercase, matches the file-share Samba share layout) as a "Music" library. Other folders (`movies/`, `tv/`, `photos/`) you add manually in **Dashboard → Libraries → Add Media Library** — Jellyfin's metadata sources differ per type, so we don't commit to a default.
 
 Override any of the paths in the wizard's Configure step if your media lives elsewhere.
 
