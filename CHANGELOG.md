@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.33.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.0...servicebay-v4.33.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* **open-webui:** route chat through Hermes (not direct to Ollama) ([#1032](https://github.com/mdopp/servicebay/issues/1032)) ([9ce6062](https://github.com/mdopp/servicebay/commit/9ce606207339e7190810a1eb58cbbcdc3035c045))
+
 ## [4.33.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.32.1...servicebay-v4.33.0) (2026-05-26)
 
 
