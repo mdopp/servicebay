@@ -1114,9 +1114,16 @@ def fetch_services(containers=None):
             is_sb = 'servicebay' in clean_lower
             
             # Managed Detection
-            # True if backed by a .kube file
+            # True if backed by a .kube or .container file.
+            # `.container` was added in #1026 for the ollama GPU fixup —
+            # podman kube play silently drops `resources.limits.nvidia.com/gpu`
+            # on rootless, so the ollama post-deploy swaps the .kube unit
+            # for a .container Quadlet with AddDevice=nvidia.com/gpu=all
+            # + SecurityLabelDisable=true. Without this widening, the
+            # dashboard tags the GPU-engaged unit as "unmanaged" even
+            # though it was installed by a template's post-deploy.
             source_ext = service_sources.get(name)
-            is_managed = (source_ext == '.kube')
+            is_managed = source_ext in ('.kube', '.container')
             
             # Handle Nginx Alias for Managed detection (nginx -> nginx.kube)
             if not is_managed and is_proxy:
