@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.33.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.1...servicebay-v4.33.2) (2026-05-26)
+
+
+### Bug Fixes
+
+* **agent:** remove function-local subprocess re-import that shadowed module-level ([#1034](https://github.com/mdopp/servicebay/issues/1034)) ([d08f009](https://github.com/mdopp/servicebay/commit/d08f0093a3b6584b9c9b146891b2c5b56fcf8ae3))
+
 ## [4.33.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.33.0...servicebay-v4.33.1) (2026-05-26)
 
 
