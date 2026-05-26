@@ -80,4 +80,71 @@ export const handlers = [
   http.get('/api/install/status', () => {
     return HttpResponse.json(idleInstallStatus);
   }),
+
+  // #971 — Expanded handler coverage for the dashboards + onboarding
+  // wizard. Each handler returns a minimal happy-path shape. Storybook
+  // stories can pass `?mock=...` query params for bad-path responses;
+  // default is "this surface renders something plausible without a
+  // backend."
+
+  // GET /api/services — list of deployed services
+  http.get('/api/services', () => HttpResponse.json([])),
+
+  // GET /api/containers — runtime container inventory
+  http.get('/api/containers', () => HttpResponse.json([])),
+
+  // GET /api/settings — operator config bag
+  http.get('/api/settings', () => HttpResponse.json({})),
+
+  // GET /api/settings/logLevel
+  http.get('/api/settings/logLevel', () => HttpResponse.json({ logLevel: 'info' })),
+
+  // GET /api/system/version
+  http.get('/api/system/version', () => HttpResponse.json({
+    version: '0.0.0-mock', latest: null, hasUpdate: false,
+  })),
+
+  // GET /api/system/mode — single-node vs cluster
+  http.get('/api/system/mode', () => HttpResponse.json({ mode: 'single-node' })),
+
+  // GET /api/system/reinstall — reinstall capabilities probe
+  http.get('/api/system/reinstall', () => HttpResponse.json({
+    available: false, reason: 'mock mode',
+  })),
+
+  // GET /api/system/templates/upgrades-pending
+  http.get('/api/system/templates/upgrades-pending', () => HttpResponse.json([])),
+
+  // GET /api/health/checks
+  http.get('/api/health/checks', () => HttpResponse.json([])),
+
+  // GET /api/network/graph — empty topology
+  http.get('/api/network/graph', () => HttpResponse.json({
+    nodes: [], edges: [], metadata: { stats: {} },
+  })),
+
+  // GET /api/system/storage?node=...
+  http.get('/api/system/storage', () => HttpResponse.json({
+    disks: [], raids: [], lvms: [],
+  })),
+
+  // GET /api/system/devices?node=...
+  http.get('/api/system/devices', () => HttpResponse.json({})),
+
+  // GET /api/auth/me — current-user introspection (consumed by #1001)
+  http.get('/api/auth/me', () => HttpResponse.json({
+    username: 'mockuser',
+    displayName: 'Mock User',
+    email: 'mock@example.com',
+    groups: ['family'],
+  })),
+
+  // GET /api/logs/query — log viewer empty result
+  http.get('/api/logs/query', () => HttpResponse.json({ success: true, logs: [] })),
+
+  // GET /api/logs/tags
+  http.get('/api/logs/tags', () => HttpResponse.json({ success: true, tags: [] })),
+
+  // GET /api/logs/list — log-by-date files
+  http.get('/api/logs/list', () => HttpResponse.json({ success: true, files: [] })),
 ];
