@@ -186,12 +186,20 @@ class TestAgent(unittest.TestCase):
 
     @patch('agent.log_debug')
     @patch('sys.stderr')
+    @patch('subprocess.check_call')
     @patch('subprocess.run')
     @patch('agent.run_command')
-    def test_fetch_proxy_routes_silence(self, mock_run_cmd, mock_sub_run, mock_stderr, mock_log_debug):
+    def test_fetch_proxy_routes_silence(self, mock_run_cmd, mock_sub_run, mock_sub_check_call, mock_stderr, mock_log_debug):
         # Setup mocks to return valid proxy routes
         mock_run_cmd.return_value = "nginx-proxy" # found container
-        
+
+        # fetch_proxy_routes calls subprocess.check_call to `podman cp` the
+        # inspector script into the nginx container before running it. The
+        # original test only patched subprocess.run, so check_call escaped
+        # to the real podman and the surrounding try/except swallowed the
+        # FileNotFoundError, returning []. Stub check_call to a no-op too.
+        mock_sub_check_call.return_value = 0
+
         # Mock exec output
         mock_proc = MagicMock()
         mock_proc.returncode = 0
