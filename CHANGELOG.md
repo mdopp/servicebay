@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.40.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.40.0...servicebay-v4.40.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **api:** /api/system/stacks now includes external-registry stacks ([2a4930e](https://github.com/mdopp/servicebay/commit/2a4930ef6eda6ec62ad73bef8f64c3a67e4ff29c))
+* **api:** /api/system/stacks now includes external-registry stacks ([c534761](https://github.com/mdopp/servicebay/commit/c534761460f64831ba2b46d2c2706933e753170a))
+* **portal:** /api/portal/asset now serves authenticated SB sessions in public mode ([46dc511](https://github.com/mdopp/servicebay/commit/46dc5113f7bf493efe733f90a030acdba5a3c497))
+* **portal:** accept 8-group Syncthing device-ids (v2.x format) ([77d5226](https://github.com/mdopp/servicebay/commit/77d52267a4ea8161f139122d1c2eaa4c41fa1935))
+* **portal:** accept Syncthing v2.x 8-group device-ids ([10cc0ad](https://github.com/mdopp/servicebay/commit/10cc0adb84444c704b55e36cd2d60b6d054b130e))
+* **portal:** allow authenticated SB requests to /api/portal/asset in public mode ([bdf402a](https://github.com/mdopp/servicebay/commit/bdf402af5e85f29917181438f89d20561dd89646))
+
 ## [4.40.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.39.2...servicebay-v4.40.0) (2026-05-27)
 
 
