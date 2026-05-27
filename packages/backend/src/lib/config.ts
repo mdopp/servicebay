@@ -143,6 +143,19 @@ export interface AgentConfig {
 }
 
 export interface AppConfig {
+  /**
+   * Schema version of the persisted `config.json` document (#1099 Phase 1).
+   * `1` is the baseline — every shape that existed before this field was
+   * introduced. Future breaking changes bump this number and add a
+   * migration step to Phase 2's migration ledger; on startup the ledger
+   * walks from the persisted version to `CURRENT_SCHEMA_VERSION`.
+   *
+   * Optional in the interface because legacy configs persisted before
+   * this PR don't carry the field — the ConfigTransformer below stamps
+   * them with `1` on first read so downstream code can rely on
+   * `getSchemaVersion()` returning a number.
+   */
+  schemaVersion?: number;
   logLevel?: LogLevel;
   serverName?: string; // Custom display name for this server
   domain?: string; // Optional domain for display
@@ -416,6 +429,21 @@ export function getJobLogLimits(config: AppConfig): { maxLines: number; maxBytes
   };
 }
 
+// #1099 Phase 1: schema version of the persisted config document.
+// Phase 2 will introduce a migration ledger that walks `persisted →
+// CURRENT_SCHEMA_VERSION` on startup; this PR establishes the baseline
+// so the ledger has a number to walk from. Legacy configs missing the
+// field are stamped `1` by the ConfigTransformer below, so in-memory
+// configs always carry a value once they've passed through migrateConfig().
+export const CURRENT_SCHEMA_VERSION = 1;
+
+export function getSchemaVersion(config: AppConfig): number {
+  // Fallback to 1 (the baseline) rather than CURRENT — a legacy config
+  // missing the field represents v1 data, regardless of where CURRENT
+  // moves to in the future.
+  return config.schemaVersion ?? 1;
+}
+
 export interface ServicePostDeployRecord {
   /** ISO timestamp of when the script finished (success or failure). */
   lastRunAt: string;
@@ -529,6 +557,7 @@ const normalizeExternalLinks = (links?: ExternalLink[]): ExternalLink[] | undefi
 };
 
 const DEFAULT_CONFIG: AppConfig = {
+  schemaVersion: CURRENT_SCHEMA_VERSION,
   templateSettings: {},
   logLevel: 'info',
   agent: {

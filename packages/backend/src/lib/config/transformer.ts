@@ -34,7 +34,22 @@ const renameExternalLinkTargets: ConfigTransform = {
     }
 };
 
-const transforms: ConfigTransform[] = [renameExternalLinkTargets];
+// #1099 Phase 1: stamp a baseline `schemaVersion: 1` on legacy configs
+// that pre-date the field. Phase 2's migration ledger reads this value
+// to decide which migrations to apply; without the stamp, every legacy
+// box would look like "no version at all" and the ledger would need
+// special-case handling for that. Stamping once at transform time lets
+// the rest of the codebase rely on the field being present.
+const stampSchemaVersion: ConfigTransform = {
+    name: 'schema-version-baseline',
+    run: (config) => {
+        if (typeof config.schemaVersion === 'number') return false;
+        config.schemaVersion = 1;
+        return true;
+    }
+};
+
+const transforms: ConfigTransform[] = [renameExternalLinkTargets, stampSchemaVersion];
 
 export class ConfigTransformer {
     constructor(private readonly configPath: string) {}
