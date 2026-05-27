@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.36.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.2...servicebay-v4.36.3) (2026-05-27)
+
+
+### Bug Fixes
+
+* **backend:** apply runtime logLevel changes inside updateConfig ([2520a47](https://github.com/mdopp/servicebay/commit/2520a47a6d0475e57e15960e1e43638e2b24ae99))
+* **backend:** apply runtime logLevel changes inside updateConfig ([c5b2efa](https://github.com/mdopp/servicebay/commit/c5b2efa8581ae43129b681842085ec09a9164ecf))
+* **backend:** require FritzBox host to be a private LAN address ([7dac577](https://github.com/mdopp/servicebay/commit/7dac57782c54786e634ffbf8e9902482acc25c77))
+* **backend:** require FritzBox host to be a private LAN address ([109fdb9](https://github.com/mdopp/servicebay/commit/109fdb97a2a41fe4af7a01f0fbe01667a6c84e83))
+* **portal:** reset onboarding picker checks on back-nav into picker ([40813ca](https://github.com/mdopp/servicebay/commit/40813ca6b024796983a96f41d53660f31a85af0b))
+* **portal:** reset onboarding picker checks on back-nav into picker ([229c664](https://github.com/mdopp/servicebay/commit/229c664772b77f6aef65740031416cdbd47613e1))
+
 ## [4.36.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.1...servicebay-v4.36.2) (2026-05-27)
 
 
