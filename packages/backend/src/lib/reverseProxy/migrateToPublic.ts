@@ -376,6 +376,80 @@ export function validatePublicDomain(input: unknown): string | null {
 }
 
 /**
+ * Per-host plan record: one dual-server_name step plus its paired
+ * cert-request step. Returned by `planHostMigration` and consumed by
+ * `planNpmProxyHostSteps`. Either field can be undefined when the
+ * host isn't on the lan root (nothing to migrate).
+ */
+function planHostMigration(
+  host: NpmHost,
+  lanRoot: string,
+  publicDomain: string,
+): { step?: ProxyHostStep; certStep?: CertRequestStep } {
+  const lanEntry = (host.domain_names ?? []).find(d => publicTwin(d, lanRoot, publicDomain) !== null);
+  if (!lanEntry) return {};
+  const twin = publicTwin(lanEntry, lanRoot, publicDomain);
+  if (!twin) return {};
+  const before = (host.domain_names ?? []).slice();
+  const alreadyDual = before.includes(twin);
+  const after = alreadyDual ? before : [...before, twin];
+  const hasCert = typeof host.certificate_id === 'number' && host.certificate_id > 0;
+  return {
+    step: { kind: 'npm-dual-server-name', hostId: host.id, domain: lanEntry, before, after, skipped: alreadyDual },
+    certStep: {
+      kind: 'cert-request',
+      hostId: host.id,
+      domain: twin,
+      skipped: hasCert,
+      skipReason: hasCert ? `host ${host.id} already has certificate_id=${host.certificate_id}` : undefined,
+    },
+  };
+}
+
+/**
+ * Plan the NPM proxy-host portion of a lan→public migration. Iterates
+ * every NPM host once and contributes both a `npm-dual-server-name`
+ * step and a (conditional) `cert-request` step so the per-host
+ * certificate state can be read off the same record. Each early-exit
+ * — NPM not deployed, can't authenticate, can't list hosts — appends
+ * a warning and returns whatever it managed to collect; the caller
+ * merges the warnings into the overall plan.
+ */
+async function planNpmProxyHostSteps(
+  npm: NpmDeps,
+  lanRoot: string,
+  publicDomain: string,
+): Promise<{ steps: ProxyHostStep[]; certSteps: CertRequestStep[]; warnings: string[] }> {
+  const steps: ProxyHostStep[] = [];
+  const certSteps: CertRequestStep[] = [];
+  const warnings: string[] = [];
+
+  const npmTarget = await npm.resolveNpm();
+  if (!npmTarget) {
+    warnings.push('Nginx Proxy Manager is not deployed or not running; proxy-host steps will be skipped.');
+    return { steps, certSteps, warnings };
+  }
+  const token = await npm.getToken(npmTarget.apiUrl);
+  if (!token) {
+    warnings.push(`Could not authenticate with NPM at ${npmTarget.apiUrl}; proxy-host steps will be skipped.`);
+    return { steps, certSteps, warnings };
+  }
+  let hosts: NpmHost[] = [];
+  try {
+    hosts = await npm.listHosts(npmTarget.apiUrl, token);
+  } catch (e) {
+    warnings.push(`Could not list NPM proxy hosts: ${e instanceof Error ? e.message : String(e)}`);
+    return { steps, certSteps, warnings };
+  }
+  for (const host of hosts) {
+    const { step, certStep } = planHostMigration(host, lanRoot, publicDomain);
+    if (step) steps.push(step);
+    if (certStep) certSteps.push(certStep);
+  }
+  return { steps, certSteps, warnings };
+}
+
+/**
  * Build a plan against the current install state without making any
  * changes. Safe to call repeatedly; output is deterministic given the
  * same inputs.
@@ -410,50 +484,10 @@ export async function planMigrationToPublic(
   //    iterated once and contribute both a dual-server_name step and
   //    a (conditional) cert-request step so the per-host certificate
   //    state can be read off the same record.
-  const npmTarget = await deps.npm.resolveNpm();
-  const certSteps: CertRequestStep[] = [];
-  if (!npmTarget) {
-    warnings.push('Nginx Proxy Manager is not deployed or not running; proxy-host steps will be skipped.');
-  } else {
-    const token = await deps.npm.getToken(npmTarget.apiUrl);
-    if (!token) {
-      warnings.push(`Could not authenticate with NPM at ${npmTarget.apiUrl}; proxy-host steps will be skipped.`);
-    } else {
-      let hosts: NpmHost[] = [];
-      try {
-        hosts = await deps.npm.listHosts(npmTarget.apiUrl, token);
-      } catch (e) {
-        warnings.push(`Could not list NPM proxy hosts: ${e instanceof Error ? e.message : String(e)}`);
-      }
-      for (const host of hosts) {
-        const lanEntry = (host.domain_names ?? []).find(d => publicTwin(d, lanRoot, publicDomain) !== null);
-        if (!lanEntry) continue;
-        const twin = publicTwin(lanEntry, lanRoot, publicDomain);
-        if (!twin) continue;
-        const before = (host.domain_names ?? []).slice();
-        const alreadyDual = before.includes(twin);
-        const after = alreadyDual ? before : [...before, twin];
-        steps.push({
-          kind: 'npm-dual-server-name',
-          hostId: host.id,
-          domain: lanEntry,
-          before,
-          after,
-          skipped: alreadyDual,
-        });
-        const hasCert = typeof host.certificate_id === 'number' && host.certificate_id > 0;
-        certSteps.push({
-          kind: 'cert-request',
-          hostId: host.id,
-          domain: twin,
-          skipped: hasCert,
-          skipReason: hasCert
-            ? `host ${host.id} already has certificate_id=${host.certificate_id}`
-            : undefined,
-        });
-      }
-    }
-  }
+  const npmResult = await planNpmProxyHostSteps(deps.npm, lanRoot, publicDomain);
+  warnings.push(...npmResult.warnings);
+  steps.push(...npmResult.steps);
+  const certSteps = npmResult.certSteps;
 
   // 2) Authelia config — read + dry-run the rewrite to surface changes.
   const autheliaLoc = await deps.authelia.locateConfig();
