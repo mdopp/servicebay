@@ -557,6 +557,45 @@ with a justifying comment.
 `config.registries[]` accepts git URLs that follow the same on-disk
 layout (a `templates/` directory at the repo root). The `registry.ts`
 sync clones with `--depth 1 --filter=blob:none --sparse`, then
-`sparse-checkout set templates stacks`. External registries override
-built-ins with the same name, so you can ship a custom variant of any
-bundled template by publishing it under the same directory name.
+`sparse-checkout set templates stacks servicebay.json`. External
+registries override built-ins with the same name, so you can ship a
+custom variant of any bundled template by publishing it under the same
+directory name.
+
+### Custom layouts via `servicebay.json` (#1050)
+
+For registries whose top-level layout reflects their own subsystem
+boundaries rather than ServiceBay's expected sparse-checkout shape,
+ship a `servicebay.json` at the repo root declaring where templates
+and stacks live:
+
+```json
+{
+  "templates": [
+    { "name": "oscar-household", "path": "servicebay-template" }
+  ],
+  "stacks": [
+    { "name": "household", "path": "stacks/household" }
+  ]
+}
+```
+
+Paths are relative to the registry root. When the manifest is present,
+ServiceBay reads `templates[]` and `stacks[]` entries from it instead
+of scanning the legacy `templates/` and `stacks/` directories. A
+registry can ship a manifest declaring `templates[]` only and let
+stacks keep using the legacy convention — the fallback applies per
+type. Manifest entries pointing at missing directories are warned and
+skipped; they don't crash registry enumeration.
+
+The sparse-checkout patterns widen automatically: after the first
+clone exposes `servicebay.json`, the sync layer re-runs
+`sparse-checkout set` to include every path the manifest declares, so
+the working tree only carries the paths the manifest names plus the
+default `templates/` + `stacks/` fallbacks.
+
+Example use case: `mdopp/oscar` keeps its template, Hermes skill pack,
+Wyoming-bridge image source, and Postgres-schema migrations in clearly
+separated top-level directories, with `servicebay.json` pointing the
+ServiceBay template at `servicebay-template/`. No `templates/` folder
+at the registry root.

@@ -25,6 +25,97 @@ const DEFAULT_REGISTRY: RegistryConfig = {
   url: 'https://github.com/mdopp/servicebay.git',
 };
 
+/**
+ * Optional registry-side manifest (#1050) describing where templates
+ * and stacks live within the repo. Registries that don't ship a
+ * `servicebay.json` keep using the legacy convention (`templates/<name>/`,
+ * `stacks/<name>/`), so existing registries — `mdopp/servicebay`,
+ * `mdopp/servicebay-templates` — keep working without change.
+ *
+ * The motivation is registries whose top-level layout reflects their
+ * own subsystem boundaries rather than ServiceBay's expected
+ * sparse-checkout shape — e.g. `mdopp/oscar` with
+ * `servicebay-template/`, `hermes-skills/`, `voice-gatekeeper/`,
+ * `database/` at the root. The manifest tells SB which of those
+ * directories to scan as templates.
+ *
+ * Shape:
+ *   {
+ *     "templates": [{ "name": "oscar-household", "path": "servicebay-template" }],
+ *     "stacks":    [{ "name": "household",       "path": "stacks/household"    }]
+ *   }
+ *
+ * Paths are relative to the registry root; the legacy `templates/` and
+ * `stacks/` directories continue to be scanned as a fallback when the
+ * manifest is missing.
+ */
+interface RegistryManifestEntry {
+  name: string;
+  path: string;
+}
+
+interface RegistryManifest {
+  templates?: RegistryManifestEntry[];
+  stacks?: RegistryManifestEntry[];
+}
+
+/**
+ * Per-registry manifest cache. Cleared on every `syncRegistries` call
+ * so a freshly-pulled manifest is picked up without a server restart.
+ * `null` means "checked the disk, no manifest present" — distinct from
+ * "not yet checked" (key absent).
+ */
+const manifestCache = new Map<string, RegistryManifest | null>();
+
+/**
+ * Test-only escape hatch to drop the manifest cache without invoking
+ * `syncRegistries`. The cache is module-scoped, so unit tests that
+ * reuse a registry name across cases would otherwise pollute each
+ * other. Production code paths reset via `syncRegistries`'s own
+ * `manifestCache.clear()`.
+ */
+export function _resetRegistryManifestCacheForTests(): void {
+  manifestCache.clear();
+}
+
+async function readRegistryManifest(regName: string): Promise<RegistryManifest | null> {
+  if (manifestCache.has(regName)) return manifestCache.get(regName) ?? null;
+  const p = path.join(REGISTRIES_DIR, regName, 'servicebay.json');
+  try {
+    const raw = await fs.readFile(p, 'utf-8');
+    const parsed = JSON.parse(raw) as RegistryManifest;
+    manifestCache.set(regName, parsed);
+    return parsed;
+  } catch {
+    manifestCache.set(regName, null);
+    return null;
+  }
+}
+
+/**
+ * Resolve the on-disk directory for a template or stack in a given
+ * registry, consulting the manifest first and falling back to the
+ * legacy `<type>s/<name>/` convention. Returns the absolute path even
+ * when the directory doesn't exist — caller's existing fs.access /
+ * fs.readFile failure paths handle "not found" the same way they did
+ * before the manifest existed.
+ */
+async function resolveRegistryItemPath(
+  regName: string,
+  type: 'template' | 'stack',
+  itemName: string,
+): Promise<string> {
+  const manifest = await readRegistryManifest(regName);
+  const entries = type === 'template' ? manifest?.templates : manifest?.stacks;
+  if (entries) {
+    const entry = entries.find(e => e.name === itemName);
+    if (entry) return path.join(REGISTRIES_DIR, regName, entry.path);
+  }
+  // Legacy fallback — also the path for manifest-less registries.
+  const subdir = type === 'template' ? 'templates' : 'stacks';
+  return path.join(REGISTRIES_DIR, regName, subdir, itemName);
+}
+
 export interface Template {
   name: string;
   path: string;
@@ -192,6 +283,32 @@ async function cloneSparse(url: string, dest: string, dirs: string[]) {
     await execFileAsync('git', ['sparse-checkout', 'set', ...dirs], { cwd: dest });
 }
 
+/**
+ * Widen an already-sparse clone to include extra paths declared by the
+ * registry's `servicebay.json`. Called after the initial sparse-checkout
+ * exposes the manifest itself — once we read which custom paths it
+ * names, this pulls them in without re-cloning. No-op if the manifest
+ * declares no entries that fall outside the default patterns.
+ */
+async function widenSparseForManifest(regPath: string, manifest: RegistryManifest): Promise<void> {
+    const extra = new Set<string>();
+    for (const e of manifest.templates ?? []) extra.add(e.path);
+    for (const e of manifest.stacks ?? []) extra.add(e.path);
+    if (extra.size === 0) return;
+    // Keep the defaults so legacy `templates/` and `stacks/` co-existence
+    // (a repo that ships some of each shape) still works.
+    const patterns = ['templates', 'stacks', 'servicebay.json', ...extra];
+    try {
+        await execFileAsync('git', ['sparse-checkout', 'set', ...patterns], { cwd: regPath });
+    } catch (e) {
+        // Failure here doesn't strand the registry — the manifest still
+        // points at paths that just won't be present on disk; downstream
+        // `fs.readFile` returns the same "not found" the operator would
+        // see for a stale manifest.
+        logger.warn('registry', `widenSparseForManifest failed for ${regPath}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+
 let gitAvailability: boolean | null = null;
 async function isGitAvailable(): Promise<boolean> {
     if (gitAvailability !== null) return gitAvailability;
@@ -224,6 +341,10 @@ export async function syncRegistries() {
         await fs.mkdir(REGISTRIES_DIR, { recursive: true });
     } catch {}
 
+    // Clear the manifest cache so any servicebay.json updates pulled
+    // this round are picked up. Pre-existing readers will re-read once.
+    manifestCache.clear();
+
     for (const reg of registries) {
         const regPath = path.join(REGISTRIES_DIR, reg.name);
         // Isolate each registry: a single bad URL (a 404'd repo, an
@@ -244,11 +365,23 @@ export async function syncRegistries() {
                 // Doesn't exist, clone
                 logger.info('registry', `Cloning registry ${reg.name}...`);
                 try {
-                    await cloneSparse(reg.url, regPath, ['templates', 'stacks']);
+                    // Default sparse patterns include `servicebay.json` so a
+                    // manifest-using registry exposes it on the first clone;
+                    // `widenSparseForManifest` below then pulls any custom
+                    // paths declared inside.
+                    await cloneSparse(reg.url, regPath, ['templates', 'stacks', 'servicebay.json']);
                 } catch {
                     // Fallback to full clone if sparse checkout not supported
                     await execFileAsync('git', ['clone', '--depth', '1', reg.url, regPath]);
                 }
+            }
+            // Manifest pass: if the registry ships `servicebay.json`, pull
+            // any custom paths it declares (e.g. `servicebay-template/`,
+            // `hermes-skills/`) into the sparse working tree so the
+            // resolver helpers find them. No-op for legacy registries.
+            const manifest = await readRegistryManifest(reg.name);
+            if (manifest) {
+                await widenSparseForManifest(regPath, manifest);
             }
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -272,10 +405,20 @@ export async function getTemplates(): Promise<Template[]> {
 
     for (const reg of registries) {
         const regPath = path.join(REGISTRIES_DIR, reg.name);
-        const [regTemplates, regStacks] = await Promise.all([
-            fetchDir(path.join(regPath, 'templates'), 'template', reg.name),
-            fetchDir(path.join(regPath, 'stacks'), 'stack', reg.name)
-        ]);
+        const manifest = await readRegistryManifest(reg.name);
+
+        // Templates: manifest-declared paths if a manifest exists, else
+        // legacy `templates/` scan. Stacks: same. A registry that ships
+        // a manifest declaring `templates[]` but no `stacks[]` falls back
+        // to scanning `stacks/` for the stacks half — that's the most
+        // useful mixed-shape behaviour (most registries have a clear
+        // "templates live here, stacks are conventional" split).
+        const regTemplates: Template[] = manifest?.templates
+            ? await fetchManifestEntries(regPath, manifest.templates, 'template', reg.name)
+            : await fetchDir(path.join(regPath, 'templates'), 'template', reg.name);
+        const regStacks: Template[] = manifest?.stacks
+            ? await fetchManifestEntries(regPath, manifest.stacks, 'stack', reg.name)
+            : await fetchDir(path.join(regPath, 'stacks'), 'stack', reg.name);
 
         // Registry versions override built-in templates with the same name
         const regItems = [...regStacks, ...regTemplates];
@@ -292,14 +435,53 @@ export async function getTemplates(): Promise<Template[]> {
     return allTemplates;
 }
 
-export async function getReadme(name: string, type: 'template' | 'stack', source?: string): Promise<string | null> {
-  const subdir = type === 'stack' ? 'stacks' : 'templates';
+/**
+ * Manifest-aware sibling to `fetchDir`. Where `fetchDir` reads every
+ * subdirectory of a fixed parent (`templates/` or `stacks/`),
+ * `fetchManifestEntries` walks the explicit `{name, path}` list from
+ * `servicebay.json`. Missing dirs are silently dropped — the operator
+ * gets the same "template not visible" symptom they'd get from a
+ * legacy registry with a missing folder, and the consistency lint
+ * catches it at build time.
+ */
+async function fetchManifestEntries(
+  regPath: string,
+  entries: RegistryManifestEntry[],
+  type: 'template' | 'stack',
+  source: string,
+): Promise<Template[]> {
+  const out: Template[] = [];
+  for (const entry of entries) {
+    const itemDir = path.join(regPath, entry.path);
+    try {
+      await fs.access(itemDir);
+    } catch {
+      // Manifest names a path the working tree doesn't have — most
+      // likely a stale manifest or a sparse-checkout that didn't widen.
+      // Skip rather than crash the whole registry's enumeration.
+      logger.warn('registry', `manifest entry ${source}/${entry.name} → ${entry.path} not present on disk`);
+      continue;
+    }
+    const { tier, dependencies } = await readTemplateMeta(itemDir, type, entry.name, source);
+    out.push({
+      name: entry.name,
+      path: itemDir,
+      url: '',
+      type,
+      source,
+      tier,
+      dependencies,
+    });
+  }
+  return out;
+}
 
+export async function getReadme(name: string, type: 'template' | 'stack', source?: string): Promise<string | null> {
   // If a specific source is given, use it directly
   if (source && source !== 'Built-in') {
     try {
-      const filePath = path.join(REGISTRIES_DIR, source, subdir, name, 'README.md');
-      return await fs.readFile(filePath, 'utf-8');
+      const itemDir = await resolveRegistryItemPath(source, type, name);
+      return await fs.readFile(path.join(itemDir, 'README.md'), 'utf-8');
     } catch {
       return null;
     }
@@ -311,8 +493,8 @@ export async function getReadme(name: string, type: 'template' | 'stack', source
     const registries = getRegistries(config);
     for (const reg of registries) {
       try {
-        const filePath = path.join(REGISTRIES_DIR, reg.name, subdir, name, 'README.md');
-        return await fs.readFile(filePath, 'utf-8');
+        const itemDir = await resolveRegistryItemPath(reg.name, type, name);
+        return await fs.readFile(path.join(itemDir, 'README.md'), 'utf-8');
       } catch { /* not in this registry */ }
     }
   }
@@ -331,8 +513,8 @@ export async function getTemplateYaml(name: string, source?: string): Promise<st
   // If a specific source is given, use it directly
   if (source && source !== 'Built-in') {
     try {
-      const filePath = path.join(REGISTRIES_DIR, source, 'templates', name, 'template.yml');
-      return await fs.readFile(filePath, 'utf-8');
+      const itemDir = await resolveRegistryItemPath(source, 'template', name);
+      return await fs.readFile(path.join(itemDir, 'template.yml'), 'utf-8');
     } catch {
       return null;
     }
@@ -344,8 +526,8 @@ export async function getTemplateYaml(name: string, source?: string): Promise<st
     const registries = getRegistries(config);
     for (const reg of registries) {
       try {
-        const filePath = path.join(REGISTRIES_DIR, reg.name, 'templates', name, 'template.yml');
-        return await fs.readFile(filePath, 'utf-8');
+        const itemDir = await resolveRegistryItemPath(reg.name, 'template', name);
+        return await fs.readFile(path.join(itemDir, 'template.yml'), 'utf-8');
       } catch { /* not in this registry */ }
     }
   }
@@ -498,14 +680,16 @@ export async function getTemplateVariables(name: string, source?: string): Promi
   };
 
   if (source && source !== 'Built-in') {
-    return tryRead(path.join(REGISTRIES_DIR, source, 'templates', name, 'variables.json'));
+    const itemDir = await resolveRegistryItemPath(source, 'template', name);
+    return tryRead(path.join(itemDir, 'variables.json'));
   }
 
   if (!source) {
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
-      const result = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'templates', name, 'variables.json'));
+      const itemDir = await resolveRegistryItemPath(reg.name, 'template', name);
+      const result = await tryRead(path.join(itemDir, 'variables.json'));
       if (result) return result;
     }
   }
@@ -536,14 +720,14 @@ export async function getTemplateConfigFiles(name: string, source?: string): Pro
   };
 
   if (source && source !== 'Built-in') {
-    return scanDir(path.join(REGISTRIES_DIR, source, 'templates', name));
+    return scanDir(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
-      const files = await scanDir(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      const files = await scanDir(await resolveRegistryItemPath(reg.name, 'template', name));
       if (files.length > 0) return files;
     }
   }
@@ -577,14 +761,14 @@ export async function getTemplatePostDeployScript(name: string, source?: string)
   };
 
   if (source && source !== 'Built-in') {
-    return tryRead(path.join(REGISTRIES_DIR, source, 'templates', name));
+    return tryRead(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
-      const found = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      const found = await tryRead(await resolveRegistryItemPath(reg.name, 'template', name));
       if (found !== null) return found;
     }
   }
@@ -610,14 +794,14 @@ export async function getTemplateUserGuide(name: string, source?: string): Promi
   };
 
   if (source && source !== 'Built-in') {
-    return tryRead(path.join(REGISTRIES_DIR, source, 'templates', name));
+    return tryRead(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
-      const found = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      const found = await tryRead(await resolveRegistryItemPath(reg.name, 'template', name));
       if (found !== null) return found;
     }
   }
@@ -638,14 +822,14 @@ export async function getTemplateChangelog(name: string, source?: string): Promi
   };
 
   if (source && source !== 'Built-in') {
-    return tryRead(path.join(REGISTRIES_DIR, source, 'templates', name));
+    return tryRead(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
-      const found = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      const found = await tryRead(await resolveRegistryItemPath(reg.name, 'template', name));
       if (found !== null) return found;
     }
   }
@@ -722,14 +906,14 @@ export async function getTemplateMigrationScripts(
   };
 
   if (source && source !== 'Built-in') {
-    return scanDir(path.join(REGISTRIES_DIR, source, 'templates', name));
+    return scanDir(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
-      const found = await scanDir(path.join(REGISTRIES_DIR, reg.name, 'templates', name));
+      const found = await scanDir(await resolveRegistryItemPath(reg.name, 'template', name));
       if (found.length > 0) return found;
     }
   }
@@ -762,13 +946,13 @@ export async function getStackManifest(
 
   let yamlText: string | null = null;
   if (source && source !== 'Built-in') {
-    yamlText = await tryRead(path.join(REGISTRIES_DIR, source, 'stacks', name));
+    yamlText = await tryRead(await resolveRegistryItemPath(source, 'stack', name));
   } else {
     if (!source) {
       const config = await getConfig();
       const registries = getRegistries(config);
       for (const reg of registries) {
-        const found = await tryRead(path.join(REGISTRIES_DIR, reg.name, 'stacks', name));
+        const found = await tryRead(await resolveRegistryItemPath(reg.name, 'stack', name));
         if (found !== null) { yamlText = found; break; }
       }
     }
