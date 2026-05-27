@@ -391,6 +391,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     handleDelete,
     onRefresh,
     requestDelete,
+    runningAction,
     selectedService,
     serviceToDelete,
     showActions,
