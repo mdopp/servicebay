@@ -1,5 +1,6 @@
 import type { ServiceUnit, EnrichedContainer, ProxyRoute } from '@/lib/agent/types';
 import type { NodeTwin } from '@/lib/store/twin';
+import { parseTemplateLabel } from '@/lib/templateLabel';
 // Direct sub-path import — using the barrel would create a cycle since
 // api-client/index re-exports `buildServiceViewModel` from this file.
 import type { ServiceViewModel, ServicePort } from '@servicebay/api-client/serviceView';
@@ -84,6 +85,18 @@ export function buildServiceViewModel({ unit, nodeName, nodeState, proxyRoutes }
   // Backend-computed display fields (#844 / ARCH-12). The frontend used
   // to derive these with `.replace('.service', '')` and `.split('/').pop()`
   // — those rules belong here so every consumer sees the same answer.
+  //
+  // Label resolution order (most → least specific):
+  //   1. Hard-coded special cases (reverse-proxy / servicebay-system).
+  //   2. `servicebay.label` parsed from the deployed YAML, when it's
+  //      already in the twin's file watcher (kube-managed services).
+  //   3. Fallback to `baseName` (the unit name minus `.service`).
+  //
+  // Step 2 is what makes the /services dashboard render the same
+  // user-friendly labels the portal shows ("Photos" instead of
+  // "immich", "Smart Home (Home Assistant)" instead of "home-assistant").
+  // The YAML content is already in nodeState.files from the file
+  // watcher; no extra I/O.
   let displayName = baseName;
   let legacyName = unit.name;
   if (unit.isReverseProxy) {
@@ -92,6 +105,14 @@ export function buildServiceViewModel({ unit, nodeName, nodeState, proxyRoutes }
   } else if (unit.isServiceBay) {
     displayName = 'ServiceBay System';
     legacyName = displayName;
+  } else if (yamlPath) {
+    const yamlFile = nodeState.files?.[yamlPath];
+    if (yamlFile?.content) {
+      const label = parseTemplateLabel(yamlFile.content);
+      if (label && label.trim()) {
+        displayName = label.trim();
+      }
+    }
   }
 
   const yamlBasename = yamlPath ? (yamlPath.split('/').pop() ?? null) : null;

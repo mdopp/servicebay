@@ -5,7 +5,7 @@ metadata:
   labels:
     app: hermes-webui
   annotations:
-    servicebay.label: "Hermes Web UI (Family Chat)"
+    servicebay.label: "Chat"
     servicebay.schema-version: "1"
     servicebay.ports: "{{HERMES_WEBUI_PORT}}/tcp"
     # Hermes-native chat surface — talks directly to the local Hermes

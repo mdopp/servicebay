@@ -5,7 +5,7 @@ metadata:
   labels:
     app: home-assistant
   annotations:
-    servicebay.label: "Home Assistant"
+    servicebay.label: "Smart Home (Home Assistant)"
     servicebay.schema-version: "6"
     # Home Assistant is reached at home.<domain> via nginx, authenticates
     # via Authelia, and talks to Wyoming-protocol STT/TTS on the voice

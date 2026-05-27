@@ -5,7 +5,7 @@ metadata:
   labels:
     app: vaultwarden
   annotations:
-    servicebay.label: "Vaultwarden (Passwords)"
+    servicebay.label: "Passwords"
     servicebay.schema-version: "2"
     servicebay.ports: "{{VAULTWARDEN_PORT}}/tcp"
     # Install order: proxy + SSO foundation needs to land first so the
