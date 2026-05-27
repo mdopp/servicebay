@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.36.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.0...servicebay-v4.36.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **frontend:** add missing runningAction dep to useServiceActions useMemo ([#1105](https://github.com/mdopp/servicebay/issues/1105)) ([a2abe1f](https://github.com/mdopp/servicebay/commit/a2abe1fdd0e76a9da14d1b464533dc785a193be1)), closes [#1065](https://github.com/mdopp/servicebay/issues/1065)
+* **portal:** parse stack READMEs before advancing to services step ([#1108](https://github.com/mdopp/servicebay/issues/1108)) ([a84dea4](https://github.com/mdopp/servicebay/commit/a84dea445f545b68e8ac8a93d577b1bc21896af1)), closes [#1067](https://github.com/mdopp/servicebay/issues/1067)
+
 ## [4.36.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.35.1...servicebay-v4.36.0) (2026-05-27)
 
 
