@@ -73,29 +73,9 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
             return { nodeName, confDir: yamlResult.exactConfDir, debug };
         }
 
-        // Probe proxy volume host paths for known nginx config subdirectories
-        if (yamlResult.proxyHostPaths.length > 0) {
-            debug.push(`Node "${nodeName}": no exact conf.d mount, probing ${yamlResult.proxyHostPaths.length} proxy volume(s)`);
-            const probed = await probeProxyVolumes(nodeName, yamlResult.proxyHostPaths, debug);
-            if (probed) {
-                logger.info('NginxConfDir', `Resolved conf.d via volume probe: ${probed} on ${nodeName}`);
-                return { nodeName, confDir: probed, debug };
-            }
-        }
-
-        // NPM fallback: if we detected Nginx Proxy Manager but YAML volume extraction
-        // failed (e.g. named volumes without hostPath), construct the data path from
-        // template settings DATA_DIR and probe NPM's known config subdirectories.
-        if (yamlResult.isNpm && yamlResult.proxyHostPaths.length === 0) {
-            debug.push(`Node "${nodeName}": NPM detected but no hostPath volumes extracted, trying DATA_DIR fallback`);
-            const npmPaths = await buildNpmFallbackPaths(debug);
-            if (npmPaths.length > 0) {
-                const probed = await probeProxyVolumes(nodeName, npmPaths, debug);
-                if (probed) {
-                    logger.info('NginxConfDir', `Resolved conf.d via NPM DATA_DIR fallback: ${probed} on ${nodeName}`);
-                    return { nodeName, confDir: probed, debug };
-                }
-            }
+        const probed = await probeProxyAndNpmFallbacks(nodeName, yamlResult, debug);
+        if (probed) {
+            return { nodeName, confDir: probed, debug };
         }
 
         const reason = `Found nginx service "${nginxService.name}" on "${nodeName}" but could not locate the nginx config directory. `
@@ -109,6 +89,43 @@ export async function findNginxConfDir(): Promise<NginxConfDirResult | null> {
         + 'Make sure you have an nginx service deployed and visible in the Services page.';
     debug.push(reason);
     return { nodeName: nodeNames[0] || 'Local', confDir: '', reason, debug };
+}
+
+/**
+ * Probe the proxy host volumes and (for NPM) the DATA_DIR fallback for a
+ * conf.d-like subdirectory. Returns the first path that contains `.conf`
+ * files, or null when no probe succeeds. Extracted from findNginxConfDir
+ * to keep that function under the lint ceiling.
+ */
+async function probeProxyAndNpmFallbacks(
+    nodeName: string,
+    yamlResult: YamlResolution,
+    debug: string[],
+): Promise<string | null> {
+    if (yamlResult.proxyHostPaths.length > 0) {
+        debug.push(`Node "${nodeName}": no exact conf.d mount, probing ${yamlResult.proxyHostPaths.length} proxy volume(s)`);
+        const probed = await probeProxyVolumes(nodeName, yamlResult.proxyHostPaths, debug);
+        if (probed) {
+            logger.info('NginxConfDir', `Resolved conf.d via volume probe: ${probed} on ${nodeName}`);
+            return probed;
+        }
+    }
+
+    // NPM fallback: if we detected Nginx Proxy Manager but YAML volume extraction
+    // failed (e.g. named volumes without hostPath), construct the data path from
+    // template settings DATA_DIR and probe NPM's known config subdirectories.
+    if (yamlResult.isNpm && yamlResult.proxyHostPaths.length === 0) {
+        debug.push(`Node "${nodeName}": NPM detected but no hostPath volumes extracted, trying DATA_DIR fallback`);
+        const npmPaths = await buildNpmFallbackPaths(debug);
+        if (npmPaths.length > 0) {
+            const probed = await probeProxyVolumes(nodeName, npmPaths, debug);
+            if (probed) {
+                logger.info('NginxConfDir', `Resolved conf.d via NPM DATA_DIR fallback: ${probed} on ${nodeName}`);
+                return probed;
+            }
+        }
+    }
+    return null;
 }
 
 function resolveFromTwinFiles(
