@@ -5,20 +5,16 @@
  * manifest + aggregated health. Drives the stacks list UI and the
  * wizard's stack selection step (Phase 5B+).
  */
-import fs from 'fs/promises';
-import path from 'path';
 import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/api/requireSession';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
-import { getStackManifest } from '@/lib/registry';
+import { getStackManifest, getTemplates } from '@/lib/registry';
 import { getStackHealth, type StackHealth } from '@/lib/install/stackHealth';
 import type { StackManifest } from '@/lib/template/stackContract';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
-
-const STACKS_PATH = path.join(process.cwd(), 'stacks');
 
 interface StackSummary {
   name: string;
@@ -31,19 +27,19 @@ export const GET = withApiHandler({}, async ({ request }) => {
   if (auth instanceof NextResponse) return auth;
 
   try {
-    // The registry's `getTemplates()` also returns stacks but only with
-    // README-derived info — for Phase 5B we want the parsed manifest +
-    // aggregated health, which means going through getStackManifest +
-    // getStackHealth per stack. Light enough at our directory count.
-    let dirents: import('fs').Dirent[];
-    try {
-      dirents = await fs.readdir(STACKS_PATH, { withFileTypes: true });
-    } catch {
-      return NextResponse.json({ stacks: [] });
-    }
-    const names = dirents
-      .filter(d => d.isDirectory() && !d.name.startsWith('.'))
-      .map(d => d.name);
+    // Enumerate stack names from the union of built-in + every external
+    // registry. `getTemplates()` returns `Template[]` covering both
+    // templates and stacks across all sources, with external entries
+    // already overriding built-ins by name (`registry.ts:269`). Filter
+    // to `type === 'stack'`, then per-name pull the parsed manifest +
+    // aggregated health.
+    //
+    // History: this used to `fs.readdir(<cwd>/stacks)` directly, which
+    // silently missed every stack shipped from an external registry —
+    // surfaced after the OSCAR migration (#1159) moved `stacks/oscar/`
+    // out to `mdopp/oscar`, leaving the wizard unable to see it.
+    const all = await getTemplates();
+    const names = Array.from(new Set(all.filter(t => t.type === 'stack').map(t => t.name)));
 
     const stacks: StackSummary[] = await Promise.all(names.map(async (name): Promise<StackSummary> => {
       try {
