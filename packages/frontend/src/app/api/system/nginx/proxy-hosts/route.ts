@@ -294,7 +294,7 @@ async function ensureLanAccessList(baseUrl: string, token: string, nodeIp: strin
  * domain isn't reported as a failure when the host already exists
  * from a prior install / re-trigger of the provisioner.
  */
-async function findProxyHostByDomain(baseUrl: string, token: string, domain: string): Promise<{ id: number; advanced_config?: string } | null> {
+async function findProxyHostByDomain(baseUrl: string, token: string, domain: string): Promise<{ id: number; advanced_config?: string; forward_host?: string; forward_port?: number } | null> {
     try {
         const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts?expand=owner,access_list,certificate`, {
             method: 'GET',
@@ -302,11 +302,63 @@ async function findProxyHostByDomain(baseUrl: string, token: string, domain: str
             signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) return null;
-        const list = (await res.json()) as Array<{ id: number; domain_names?: string[]; advanced_config?: string }>;
+        const list = (await res.json()) as Array<{ id: number; domain_names?: string[]; advanced_config?: string; forward_host?: string; forward_port?: number }>;
         const existing = list.find(h => Array.isArray(h.domain_names) && h.domain_names.includes(domain));
-        return existing ? { id: existing.id, advanced_config: existing.advanced_config ?? '' } : null;
+        return existing
+            ? {
+                id: existing.id,
+                advanced_config: existing.advanced_config ?? '',
+                forward_host: existing.forward_host,
+                forward_port: existing.forward_port,
+            }
+            : null;
     } catch {
         return null;
+    }
+}
+
+/**
+ * #1178 — When a proxy host already exists for a domain but its
+ * `forward_host` / `forward_port` no longer match what the installer
+ * requested (e.g. \`hermes-webui\` replaces \`open-webui\` at
+ * \`chat.<domain>\` — same URL, different upstream port), update the
+ * existing host's target rather than leaving the stale upstream in
+ * place. Returns true when an update was made; false when no change
+ * was needed.
+ *
+ * Live finding 2026-05-27 on core@192.168.178.100: \`open-webui\` had
+ * registered \`chat.dopp.cloud → 127.0.0.1:8080\`; \`hermes-webui\`'s
+ * post-deploy ran the decommission flow but never reconciled the
+ * proxy, so operators kept seeing the old Open WebUI on the chat
+ * URL even after the migration completed.
+ */
+async function reconcileProxyHostUpstream(
+    baseUrl: string,
+    token: string,
+    hostId: number,
+    domain: string,
+    expectedHost: string,
+    expectedPort: number,
+    currentHost: string | undefined,
+    currentPort: number | undefined,
+): Promise<boolean> {
+    if (currentHost === expectedHost && currentPort === expectedPort) return false;
+    try {
+        const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ forward_host: expectedHost, forward_port: expectedPort }),
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+            logger.warn('ProxyHosts', `Failed to update forward target for ${domain} (NPM PUT returned ${res.status})`);
+            return false;
+        }
+        logger.info('ProxyHosts', `Reconciled ${domain} upstream: ${currentHost ?? '?'}:${currentPort ?? '?'} → ${expectedHost}:${expectedPort}`);
+        return true;
+    } catch (e) {
+        logger.warn('ProxyHosts', `Failed to update forward target for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
+        return false;
     }
 }
 
@@ -484,6 +536,24 @@ async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRe
             host.proxyConfig?.advanced_config ?? '',
             host.domain,
         );
+        // #1178 — Reconcile forward target when a new template takes
+        // over a domain that another template previously owned (e.g.
+        // hermes-webui replacing open-webui at chat.<domain>). Without
+        // this, the proxy keeps pointing at the dead service. The
+        // caller has already defaulted `host.forwardHost` to the node
+        // LAN IP before reaching here (see line 831).
+        if (host.forwardHost) {
+            await reconcileProxyHostUpstream(
+                baseUrl,
+                token,
+                existing.id,
+                host.domain,
+                host.forwardHost,
+                host.forwardPort,
+                existing.forward_host,
+                existing.forward_port,
+            );
+        }
         return { id: existing.id };
     }
 
