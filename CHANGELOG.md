@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.39.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.38.0...servicebay-v4.39.0) (2026-05-27)
+
+
+### Features
+
+* **backend:** add schemaVersion field to AppConfig ([5336664](https://github.com/mdopp/servicebay/commit/5336664c953fedf5071370a95e62e96ada325aff))
+* **backend:** add schemaVersion field to AppConfig ([53a6b6f](https://github.com/mdopp/servicebay/commit/53a6b6f2b4b45de1144d333114708e94b1377ce8))
+
 ## [4.38.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.37.0...servicebay-v4.38.0) (2026-05-27)
 
 
