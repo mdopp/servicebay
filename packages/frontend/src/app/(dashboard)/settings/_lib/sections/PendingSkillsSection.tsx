@@ -108,7 +108,7 @@ function PendingSkillCard({ skill, busy, onPromoteClick, onRejectClick }: Pendin
               ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ul>,
               ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ol>,
               li: ({children}) => <li className="text-xs">{children}</li>,
-              code: ({node, className, children, ...props}) => {
+              code: ({node: _node, className, children, ...props}) => {
                 const match = /language-(\w+)/.exec(className || '');
                 const isInline = !match;
                 return isInline ? (
@@ -195,7 +195,7 @@ export default function PendingSkillsSection() {
                   break;
                 }
               }
-            } catch (e) {
+            } catch {
               // ignore fetch failures during container reboot
             }
           }
