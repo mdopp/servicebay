@@ -6,9 +6,8 @@ import { useRouter } from 'next/navigation';
 
 const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
 import dynamic from 'next/dynamic';
-import { useDigitalTwin } from '@/hooks/useDigitalTwin';
+import { useTopologyData } from '@/hooks/useTopologyData';
 import type { PortMapping, EnrichedContainer, ServiceUnit } from '@servicebay/api-client';
-import { NetworkGraph } from '@servicebay/api-client'; 
 import { buildServiceViewModel } from '@servicebay/api-client';
 import type { ServiceViewModel } from '@servicebay/api-client';
 import { useServiceActions } from '@/hooks/useServiceActions';
@@ -1008,50 +1007,13 @@ export default function NetworkDashboard() {
     setEdges(layouted.edges);
   }, [setNodes, setEdges, applyFilter]);
 
-  const { data: twin } = useDigitalTwin();
-
-  // Compute graph data from Twin on the fly
-  // This replaces backend aggregation logic with client-side graph builder.
-  // OR we keep backend API but make it reactive?
-  // Ideally, if we have full twin, we can build the graph locally.
-  // BUT the graph logic is complex (see `src/app/api/network/graph/route.ts`).
-  // For now, let's keep fetching the graph from API but trigger it via Twin updates OR 
-  // rewrite `useNetworkGraph` to be a pure function of `twin`.
-  //
-  // Given user request "loaded from digital twin", we should rebuild graph here.
-  // However, rewriting the entire graph builder logic from server to client is risky and large.
-  //
-  // Alternative: Auto-fetch graph when twin updates. (Slightly cheating but fits "no refresh button")
-  // Better: Port the essential graph logic. 
-  //
-  // Let's check `src/lib/network/graph.ts` complexity. If it's pure logic, we can import it?
-  // It imports `manager`, `nodes` which are server-side.
-  // So we CANNOT run graph builder on client easily without heavy refactor.
-  // 
-  // Compromise: We keep fetching from API, but we use `twin` as a dependency to trigger re-fetch automatically.
-  // AND we verify if the server pushes graph updates? The server pushes TWIN updates.
-  // So when twin updates, we re-fetch graph.
-  //
-  // Actually, for "Network Map loaded from digital twin", ideally the client builds it.
-  // But let's stick to the "No Refresh Button" requirement first.
-  
-  const [rawData, setRawData] = useState<NetworkGraph | null>(null);
-
-  const fetchGraph = useCallback(async () => {
-     startReloadToast();
-     try {
-         const res = await fetch('/api/network/graph');
-         if (!res.ok) {
-             throw new Error('Failed to fetch network graph');
-         }
-
-         const data = await res.json();
-         setRawData(data);
-     } catch (e) {
-         const message = e instanceof Error ? e.message : 'Unable to reload network map';
-         resolveReloadToast('error', message);
-     }
-  }, [startReloadToast, resolveReloadToast]);
+  // #1071 phase 1: data layer (graph fetch + twin-driven auto-refresh
+  // + the two effects that drive them) is in useTopologyData. Toast
+  // plumbing stays here since it's a UI concern.
+  const { rawData, fetchGraph, twin } = useTopologyData({
+    onLoadStart: startReloadToast,
+    onLoadError: (message) => resolveReloadToast('error', message),
+  });
 
   const {
       openMonitorDrawer,
@@ -1060,20 +1022,6 @@ export default function NetworkDashboard() {
       requestDelete: requestServiceDelete,
       overlays: serviceActionOverlays,
   } = useServiceActions({ onRefresh: fetchGraph });
-
-  // Kick off the first render as soon as the dashboard mounts so the toast shows immediately
-  useEffect(() => {
-      fetchGraph();
-  }, [fetchGraph]);
-
-  // Auto-fetch when Twin updates (debounced)
-  useEffect(() => {
-     if (!twin) return;
-     
-     // Debounce slightly to avoid thrashing on rapid partial updates
-     const t = setTimeout(fetchGraph, 500);
-     return () => { clearTimeout(t); };
-  }, [twin, fetchGraph]); 
 
   // const refreshing = false; // Hidden
 
