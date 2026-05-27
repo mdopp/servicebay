@@ -14,5 +14,6 @@ export * from './install';
 export * from './services';
 export * from './serviceView';
 export * from './client';
+export * from './apiFetch';
 export * from './lib-types';
 export * from './lib-utils';
