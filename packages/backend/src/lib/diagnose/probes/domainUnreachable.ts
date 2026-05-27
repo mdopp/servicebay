@@ -168,33 +168,22 @@ async function adguardResolves(domain: string, config: AppConfig): Promise<strin
   }
 }
 
-async function fetchOrClassify(url: string): Promise<{ ok: true; status: number; bodySnippet: string; headers: Headers } | { ok: false; reason: 'tls' | 'refused' | 'timeout' | 'dns' | 'other'; detail: string }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { signal: controller.signal, redirect: 'manual' });
-    const body = await res.text().catch(() => '');
-    return { ok: true, status: res.status, bodySnippet: body.slice(0, 256), headers: res.headers };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(msg)) return { ok: false, reason: 'dns', detail: msg };
-    if (/ECONNREFUSED/i.test(msg)) return { ok: false, reason: 'refused', detail: msg };
-    if (/aborted|timeout|ETIMEDOUT/i.test(msg)) return { ok: false, reason: 'timeout', detail: msg };
-    if (/certificate|TLS|SSL|self-signed|unable to verify/i.test(msg)) return { ok: false, reason: 'tls', detail: msg };
-    return { ok: false, reason: 'other', detail: msg };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
+/** Shared return shape between the (currently sole) fetch helper and any
+ *  future siblings that classify network errors. fetchOrClassify lived
+ *  here previously as a public-DNS counterpart to fetchWithHostHeader;
+ *  it was never wired up and got dropped, leaving the type to document
+ *  the contract. */
+type ClassifiedFetchResult =
+  | { ok: true; status: number; bodySnippet: string; headers: Headers }
+  | { ok: false; reason: 'tls' | 'refused' | 'timeout' | 'dns' | 'other'; detail: string };
 
 /**
  * Probe NPM directly via the LAN IP with a `Host:` header — the
  * only way to test proxy routing without depending on a working
- * resolver. Same shape as `fetchOrClassify`. ServiceBay's container
- * shares the host's network namespace (hostNetwork), so `lanIp:80`
- * is just a TCP socket away.
+ * resolver. ServiceBay's container shares the host's network namespace
+ * (hostNetwork), so `lanIp:80` is just a TCP socket away.
  */
-async function fetchWithHostHeader(npmUrl: string, hostHeader: string): Promise<ReturnType<typeof fetchOrClassify> extends Promise<infer T> ? T : never> {
+async function fetchWithHostHeader(npmUrl: string, hostHeader: string): Promise<ClassifiedFetchResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
