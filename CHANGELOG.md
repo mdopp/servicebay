@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.36.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.3...servicebay-v4.36.4) (2026-05-27)
+
+
+### Bug Fixes
+
+* **backend:** route discovery when endpoint is empty ([611750b](https://github.com/mdopp/servicebay/commit/611750b6b46cdd4f29407a60bee7d8273d98b204))
+* **backend:** route discovery's systemctl call through execArgv ([94cae9f](https://github.com/mdopp/servicebay/commit/94cae9fdf1c7d6dd0b69e8c21f44314e76d7194c))
+* **backend:** shellQuote to use single quotes ([4eac25d](https://github.com/mdopp/servicebay/commit/4eac25dde1ff27f927da305f248809f505089c4b))
+
 ## [4.36.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.2...servicebay-v4.36.3) (2026-05-27)
 
 
