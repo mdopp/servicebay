@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, FileText, RefreshCw, X } from 'lucide-react';
 import FileViewer from '@/components/FileViewer';
+import FocusTrap from '@/components/FocusTrap';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface FileViewerOverlayProps {
@@ -106,8 +107,9 @@ export default function FileViewerOverlay({ isOpen, path, nodeName, onClose }: F
   }
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-stretch justify-center p-0 md:p-6" onMouseDown={stopEventPropagation} onClick={stopEventPropagation}>
+    <div className="fixed inset-0 z-[120] flex items-stretch justify-center p-0 md:p-6" onMouseDown={stopEventPropagation} onClick={stopEventPropagation} role="dialog" aria-modal="true" aria-label={`File viewer: ${path}`}>
       <div className="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" onMouseDown={stopEventPropagation} onClick={handleBackdropClick} />
+      <FocusTrap>
       <div className="relative z-10 flex w-full h-full max-w-full flex-col rounded-none border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl md:h-auto md:max-h-[90vh] md:max-w-5xl md:rounded-2xl">
         <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 px-5 py-4">
           <div className="flex flex-col gap-1 text-sm">
@@ -146,6 +148,7 @@ export default function FileViewerOverlay({ isOpen, path, nodeName, onClose }: F
           )}
         </div>
       </div>
+      </FocusTrap>
     </div>
   );
 }
