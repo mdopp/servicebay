@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.40.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.39.2...servicebay-v4.40.0) (2026-05-27)
+
+
+### Features
+
+* **installer:** add mdopp/oscar as opt-in default registry in FCoS prompt ([bb9842c](https://github.com/mdopp/servicebay/commit/bb9842c6f47c6fe5048a2e51764d75da7ad3d883))
+* **installer:** add mdopp/oscar as opt-in default registry in FCoS prompt ([25e753d](https://github.com/mdopp/servicebay/commit/25e753df5351ef5115853034eab982a8215388f1))
+* **install:** ship template skills/ directories to agent via existing extraFiles transport ([ab2e40e](https://github.com/mdopp/servicebay/commit/ab2e40e9c432a74f20c58d27df68d747688ef189))
+* **install:** ship template skills/ directories to agent via existing extraFiles transport ([443baec](https://github.com/mdopp/servicebay/commit/443baec5171a3fb2320ffb24db948b098150df43))
+
 ## [4.39.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.39.1...servicebay-v4.39.2) (2026-05-27)
 
 
