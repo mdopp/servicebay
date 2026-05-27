@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import type { DigitalTwinSnapshot } from '@/providers/DigitalTwinProvider';
 import type { NetworkGraph } from '@servicebay/api-client';
@@ -40,12 +40,24 @@ interface UseTopologyDataResult {
  * has no dependency on the toast provider so it stays testable.
  */
 export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopologyDataResult {
-  const { onLoadStart, onLoadError } = options;
   const { data: twin } = useDigitalTwin();
   const [rawData, setRawData] = useState<NetworkGraph | null>(null);
 
+  // #1175 — keep `onLoadStart` / `onLoadError` in refs so callers can
+  // pass inline arrow functions without churning `fetchGraph`'s
+  // identity. Without this, `useCallback([onLoadStart, onLoadError])`
+  // saw a new ref every render, both effects below re-fired on every
+  // render, and the NetworkDashboard hit React error #185 (max update
+  // depth — fetch → setRawData → re-render → fresh callbacks → fresh
+  // fetchGraph → effects re-fire → fetch …). The ref pattern keeps
+  // the hook tolerant of unstable callers.
+  const onLoadStartRef = useRef(options.onLoadStart);
+  const onLoadErrorRef = useRef(options.onLoadError);
+  onLoadStartRef.current = options.onLoadStart;
+  onLoadErrorRef.current = options.onLoadError;
+
   const fetchGraph = useCallback(async () => {
-    onLoadStart?.();
+    onLoadStartRef.current?.();
     try {
       const res = await fetch('/api/network/graph');
       if (!res.ok) {
@@ -55,9 +67,9 @@ export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopolo
       setRawData(data);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Unable to reload network map';
-      onLoadError?.(message);
+      onLoadErrorRef.current?.(message);
     }
-  }, [onLoadStart, onLoadError]);
+  }, []);
 
   // Kick off the first render as soon as the dashboard mounts so the
   // toast shows immediately.
