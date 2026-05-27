@@ -389,6 +389,41 @@ const evaluateBundleValidations = (bundle: ServiceBundle): BundleValidation[] =>
   return validations;
 };
 
+// Fold every bundle in `group` into the first one and return that
+// primary. Caller guarantees `group.length >= 2` — the single-bundle
+// shortcut stays at the call site so this helper is unambiguously the
+// "merge needed" path.
+const mergePodBundleGroup = (group: ServiceBundle[]): ServiceBundle => {
+  const [primary, ...rest] = group;
+  rest.forEach(bundle => {
+    primary.services.push(...bundle.services);
+    primary.containers = dedupeContainers([...primary.containers, ...bundle.containers]);
+    primary.assets = dedupeAssets([...primary.assets, ...bundle.assets]);
+    primary.graph = dedupeEdges([...primary.graph, ...bundle.graph]);
+    primary.podReferences = Array.from(new Set([...(primary.podReferences || []), ...(bundle.podReferences || [])]));
+    primary.serviceTemplates = dedupeServiceTemplates([
+      ...(primary.serviceTemplates || []),
+      ...(bundle.serviceTemplates || [])
+    ]);
+    bundle.hints.forEach(hint => {
+      if (!primary.hints.includes(hint)) {
+        primary.hints.push(hint);
+      }
+    });
+  });
+  // Final deduplication after merge
+  primary.services = dedupeServices(primary.services);
+  primary.containers = dedupeContainers(primary.containers);
+  primary.assets = dedupeAssets(primary.assets);
+  primary.graph = dedupeEdges(primary.graph);
+  primary.ports = aggregatePorts(primary.containers);
+  primary.podReferences = Array.from(new Set(primary.podReferences || []));
+  primary.serviceTemplates = dedupeServiceTemplates(primary.serviceTemplates || []);
+  primary.validations = evaluateBundleValidations(primary);
+  primary.severity = severityFromValidations(primary.validations);
+  return primary;
+};
+
 const mergeBundlesByPod = (bundles: Map<string, ServiceBundle>): Map<string, ServiceBundle> => {
   const podToBundles = new Map<string, ServiceBundle[]>();
   const noPodBundles: ServiceBundle[] = [];
@@ -410,41 +445,11 @@ const mergeBundlesByPod = (bundles: Map<string, ServiceBundle>): Map<string, Ser
 
   const merged = new Map<string, ServiceBundle>();
 
-  // Merge bundles that share the same pod
   podToBundles.forEach((bundleGroup) => {
     if (bundleGroup.length === 1) {
-      // No merging needed
       merged.set(bundleGroup[0].id, bundleGroup[0]);
     } else {
-      // Merge all bundles in this group
-      const [primary, ...rest] = bundleGroup;
-      rest.forEach(bundle => {
-        primary.services.push(...bundle.services);
-        primary.containers = dedupeContainers([...primary.containers, ...bundle.containers]);
-        primary.assets = dedupeAssets([...primary.assets, ...bundle.assets]);
-        primary.graph = dedupeEdges([...primary.graph, ...bundle.graph]);
-        primary.podReferences = Array.from(new Set([...(primary.podReferences || []), ...(bundle.podReferences || [])]));
-        primary.serviceTemplates = dedupeServiceTemplates([
-          ...(primary.serviceTemplates || []),
-          ...(bundle.serviceTemplates || [])
-        ]);
-        bundle.hints.forEach(hint => {
-          if (!primary.hints.includes(hint)) {
-            primary.hints.push(hint);
-          }
-        });
-      });
-      // Final deduplication after merge
-      primary.services = dedupeServices(primary.services);
-      primary.containers = dedupeContainers(primary.containers);
-      primary.assets = dedupeAssets(primary.assets);
-      primary.graph = dedupeEdges(primary.graph);
-      primary.ports = aggregatePorts(primary.containers);
-      primary.podReferences = Array.from(new Set(primary.podReferences || []));
-      primary.serviceTemplates = dedupeServiceTemplates(primary.serviceTemplates || []);
-      // Re-evaluate validations after merge
-      primary.validations = evaluateBundleValidations(primary);
-      primary.severity = severityFromValidations(primary.validations);
+      const primary = mergePodBundleGroup(bundleGroup);
       merged.set(primary.id, primary);
     }
   });
