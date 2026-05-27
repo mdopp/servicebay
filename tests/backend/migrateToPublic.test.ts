@@ -80,7 +80,7 @@ function makeDeps(opts: {
     if (patch.domain_names) host.domain_names = patch.domain_names.slice();
     if (typeof patch.certificate_id === 'number') host.certificate_id = patch.certificate_id;
   });
-  const writeConfig = vi.fn(async (_node: string, _path: string, _content: string) => undefined);
+  const writeConfig = vi.fn<(node: string, path: string, content: string) => Promise<undefined>>(async () => undefined);
   const requestCert = vi.fn(async (_url: string, _t: string, domain: string) => {
     if (opts.failApplyCertFor === domain) throw new Error(`forced cert-request failure for ${domain}`);
     return 999 + Math.floor(Math.random() * 100);
