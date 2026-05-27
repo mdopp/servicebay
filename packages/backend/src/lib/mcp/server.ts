@@ -423,12 +423,17 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         .describe('Additional config files to write before the unit starts. Failures are fatal — the deploy aborts so the operator knows the service would have started misconfigured.'),
       node: nodeParam,
     },
-    async ({ name, kubeContent, yamlContent, yamlFileName, extraFiles, node }) => {
+    async ({ name, kubeContent, yamlFileName, extraFiles, node }) => {
       const nodeName = await resolveNode(node);
       // `kubeContent` here is the Pod YAML (Kubernetes manifest). We generate
       // the systemd .kube unit internally — same pattern as the install runner
       // (src/lib/install/runner.ts:275-276). The parameter name is historical;
       // the MCP description says "kube YAML content" meaning the Pod YAML.
+      // The schema still accepts `yamlContent` for backwards-compat with
+      // MCP clients that pass it; the handler ignores it because the
+      // companion YAML is derived from `kubeContent` + extraFiles, not a
+      // separate top-level field. Drop the schema entry in a future API
+      // surface review.
       const resolvedYamlFileName = yamlFileName ?? `${name}.yml`;
       const generatedKubeUnit = `[Kube]\nYaml=${resolvedYamlFileName}\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
       await ServiceManager.deployKubeService(
@@ -757,7 +762,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       yamlFileName: z.string().optional().describe('Filename for companion YAML (default: <name>.yaml)'),
       node: nodeParam,
     },
-    async ({ name, kubeContent, yamlContent, yamlFileName, node }) => {
+    async ({ name, kubeContent, yamlFileName, node }) => {
       const nodeName = await resolveNode(node);
       try {
         const resolvedYamlFileName = yamlFileName ?? `${name}.yml`;
