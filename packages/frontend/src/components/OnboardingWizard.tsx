@@ -900,11 +900,13 @@ export default function OnboardingWizard() {
       setWizardSubStepRaw('select');
       return [];
     }
-    setSelectedStacks(stacks);
-    navigateToSubStep('services');
     setStacksLoading(true);
 
     try {
+      // Parse READMEs before navigating so an empty parse never
+      // flashes a blank `services` step (#1067). The picker stays
+      // visible while we fetch, with the spinner driven by
+      // `stacksLoading`.
       const existing = await fetchExistingServices(stackSelectedNode || undefined);
       const itemsByName = new Map<string, StackItem>();
       const regex = /-\s*\[([ xX])\]\s*([\w\d_-]+)\s*(?:[—–\-:]\s*(.+))?$/;
@@ -935,15 +937,21 @@ export default function OnboardingWizard() {
       const parsedItems = Array.from(itemsByName.values());
       if (parsedItems.length === 0) {
         const names = stacks.map(s => s.name).join(', ');
-        addToast('error', 'No services found', `Could not parse services from ${names}`);
+        addToast(
+          'error',
+          'No services found in stack README',
+          `${names} did not expose any \`- [x] name — description\` lines. ` +
+          'This usually means the registry README is missing or malformed — ' +
+          'pick another stack, or check the registry source.',
+        );
         setStackItems([]);
         setSelectedStacks([]);
-        // Parse-failure recovery — bounce back to picker without
-        // pushing the failed forward step onto history.
-        setWizardSubStepRaw('select');
+        // Stay on the picker — we never navigated forward.
         return [];
       }
+      setSelectedStacks(stacks);
       setStackItems(parsedItems);
+      navigateToSubStep('services');
       return parsedItems;
     } finally {
       setStacksLoading(false);
