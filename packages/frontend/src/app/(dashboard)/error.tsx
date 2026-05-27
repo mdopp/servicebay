@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import ErrorActions from '@/components/ErrorActions';
 
 export default function DashboardError({
   error,
@@ -24,12 +25,7 @@ export default function DashboardError({
         {error.digest && (
           <p className="text-xs opacity-50 font-mono">ref: {error.digest}</p>
         )}
-        <button
-          onClick={() => reset()}
-          className="mt-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-sm transition"
-        >
-          Retry
-        </button>
+        <ErrorActions reset={reset} retryLabel="Retry" />
       </div>
     </div>
   );
