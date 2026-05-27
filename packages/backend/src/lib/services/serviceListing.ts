@@ -26,6 +26,32 @@ function extractFileContent(res: unknown): string {
     return '';
 }
 
+/**
+ * Resolve the systemd-generated unit content + on-disk FragmentPath
+ * for `<serviceName>.service`. Returns sentinel content when the unit
+ * hasn't been generated yet — getServiceFiles surfaces this to the
+ * UI without aborting the rest of the read.
+ */
+async function loadSystemdUnitInfo(
+    agent: import('../agent/handler').AgentHandler,
+    serviceName: string,
+): Promise<{ serviceContent: string; servicePath: string }> {
+    const unitNotFound = '# Service unit not found or not generated yet.';
+    try {
+        const catRes = await agent.sendCommand('exec', { command: `systemctl --user cat ${serviceName}.service` });
+        const serviceContent = catRes.code === 0 ? catRes.stdout : unitNotFound;
+        let servicePath = '';
+        const pathRes = await agent.sendCommand('exec', { command: `systemctl --user show -p FragmentPath ${serviceName}.service` });
+        if (pathRes.code === 0) {
+            const match = pathRes.stdout.match(/FragmentPath=(.+)/);
+            if (match) servicePath = match[1].trim();
+        }
+        return { serviceContent, servicePath };
+    } catch {
+        return { serviceContent: unitNotFound, servicePath: '' };
+    }
+}
+
 export interface ServiceInfo {
   name: string;
   kubeFile: string;
@@ -564,19 +590,7 @@ export class ServiceListing {
                 }
             }
 
-            // Get generated service unit content
-            try {
-                const catRes = await agent.sendCommand('exec', { command: `systemctl --user cat ${serviceName}.service` });
-                serviceContent = catRes.code === 0 ? catRes.stdout : '# Service unit not found or not generated yet.';
-
-                const pathRes = await agent.sendCommand('exec', { command: `systemctl --user show -p FragmentPath ${serviceName}.service` });
-                if (pathRes.code === 0) {
-                    const match = pathRes.stdout.match(/FragmentPath=(.+)/);
-                    if (match) servicePath = match[1].trim();
-                }
-            } catch {
-                serviceContent = '# Service unit not found or not generated yet.';
-            }
+            ({ serviceContent, servicePath } = await loadSystemdUnitInfo(agent, serviceName));
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             throw new Error(`Service ${serviceName} not found: ${msg}`);
