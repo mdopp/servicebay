@@ -5,7 +5,7 @@ metadata:
   labels:
     app: voice
   annotations:
-    servicebay.label: "Voice (Wyoming: Whisper + Piper + openWakeWord)"
+    servicebay.label: "Smart Home Voice Assist"
     servicebay.schema-version: "1"
     # No `servicebay.tier` — voice is optional plumbing, not platform
     # infrastructure (DNS / proxy / SSO are tier=infrastructure and

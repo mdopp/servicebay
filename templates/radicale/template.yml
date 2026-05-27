@@ -5,7 +5,7 @@ metadata:
   labels:
     app: radicale
   annotations:
-    servicebay.label: "Radicale (CalDAV + CardDAV)"
+    servicebay.label: "Calendar & Contacts"
     servicebay.schema-version: "1"
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
     # caldav.<domain> goes through nginx; auth is the SSO front.

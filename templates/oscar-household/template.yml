@@ -5,7 +5,7 @@ metadata:
   labels:
     app: oscar-household
   annotations:
-    servicebay.label: "OSCAR Household (schema init + skill mount + MCP wiring + voice gatekeeper)"
+    servicebay.label: "AI Skills (OSCAR/household)"
     servicebay.schema-version: "1"
     # Wyoming endpoint for satellites (HA Voice PE, wyoming-satellite CLI).
     # The gatekeeper container is the only consumer that exposes a host

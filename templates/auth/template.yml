@@ -5,7 +5,7 @@ metadata:
   labels:
     app: auth
   annotations:
-    servicebay.label: "Auth (LLDAP + Authelia)"
+    servicebay.label: "Sign-In Gate"
     servicebay.schema-version: "1"
     servicebay.tier: "infrastructure"
     # post-deploy.py calls /api/system/lldap/* and /api/system/authelia/*.

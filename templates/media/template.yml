@@ -6,7 +6,7 @@ metadata:
     app: media
     servicebay.role: media
   annotations:
-    servicebay.label: "Media (Audiobookshelf + Jellyfin)"
+    servicebay.label: "Movies & TV"
     servicebay.schema-version: "4"
     # Audiobookshelf's post-deploy registers an OIDC client in Authelia
     # and both apps' public URLs route through nginx — both prerequisites.

@@ -5,7 +5,7 @@ metadata:
   labels:
     app: hermes
   annotations:
-    servicebay.label: "Hermes Agent"
+    servicebay.label: "AI Assistant (Hermes)"
     servicebay.schema-version: "3"
     servicebay.ports: "{{HERMES_API_PORT}}/tcp,{{HERMES_DASHBOARD_PORT}}/tcp"
     # Hermes' default LLM_PROVIDER_URL points at the `ollama` template's

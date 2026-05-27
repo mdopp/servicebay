@@ -6,7 +6,7 @@ metadata:
     app: nginx
     servicebay.role: reverse-proxy
   annotations:
-    servicebay.label: "Nginx Proxy Manager"
+    servicebay.label: "Reverse Proxy"
     servicebay.schema-version: "3"
     servicebay.tier: "infrastructure"
     servicebay.ports: "{{NGINX_PORT}}/tcp,{{NGINX_SSL_PORT}}/tcp,{{NGINX_ADMIN_PORT}}/tcp"

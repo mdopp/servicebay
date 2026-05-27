@@ -5,7 +5,7 @@ metadata:
   labels:
     app: file-share
   annotations:
-    servicebay.label: "File Share (Syncthing + Samba + FileBrowser)"
+    servicebay.label: "Files"
     servicebay.schema-version: "4"
     # FileBrowser is fronted by Authelia via the nginx proxy host — both
     # must be running before this template's post-deploy can wire SSO.

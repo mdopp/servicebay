@@ -5,7 +5,7 @@ metadata:
   labels:
     app: ollama
   annotations:
-    servicebay.label: "Ollama (Local LLM Server)"
+    servicebay.label: "AI Engine (Ollama)"
     servicebay.schema-version: "2"
     servicebay.ports: "{{OLLAMA_PORT}}/tcp"
     # No `servicebay.tier` — Ollama is opt-in AI infrastructure, not a

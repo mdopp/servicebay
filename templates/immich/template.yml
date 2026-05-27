@@ -5,7 +5,7 @@ metadata:
   labels:
     app: immich
   annotations:
-    servicebay.label: "Immich (Photos)"
+    servicebay.label: "Photos"
     servicebay.schema-version: "2"
     servicebay.ports: "{{IMMICH_PORT}}/tcp"
     # photos.<domain> is served via nginx; Immich's SSO uses Authelia.

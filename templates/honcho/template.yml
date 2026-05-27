@@ -5,7 +5,7 @@ metadata:
   labels:
     app: honcho
   annotations:
-    servicebay.label: "Honcho (Per-User Memory for Hermes/OSCAR)"
+    servicebay.label: "AI Memory"
     servicebay.schema-version: "1"
     # Service-to-service only by design (#1004). Honcho exposes a peer
     # isolation API consumed by Hermes' memory plugin; no operator-facing
