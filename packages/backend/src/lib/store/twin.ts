@@ -1,5 +1,4 @@
 import path from 'path';
-import yaml from 'js-yaml';
 import { EnrichedContainer, ServiceUnit, ServiceHealth, SystemResources, Volume, WatchedFile, ProxyRoute, PortMapping } from '../agent/types';
 import { logger } from '../logger';
 import type { AgentHealth } from '../agent/handler';
@@ -7,6 +6,10 @@ import type { ServiceBundle } from '../unmanaged/bundleShared';
 import { sanitizeBundleName } from '../unmanaged/bundleShared';
 import { buildServiceBundlesForNode } from '../unmanaged/bundleBuilder';
 import { NodeTwinUpdateSchema } from './schema';
+import {
+  extractPortsFromKubeYaml,
+  extractPortsFromQuadletContainer,
+} from './twinPortExtraction';
 
 const normalizeNameToken = (value?: string | null): string | null => {
     if (!value) return null;
@@ -839,42 +842,10 @@ export class DigitalTwinStore {
       const files = node.files;
       if (kubeEntry) {
           const [kubePath, kubeFile] = kubeEntry;
-          if (kubeFile.content) {
-              const match = kubeFile.content.match(/^Yaml=(.+)$/m);
-              if (match) {
-                  const yamlRef = match[1].trim();
-                  const yamlContent = this.getYamlContent(files, kubePath, yamlRef);
-                  if (yamlContent) {
-                      try {
-                          const docs = yaml.loadAll(yamlContent) as unknown[];
-                          docs.forEach(doc => {
-                              if (!doc || typeof doc !== 'object') return;
-                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                              const spec = (doc as any).spec;
-                              if (!spec) return;
-                              const hostNetwork = Boolean(spec.hostNetwork);
-                              const containers = Array.isArray(spec.containers) ? spec.containers : [];
-                              containers.forEach((containerDoc: unknown) => {
-                                  if (!containerDoc || typeof containerDoc !== 'object') return;
-                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                  const portsDef = Array.isArray((containerDoc as any).ports) ? (containerDoc as any).ports : [];
-                                  portsDef.forEach((portDef: unknown) => {
-                                      if (!portDef || typeof portDef !== 'object') return;
-                                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                      const descriptor = portDef as any;
-                                      const containerPort = this.safeParsePort(descriptor.containerPort ?? descriptor.container_port ?? descriptor.port);
-                                      if (!containerPort) return;
-                                      let hostPort = this.safeParsePort(descriptor.hostPort ?? descriptor.host_port);
-                                      if (!hostPort && hostNetwork) hostPort = containerPort;
-                                      pushPort(hostPort, containerPort, descriptor.protocol);
-                                  });
-                              });
-                          });
-                      } catch (err) {
-                          logger.warn('TwinStore', `Failed to parse YAML for ${service.name}`, err);
-                      }
-                  }
-              }
+          const match = kubeFile.content?.match(/^Yaml=(.+)$/m);
+          if (match) {
+              const yamlContent = this.getYamlContent(files, kubePath, match[1].trim());
+              if (yamlContent) extractPortsFromKubeYaml(yamlContent, service.name, pushPort);
           }
           if (ports.length > 0) {
               this.staticPortsCache.set(baseName, { contentKey, ports });
@@ -885,43 +856,7 @@ export class DigitalTwinStore {
       if (containerEntry) {
           const [, containerFile] = containerEntry;
           if (containerFile.content) {
-              let hostNetwork = false;
-              const lines = containerFile.content.split('\n');
-              for (const line of lines) {
-                  const trimmed = line.trim();
-                  if (trimmed.length === 0) continue;
-                  if (trimmed.startsWith('Network=')) {
-                      hostNetwork = trimmed.split('=')[1]?.trim() === 'host';
-                      continue;
-                  }
-                  if (trimmed.startsWith('PublishPort=')) {
-                      const definition = trimmed.substring('PublishPort='.length);
-                      const [portPart, protoPart] = definition.split('/');
-                      const segments = portPart.split(':').filter(Boolean);
-                      let ip: string | undefined;
-                      let hostStr: string | undefined;
-                      let containerStr: string | undefined;
-
-                      if (segments.length === 3) {
-                          [ip, hostStr, containerStr] = segments;
-                      } else if (segments.length === 2) {
-                          [hostStr, containerStr] = segments;
-                      } else if (segments.length === 1) {
-                          hostStr = segments[0];
-                          containerStr = segments[0];
-                      }
-
-                      const containerPort = this.safeParsePort(containerStr);
-                      let hostPort = this.safeParsePort(hostStr);
-                      if (!hostPort && hostNetwork && containerPort) {
-                          hostPort = containerPort;
-                      }
-
-                      if (containerPort || hostPort) {
-                          pushPort(hostPort, containerPort ?? hostPort, protoPart, ip);
-                      }
-                  }
-              }
+              extractPortsFromQuadletContainer(containerFile.content, pushPort);
           }
       }
 
@@ -941,19 +876,6 @@ export class DigitalTwinStore {
       }
       const fallbackKey = Object.keys(files).find((filePath) => filePath.endsWith(`/${relative}`));
       return fallbackKey ? files[fallbackKey].content : null;
-  }
-
-  private safeParsePort(value: unknown): number | undefined {
-      if (typeof value === 'number' && Number.isFinite(value)) {
-          return value;
-      }
-      if (typeof value === 'string') {
-          const parsed = parseInt(value, 10);
-          if (!Number.isNaN(parsed)) {
-              return parsed;
-          }
-      }
-      return undefined;
   }
 
   public recordMigrationEvent(nodeId: string, event: MigrationHistoryEntry) {
