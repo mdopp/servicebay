@@ -389,16 +389,6 @@ app.prepare().then(() => {
           // TS "as any" is simplistic but TwinStore handles Partial<NodeTwin> safely.
           const update: Partial<NodeTwin> = { ...message.payload as unknown as Partial<NodeTwin>, health };
           twinStore.updateNode(nodeName, update);
-        } else if (message.type === 'SYNC_DIFF') {
-            const agent = agentManager.getAgent(nodeName);
-            logger.info('Server', `SYNC_DIFF from ${nodeName}${formatAgentIdSuffix(agent)}`);
-         
-         // Add health snapshot from agent
-         const health = agent.getHealth();
-         
-         // TODO: Implement diff patching
-         const update: Partial<NodeTwin> = { ...message.payload as unknown as Partial<NodeTwin>, health };
-         twinStore.updateNode(nodeName, update);
       }
   });
   
