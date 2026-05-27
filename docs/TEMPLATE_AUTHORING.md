@@ -562,7 +562,28 @@ registries override built-ins with the same name, so you can ship a
 custom variant of any bundled template by publishing it under the same
 directory name.
 
-### Custom layouts via `servicebay.json` (#1050)
+First-party registries ServiceBay knows about:
+
+- **`mdopp/servicebay-templates`** — the canonical external template
+  set. Operator prompt at FCoS install time defaults to enabled.
+- **`mdopp/oscar`** — the household AI assistant tier (Ollama,
+  Hermes, Hermes WebUI, oscar-household template, plus the OSCAR
+  stack bundling them). Operator prompt at FCoS install time
+  defaults to enabled; decline to keep the install lean.
+
+### Asset directories (`skills/`) on a template
+
+Any template can ship a `skills/` subdirectory; the install runner
+walks it recursively and ships each file to the agent at
+`{{DATA_DIR}}/<template>/skills/<relpath>`. Content goes through
+verbatim — Mustache rendering and the missing-variable sanity check
+are both skipped — because SKILL.md and friends commonly contain
+`{{...}}` tokens as documentation that would otherwise mistakenly
+trigger placeholder substitution. See #1156. First consumer is the
+OSCAR `oscar-household` template's skill pack at
+`templates/oscar-household/skills/` in `mdopp/oscar`.
+
+### Custom layouts via `servicebay.json`
 
 For registries whose top-level layout reflects their own subsystem
 boundaries rather than ServiceBay's expected sparse-checkout shape,
@@ -572,10 +593,10 @@ and stacks live:
 ```json
 {
   "templates": [
-    { "name": "oscar-household", "path": "servicebay-template" }
+    { "name": "my-template", "path": "my-template-dir" }
   ],
   "stacks": [
-    { "name": "household", "path": "stacks/household" }
+    { "name": "my-stack", "path": "stacks/my-stack" }
   ]
 }
 ```
@@ -594,8 +615,8 @@ clone exposes `servicebay.json`, the sync layer re-runs
 the working tree only carries the paths the manifest names plus the
 default `templates/` + `stacks/` fallbacks.
 
-Example use case: `mdopp/oscar` keeps its template, Hermes skill pack,
-Wyoming-bridge image source, and Postgres-schema migrations in clearly
-separated top-level directories, with `servicebay.json` pointing the
-ServiceBay template at `servicebay-template/`. No `templates/` folder
-at the registry root.
+Note: `mdopp/oscar` uses the **legacy** `templates/<name>/` layout (no
+manifest), even though it has multiple subsystems at top level
+(`voice-gatekeeper/`, `database/`, `__init__.py` for the Hermes-plugin
+path). The manifest mechanism stays available for future registries
+where consumer-named top-level dirs make more sense.
