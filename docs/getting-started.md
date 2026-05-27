@@ -92,17 +92,17 @@ Four of five intents, substantially, from `pip install` + config. That is the ho
 
 ## Tier 3 — the household deployment
 
-Tier 3 is what the rest of this repo builds: OSCAR as a ServiceBay stack, for a household rather than one person.
+Tier 3 is what the rest of the OSCAR product builds: OSCAR as a ServiceBay-managed deployment, for a household rather than one person. OSCAR lives in its own repo ([`mdopp/oscar`](https://github.com/mdopp/oscar)) as an external ServiceBay registry — enable it at FCoS install time (or via Settings → Registries) and the four OSCAR templates (`ollama`, `hermes`, `hermes-webui`, `oscar-household`) plus the `oscar` stack appear in the wizard.
 
 What Tier 3 adds over Tier 2:
 
-- **Packaged, wizard-driven deploy** — ServiceBay's `ai-stack` (Ollama + Hermes) plus OSCAR's `oscar-household` template, instead of a hand-run `pip install`.
+- **Packaged, wizard-driven deploy** — install the four-template OSCAR stack with one click instead of running `pip install hermes-agent` and configuring each piece by hand.
 - **Cloud-LLM audit** — every cloud call writes a `cloud_audit` row, family-readable via the `oscar-audit-query` skill.
 - **HA Voice PE in the rooms** — the `gatekeeper` container bridges Wyoming-protocol voice pucks to Hermes (Phase 1).
 - **Voice = identity** — speaker-ID maps a voice to an LLDAP resident and the right Honcho peer (Phase 2).
 - **German-household defaults** and the per-resident harness composition.
 
-Walkthrough: [`../stacks/oscar/README.md`](../stacks/oscar/README.md). It depends on ServiceBay's `ai-stack` templates ([mdopp/servicebay#544](https://github.com/mdopp/servicebay/pull/544)).
+Walkthrough: [`mdopp/oscar`'s README](https://github.com/mdopp/oscar#readme). Enable the OSCAR registry during FCoS install (the prompt defaults to `Y`), or add `https://github.com/mdopp/oscar` to Settings → Registries on an existing install.
 
 ---
 

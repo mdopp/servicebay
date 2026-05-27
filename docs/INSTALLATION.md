@@ -50,6 +50,7 @@ flowchart TD
 │             │ FritzBox password            │ —          │ ✗ secret   │
 ├─────────────┼──────────────────────────────┼────────────┼────────────┤
 │ Registries  │ Enable servicebay-templates  │ y          │ ✓          │
+│             │ Enable mdopp/oscar           │ y          │ ✓          │
 │ Email       │ SMTP host/port/user/pass/TLS │ —          │ partial    │
 │ Backup      │ Restore .tar.gz path         │ —          │ ✗          │
 └─────────────┴──────────────────────────────┴────────────┴────────────┘
