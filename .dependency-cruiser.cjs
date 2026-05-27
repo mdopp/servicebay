@@ -103,9 +103,8 @@ module.exports = {
             severity: 'error',
             comment:
                 'ARCH audit: all Mustache rendering must pass through src/lib/template/render.ts ' +
-                '(#599). The two install-time consumers below stay exempt because they still ' +
-                'import mustache directly for the moment — `install/runner.ts` and the ' +
-                'stackInstall family will migrate to renderTemplate() in a follow-up.',
+                '(#599, #1066). Direct `import mustache` from anywhere else is blocked so deploy ' +
+                'and preview cannot drift on escape semantics.',
             from: {
                 path: '^packages/backend/src/lib/',
                 pathNot: [
