@@ -35,6 +35,74 @@ function extractFileContent(res: unknown): string {
     return '';
 }
 
+/**
+ * Walk a parsed kube/pod YAML doc and collect every `image:` field
+ * reachable through `containers[]`, `initContainers[]`, `spec`, and
+ * `template`. Used by `updateAndRestartService` to know which images
+ * to pull before restarting the unit.
+ *
+ * Returns a deduped Set so callers can iterate without re-pulling
+ * the same image twice if it appears in both initContainers and
+ * containers.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function collectImagesFromKubeYaml(parsed: any): Set<string> {
+    const images = new Set<string>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const walk = (obj: any) => {
+        if (!obj) return;
+        if (obj.image && typeof obj.image === 'string') images.add(obj.image);
+        if (Array.isArray(obj.containers)) obj.containers.forEach(walk);
+        if (Array.isArray(obj.initContainers)) obj.initContainers.forEach(walk);
+        if (obj.spec) walk(obj.spec);
+        if (obj.template) walk(obj.template);
+    };
+    walk(parsed);
+    return images;
+}
+
+/**
+ * Parse `yamlContent` as a kube/pod doc, pull every referenced image
+ * via `agent.pullImage`, and append human-readable progress lines to
+ * `logs`. Used by `updateAndRestartService` so the parent method
+ * stays focused on the start/stop dance.
+ *
+ * Failures (YAML parse error, per-image pull failure) are caught
+ * here — the caller continues with the restart sequence even if an
+ * image refresh missed, matching the prior in-line behavior.
+ */
+async function pullServiceImagesFromYaml(
+    agent: import('../agent/handler').AgentHandler,
+    yamlContent: string,
+    logs: string[]
+): Promise<void> {
+    let images: Set<string>;
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const parsed = yaml.load(yamlContent) as any;
+        images = collectImagesFromKubeYaml(parsed);
+    } catch (e) {
+        logger.warn('ServiceManager', 'Error parsing YAML for images', e);
+        logs.push('Error parsing YAML to find images.');
+        return;
+    }
+    for (const image of images) {
+        logs.push(`Pulling image: ${image}`);
+        try {
+            await agent.pullImage(image, (evt) => {
+                if (evt.status && evt.id) {
+                    const pct = evt.total ? ` ${Math.round((evt.current || 0) / evt.total * 100)}%` : '';
+                    logs.push(`  ${evt.id}: ${evt.status}${pct}`);
+                }
+            });
+            logs.push(`Successfully pulled ${image}`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            logs.push(`Failed to pull ${image}: ${msg}`);
+        }
+    }
+}
+
 export class ServiceLifecycle {
     static async startService(nodeName: string, serviceName: string) {
         const agent = await agentManager.ensureAgent(nodeName);
@@ -1275,43 +1343,9 @@ export class ServiceLifecycle {
         const logs: string[] = [];
 
         if (yamlPath) {
-            try {
-                const res = await agent.sendCommand('read_file', { path: yamlPath.startsWith('/') ? yamlPath : `~/${yamlPath}` });
-                const content = extractFileContent(res);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const parsed = yaml.load(content) as any;
-
-                const images = new Set<string>();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const findImages = (obj: any) => {
-                    if (!obj) return;
-                    if (obj.image && typeof obj.image === 'string') images.add(obj.image);
-                    if (Array.isArray(obj.containers)) obj.containers.forEach((c: typeof obj) => findImages(c));
-                    if (Array.isArray(obj.initContainers)) obj.initContainers.forEach((c: typeof obj) => findImages(c));
-                    if (obj.spec) findImages(obj.spec);
-                    if (obj.template) findImages(obj.template);
-                };
-                findImages(parsed);
-
-                for (const image of images) {
-                    logs.push(`Pulling image: ${image}`);
-                    try {
-                        await agent.pullImage(image, (evt) => {
-                            if (evt.status && evt.id) {
-                                const pct = evt.total ? ` ${Math.round((evt.current || 0) / evt.total * 100)}%` : '';
-                                logs.push(`  ${evt.id}: ${evt.status}${pct}`);
-                            }
-                        });
-                        logs.push(`Successfully pulled ${image}`);
-                    } catch (e) {
-                        const msg = e instanceof Error ? e.message : String(e);
-                        logs.push(`Failed to pull ${image}: ${msg}`);
-                    }
-                }
-            } catch (e) {
-                logger.warn('ServiceManager', 'Error parsing YAML for images', e);
-                logs.push('Error parsing YAML to find images.');
-            }
+            const res = await agent.sendCommand('read_file', { path: yamlPath.startsWith('/') ? yamlPath : `~/${yamlPath}` });
+            const content = extractFileContent(res);
+            await pullServiceImagesFromYaml(agent, content, logs);
         } else {
             logs.push('No YAML file found for this service.');
         }
