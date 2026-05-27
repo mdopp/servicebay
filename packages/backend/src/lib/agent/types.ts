@@ -194,5 +194,4 @@ export interface NodeStateSnapshot {
 
 export type AgentMessage =
   | { type: 'SYNC_PARTIAL'; payload: Partial<NodeStateSnapshot> & { initialSyncComplete?: boolean } }
-  | { type: 'HEARTBEAT'; timestamp: number }
-  | { type: 'SYNC_DIFF'; payload: Partial<NodeStateSnapshot> }; // Kept for future diff logic
+  | { type: 'HEARTBEAT'; timestamp: number };
