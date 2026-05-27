@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.40.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.40.1...servicebay-v4.40.2) (2026-05-27)
+
+
+### Bug Fixes
+
+* **install:** pre-pull renders {{VAR}} image placeholders against wizard variables ([c325a2a](https://github.com/mdopp/servicebay/commit/c325a2aeba39cd7f194035fb94cf4e621fd48e78))
+* **install:** pre-pull renders {{VAR}} image placeholders against wizard variables ([a6cc3dc](https://github.com/mdopp/servicebay/commit/a6cc3dc669a4170dd7812303b68c2f475725d2c0))
+* **network:** break infinite-render loop in useTopologyData by stabilising fetchGraph ([bbd4ebb](https://github.com/mdopp/servicebay/commit/bbd4ebb87e4c47ced81bc036fbca4563783fcf8f))
+* **network:** break infinite-render loop in useTopologyData by stabilising fetchGraph ([c1588b9](https://github.com/mdopp/servicebay/commit/c1588b928ca2d3ccaff06540d09390fa3b37e654))
+* **nginx:** reconcile NPM proxy upstream when a domain is re-used by a new template ([328fb67](https://github.com/mdopp/servicebay/commit/328fb6743b0bb1e5421153c17c5580dd09038218))
+* **nginx:** reconcile NPM proxy upstream when a domain is re-used by a new template ([9230dbd](https://github.com/mdopp/servicebay/commit/9230dbd1daae108fed13179c797a19928a22517e))
+
 ## [4.40.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.40.0...servicebay-v4.40.1) (2026-05-27)
 
 
