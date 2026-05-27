@@ -698,12 +698,23 @@ export async function getTemplateVariables(name: string, source?: string): Promi
 }
 
 export interface TemplateConfigFile {
-  /** Filename without .mustache extension (e.g. "configuration.yml") */
+  /** Filename without .mustache extension (e.g. "configuration.yml").
+   *  For asset files this is the path *relative to the template dir*
+   *  (e.g. "skills/audit-query/SKILL.md") so the receiver has a
+   *  meaningful name for diagnostics. */
   filename: string;
-  /** Raw Mustache template content */
+  /** Raw Mustache template content (when `renderContent` is true) or
+   *  verbatim file bytes (when false). */
   content: string;
-  /** Target path hint from template.yml volume mounts (set by caller) */
+  /** Target path on the agent host. Always Mustache-rendered against
+   *  the deploy variables, so `{{DATA_DIR}}` etc. resolve. */
   targetPath?: string;
+  /** When false, `content` is shipped verbatim — Mustache rendering is
+   *  skipped. Used for asset files (Hermes SKILL.md and similar) whose
+   *  body may legitimately contain `{{...}}` literals that aren't
+   *  placeholders. Default: true (current `.mustache` config-file
+   *  behaviour). #1156. */
+  renderContent?: boolean;
 }
 
 /** Find .mustache config files for a template (e.g. authelia/configuration.yml.mustache). */
@@ -733,6 +744,91 @@ export async function getTemplateConfigFiles(name: string, source?: string): Pro
   }
 
   return scanDir(path.join(TEMPLATES_PATH, name));
+}
+
+/**
+ * Walk `<template-dir>/skills/` recursively and return one
+ * `TemplateConfigFile` per file, with `targetPath` pre-set to
+ * `{{DATA_DIR}}/<template-name>/skills/<relative-path>` and
+ * `renderContent: false` so Mustache leaves SKILL.md bodies alone
+ * (they often contain `{{...}}` literals as documentation that
+ * mustache would otherwise corrupt).
+ *
+ * The install runner concatenates the result with the regular
+ * `.mustache` config files; the existing `extraFiles` transport
+ * (`packages/backend/src/lib/services/serviceLifecycle.ts:677`)
+ * writes each one to the agent host via `agent.sendCommand('write_file', …)`.
+ * This is the delivery path that #1025's README claim ("placed there
+ * by ServiceBay's registry sync") was missing. #1156.
+ *
+ * Returns `[]` when the template ships no `skills/` directory —
+ * which is every template today except OSCAR's `oscar-household`
+ * (after migration to `mdopp/oscar`).
+ *
+ * Same registry-fallback semantics as `getTemplateConfigFiles`.
+ * Symlinks are ignored to keep the convention to "files in the
+ * template's own tree only" — operators introducing symlinks should
+ * use an explicit asset annotation if/when one lands.
+ */
+async function walkSkillsDir(skillsDir: string, templateName: string): Promise<TemplateConfigFile[]> {
+  try {
+    const st = await fs.stat(skillsDir);
+    if (!st.isDirectory()) return [];
+  } catch {
+    return [];
+  }
+  const out: TemplateConfigFile[] = [];
+  const stack: string[] = ['.'];
+  while (stack.length > 0) {
+    const rel = stack.pop()!;
+    let entries: import('fs').Dirent[];
+    try {
+      entries = await fs.readdir(path.join(skillsDir, rel), { withFileTypes: true });
+    } catch {
+      // Unreadable subdir — skip rather than break the whole walk.
+      continue;
+    }
+    for (const ent of entries) {
+      if (ent.name.startsWith('.')) continue;
+      if (ent.isSymbolicLink()) continue;
+      const childRel = rel === '.' ? ent.name : path.join(rel, ent.name);
+      if (ent.isDirectory()) {
+        stack.push(childRel);
+      } else if (ent.isFile()) {
+        const content = await fs.readFile(path.join(skillsDir, childRel), 'utf-8');
+        out.push({
+          filename: path.join('skills', childRel),
+          content,
+          targetPath: `{{DATA_DIR}}/${templateName}/skills/${childRel}`,
+          renderContent: false,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+export async function getTemplateAssetFiles(
+  name: string,
+  source?: string,
+): Promise<TemplateConfigFile[]> {
+  const walk = (templateDir: string) =>
+    walkSkillsDir(path.join(templateDir, 'skills'), name);
+
+  if (source && source !== 'Built-in') {
+    return walk(await resolveRegistryItemPath(source, 'template', name));
+  }
+
+  if (!source) {
+    const config = await getConfig();
+    const registries = getRegistries(config);
+    for (const reg of registries) {
+      const files = await walk(await resolveRegistryItemPath(reg.name, 'template', name));
+      if (files.length > 0) return files;
+    }
+  }
+
+  return walk(path.join(TEMPLATES_PATH, name));
 }
 
 /**

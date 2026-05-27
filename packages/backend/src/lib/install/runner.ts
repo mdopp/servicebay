@@ -362,6 +362,10 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   const refRe = /\{\{\s*[#^/{]?\s*([A-Z_][A-Z0-9_]*)\s*\}{1,3}/g;
   for (const cf of (item.configFiles || [])) {
     if (!cf.targetPath) continue;
+    // Asset files (#1156) ship content verbatim, so {{…}} in the body
+    // isn't a placeholder reference — skip the missing-var sanity check
+    // for them.
+    if (cf.renderContent === false) continue;
     const refs = new Set<string>();
     for (const m of cf.content.matchAll(refRe)) refs.add(m[1]);
     const missing = [...refs].filter(r => !(r in view) || view[r] === '');
@@ -377,7 +381,11 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     .filter(cf => cf.targetPath)
     .map(cf => ({
       path: renderTemplate(cf.targetPath!, view),
-      content: renderTemplate(cf.content, view),
+      // Asset files (#1156) opt out of content rendering — SKILL.md
+      // bodies may contain `{{...}}` literals as documentation that
+      // Mustache would otherwise corrupt. Default-true preserves the
+      // existing `.mustache` behaviour for config files.
+      content: cf.renderContent === false ? cf.content : renderTemplate(cf.content, view),
     }));
 
   // Optional per-template post-deploy.py — server runs it after the unit

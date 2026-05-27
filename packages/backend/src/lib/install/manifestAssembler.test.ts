@@ -12,11 +12,13 @@ import type { VariableMeta } from '@/lib/registry';
 const getTemplateYaml = vi.fn<(n: string, s?: string) => Promise<string | null>>();
 const getTemplateVariables = vi.fn<(n: string, s?: string) => Promise<Record<string, VariableMeta> | null>>();
 const getTemplateConfigFiles = vi.fn<(n: string, s?: string) => Promise<{ filename: string; content: string }[]>>();
+const getTemplateAssetFiles = vi.fn<(n: string, s?: string) => Promise<{ filename: string; content: string; targetPath?: string; renderContent?: boolean }[]>>();
 const getTemplateSettingsSchema = vi.fn<() => Promise<Record<string, { default: string; description?: string }>>>();
 vi.mock('@/lib/registry', () => ({
   getTemplateYaml: (n: string, s?: string) => getTemplateYaml(n, s),
   getTemplateVariables: (n: string, s?: string) => getTemplateVariables(n, s),
   getTemplateConfigFiles: (n: string, s?: string) => getTemplateConfigFiles(n, s),
+  getTemplateAssetFiles: (n: string, s?: string) => getTemplateAssetFiles(n, s),
   getTemplateSettingsSchema: () => getTemplateSettingsSchema(),
 }));
 
@@ -57,6 +59,8 @@ beforeEach(() => {
   getTemplateVariables.mockReset();
   getTemplateConfigFiles.mockReset();
   getTemplateConfigFiles.mockResolvedValue([]);
+  getTemplateAssetFiles.mockReset();
+  getTemplateAssetFiles.mockResolvedValue([]);
   getTemplateSettingsSchema.mockReset();
   getTemplateSettingsSchema.mockResolvedValue({});
   getConfig.mockReset();

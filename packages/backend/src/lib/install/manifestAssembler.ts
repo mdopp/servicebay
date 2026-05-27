@@ -28,6 +28,7 @@ import {
   getTemplateYaml,
   getTemplateVariables,
   getTemplateConfigFiles,
+  getTemplateAssetFiles,
   getTemplateSettingsSchema,
   type VariableMeta,
 } from '@/lib/registry';
@@ -244,10 +245,23 @@ export async function assembleManifest(
       for (const cf of cfgFiles) {
         for (const m of cf.content.matchAll(MUSTACHE_VAR_RE)) vars.add(m[1]);
       }
-      item.configFiles = cfgFiles.map(cf => ({
+    }
+
+    // Asset files (#1156) — a template's `skills/` subdirectory ships
+    // to `{{DATA_DIR}}/<template>/skills/<relpath>` on the agent via
+    // the same `extraFiles` transport. `renderContent: false` so
+    // SKILL.md bodies aren't mangled by Mustache. No vars are
+    // discovered from asset content for the same reason — they're
+    // shipped verbatim.
+    const assetFiles = await getTemplateAssetFiles(item.name, templateSource).catch(() => []);
+
+    const allFiles = [...cfgFiles, ...assetFiles];
+    if (allFiles.length > 0) {
+      item.configFiles = allFiles.map(cf => ({
         filename: cf.filename,
         content: cf.content,
         targetPath: cf.targetPath,
+        renderContent: cf.renderContent,
       }));
     }
   }
