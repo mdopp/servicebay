@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.37.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.4...servicebay-v4.37.0) (2026-05-27)
+
+
+### Features
+
+* **api-client:** add apiFetch wrapper that handles 401 redirects ([0b30aba](https://github.com/mdopp/servicebay/commit/0b30abacad57af9773f2b68e9b746279762eff96))
+* **api-client:** add apiFetch wrapper that handles 401 redirects ([3d4ec1e](https://github.com/mdopp/servicebay/commit/3d4ec1eee78f50c065eafa3955156e380490b78f))
+
+
+### Bug Fixes
+
+* **api:** replace any with structural types in service action-stream ([78e9821](https://github.com/mdopp/servicebay/commit/78e98217a3d6040f1f63083bbf86119b3db2fe34))
+* **api:** replace any with structural types in service action-stream ([557fc73](https://github.com/mdopp/servicebay/commit/557fc735bd9abe3097340cd3b6e854776d842e16))
+
 ## [4.36.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.3...servicebay-v4.36.4) (2026-05-27)
 
 
