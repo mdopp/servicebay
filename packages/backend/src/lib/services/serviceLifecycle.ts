@@ -842,8 +842,36 @@ export class ServiceLifecycle {
     /** Fix volume ownership for containers with explicit runAsUser/runAsGroup.
      *  In rootless podman, host UIDs map differently inside the user namespace.
      *  Uses `podman unshare chown` to translate container UIDs to correct host UIDs. */
+    private static async chownContainerMounts(
+        nodeName: string,
+        container: NonNullable<NonNullable<PodLikeDoc['spec']>['containers']>[number],
+        volumePaths: Map<string, string>,
+    ): Promise<void> {
+        const uid = container.securityContext?.runAsUser;
+        const gid = container.securityContext?.runAsGroup ?? uid;
+        if (uid == null || uid === 0) return; // Skip root or unset
+
+        const mounts = container.volumeMounts || [];
+        for (const mount of mounts) {
+            if (!mount.name) continue;
+            const hostPath = volumePaths.get(mount.name);
+            if (!hostPath || mount.readOnly) continue;
+
+            const agent = await agentManager.ensureAgent(nodeName);
+            try {
+                await agent.sendCommand('exec', {
+                    command: `podman unshare chown -R ${uid}:${gid} ${hostPath}`
+                });
+                logger.info('ServiceManager', `Fixed volume ownership: ${hostPath} -> ${uid}:${gid}`);
+            } catch (e) {
+                logger.warn('ServiceManager', `Failed to fix ownership for ${hostPath}:`, e);
+            }
+        }
+    }
+
     private static async fixVolumeOwnership(nodeName: string, yamlContent: string) {
-        try {            const docs = yaml.loadAll(yamlContent) as PodLikeDoc[];
+        try {
+            const docs = yaml.loadAll(yamlContent) as PodLikeDoc[];
             for (const doc of docs) {
                 if (!doc?.spec) continue;
                 const containers = doc.spec.containers || [];
@@ -858,26 +886,7 @@ export class ServiceLifecycle {
                 }
 
                 for (const container of containers) {
-                    const uid = container.securityContext?.runAsUser;
-                    const gid = container.securityContext?.runAsGroup ?? uid;
-                    if (uid == null || uid === 0) continue; // Skip root or unset
-
-                    const mounts = container.volumeMounts || [];
-                    for (const mount of mounts) {
-                        if (!mount.name) continue;
-                        const hostPath = volumePaths.get(mount.name);
-                        if (!hostPath || mount.readOnly) continue;
-
-                        const agent = await agentManager.ensureAgent(nodeName);
-                        try {
-                            await agent.sendCommand('exec', {
-                                command: `podman unshare chown -R ${uid}:${gid} ${hostPath}`
-                            });
-                            logger.info('ServiceManager', `Fixed volume ownership: ${hostPath} -> ${uid}:${gid}`);
-                        } catch (e) {
-                            logger.warn('ServiceManager', `Failed to fix ownership for ${hostPath}:`, e);
-                        }
-                    }
+                    await this.chownContainerMounts(nodeName, container, volumePaths);
                 }
             }
         } catch (e) {
