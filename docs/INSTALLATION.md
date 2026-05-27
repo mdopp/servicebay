@@ -397,3 +397,114 @@ scripts/fcos-diagnose.sh 192.168.1.50          # different IP
 FCOS_PORT=5888 scripts/fcos-diagnose.sh        # different port
 FCOS_KEY=~/.ssh/id_ed25519 scripts/fcos-diagnose.sh
 ```
+
+## 13. Known reinstall gotchas
+
+Failure modes that have bitten the maintainer on real reinstall boxes.
+All look similar from the network — the box pings, ServiceBay's port
+doesn't answer — but each has a distinct cause and a different fix.
+
+### 13.1 USB stays in BootOrder → install loop
+
+**Symptom (from network):** ping cycles UP / DOWN with a ~90-second
+period. The installer keeps re-running.
+
+**Root cause:** `install-fedora-coreos.sh`'s `disable-usb-boot.sh` runs
+under `WantedBy=multi-user.target`, so it only fires *after* the install
+chain finishes. On hardware where `install-nvidia` reboots mid-stage
+(see 13.2), `disable-usb-boot` never runs and the BIOS keeps booting
+from the still-inserted USB.
+
+**Fix:** pull the USB. The loop stops on the next reboot. If the box
+came up far enough to write SSD content, the next boot lands on the
+installed system.
+
+**Prevention:** if this recurs, re-target `disable-usb-boot.service` to
+an earlier sync point (`local-fs.target` with `Before=` on the
+install-nvidia chain) so it cannot be blocked by later stages.
+
+### 13.2 install-nvidia failed before the GPU stack landed
+
+**Symptom (from network):** ping stays UP, SSH/5888 open briefly during
+one cycle then close, repeating. The box is alive but rpm-ostree is
+re-layering and rebooting.
+
+**Root cause (pre-2026-05-25):** stage 2 of `install-nvidia.sh` asked
+for `kmod-nvidia-open-dkms` + `nvidia-container-toolkit`, but Fedora has
+no native DKMS — RPM Fusion ships `akmod-*` packages — and
+`nvidia-container-toolkit` lives in NVIDIA's own
+libnvidia-container repo, not RPM Fusion. Stage 2 exited with
+`error: Packages not found`, no reboot, no stage 3. From outside it
+looked like a stable-but-broken install.
+
+Stage 2 was fixed in `2c77a17`/`b55e159`; this entry stays because
+operators on boxes installed before the fix need the recovery path.
+
+**Disambiguate from 13.1:** win the SSH race during an "open" window
+(use `build/fcos/servicebay-ssh/id_rsa`) and check
+`journalctl -b 0 -u install-nvidia.service`. If you see
+`Packages not found: kmod-nvidia-…`, this is it.
+
+**Recovery on a half-installed box** (SSH works, GPU stack missing):
+
+```bash
+sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null <<'EOF'
+[nvidia-container-toolkit]
+name=nvidia-container-toolkit
+baseurl=https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch
+enabled=1
+repo_gpgcheck=1
+gpgcheck=1
+gpgkey=https://nvidia.github.io/libnvidia-container/gpgkey
+EOF
+sudo rpm-ostree install --idempotent --allow-inactive \
+  akmod-nvidia-open xorg-x11-drv-nvidia-cuda nvidia-container-toolkit
+sudo touch /var/lib/install-nvidia-driver-done
+sudo systemctl reboot
+```
+
+After the reboot:
+
+```bash
+sudo modprobe nvidia
+sudo mkdir -p /etc/cdi
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+sudo touch /var/lib/install-nvidia-cdi-done
+sudo systemctl reset-failed install-nvidia.service
+```
+
+**Adjacent gotcha:** on an Ada-class GPU (RTX 2000 observed) the kmod's
+udev autoload races boot for ~65 s — one cycle past the original 60 s
+poll. `b55e159` raised the poll to 180 s plus an explicit
+`modprobe nvidia` to short-circuit the race.
+
+### 13.3 hermes crash-loops after `hermes config set` (SELinux relabel)
+
+**Symptom:** `hermes.service` exits 125 immediately on
+`systemctl --user restart hermes`. Journal shows
+`failed to create volume "hermes-data": … lsetxattr … operation not
+permitted` or `setting selinux label`.
+
+**Root cause:** `podman kube play` mounts `/mnt/data/stacks/hermes` with
+`:Z`, which re-applies the SELinux `container_file_t` label across the
+whole tree. If `hermes config set …` (or any operator command running
+outside the container) left files owned by `root:root` —
+e.g. `config.yaml.bak` written as a backup — the relabel can't touch
+them and exits 125.
+
+**Fix:**
+
+```bash
+sudo rm -f /mnt/data/stacks/hermes/*.bak
+systemctl --user restart hermes
+```
+
+**Prevention:** run `hermes config set …` from inside the container
+(`podman exec hermes-hermes hermes config set …`) so any backups
+inherit the container user. After any out-of-container edit, sweep
+`/mnt/data/stacks/hermes/` for stray root-owned files before
+restarting.
+
+This pattern likely applies to any other template whose post-deploy or
+operator commands write into the data volume from a different uid.
+
