@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.39.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.39.1...servicebay-v4.39.2) (2026-05-27)
+
+
+### Bug Fixes
+
+* **installer:** hide system-wide Clean Install toggle from per-template modal ([72520b0](https://github.com/mdopp/servicebay/commit/72520b08d4f51a59c04c1be0768254b4ca0190e2))
+* **installer:** hide system-wide Clean Install toggle from per-template modal ([2bdf67b](https://github.com/mdopp/servicebay/commit/2bdf67bda7d6dac93f9d60b0021422dd5dc60bd2))
+
 ## [4.39.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.39.0...servicebay-v4.39.1) (2026-05-27)
 
 
