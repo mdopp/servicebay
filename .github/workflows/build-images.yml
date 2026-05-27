@@ -1,28 +1,21 @@
 name: build-images
 
-# Build and publish container images for OSCAR-owned components.
+# Build and publish container images for ServiceBay-owned components.
 #
-# - On push to `main` and tags `v*`: builds + pushes to GHCR.
-# - On pull requests touching image sources: builds without pushing,
-#   so the Dockerfile is validated before merge.
-#
-# Matrix entries are deliberately permissive: each step checks that the
-# Dockerfile actually exists before building, so this workflow can land
-# on main before the image-bearing PRs do without breaking subsequent
-# pushes.
+# After the OSCAR migration (mdopp/oscar), the oscar-gatekeeper and
+# oscar-household-init images moved to mdopp/oscar's own
+# .github/workflows/build-images.yml. ServiceBay currently has no
+# remaining first-party container images of its own — the workflow
+# stays as scaffolding for any future ServiceBay-owned image.
 
 on:
   push:
     branches: [main]
     tags: ['v*']
     paths:
-      - 'templates/oscar-household/src/gatekeeper/**'
-      - 'templates/oscar-household/src/schema/**'
       - '.github/workflows/build-images.yml'
   pull_request:
     paths:
-      - 'templates/oscar-household/src/gatekeeper/**'
-      - 'templates/oscar-household/src/schema/**'
       - '.github/workflows/build-images.yml'
 
 permissions:
@@ -33,16 +26,14 @@ jobs:
   build:
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
+    if: false  # no images to build until ServiceBay grows one — see header comment
     strategy:
       fail-fast: false
       matrix:
         include:
-          - image: oscar-gatekeeper
-            dockerfile: templates/oscar-household/src/gatekeeper/Dockerfile
-            description: "OSCAR Wyoming-to-Hermes bridge — STT/TTS pipeline orchestration, Phase-2 speaker ID. Runs as a container inside oscar-household; reaches ServiceBay's voice template via host loopback (both pods hostNetwork)."
-          - image: oscar-household-init
-            dockerfile: templates/oscar-household/src/schema/Dockerfile
-            description: "OSCAR schema-init sidecar — runs alembic upgrade head against oscar-household's local SQLite (oscar.db) on every pod start. Idempotent."
+          - image: placeholder
+            dockerfile: Dockerfile.placeholder
+            description: "Placeholder — keeps the workflow valid until ServiceBay ships its own image."
     steps:
       - name: Checkout
         uses: actions/checkout@v4

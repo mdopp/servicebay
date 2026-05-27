@@ -123,6 +123,13 @@ describe('Template ↔ source-name consistency', () => {
     'home-assistant',
     'homeassistant',
     'audiobookshelf-oidc',
+    // Templates that moved to mdopp/oscar (external registry) but are
+    // still referenced by name by SB-side code that controls them
+    // (e.g. the OSCAR pending-skills promote route restarts the
+    // Hermes service after promoting a skill). The template doesn't
+    // live in this repo any more, but the service name on the agent
+    // is still 'hermes' — the reference is legitimate. See #1159.
+    'hermes',
   ]);
 
   // Patterns to scan for in src/ — each captures a template-name string literal.
