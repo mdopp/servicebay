@@ -720,6 +720,14 @@ export default function OnboardingWizard() {
     if (prev.step === 'stacks' && prev.subStep === 'select') {
       setSelectedStacks([]);
       setStackItems([]);
+      // #1068: also reset pickerChecked to the picker's default (all
+      // stacks checked, matching the "Defaults to all — uncheck what
+      // you don't need" copy in StacksStep). Express install calls
+      // handleSelectStack(availableStacks) directly and never touches
+      // pickerChecked, so without this reset the picker can carry
+      // whatever subset was checked before the express run — confusing
+      // for an operator who never explicitly picked it.
+      setPickerChecked(new Set(availableStacks.map(s => s.name)));
     }
   };
 
