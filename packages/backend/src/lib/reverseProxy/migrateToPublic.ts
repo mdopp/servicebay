@@ -254,6 +254,27 @@ interface AutheliaDeps {
   restartAuth(node: string): Promise<void>;
 }
 
+/**
+ * Walk parsed auth-pod docs and return the first `hostPath` of a
+ * volume whose name contains "config", or `''` if none exists.
+ * This is where authelia's `configuration.yml` lives on disk on
+ * the node — locateConfig appends `/configuration.yml` to the
+ * returned value.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function findAutheliaConfigHostPath(docs: any[]): string {
+  for (const doc of docs) {
+    const volumes = doc?.spec?.volumes;
+    if (!Array.isArray(volumes)) continue;
+    for (const vol of volumes) {
+      if (vol.name?.includes('config') && vol.hostPath?.path) {
+        return vol.hostPath.path;
+      }
+    }
+  }
+  return '';
+}
+
 async function realAutheliaDeps(): Promise<AutheliaDeps> {
   const { agentManager } = await import('../agent/manager');
   return {
@@ -264,18 +285,7 @@ async function realAutheliaDeps(): Promise<AutheliaDeps> {
           if (!files.yamlContent) continue;
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const docs = yaml.loadAll(files.yamlContent) as any[];
-          let configHostPath = '';
-          for (const doc of docs) {
-            const volumes = doc?.spec?.volumes;
-            if (!Array.isArray(volumes)) continue;
-            for (const vol of volumes) {
-              if (vol.name?.includes('config') && vol.hostPath?.path) {
-                configHostPath = vol.hostPath.path;
-                break;
-              }
-            }
-            if (configHostPath) break;
-          }
+          const configHostPath = findAutheliaConfigHostPath(docs);
           if (!configHostPath) continue;
           const configFilePath = `${configHostPath}/configuration.yml`;
           const agent = await agentManager.ensureAgent(nodeName);
