@@ -21,6 +21,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { DATA_DIR } from '@/lib/dirs';
+import { getConfig, getJobLogLimits, DEFAULT_MAX_JOB_LOG_LINES, DEFAULT_MAX_JOB_LOG_BYTES } from '@/lib/config';
 import type { Credential } from '@/lib/stackInstall/credentialsManifest';
 
 const JOBS_DIR = path.join(DATA_DIR, 'install-jobs');
@@ -196,6 +197,11 @@ export async function createJob(opts: { source: string; input: JobInput }): Prom
     await atomicWrite(statePath(job.id), JSON.stringify(job, null, 2));
     await fs.writeFile(logPath(job.id), '', 'utf-8');
     memCache.set(job.id, job);
+    // Prime the per-job log cap (#1098 Phase 2). Reads the current
+    // config once per createJob so individual `appendLog` calls stay
+    // free of an async config hop on the hot path.
+    const limits = await readLogLimits();
+    logCaps.set(job.id, { bytes: 0, lines: 0, ...limits, truncated: false });
     return job;
   });
 }
@@ -238,8 +244,72 @@ export async function updateJob(
   return next;
 }
 
+/**
+ * Per-job log-cap tracking (#1098 Phase 2). Hard ceiling on each job's
+ * `.log` file so a thrashing install can't unbound the JOBS_DIR or
+ * crowd the status-route reader. When the cap is hit we write one
+ * `[TRUNCATED]` marker and drop subsequent appends silently — the
+ * runner keeps running, we just stop preserving its chatter.
+ *
+ * Cache survives the lifetime of the job within a process. On server
+ * restart the cache is cold; `initLogCap` reads the existing file's
+ * size + line count once so we don't blow past the cap by reading the
+ * old file as zero-size.
+ */
+interface LogCap {
+  bytes: number;
+  lines: number;
+  maxBytes: number;
+  maxLines: number;
+  truncated: boolean;
+}
+
+const logCaps = new Map<string, LogCap>();
+
+async function readLogLimits(): Promise<{ maxBytes: number; maxLines: number }> {
+  try {
+    return getJobLogLimits(await getConfig());
+  } catch {
+    // Config unreadable at this point is exceptional, but a missing
+    // cap mustn't strand the runner — fall back to the same defaults
+    // the getter would have returned.
+    return { maxBytes: DEFAULT_MAX_JOB_LOG_BYTES, maxLines: DEFAULT_MAX_JOB_LOG_LINES };
+  }
+}
+
+async function initLogCap(id: string): Promise<LogCap> {
+  const limits = await readLogLimits();
+  let bytes = 0;
+  let lines = 0;
+  let truncated = false;
+  try {
+    const buf = await fs.readFile(logPath(id), 'utf-8');
+    bytes = Buffer.byteLength(buf, 'utf-8');
+    // Newline-terminated lines; an empty file is 0 lines.
+    lines = bytes === 0 ? 0 : buf.split('\n').length - (buf.endsWith('\n') ? 1 : 0);
+    truncated = buf.includes('[TRUNCATED:');
+  } catch {
+    // Missing log file is fine — runner hasn't written yet.
+  }
+  const cap: LogCap = { bytes, lines, ...limits, truncated };
+  logCaps.set(id, cap);
+  return cap;
+}
+
 export async function appendLog(id: string, line: string): Promise<void> {
-  await fs.appendFile(logPath(id), line + '\n', 'utf-8').catch(() => undefined);
+  const cap = logCaps.get(id) ?? await initLogCap(id);
+  if (cap.truncated) return;
+  const data = line + '\n';
+  const dataBytes = Buffer.byteLength(data, 'utf-8');
+  if (cap.bytes + dataBytes > cap.maxBytes || cap.lines + 1 > cap.maxLines) {
+    const marker = `[TRUNCATED: log exceeded cap (lines=${cap.maxLines}, bytes=${cap.maxBytes}); further lines dropped]\n`;
+    await fs.appendFile(logPath(id), marker, 'utf-8').catch(() => undefined);
+    cap.truncated = true;
+    return;
+  }
+  await fs.appendFile(logPath(id), data, 'utf-8').catch(() => undefined);
+  cap.bytes += dataBytes;
+  cap.lines += 1;
 }
 
 /** Read log content from `sinceBytes` to end-of-file. Used by the
@@ -357,5 +427,6 @@ async function pruneJobs(keep: number): Promise<void> {
     if (j.phase === 'running' || j.phase === 'needs_credentials') continue;
     await fs.unlink(statePath(j.id)).catch(() => undefined);
     await fs.unlink(logPath(j.id)).catch(() => undefined);
+    logCaps.delete(j.id);
   }
 }
