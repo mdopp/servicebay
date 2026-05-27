@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.38.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.37.0...servicebay-v4.38.0) (2026-05-27)
+
+
+### Features
+
+* **backend:** add per-job log cap config fields ([ccbfe81](https://github.com/mdopp/servicebay/commit/ccbfe81ee07fedf0b7809be026767559a48dc504))
+* **backend:** add per-job log cap config fields ([ffd7a50](https://github.com/mdopp/servicebay/commit/ffd7a5040124a2be50b4e72ceda62e434e12eaf3))
+* **frontend:** add FocusTrap component and wire it into FileViewerOverlay ([114a07d](https://github.com/mdopp/servicebay/commit/114a07d363a4f12c9f3532215de8c718631af16a))
+* **frontend:** add FocusTrap component and wire it into FileViewerOverlay ([b237065](https://github.com/mdopp/servicebay/commit/b237065203df33b06f828e34879db140663b3238))
+
 ## [4.37.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.4...servicebay-v4.37.0) (2026-05-27)
 
 
