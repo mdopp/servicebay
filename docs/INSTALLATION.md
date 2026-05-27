@@ -42,7 +42,6 @@ flowchart TD
 │             │ DNS servers (;-separated)    │ gateway IP │ ✓          │
 ├─────────────┼──────────────────────────────┼────────────┼────────────┤
 │ ServiceBay  │ Port                         │ 3000       │ ✓          │
-│             │ Update channel               │ stable     │ ✓          │
 │             │ Admin username               │ admin      │ ✓          │
 │             │ Admin password               │ —          │ ✗ secret   │
 ├─────────────┼──────────────────────────────┼────────────┼────────────┤
