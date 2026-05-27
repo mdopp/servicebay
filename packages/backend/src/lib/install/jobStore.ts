@@ -55,7 +55,7 @@ export interface JobInputItem {
   checked: boolean;
   alreadyInstalled?: boolean;
   yaml?: string;
-  configFiles?: { filename: string; content: string; targetPath?: string }[];
+  configFiles?: { filename: string; content: string; targetPath?: string; renderContent?: boolean }[];
   dependencies?: string[];
 }
 
