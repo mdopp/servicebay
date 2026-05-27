@@ -102,14 +102,16 @@ export async function discoverSystemdServices(connection?: PodmanConnection): Pr
         const discoveryHints: string[] = [];
 
         try {
-            // Try with the service name as is
-            let cmd = `systemctl --user show -p FragmentPath -p SourcePath "${serviceName}"`;
-            let { stdout } = await executor.exec(cmd);
+            // #1097: route systemctl through execArgv so the shell never
+            // sees serviceName as part of a command-line string. The
+            // upstream regex validator already constrains the input, but
+            // argv-based exec removes the shell-injection class entirely
+            // and matches the convention the rest of the codebase uses.
+            let { stdout } = await executor.execArgv(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', serviceName]);
 
             // If empty output or properties missing, try appending .service if not present
             if ((!stdout || (!stdout.includes('FragmentPath=') && !stdout.includes('SourcePath='))) && !serviceName.endsWith('.service')) {
-                 cmd = `systemctl --user show -p FragmentPath -p SourcePath "${serviceName}.service"`;
-                 const res = await executor.exec(cmd);
+                 const res = await executor.execArgv(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', `${serviceName}.service`]);
                  stdout = res.stdout;
             }
 
