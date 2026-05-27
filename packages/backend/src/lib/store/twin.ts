@@ -116,6 +116,13 @@ export class DigitalTwinStore {
   private listeners: Array<() => void> = [];
   private staticPortsCache = new Map<string, { contentKey: string; ports: PortMapping[] }>();
 
+  // Per-node debounce timers for unmanaged-bundle rebuilds (#1036).
+  // Bundle discovery is O(containers × services) and was firing inside
+  // every SYNC_PARTIAL; debouncing collapses a burst into one rebuild.
+  private bundleRebuildTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  public bundleRebuildDebounceMs = 5_000; // public for tests
+
+
   /**
    * Health-probe results keyed by `nodeId → serviceName → ServiceHealth`.
    * Source of truth for `ServiceUnit.health` (#626). Held out-of-band
@@ -313,16 +320,7 @@ export class DigitalTwinStore {
     // ENRICHMENT: Calculate Derived Properties (Effective Ports, Host Network)
     // This makes the Twin the Single Source of Truth for "Service Properties"
     this.enrichNode(nodeId, this.nodes[nodeId]);
-    const builtBundles = buildServiceBundlesForNode({
-        nodeName: nodeId,
-        services: this.nodes[nodeId].services,
-        containers: this.nodes[nodeId].containers,
-        files: this.nodes[nodeId].files
-    });
-    const dismissed = new Set(this.nodes[nodeId].dismissedBundles || []);
-    this.nodes[nodeId].unmanagedBundles = dismissed.size > 0
-        ? builtBundles.filter(bundle => !dismissed.has(bundle.id))
-        : builtBundles;
+    this.scheduleBundleRebuild(nodeId);
 
     // AGGREGATION: Update Global Proxy State
     this.recalculateGlobalProxy();
@@ -334,6 +332,29 @@ export class DigitalTwinStore {
 
     this.notifyListeners();
   }
+
+    // #1036: Coalesce a burst of agent updates into a single bundle
+    // rebuild. Resetting the timer pushes the deadline. rebuildBundlesNow
+    // is also exposed for explicit operator-triggered fetches.
+    private scheduleBundleRebuild(nodeId: string): void {
+        const existing = this.bundleRebuildTimers.get(nodeId);
+        if (existing) clearTimeout(existing);
+        const t = setTimeout(() => {
+            this.bundleRebuildTimers.delete(nodeId);
+            this.rebuildBundlesNow(nodeId);
+        }, this.bundleRebuildDebounceMs);
+        if (typeof t === 'object' && t && 'unref' in t && typeof t.unref === 'function') t.unref();
+        this.bundleRebuildTimers.set(nodeId, t);
+    }
+
+    public rebuildBundlesNow(nodeId: string): void {
+        const node = this.nodes[nodeId];
+        if (!node) return;
+        const built = buildServiceBundlesForNode({ nodeName: nodeId, services: node.services, containers: node.containers, files: node.files });
+        const dismissed = new Set(node.dismissedBundles || []);
+        node.unmanagedBundles = dismissed.size > 0 ? built.filter(b => !dismissed.has(b.id)) : built;
+        this.notifyListeners();
+    }
 
     public dismissUnmanagedBundle(nodeId: string, bundleId: string): boolean {
             if (!bundleId) return false;

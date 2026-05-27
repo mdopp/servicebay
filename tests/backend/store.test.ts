@@ -88,4 +88,75 @@ describe('DigitalTwinStore', () => {
         expect(history[0].targetName).toBe('target-29');
         expect(history[history.length - 1].targetName).toBe('target-5');
     });
+
+    // #1036 — bundle discovery used to run synchronously inside every
+    // updateNode call (6+ per initial sync, one per poll). It now
+    // coalesces on a debounce so a burst collapses into one rebuild.
+    describe('unmanaged bundle rebuild debounce (#1036)', () => {
+        it('does not compute bundles synchronously inside updateNode', () => {
+            store.registerNode('DebounceNode');
+            store.bundleRebuildDebounceMs = 5_000;
+
+            // Push something that *would* bundle: a service file
+            // referencing a container that is not Quadlet-managed.
+            store.updateNode('DebounceNode', {
+                containers: [],
+                services: [],
+                files: {},
+            });
+
+            // Immediately after updateNode, bundles should still be the
+            // empty initial state — the rebuild is pending, not done.
+            expect(store.nodes['DebounceNode'].unmanagedBundles).toEqual([]);
+            // And a timer should be scheduled, proving the rebuild was
+            // deferred rather than skipped entirely.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const timers = (store as any).bundleRebuildTimers as Map<string, unknown>;
+            expect(timers.has('DebounceNode')).toBe(true);
+        });
+
+        it('rebuilds exactly once across a burst of updateNode calls', () => {
+            vi.useFakeTimers();
+            try {
+                store.registerNode('BurstNode');
+                store.bundleRebuildDebounceMs = 5_000;
+
+                // Spy on the public on-demand entry point — the debounce
+                // callback funnels through it, so one call here proves the
+                // burst coalesced.
+                const rebuildSpy = vi.spyOn(store, 'rebuildBundlesNow');
+
+                // Six updates inside the debounce window: matches the
+                // worst-case agent initial-sync pattern (containers /
+                // services / volumes / files / resources / proxyRoutes).
+                for (let i = 0; i < 6; i += 1) {
+                    store.updateNode('BurstNode', { resources: null });
+                    vi.advanceTimersByTime(500);
+                }
+
+                // Mid-burst (3s elapsed): rebuild has not fired.
+                expect(rebuildSpy).not.toHaveBeenCalled();
+
+                // Advance past the debounce window. One rebuild total.
+                vi.advanceTimersByTime(5_000);
+                expect(rebuildSpy).toHaveBeenCalledTimes(1);
+                expect(rebuildSpy).toHaveBeenCalledWith('BurstNode');
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('rebuildBundlesNow bypasses the debounce for explicit operator actions', () => {
+            store.registerNode('NowNode');
+            store.bundleRebuildDebounceMs = 60_000;
+
+            store.updateNode('NowNode', { resources: null });
+            expect(store.nodes['NowNode'].unmanagedBundles).toEqual([]);
+
+            store.rebuildBundlesNow('NowNode');
+            // Bundles list is still empty (no input to bundle from), but
+            // the call shouldn't throw and should leave the field set.
+            expect(store.nodes['NowNode'].unmanagedBundles).toEqual([]);
+        });
+    });
 });
