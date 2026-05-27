@@ -2240,6 +2240,7 @@ PERSISTED_SETTINGS=(
   GW_HOST
   GW_USER
   ENABLE_REGISTRIES
+  ENABLE_OSCAR_REGISTRY
   ENABLE_EMAIL
   EMAIL_HOST
   EMAIL_PORT
@@ -2282,6 +2283,7 @@ if [[ -f "$SETTINGS_FILE" ]]; then
     echo "  FRITZ!Box:        (not configured)"
   fi
   echo "  Registries:       $(load_setting ENABLE_REGISTRIES)"
+  echo "  OSCAR registry:   $(load_setting ENABLE_OSCAR_REGISTRY)"
   _EMAIL="$(load_setting ENABLE_EMAIL)"
   if [[ "${_EMAIL^^}" =~ ^Y ]]; then
     echo "  Email:            $(load_setting EMAIL_USER) via $(load_setting EMAIL_HOST):$(load_setting EMAIL_PORT)"
@@ -2496,6 +2498,14 @@ else
   read -r -p "Enable default template registry (servicebay-templates)? [${PREV_REG}]: " ENABLE_REGISTRIES
   ENABLE_REGISTRIES=${ENABLE_REGISTRIES:-$PREV_REG}
 
+  # OSCAR is a household AI assistant (ollama + hermes + hermes-webui +
+  # oscar-household) published as a separate external registry. Default
+  # `Y` so the templates appear in the wizard; operator can decline to
+  # keep the default install lean.
+  PREV_OSCAR="$(prev ENABLE_OSCAR_REGISTRY "Y")"
+  read -r -p "Enable OSCAR registry (household AI assistant, mdopp/oscar)? [${PREV_OSCAR}]: " ENABLE_OSCAR_REGISTRY
+  ENABLE_OSCAR_REGISTRY=${ENABLE_OSCAR_REGISTRY:-$PREV_OSCAR}
+
   # --- Email Notifications ---
 
   echo ""
@@ -2612,17 +2622,24 @@ if [[ -n "$GW_USER" ]]; then
   }'
 fi
 
-# Add registries config if enabled
+# Add registries config if either default registry is enabled. The
+# config.registries.items[] holds each enabled entry; ServiceBay's
+# registry sync iterates them on every server start.
+REGISTRY_ENTRIES=()
 if [[ "${ENABLE_REGISTRIES^^}" =~ ^Y ]]; then
+  REGISTRY_ENTRIES+=('{ "name": "ServiceBay Templates", "url": "https://github.com/mdopp/servicebay-templates" }')
+fi
+if [[ "${ENABLE_OSCAR_REGISTRY^^}" =~ ^Y ]]; then
+  REGISTRY_ENTRIES+=('{ "name": "oscar", "url": "https://github.com/mdopp/oscar" }')
+fi
+if (( ${#REGISTRY_ENTRIES[@]} > 0 )); then
+  # Join the entries with commas; printf is the safest way to do that
+  # without trailing-comma surprises.
+  IFS=, ; REGISTRY_ITEMS="${REGISTRY_ENTRIES[*]}" ; unset IFS
   SERVICEBAY_CONFIG+=',
   "registries": {
     "enabled": true,
-    "items": [
-      {
-        "name": "ServiceBay Templates",
-        "url": "https://github.com/mdopp/servicebay-templates"
-      }
-    ]
+    "items": ['"$REGISTRY_ITEMS"']
   }'
 fi
 
