@@ -383,6 +383,37 @@ export interface AppConfig {
    * disk.
    */
   accessRequests?: AccessRequest[];
+  /**
+   * Per-job log caps (#1098 Phase 1). Long-running installs and noisy
+   * mass deploys can balloon `logs.db` without bound; these limits
+   * give the logger a hard ceiling per job. Phase 2 wires the rotation
+   * + `[TRUNCATED]` summary in `logger.ts`; this PR is just the
+   * config surface so operators can set their own limits ahead of the
+   * rotation landing.
+   *
+   * Defaults (read via `getJobLogLimits()` below) bias toward
+   * "verbose but bounded": enough to debug a normal install end-to-end
+   * without letting a thrashing job swallow the SQLite file.
+   */
+  logging?: {
+    /** Hard cap on log entries persisted per job. Default 10_000. */
+    maxJobLogLines?: number;
+    /** Hard cap on cumulative log bytes persisted per job. Default 5_000_000 (~5 MB). */
+    maxJobLogBytes?: number;
+  };
+}
+
+// #1098 Phase 1: defaults for the logging caps. Consumers (Phase 2's
+// rotation in logger.ts) should always go through this getter so the
+// fallback shape lives in one place.
+export const DEFAULT_MAX_JOB_LOG_LINES = 10_000;
+export const DEFAULT_MAX_JOB_LOG_BYTES = 5_000_000;
+
+export function getJobLogLimits(config: AppConfig): { maxLines: number; maxBytes: number } {
+  return {
+    maxLines: config.logging?.maxJobLogLines ?? DEFAULT_MAX_JOB_LOG_LINES,
+    maxBytes: config.logging?.maxJobLogBytes ?? DEFAULT_MAX_JOB_LOG_BYTES,
+  };
 }
 
 export interface ServicePostDeployRecord {

@@ -21,7 +21,7 @@ vi.mock('@/lib/secrets', () => ({
 
 const TEST_DIR = path.join(os.tmpdir(), `sb-config-race-${process.pid}`);
 
-import { updateConfig, getConfig } from './config';
+import { updateConfig, getConfig, getJobLogLimits, DEFAULT_MAX_JOB_LOG_LINES, DEFAULT_MAX_JOB_LOG_BYTES } from './config';
 
 beforeEach(async () => {
   await fs.mkdir(TEST_DIR, { recursive: true });
@@ -113,5 +113,48 @@ describe('updateConfig serialization', () => {
     } finally {
       setSpy.mockRestore();
     }
+  });
+});
+
+// #1098 Phase 1 — config surface for job-log caps. Phase 2 wires the
+// rotation in logger.ts; this PR is just the config getter + defaults.
+describe('getJobLogLimits (#1098)', () => {
+  it('returns documented defaults when logging.* is absent', () => {
+    const limits = getJobLogLimits({ autoUpdate: { enabled: true, schedule: '0 0 * * *' } });
+    expect(limits.maxLines).toBe(DEFAULT_MAX_JOB_LOG_LINES);
+    expect(limits.maxBytes).toBe(DEFAULT_MAX_JOB_LOG_BYTES);
+  });
+
+  it('respects operator overrides', () => {
+    const limits = getJobLogLimits({
+      autoUpdate: { enabled: true, schedule: '0 0 * * *' },
+      logging: { maxJobLogLines: 500, maxJobLogBytes: 100_000 },
+    });
+    expect(limits.maxLines).toBe(500);
+    expect(limits.maxBytes).toBe(100_000);
+  });
+
+  it('falls back per-field — a partial override fills the other from defaults', () => {
+    const linesOnly = getJobLogLimits({
+      autoUpdate: { enabled: true, schedule: '0 0 * * *' },
+      logging: { maxJobLogLines: 42 },
+    });
+    expect(linesOnly.maxLines).toBe(42);
+    expect(linesOnly.maxBytes).toBe(DEFAULT_MAX_JOB_LOG_BYTES);
+
+    const bytesOnly = getJobLogLimits({
+      autoUpdate: { enabled: true, schedule: '0 0 * * *' },
+      logging: { maxJobLogBytes: 999 },
+    });
+    expect(bytesOnly.maxLines).toBe(DEFAULT_MAX_JOB_LOG_LINES);
+    expect(bytesOnly.maxBytes).toBe(999);
+  });
+
+  it('updateConfig persists logging fields and getJobLogLimits reads them back', async () => {
+    await updateConfig({ logging: { maxJobLogLines: 123, maxJobLogBytes: 4567 } });
+    const config = await getConfig();
+    const limits = getJobLogLimits(config);
+    expect(limits.maxLines).toBe(123);
+    expect(limits.maxBytes).toBe(4567);
   });
 });
