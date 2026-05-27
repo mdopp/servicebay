@@ -14,17 +14,81 @@ export interface FritzBoxOptions {
 
 /**
  * Validate a FritzBox host string. The gateway is always on the LAN,
- * so reject the cases that are NEVER legitimate (#578):
- *   - `localhost` and the `.localhost` reserved suffix
- *   - 127.0.0.0/8 loopback
- *   - 169.254.0.0/16 link-local (auto-config, not a router)
- *   - IPv6 loopback / link-local
+ * so reject everything that is NOT a legitimate LAN address (#578, #1069):
  *
- * RFC1918 + `fritz.box` mDNS are allowed: those are legitimate LAN
- * router addresses. The threat model is an operator (or attacker with
- * config write access) pointing the gateway client at a local service
- * to probe it via the FritzBox client's HTTP fetches.
+ *   - `localhost` / `.localhost` and loopback IPs (a router isn't on
+ *     localhost; the original threat model)
+ *   - link-local (169.254/16 IPv4, fe80::/10 IPv6 — auto-config, not
+ *     a router)
+ *   - **public IPs** — #1069: if the operator (or an attacker with
+ *     config write access) sets host to a public address, the client
+ *     would leak TR-064 credentials to a public endpoint
+ *
+ *   Hostnames (anything that is not an IP literal — `fritz.box`,
+ *   `router.lan`, custom mDNS names) pass through unvalidated: we'd
+ *   have to do a synchronous DNS lookup to inspect them, and a
+ *   custom-named LAN router is a legitimate configuration. The
+ *   SSRF reduction comes from the IP-literal allowlist; hostname
+ *   misconfiguration is left to the operator (with the failing
+ *   discovery surfacing it later).
+ *
+ *   ALLOWED IPv4 ranges:
+ *     - 10.0.0.0/8        — RFC1918
+ *     - 172.16.0.0/12     — RFC1918
+ *     - 192.168.0.0/16    — RFC1918
+ *     - 100.64.0.0/10     — CGNAT (some ISPs / VPNs)
+ *
+ *   ALLOWED IPv6 ranges:
+ *     - fc00::/7          — unique-local addresses (ULA)
  */
+function isPrivateIPv4(parts: number[]): boolean {
+  if (parts.length !== 4 || parts.some(n => Number.isNaN(n))) return false;
+  if (parts[0] === 10) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true; // CGNAT
+  return false;
+}
+
+function isPrivateIPv6(host: string): boolean {
+  // Unique-local: fc00::/7 — first byte 0xfc or 0xfd.
+  // Match the first hex group (1-4 chars) and test its top 7 bits.
+  const firstGroup = host.split(':', 1)[0];
+  if (!firstGroup) return false;
+  const value = parseInt(firstGroup, 16);
+  if (Number.isNaN(value)) return false;
+  // For groups shorter than 4 hex chars (e.g. "fc"), parseInt still
+  // gives the correct numeric value; the top 7 bits of the leading
+  // byte are checked by masking with 0xfe (binary 11111110).
+  // 0xfc / 0xfd both have (byte & 0xfe) === 0xfc.
+  const leadingByte = value > 0xff ? (value >> 8) & 0xff : value;
+  return (leadingByte & 0xfe) === 0xfc;
+}
+
+function assertValidIPv4Host(host: string, rawHost: string): void {
+  const parts = host.split('.').map(Number);
+  if (parts[0] === 127 || parts[0] === 0) {
+    throw new Error(`FritzBox host must not be loopback (got "${rawHost}")`);
+  }
+  if (parts[0] === 169 && parts[1] === 254) {
+    throw new Error(`FritzBox host must not be link-local (got "${rawHost}")`);
+  }
+  // #1069: must be a private LAN address — public IPs leak credentials.
+  if (!isPrivateIPv4(parts)) {
+    throw new Error(`FritzBox host must be a private LAN address (got "${rawHost}"). Allowed: 10/8, 172.16/12, 192.168/16, 100.64/10 (CGNAT).`);
+  }
+}
+
+function assertValidIPv6Host(host: string, rawHost: string): void {
+  if (host === '::1' || host === '::' || host.startsWith('fe80')) {
+    throw new Error(`FritzBox host must not be loopback / link-local (got "${rawHost}")`);
+  }
+  // #1069: IPv6 must be unique-local (fc00::/7).
+  if (!isPrivateIPv6(host)) {
+    throw new Error(`FritzBox host must be a private IPv6 address (got "${rawHost}"). Allowed: fc00::/7 (unique-local).`);
+  }
+}
+
 export function assertValidFritzBoxHost(rawHost: string): void {
   if (!rawHost || typeof rawHost !== 'string') {
     throw new Error('FritzBox host must be a non-empty string');
@@ -34,20 +98,12 @@ export function assertValidFritzBoxHost(rawHost: string): void {
   if (host === 'localhost' || host.endsWith('.localhost')) {
     throw new Error(`FritzBox host must not be localhost (got "${rawHost}")`);
   }
-  if (isIP(host) === 4) {
-    const parts = host.split('.').map(Number);
-    if (parts[0] === 127 || parts[0] === 0) {
-      throw new Error(`FritzBox host must not be loopback (got "${rawHost}")`);
-    }
-    if (parts[0] === 169 && parts[1] === 254) {
-      throw new Error(`FritzBox host must not be link-local (got "${rawHost}")`);
-    }
-  }
-  if (isIP(host) === 6) {
-    if (host === '::1' || host === '::' || host.startsWith('fe80')) {
-      throw new Error(`FritzBox host must not be loopback / link-local (got "${rawHost}")`);
-    }
-  }
+  const ipVersion = isIP(host);
+  if (ipVersion === 4) return assertValidIPv4Host(host, rawHost);
+  if (ipVersion === 6) return assertValidIPv6Host(host, rawHost);
+  // Hostname (not an IP literal): pass through. mDNS / custom LAN names
+  // are legitimate; we don't resolve here because that would require a
+  // synchronous DNS round-trip at construction time.
 }
 
 export class FritzBoxClient {
