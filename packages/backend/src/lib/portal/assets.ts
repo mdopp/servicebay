@@ -182,11 +182,14 @@ export async function fetchSyncthingDeviceId(node: string = 'Local'): Promise<st
     }, { timeoutMs: 6_000 }) as { code?: number; stdout?: string };
     if (res.code !== 0) return null;
     const id = (res.stdout ?? '').trim();
-    // Syncthing device IDs are 56 chars in 7 groups of 7 separated
-    // by hyphens (e.g. ABCDEFG-HIJKLMN-...). Lightly validate so
-    // a noisy stdout (warning lines, etc.) doesn't smuggle junk
-    // into the QR.
-    if (!/^[A-Z2-7]{7}(-[A-Z2-7]{7}){6}$/.test(id)) {
+    // Syncthing device IDs use base32 with check digits separated
+    // by hyphens. Syncthing v1.x format: 56 chars in 7 groups of 7.
+    // Syncthing v2.x format (observed live 2026-05-27 on v2.1.0):
+    // 63 chars in 8 groups of 7 (extra check character per group).
+    // Accept either — the QR encoder doesn't care about the group
+    // count, only the operator's Syncthing app does, and that handles
+    // both formats from any version it shipped against.
+    if (!/^[A-Z2-7]{7}(-[A-Z2-7]{7}){6,7}$/.test(id)) {
       logger.warn('portal:assets', `Unexpected syncthing device-id shape: ${id.slice(0, 40)}`);
       return null;
     }
