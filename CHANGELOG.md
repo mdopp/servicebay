@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.36.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.1...servicebay-v4.36.2) (2026-05-27)
+
+
+### Bug Fixes
+
+* **frontend:** add actionable CTAs to error boundaries ([921f86b](https://github.com/mdopp/servicebay/commit/921f86b814c1a9d1833c253d12835bc936e921ae))
+* **frontend:** add actionable CTAs to error boundaries ([ee8dc84](https://github.com/mdopp/servicebay/commit/ee8dc84f68d681d1ea9c19ec7c7677dabcab8d20))
+* **frontend:** route stray console.warn through the typed logger ([ecf88b7](https://github.com/mdopp/servicebay/commit/ecf88b7777bc399dca1f0e156e64837d19345e0b))
+* **frontend:** route stray console.warn through the typed logger ([84203b4](https://github.com/mdopp/servicebay/commit/84203b45b9d2aa81bef9da1de797955a86068c55))
+
 ## [4.36.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.36.0...servicebay-v4.36.1) (2026-05-27)
 
 
