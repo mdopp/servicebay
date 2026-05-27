@@ -235,7 +235,15 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
               nodes={nodes}
               selectedNode={selectedNode}
               onSelectNode={setSelectedNode}
-              allowCleanInstall={template.type === 'stack'}
+              // #1150: the "Clean install" toggle wipes EVERY service on
+              // the node (via /api/system/stacks/reset), not just the one
+              // being installed here. Surfacing it in the per-template
+              // modal mismatches the operator's mental model and has
+              // already caused total data loss (memory 2026-05-15). The
+              // toggle still lives in the onboarding wizard's MachineStep
+              // where a system-wide wipe is contextually correct (no
+              // user data yet, Phase 1 boot).
+              allowCleanInstall={false}
               deviceContext={{
                 deviceOptions,
                 loadingDevices,
