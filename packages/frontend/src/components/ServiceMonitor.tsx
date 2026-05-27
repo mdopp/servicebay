@@ -119,7 +119,7 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
           if (targetNode) {
               setNetworkData(targetNode);
           } else {
-              console.warn(`[ServiceMonitor] Node not found for service: ${cleanName}`);
+              logger.warn('ServiceMonitor', `Node not found for service: ${cleanName}`);
           }
       }
     } catch (e) {

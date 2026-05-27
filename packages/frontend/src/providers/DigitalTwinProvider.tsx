@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { useSocket } from '@/hooks/useSocket';
 import type { NodeTwin, GatewayState, ProxyState } from '@servicebay/api-client';
+import { logger } from '@servicebay/api-client';
 
 export interface DigitalTwinSnapshot {
   instanceId?: string;
@@ -65,7 +66,7 @@ export function DigitalTwinProvider({ children }: { children: ReactNode }) {
             // But currently it seems to send full snapshots or we just replace common parts.
             // The previous hook just did setData(snapshot).
             if (instanceIdRef.current && snapshot.instanceId && snapshot.instanceId !== instanceIdRef.current) {
-                console.warn(`[DigitalTwinProvider] CRITICAL: Backend Instance ID changed from ${instanceIdRef.current} to ${snapshot.instanceId}. Possible server restart or split-brain.`);
+                logger.warn('DigitalTwinProvider', `CRITICAL: Backend Instance ID changed from ${instanceIdRef.current} to ${snapshot.instanceId}. Possible server restart or split-brain.`);
             }
             if (snapshot.instanceId) {
                 instanceIdRef.current = snapshot.instanceId;
