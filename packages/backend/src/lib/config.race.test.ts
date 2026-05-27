@@ -82,4 +82,36 @@ describe('updateConfig serialization', () => {
     const final = await getConfig();
     expect(final.serverName).toBe('after');
   });
+
+  // #1093 — runtime logLevel applies without restart, regardless of
+  // which call site triggers updateConfig. Previously only the
+  // /api/settings/logLevel route handler explicitly called
+  // logger.setLogLevel before persisting; any other path (env-driven
+  // change, future MCP tool, operator backup-restore, …) was silently
+  // ignored until the next server boot.
+  it('applies logLevel changes via logger.setLogLevel and skips the no-op', async () => {
+    const { logger } = await import('./logger');
+    // Establish a baseline so the next call has a known prior value.
+    await updateConfig({ logLevel: 'info' });
+
+    const setSpy = vi.spyOn(logger, 'setLogLevel');
+    try {
+      // Different value → setter fires.
+      await updateConfig({ logLevel: 'debug' });
+      expect(setSpy).toHaveBeenLastCalledWith('debug');
+
+      // Same value as the previous write → setter is NOT called again
+      // (cheap guard, but proves runtime side effects are gated on a
+      // real change rather than every save).
+      const callsBefore = setSpy.mock.calls.length;
+      await updateConfig({ logLevel: 'debug', serverName: 'unrelated' });
+      expect(setSpy.mock.calls.length).toBe(callsBefore);
+
+      // Switching again to a fresh value fires once more.
+      await updateConfig({ logLevel: 'warn' });
+      expect(setSpy).toHaveBeenLastCalledWith('warn');
+    } finally {
+      setSpy.mockRestore();
+    }
+  });
 });

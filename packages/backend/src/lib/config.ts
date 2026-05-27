@@ -656,6 +656,13 @@ export async function updateConfig(updates: Partial<AppConfig>): Promise<AppConf
     const current = await getConfig();
     const updated: AppConfig = deepMerge(current, updates);
     await saveConfigLocked(updated);
+    // #1093: apply runtime side effects of certain fields here so EVERY
+    // updateConfig caller — not just the /api/settings/logLevel route
+    // handler — picks up the change without a server restart. logLevel
+    // is the canonical case: server.ts only reads it once at boot.
+    if (updates.logLevel && updates.logLevel !== current.logLevel) {
+      logger.setLogLevel(updates.logLevel);
+    }
     return updated;
   });
 }
