@@ -132,27 +132,72 @@ async function atomicWrite(p: string, content: string): Promise<void> {
   await fs.rename(tmp, p);
 }
 
+/**
+ * Thrown by `createJob` when an active install job already exists.
+ * Carries the existing job's id so the caller (the /api/install/start
+ * route) can surface it in the 409 response — the wizard reattaches
+ * to that job instead of starting a new one.
+ *
+ * #1100: the route's pre-check (`getCurrentJob() → 409`) was a TOCTOU
+ * — two parallel POSTs could both observe no active job before either
+ * wrote one, then both runners would race on shared host state
+ * (systemd quadlets, nginx blocks, podman networks). This error is
+ * raised from inside the createJob lock so the second caller sees the
+ * first's write deterministically.
+ */
+export class InstallInProgressError extends Error {
+  readonly existingJobId: string;
+  constructor(existingJobId: string) {
+    super(`install already in progress: ${existingJobId}`);
+    this.name = 'InstallInProgressError';
+    this.existingJobId = existingJobId;
+  }
+}
+
+/**
+ * Per-process serialization for `createJob`. Same pattern as
+ * `withConfigLock` in `lib/config.ts`: a Promise chain that serializes
+ * concurrent callers and never breaks on a rejection. Required because
+ * the active-job check and the state-file write must be atomic against
+ * parallel /api/install/start requests (#1100).
+ */
+let createJobQueue: Promise<unknown> = Promise.resolve();
+
+function withCreateJobLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = createJobQueue.then(fn, fn);
+  createJobQueue = next.catch(() => undefined);
+  return next;
+}
+
 export async function createJob(opts: { source: string; input: JobInput }): Promise<JobState> {
-  await ensureDir();
-  await pruneJobs(KEEP_RECENT_JOBS);
-  const now = new Date().toISOString();
-  const job: JobState = {
-    id: randomUUID(),
-    source: opts.source,
-    phase: 'running',
-    startedAt: now,
-    updatedAt: now,
-    input: opts.input,
-    progress: {
-      currentItem: null,
-      deployedNames: [],
-      totalCount: opts.input.items.filter(i => i.checked).length,
-    },
-  };
-  await atomicWrite(statePath(job.id), JSON.stringify(job, null, 2));
-  await fs.writeFile(logPath(job.id), '', 'utf-8');
-  memCache.set(job.id, job);
-  return job;
+  return withCreateJobLock(async () => {
+    await ensureDir();
+    await pruneJobs(KEEP_RECENT_JOBS);
+    // Re-check under the lock: the route's pre-check is a fast path,
+    // not a guarantee. Without this, two parallel POSTs both pass the
+    // route's `getCurrentJob()` check before either createJob writes,
+    // and two installs race on the host's shared state (#1100).
+    const existing = await getCurrentJob();
+    if (existing) throw new InstallInProgressError(existing.id);
+    const now = new Date().toISOString();
+    const job: JobState = {
+      id: randomUUID(),
+      source: opts.source,
+      phase: 'running',
+      startedAt: now,
+      updatedAt: now,
+      input: opts.input,
+      progress: {
+        currentItem: null,
+        deployedNames: [],
+        totalCount: opts.input.items.filter(i => i.checked).length,
+      },
+    };
+    await atomicWrite(statePath(job.id), JSON.stringify(job, null, 2));
+    await fs.writeFile(logPath(job.id), '', 'utf-8');
+    memCache.set(job.id, job);
+    return job;
+  });
 }
 
 export async function getJob(id: string): Promise<JobState | null> {
