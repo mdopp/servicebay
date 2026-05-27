@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.36.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.35.1...servicebay-v4.36.0) (2026-05-27)
+
+
+### Features
+
+* **hermes-webui:** decommission orphaned open-webui pod on (re)install ([#1083](https://github.com/mdopp/servicebay/issues/1083)) ([#1084](https://github.com/mdopp/servicebay/issues/1084)) ([7d4b010](https://github.com/mdopp/servicebay/commit/7d4b0108281d6eda8d0a47006a1aeb3becd85809))
+
 ## [4.35.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.35.0...servicebay-v4.35.1) (2026-05-26)
 
 
