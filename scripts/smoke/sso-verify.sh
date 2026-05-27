@@ -118,7 +118,7 @@ cleanup() {
 trap cleanup EXIT
 
 # -------------------- 1. box health --------------------
-section "1/7 · Box health — Quadlet units + containers"
+section "1/8 · Box health — Quadlet units + containers"
 if ! ssh_cmd 'true' &> /dev/null; then
   fail "SSH to $SSH_USER@$HOST failed (key: $SSH_KEY)"
   exit 1
@@ -140,7 +140,7 @@ else
 fi
 
 # -------------------- 2. LLDAP admin handshake --------------------
-section "2/7 · LLDAP admin handshake"
+section "2/8 · LLDAP admin handshake"
 LLDAP_ADMIN_PASS=$(ssh_cmd 'podman exec auth-lldap printenv LLDAP_LDAP_USER_PASS 2>/dev/null' | tr -d '\r\n')
 if [[ -z "$LLDAP_ADMIN_PASS" ]]; then
   fail "could not read LLDAP_LDAP_USER_PASS from auth-lldap container"
@@ -201,7 +201,7 @@ else
 fi
 
 # -------------------- 3. user lifecycle --------------------
-section "3/7 · User lifecycle — create + set password + group-add"
+section "3/8 · User lifecycle — create + set password + group-add"
 
 create_resp=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
   -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
@@ -278,7 +278,7 @@ done
 pass "addUserToGroup($ADMIN_TEST_USER, family + admins)"
 
 # -------------------- 4. Authelia SSO --------------------
-section "4/7 · Authelia firstfactor"
+section "4/8 · Authelia firstfactor"
 build_resolve_flags
 COOKIE_JAR=$(mktemp -t sb-smoke-cookies.XXXXXX)
 authelia_resp=$(curl -fsS $RESOLVE_FLAGS -k -c "$COOKIE_JAR" \
@@ -299,7 +299,7 @@ else
 fi
 
 # -------------------- 5. per-service reachability --------------------
-section "5/7 · User-facing services — hit via SSO cookie"
+section "5/8 · User-facing services — hit via SSO cookie"
 
 # host → expected content signature (case-sensitive grep). Empty value
 # means "just expect 2xx/3xx" without content assertion.
@@ -353,7 +353,7 @@ for h in "${!USER_APPS[@]}"; do
 done
 
 # -------------------- 6. access control negative --------------------
-section "6/7 · Access control — family user MUST NOT reach admin domains"
+section "6/8 · Access control — family user MUST NOT reach admin domains"
 
 # These are listed under Authelia's admins-group rule. A family-only
 # user should get redirected back to /auth (302) or refused (403 from
@@ -393,7 +393,7 @@ for h in nginx dns ldap; do
 done
 
 # -------------------- 7. admin path — admins user reaches admin domains --------------------
-section "7/7 · Admin path — admins user reaches LLDAP / NPM / AdGuard admin"
+section "7/8 · Admin path — admins user reaches LLDAP / NPM / AdGuard admin"
 
 # Authelia's admin-domain rule requires `group:admins` AND `policy: two_factor`.
 # An admins-group user without 2FA enrolled gets redirected through the
@@ -440,6 +440,89 @@ for h in ldap nginx dns; do
   rm -f "$body"
 done
 rm -f "$ADMIN_JAR"
+
+# -------------------- 8. portal-asset endpoints --------------------
+section "8/8 · Portal asset endpoints — pairing helpers behind SB session auth"
+
+# Operator-facing dashboard surfaces (`Pair this device` for Syncthing,
+# `Open in Audiobookshelf`, `Add to iOS Calendar`) hit
+# `/api/portal/asset/<service>/<kind>`. Pre-#1172 the route hard-404'd
+# in public-mode installs (the most common production config), so
+# operators on real domains saw "Couldn't read the device id (HTTP 404)"
+# in the pairing modal of every assemble. The endpoint now allows
+# authenticated SB-admin requests in public mode; LAN-mode stays
+# anonymous as before.
+SB_ADMIN_USER=$(ssh_cmd 'grep "^Environment=SERVICEBAY_USERNAME=" ~/.config/containers/systemd/servicebay.container | head -1 | cut -d= -f3' | tr -d '\r\n')
+SB_ADMIN_PASS=$(ssh_cmd 'grep "^Environment=SERVICEBAY_PASSWORD=" ~/.config/containers/systemd/servicebay.container | head -1 | cut -d= -f3' | tr -d '\r\n')
+
+if [[ -z "$SB_ADMIN_USER" || -z "$SB_ADMIN_PASS" ]]; then
+  fail "could not read SERVICEBAY_USERNAME / SERVICEBAY_PASSWORD from servicebay.container — portal-asset checks skipped"
+else
+  SB_JAR=$(mktemp -t sb-smoke-cookies.XXXXXX)
+  vlog "POST http://$HOST:$SB_PORT/api/auth/login"
+  set +e
+  sb_login=$(curl -fsS -c "$SB_JAR" \
+    -H "Origin: http://$HOST:$SB_PORT" \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"$SB_ADMIN_USER\",\"password\":\"$SB_ADMIN_PASS\"}" \
+    "http://$HOST:$SB_PORT/api/auth/login" 2>&1)
+  sb_login_rc=$?
+  set -e
+  if [[ $sb_login_rc -ne 0 ]]; then
+    fail "SB /api/auth/login failed: $sb_login"
+  else
+    pass "SB session login (as $SB_ADMIN_USER) → cookie"
+
+    # Syncthing pairing QR — the failure mode the user reports.
+    body=$(mktemp -t sb-smoke-svc.XXXXXX)
+    set +e
+    code=$(curl -ks -b "$SB_JAR" -H "Origin: http://$HOST:$SB_PORT" \
+                -o "$body" -w "%{http_code}" \
+                "http://$HOST:$SB_PORT/api/portal/asset/file-share/syncthing_qr")
+    curl_rc=$?
+    set -e
+    [[ $curl_rc -ne 0 && -z "$code" ]] && code="000"
+    case "$code" in
+      200)
+        # Body should be { "deviceId": "ABC...-...-..." } — validate shape.
+        if grep -qE '"deviceId":\s*"[A-Z2-7]{7}(-[A-Z2-7]{7}){6}"' "$body"; then
+          pass "syncthing_qr → 200 with valid Syncthing device-id"
+        else
+          fail "syncthing_qr → 200 but body missing valid deviceId: $(head -c 200 "$body")"
+        fi
+        ;;
+      404)
+        fail "syncthing_qr → HTTP 404 (regression of #1172 — the pairing modal in /portal would show 'Couldn't read the device id')"
+        ;;
+      *)
+        fail "syncthing_qr → HTTP $code (expected 200; body: $(head -c 200 "$body"))"
+        ;;
+    esac
+    rm -f "$body"
+
+    # Audiobookshelf deeplink — same endpoint family, kind=audiobookshelf_deeplink.
+    body=$(mktemp -t sb-smoke-svc.XXXXXX)
+    set +e
+    code=$(curl -ks -b "$SB_JAR" -H "Origin: http://$HOST:$SB_PORT" \
+                -o "$body" -w "%{http_code}" \
+                "http://$HOST:$SB_PORT/api/portal/asset/media/audiobookshelf_deeplink?subdomain_var=AUDIOBOOKSHELF_SUBDOMAIN")
+    curl_rc=$?
+    set -e
+    [[ $curl_rc -ne 0 && -z "$code" ]] && code="000"
+    case "$code" in
+      200) pass "audiobookshelf_deeplink → HTTP 200" ;;
+      404)
+        # 404 here can also mean "asset not configured for this service"
+        # — that's fine, it's a soft check. The hard failure is portal
+        # asset returning 404 in public mode unconditionally.
+        info "audiobookshelf_deeplink → HTTP 404 (asset not configured — soft check, OK)"
+        ;;
+      *) fail "audiobookshelf_deeplink → HTTP $code (expected 200 or soft 404)" ;;
+    esac
+    rm -f "$body"
+  fi
+  rm -f "$SB_JAR"
+fi
 
 # -------------------- summary --------------------
 section "Summary"

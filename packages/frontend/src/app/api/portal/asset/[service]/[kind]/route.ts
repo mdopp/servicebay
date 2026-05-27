@@ -5,6 +5,7 @@ import { getMode } from '@/lib/mode';
 import { resolveSetupAsset } from '@/lib/portal/assets';
 import type { SetupAssetKind } from '@/lib/portal/userGuide';
 import { withApiHandlerParams } from '@/lib/api/handler';
+import { requireSession } from '@/lib/api/requireSession';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,13 +37,21 @@ type Params = { service: string; kind: string };
  */
 export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, Params>(
   { query: Query },
-  async ({ query, params }) => {
+  async ({ query, params, request }) => {
     const { service, kind } = params;
 
-    // Mode gate: portal assets are LAN-only (same as /portal page).
+    // LAN-mode installs serve portal assets anonymously (the portal
+    // page is open on the LAN). Public-mode installs require an
+    // authenticated SB session — without that the dashboard's
+    // "Pair device" / "Open in app" buttons would 404 even when an
+    // operator is logged in. Pre-#1172 this used to hard-404 any
+    // public-mode request, which surfaced as "Couldn't read the device
+    // id (HTTP 404)" in the Syncthing pairing modal of every operator
+    // running with a real publicDomain set.
     const config = await getConfig();
     if (getMode(config) === 'public') {
-      return new NextResponse('Not found', { status: 404 });
+      const auth = await requireSession(request);
+      if (auth instanceof NextResponse) return auth;
     }
 
     if (!KIND_VALUES.includes(kind as SetupAssetKind)) {
