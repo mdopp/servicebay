@@ -260,6 +260,7 @@ Settings → System → Check for Updates → Update. Your service containers ar
 
 ## Contributing
 
+- **Quickstart for the three first-PR extension points** (MCP tool, capability handler, diagnose probe): [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 - **Bug Reports**: [Open an issue](https://github.com/mdopp/servicebay/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/mdopp/servicebay/discussions)
 - **Releases**: [Conventional Commits](https://www.conventionalcommits.org/) + Release Please. `feat:` → minor, `fix:` → patch, `feat!:` → major.
