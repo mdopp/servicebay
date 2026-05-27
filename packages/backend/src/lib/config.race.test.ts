@@ -21,7 +21,7 @@ vi.mock('@/lib/secrets', () => ({
 
 const TEST_DIR = path.join(os.tmpdir(), `sb-config-race-${process.pid}`);
 
-import { updateConfig, getConfig, getJobLogLimits, DEFAULT_MAX_JOB_LOG_LINES, DEFAULT_MAX_JOB_LOG_BYTES } from './config';
+import { updateConfig, getConfig, getJobLogLimits, DEFAULT_MAX_JOB_LOG_LINES, DEFAULT_MAX_JOB_LOG_BYTES, getSchemaVersion, CURRENT_SCHEMA_VERSION } from './config';
 
 beforeEach(async () => {
   await fs.mkdir(TEST_DIR, { recursive: true });
@@ -156,5 +156,40 @@ describe('getJobLogLimits (#1098)', () => {
     const limits = getJobLogLimits(config);
     expect(limits.maxLines).toBe(123);
     expect(limits.maxBytes).toBe(4567);
+  });
+});
+
+// #1099 Phase 1 — schemaVersion field on the persisted config document.
+// Phase 2 wires the migration ledger; this PR establishes the baseline.
+describe('getSchemaVersion (#1099)', () => {
+  it('returns 1 (baseline) when the field is absent', () => {
+    expect(getSchemaVersion({ autoUpdate: { enabled: true, schedule: '0 0 * * *' } })).toBe(1);
+  });
+
+  it('returns the persisted value when present', () => {
+    expect(getSchemaVersion({
+      autoUpdate: { enabled: true, schedule: '0 0 * * *' },
+      schemaVersion: 7,
+    })).toBe(7);
+  });
+
+  it('CURRENT_SCHEMA_VERSION is 1 in Phase 1 — Phase 2 bumps this when migrations land', () => {
+    // Pin the current version so a future bump is an intentional act,
+    // not an accidental tweak that drifts past the migration ledger.
+    expect(CURRENT_SCHEMA_VERSION).toBe(1);
+  });
+
+  it('fresh-init configs (no file on disk) include the current schemaVersion', async () => {
+    // Wipe so getConfig returns DEFAULT_CONFIG.
+    await fs.rm(path.join(TEST_DIR, 'config.json'), { force: true });
+    const config = await getConfig();
+    expect(config.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(getSchemaVersion(config)).toBe(CURRENT_SCHEMA_VERSION);
+  });
+
+  it('updateConfig persists schemaVersion and getSchemaVersion reads it back', async () => {
+    await updateConfig({ schemaVersion: 1 });
+    const config = await getConfig();
+    expect(getSchemaVersion(config)).toBe(1);
   });
 });

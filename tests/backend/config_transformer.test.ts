@@ -45,6 +45,10 @@ describe('ConfigTransformer', () => {
 
     it('skips transformation when no legacy data is present', async () => {
         const config = {
+            // schemaVersion present so the #1099 baseline-stamp transform
+            // doesn't fire — this case is "fully migrated config, nothing
+            // to do" and should round-trip identically.
+            schemaVersion: 1,
             externalLinks: [
                 { id: 'modern', name: 'Modern', url: 'https://modern.example.com', ipTargets: ['192.168.1.2:443'] }
             ]
