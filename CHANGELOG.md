@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.39.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.39.0...servicebay-v4.39.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **install:** cap per-job log file at configured line/byte limits ([ab236cb](https://github.com/mdopp/servicebay/commit/ab236cbb7af455aa95c93f009ae798ada74caa80))
+* **install:** cap per-job log file at maxJobLogLines / maxJobLogBytes ([53bfe31](https://github.com/mdopp/servicebay/commit/53bfe31e5ae58cce7ecbcda495030685888f6858))
+* **install:** serialize createJob to close TOCTOU on concurrent installs ([fe6af50](https://github.com/mdopp/servicebay/commit/fe6af5004e5aebd1ea0e111ce24e93985a909cdd))
+* **install:** serialize createJob to close TOCTOU on concurrent installs ([7a72e34](https://github.com/mdopp/servicebay/commit/7a72e345a4d994781df39da7985bd71e69527124))
+
 ## [4.39.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.38.0...servicebay-v4.39.0) (2026-05-27)
 
 
