@@ -104,33 +104,32 @@ const summarizeService = (
   };
 };
 
-const collectAssets = (service: ServiceUnit, files: Record<string, WatchedFile>): BundleAsset[] => {
-  const assets: BundleAsset[] = [];
+/**
+ * BFS over a service's Quadlet references — `.pod` ↔ `.kube` siblings,
+ * `Kube=`/`Pod=` directives that point at other files in the same dir,
+ * and the operator's own `service.podReference`. Returns the full set
+ * of candidate paths that should be included in a bundle alongside the
+ * service's primary Quadlet file. Doesn't read files itself — the
+ * caller supplies `mapByPath` (path → WatchedFile) and
+ * `normalizedPathLookup` (normalised path → real path) so the
+ * traversal can hop between captured files without re-walking the
+ * filesystem.
+ */
+const traverseQuadletGraph = (
+  service: ServiceUnit,
+  mapByPath: Map<string, WatchedFile>,
+  normalizedPathLookup: Map<string, string>,
+): Set<string> => {
   const candidates = new Set<string>();
-
-  const fileList = Object.values(files);
-  const mapByPath = new Map<string, WatchedFile>();
-  const normalizedPathLookup = new Map<string, string>();
-  fileList.forEach(file => {
-    mapByPath.set(file.path, file);
-    normalizedPathLookup.set(path.normalize(file.path), file.path);
-  });
+  const visited = new Set<string>();
+  const queue: string[] = [];
 
   const findExistingPath = (candidate?: string | null): string | null => {
     if (!candidate) return null;
     if (mapByPath.has(candidate)) return candidate;
     const normalized = path.normalize(candidate);
-    const actual = normalizedPathLookup.get(normalized);
-    return actual || null;
+    return normalizedPathLookup.get(normalized) || null;
   };
-
-  const addPrimaryCandidate = (candidate?: string | null) => {
-    if (!candidate) return;
-    candidates.add(candidate);
-  };
-
-  const queue: string[] = [];
-  const visited = new Set<string>();
 
   const enqueueExistingFile = (filePath?: string | null) => {
     const resolved = findExistingPath(filePath);
@@ -141,8 +140,8 @@ const collectAssets = (service: ServiceUnit, files: Record<string, WatchedFile>)
   };
 
   // Always include the direct service paths even if the file wasn't captured yet
-  addPrimaryCandidate(service.path);
-  addPrimaryCandidate(service.fragmentPath);
+  if (service.path) candidates.add(service.path);
+  if (service.fragmentPath) candidates.add(service.fragmentPath);
 
   // Seed traversal with whichever file we can actually read
   enqueueExistingFile(service.fragmentPath || service.path);
@@ -162,49 +161,59 @@ const collectAssets = (service: ServiceUnit, files: Record<string, WatchedFile>)
     const currentExt = path.extname(currentPath).toLowerCase();
     const currentStem = path.basename(currentPath, currentExt);
 
-    const enqueueSibling = (extension: string) => {
-      if (!extension) return;
-      const candidate = path.join(currentDir, `${currentStem}.${extension}`);
-      enqueueExistingFile(candidate);
-    };
-
     if (currentExt === '.pod') {
-      enqueueSibling('kube');
+      enqueueExistingFile(path.join(currentDir, `${currentStem}.kube`));
     } else if (currentExt === '.kube') {
-      enqueueSibling('pod');
+      enqueueExistingFile(path.join(currentDir, `${currentStem}.pod`));
     }
 
-    const addRelativeReference = (reference?: string | null, fallbackExts: string[] = []) => {
-      if (!reference) return;
-      const trimmed = reference.trim();
-      if (!trimmed) return;
-      const nameCandidates = new Set<string>([trimmed]);
-      fallbackExts.forEach(ext => {
-        const lower = trimmed.toLowerCase();
-        if (!lower.endsWith(`.${ext}`)) {
-          nameCandidates.add(`${trimmed}.${ext}`);
-        }
-      });
-
-      nameCandidates.forEach(name => {
-        const target = path.isAbsolute(name) ? name : path.join(currentDir, name);
-        enqueueExistingFile(target);
-      });
-    };
-
-    addRelativeReference(directives?.pod || service.podReference, ['pod']);
-    addRelativeReference(directives?.kubeYaml, ['yml', 'yaml']);
+    enqueueRelativeReference(directives?.pod || service.podReference, currentDir, ['pod'], enqueueExistingFile);
+    enqueueRelativeReference(directives?.kubeYaml, currentDir, ['yml', 'yaml'], enqueueExistingFile);
   }
 
+  return candidates;
+};
+
+const enqueueRelativeReference = (
+  reference: string | null | undefined,
+  currentDir: string,
+  fallbackExts: string[],
+  enqueueExistingFile: (filePath?: string | null) => void,
+): void => {
+  if (!reference) return;
+  const trimmed = reference.trim();
+  if (!trimmed) return;
+  const nameCandidates = new Set<string>([trimmed]);
+  fallbackExts.forEach(ext => {
+    const lower = trimmed.toLowerCase();
+    if (!lower.endsWith(`.${ext}`)) nameCandidates.add(`${trimmed}.${ext}`);
+  });
+  nameCandidates.forEach(name => {
+    const target = path.isAbsolute(name) ? name : path.join(currentDir, name);
+    enqueueExistingFile(target);
+  });
+};
+
+const collectAssets = (service: ServiceUnit, files: Record<string, WatchedFile>): BundleAsset[] => {
+  const fileList = Object.values(files);
+  const mapByPath = new Map<string, WatchedFile>();
+  const normalizedPathLookup = new Map<string, string>();
+  fileList.forEach(file => {
+    mapByPath.set(file.path, file);
+    normalizedPathLookup.set(path.normalize(file.path), file.path);
+  });
+
+  const candidates = traverseQuadletGraph(service, mapByPath, normalizedPathLookup);
+
+  const assets: BundleAsset[] = [];
   candidates.forEach(candidate => {
     const resolved = mapByPath.get(candidate);
     assets.push({
       path: candidate,
       kind: assetKindFromPath(candidate),
-      modified: resolved?.modified
+      modified: resolved?.modified,
     });
   });
-
   return assets;
 };
 
