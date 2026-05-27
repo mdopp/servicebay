@@ -1050,6 +1050,25 @@ WantedBy=default.target
 `;
     await executor.writeFile(targetKubePath, kubeContent);
 
+    await activateMergedUnit({ executor, services, newName, nodeName, backupArchive, initiator });
+}
+
+/**
+ * Stop the legacy units, enable the merged unit, and roll back if the
+ * new unit fails to come up healthy. Records the outcome (success /
+ * rolled_back / failed) in the migration history. Re-throws the
+ * original activation error after recording so the caller still sees
+ * the failure.
+ */
+async function activateMergedUnit(params: {
+    executor: Executor;
+    services: DiscoveredService[];
+    newName: string;
+    nodeName: string;
+    backupArchive?: string;
+    initiator?: string;
+}): Promise<void> {
+    const { executor, services, newName, nodeName, backupArchive, initiator } = params;
     const stoppedServices = await stopLegacyServices(executor, services);
     const targetUnit = `${newName}.service`;
 
