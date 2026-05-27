@@ -80,7 +80,7 @@ describe('oidc_provider_reachable probe', () => {
   // proxied traffic.
   it('sends X-Forwarded-Proto: https and Host: auth.<publicDomain>', async () => {
     vi.mocked(getConfig).mockResolvedValue(baseConfig as never);
-    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () =>
       new Response(JSON.stringify(validDiscovery), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },

@@ -95,7 +95,7 @@ const GetQuery = z.object({ node: z.string().min(1) });
 
 export const GET = withApiHandler<undefined, z.infer<typeof GetQuery>>(
   { query: GetQuery },
-  async ({ query, request }) => {
+  async ({ query }) => {
   const nodeName = query.node;
 
   try {
