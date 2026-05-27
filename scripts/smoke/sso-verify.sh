@@ -485,7 +485,9 @@ else
     case "$code" in
       200)
         # Body should be { "deviceId": "ABC...-...-..." } — validate shape.
-        if grep -qE '"deviceId":\s*"[A-Z2-7]{7}(-[A-Z2-7]{7}){6}"' "$body"; then
+        # Syncthing v1.x: 7 groups of 7; v2.x: 8 groups of 7 (one extra
+        # check char per group). Accept either.
+        if grep -qE '"deviceId":\s*"[A-Z2-7]{7}(-[A-Z2-7]{7}){6,7}"' "$body"; then
           pass "syncthing_qr → 200 with valid Syncthing device-id"
         else
           fail "syncthing_qr → 200 but body missing valid deviceId: $(head -c 200 "$body")"
