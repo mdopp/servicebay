@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // guarantees the mock and the reference our assertions read are the
 // same vi.fn instance.
 const { sendEmailAlertMock } = vi.hoisted(() => ({
-  sendEmailAlertMock: vi.fn(async (_subject: string, _message: string) => undefined),
+  sendEmailAlertMock: vi.fn<(subject: string, message: string) => Promise<undefined>>(async () => undefined),
 }));
 vi.mock('@/lib/email', () => ({
   sendEmailAlert: sendEmailAlertMock,
