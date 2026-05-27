@@ -73,4 +73,35 @@ describe('collectImagesToPull', () => {
   it('returns an empty array for empty input', () => {
     expect(collectImagesToPull([])).toEqual([]);
   });
+
+  // ─── view-rendering (#1170) ────────────────────────────────────────
+  it('renders {{VAR}} image refs against the provided view', () => {
+    const items = [
+      {
+        name: 'oscar-household',
+        yaml: 'spec:\n  containers:\n  - image: {{GATEKEEPER_IMAGE}}\n    name: gatekeeper\n',
+      },
+    ];
+    const view = { GATEKEEPER_IMAGE: 'ghcr.io/mdopp/oscar-gatekeeper:latest' };
+    expect(collectImagesToPull(items, view)).toEqual([
+      'ghcr.io/mdopp/oscar-gatekeeper:latest',
+    ]);
+  });
+
+  it('skips images whose template var is unresolved (no value in view)', () => {
+    const items = [
+      { name: 'a', yaml: '  image: {{MISSING}}' },
+      { name: 'b', yaml: '  image: nginx:1.25' },
+    ];
+    expect(collectImagesToPull(items, { OTHER: 'x' })).toEqual(['nginx:1.25']);
+  });
+
+  it('without a view, still returns the literal placeholder (back-compat with callers that pre-render)', () => {
+    const items = [
+      { name: 'a', yaml: '  image: {{GATEKEEPER_IMAGE}}' },
+    ];
+    // No view → no rendering; the placeholder comes through verbatim
+    // so callers that have already rendered keep working.
+    expect(collectImagesToPull(items)).toEqual(['{{GATEKEEPER_IMAGE}}']);
+  });
 });

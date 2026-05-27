@@ -181,14 +181,34 @@ async function waitForCredentials(
  */
 export function collectImagesToPull(
   items: ReadonlyArray<{ name: string; yaml?: string; alreadyInstalled?: boolean }>,
+  view?: Record<string, string>,
 ): string[] {
   const seen = new Set<string>();
   const imageRe = /^[\t ]*-?[\t ]*image:[\t ]*['"]?([^\s'"#]+)['"]?[\t ]*(?:#.*)?$/gm;
   for (const item of items) {
     if (item.alreadyInstalled || !item.yaml) continue;
     for (const m of item.yaml.matchAll(imageRe)) {
-      const image = m[1].trim();
-      if (image) seen.add(image);
+      let image = m[1].trim();
+      if (!image) continue;
+      // Templates may interpolate the image tag via Mustache
+      // (e.g. `image: {{GATEKEEPER_IMAGE}}`). The pre-pull step ran
+      // BEFORE per-item Mustache rendering, so the literal placeholder
+      // hit `agent.pullImage()` and surfaced as
+      //   "(note) pre-pull failed for {{GATEKEEPER_IMAGE}}: parsing
+      //   reference … invalid reference format"
+      // in the install log. Render now when a view is provided. If
+      // the rendered string STILL contains an unresolved `{{...}}`
+      // (no value for that variable), skip the pre-pull for that
+      // image — the deploy-step's sequential pull will handle it
+      // with the proper render context. #1170.
+      if (view) {
+        image = renderTemplate(image, view);
+        // Mustache expands missing vars to '' rather than leaving the
+        // literal `{{...}}` in place, so check both shapes — empty or
+        // still-templated → skip and let the deploy step handle it.
+        if (!image || image.includes('{{')) continue;
+      }
+      seen.add(image);
     }
   }
   return [...seen];
@@ -975,7 +995,14 @@ async function runJob(jobId: string): Promise<void> {
   // subsequent unit start will trigger a sequential retry via Quadlet's
   // own image-pull path; the operator just loses the parallelism
   // benefit for that one image.
-  const imagesToPull = collectImagesToPull(selected);
+  // Render image refs against the wizard variables so templates that
+  // interpolate `image: {{VAR}}` get a real registry reference at
+  // pre-pull time, not the literal placeholder. #1170.
+  const prePullView = (input.variables as StackVariable[]).reduce<Record<string, string>>((acc, v) => {
+    if (typeof v.value === 'string') acc[v.name] = v.value;
+    return acc;
+  }, {});
+  const imagesToPull = collectImagesToPull(selected, prePullView);
   if (imagesToPull.length > 0) {
     await log(jobId, `📦 Pre-pulling ${imagesToPull.length} container image${imagesToPull.length === 1 ? '' : 's'} in parallel...`);
     const node = input.node || 'Local';
