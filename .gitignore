@@ -59,6 +59,8 @@ __pycache__/
 /temp-js/
 /temp/
 /scratch/
-/.claude/
+# Track .claude/skills/ (project skills live in-repo); ignore runtime state + local settings.
+/.claude/*
+!/.claude/skills/
 secret.key
 *.local.json
