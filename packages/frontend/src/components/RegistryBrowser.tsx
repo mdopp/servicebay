@@ -56,6 +56,30 @@ const specialItems: SpecialItem[] = [
     }
 ];
 
+function RegistryListItem({ item, isSelected, onClick }: { item: Template; isSelected: boolean; onClick: () => void }) {
+    return (
+        <button
+            onClick={onClick}
+            className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors ${
+                isSelected
+                ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-gray-200 dark:ring-gray-700'
+                : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+            }`}
+        >
+            {item.type === 'stack' ? (
+                <Layers size={18} className={isSelected ? 'text-purple-500 dark:text-purple-400' : 'text-purple-400 dark:text-purple-500'} />
+            ) : (
+                <Folder size={18} className={isSelected ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'} />
+            )}
+            <div className="flex flex-col items-start min-w-0 flex-1">
+                <span className="font-medium truncate w-full">{item.name}</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400 truncate w-full">{item.source}</span>
+            </div>
+            {item.type === 'stack' && <span className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full ml-auto">Stack</span>}
+        </button>
+    );
+}
+
 export default function RegistryBrowser({ templates }: { templates: Template[] }) {
   const router = useRouter();
     const pathname = usePathname() || '';
@@ -118,6 +142,13 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
       router.push(`${pathname}?selected=${t.name}`);
   };
 
+  // Group the registry list so stacks sit together (internal + external) in
+  // their own section, separate from single-service templates.
+  const templateItems = templates.filter(t => t.type !== 'stack');
+  const stackItems = templates.filter(t => t.type === 'stack');
+  const isItemSelected = (t: Template) =>
+      !!selected && !('id' in selected) && selected.name === t.name && selected.source === t.source;
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Sidebar List */}
@@ -146,32 +177,27 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
                 ))}
             </div>
 
-            <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Templates</div>
-            {templates.map(t => (
-                <button
-                    key={`${t.source}-${t.name}`}
-                    onClick={() => handleTemplateClick(t)}
-                    className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors ${
-                        selected && !('id' in selected) && selected.name === t.name && selected.source === t.source
-                        ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-gray-200 dark:ring-gray-700' 
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                    }`}
-                >
-                    {t.type === 'stack' ? (
-                        <Layers size={18} className={selected && !('id' in selected) && selected.name === t.name ? 'text-purple-500 dark:text-purple-400' : 'text-purple-400 dark:text-purple-500'} />
-                    ) : (
-                        <Folder size={18} className={selected && !('id' in selected) && selected.name === t.name ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'} />
-                    )}
-                    <div className="flex flex-col items-start min-w-0 flex-1">
-                        <span className="font-medium truncate w-full">{t.name}</span>
-                        <span className="text-xs text-gray-500 dark:text-gray-400 truncate w-full">{t.source}</span>
-                    </div>
-                    {t.type === 'stack' && <span className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full ml-auto">Stack</span>}
-                </button>
-            ))}
+            {templateItems.length > 0 && (
+                <>
+                    <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Templates</div>
+                    {templateItems.map(t => (
+                        <RegistryListItem key={`${t.source}-${t.name}`} item={t} isSelected={isItemSelected(t)} onClick={() => handleTemplateClick(t)} />
+                    ))}
+                </>
+            )}
+
+            {stackItems.length > 0 && (
+                <>
+                    <div className="px-4 py-2 mt-1 text-xs font-semibold text-gray-500 uppercase tracking-wider">Stacks</div>
+                    {stackItems.map(t => (
+                        <RegistryListItem key={`${t.source}-${t.name}`} item={t} isSelected={isItemSelected(t)} onClick={() => handleTemplateClick(t)} />
+                    ))}
+                </>
+            )}
+
             {templates.length === 0 && (
                 <div className="p-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-                    No templates found in registry.
+                    No templates or stacks found in registry.
                 </div>
             )}
         </div>
