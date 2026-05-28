@@ -52,6 +52,41 @@ export interface DiagnoseProbe {
   items?: ProbeItem[];
 }
 
+/**
+ * Client-side DNS verification: hits the public installer admin host on
+ * *this device's* DNS resolver and reports whether the browser can
+ * resolve the LAN domain. Runs in the browser (not the server) because
+ * the whole point is to test the calling device's DNS setup.
+ *
+ * Returns the action-state row the caller should write into its
+ * `actionState[key]` map — keeps runAction's dispatch step trivial.
+ */
+async function runVerifyFromDeviceAction(): Promise<{ ok: boolean; message: string }> {
+  try {
+    const modeRes = await fetch('/api/system/mode');
+    const modeData = await modeRes.json().catch(() => ({}));
+    const activeDomain = modeData.activeDomain ?? 'home.arpa';
+    const verifyRes = await fetch(`http://admin.${activeDomain}/api/system/verify-lan-dns`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(3000),
+    });
+    const data = await verifyRes.json().catch(() => ({}));
+    const ok = verifyRes.ok && data.ok === true;
+    return {
+      ok,
+      message: ok
+        ? `✅ This device resolves ${activeDomain} → ${data.lanIp ?? 'ok'}.`
+        : `Got HTTP ${verifyRes.status} — DNS may be partially configured.`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      message: `❌ This device can't resolve the LAN domain — your router may not be using AdGuard as DNS, or this device has DNS-over-HTTPS overriding it. (${msg})`,
+    };
+  }
+}
+
 const STATUS_META: Record<ProbeStatus, { color: string; bg: string; ring: string; Icon: React.ComponentType<{ size?: number; className?: string }> }> = {
   ok: { color: 'text-emerald-700 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-900/20', ring: 'border-emerald-200 dark:border-emerald-800', Icon: CheckCircle2 },
   warn: { color: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-900/20', ring: 'border-amber-200 dark:border-amber-800', Icon: AlertTriangle },
@@ -96,38 +131,9 @@ export default function DiagnoseProbeList({
     const key = itemId ? `${probe.id}:${action.id}:${itemId}` : `${probe.id}:${action.id}`;
     setActionState(s => ({ ...s, [key]: { running: true } }));
 
-    // `verify_from_device` runs in the browser (the whole point is to test
-    // *this device's* DNS resolver). Mirrors SelfDiagnoseSection.
     if (action.id === 'verify_from_device') {
-      try {
-        const modeRes = await fetch('/api/system/mode');
-        const modeData = await modeRes.json().catch(() => ({}));
-        const activeDomain = modeData.activeDomain ?? 'home.arpa';
-        const verifyRes = await fetch(`http://admin.${activeDomain}/api/system/verify-lan-dns`, {
-          method: 'GET',
-          signal: AbortSignal.timeout(3000),
-        });
-        const data = await verifyRes.json().catch(() => ({}));
-        const ok = verifyRes.ok && data.ok === true;
-        setActionState(s => ({
-          ...s,
-          [key]: {
-            ok,
-            message: ok
-              ? `✅ This device resolves ${activeDomain} → ${data.lanIp ?? 'ok'}.`
-              : `Got HTTP ${verifyRes.status} — DNS may be partially configured.`,
-          },
-        }));
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setActionState(s => ({
-          ...s,
-          [key]: {
-            ok: false,
-            message: `❌ This device can't resolve the LAN domain — your router may not be using AdGuard as DNS, or this device has DNS-over-HTTPS overriding it. (${msg})`,
-          },
-        }));
-      }
+      const result = await runVerifyFromDeviceAction();
+      setActionState(s => ({ ...s, [key]: result }));
       return;
     }
 
