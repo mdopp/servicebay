@@ -57,6 +57,37 @@ export type TopoSortResult<T> =
   | { ok: false; reason: 'cycle'; involved: string[] };
 
 /**
+ * Compute the effective dependency edges used by the topological sort:
+ * - each item's declared `servicebay.dependencies` that are in the set
+ * - PLUS implicit "every feature depends on every infra in this set" so
+ *   the order surfaces all infrastructure before any feature. Without
+ *   this, an unrelated feature (`ollama`, `hermes`) that declares no deps
+ *   can sneak in front of nginx/auth and register subdomain proxy hosts
+ *   against NPM data the install runner is about to wipe and recreate
+ *   (#796).
+ */
+function computeEffectiveDeps<T extends DependencyAwareItem>(
+  items: T[],
+  namesInSet: Set<string>,
+): Map<string, string[]> {
+  const infraNames = items
+    .filter(it => it.tier === 'infrastructure')
+    .map(it => it.name);
+  const effectiveDeps = new Map<string, string[]>();
+  for (const it of items) {
+    const tier = it.tier ?? 'feature';
+    const explicit = it.dependencies.filter(d => namesInSet.has(d));
+    if (tier === 'infrastructure') {
+      effectiveDeps.set(it.name, explicit);
+    } else {
+      const implicit = infraNames.filter(n => n !== it.name);
+      effectiveDeps.set(it.name, [...new Set([...explicit, ...implicit])]);
+    }
+  }
+  return effectiveDeps;
+}
+
+/**
  * Topologically sort `items` so every entry's dependencies appear
  * earlier in the result. Items whose dependencies aren't in
  * `candidates` (typically `selectedNames`) return `missing`; cycles
@@ -86,28 +117,7 @@ export function topoSortByDependencies<T extends DependencyAwareItem>(
     }
   }
 
-  // Compute the effective dependency edges:
-  // - each item's declared `servicebay.dependencies`
-  // - PLUS implicit "every feature depends on every infra in this set"
-  //   so the topological order surfaces all infrastructure before any
-  //   feature. Without this, an unrelated feature (`ollama`, `hermes`)
-  //   that declares no deps can sneak in front of nginx/auth and
-  //   register subdomain proxy hosts against NPM data that the
-  //   install runner is about to wipe and recreate (#796).
-  const infraNames = items
-    .filter(it => it.tier === 'infrastructure')
-    .map(it => it.name);
-  const effectiveDeps = new Map<string, string[]>();
-  for (const it of items) {
-    const tier = it.tier ?? 'feature';
-    const explicit = it.dependencies.filter(d => namesInSet.has(d));
-    if (tier === 'infrastructure') {
-      effectiveDeps.set(it.name, explicit);
-    } else {
-      const implicit = infraNames.filter(n => n !== it.name);
-      effectiveDeps.set(it.name, [...new Set([...explicit, ...implicit])]);
-    }
-  }
+  const effectiveDeps = computeEffectiveDeps(items, namesInSet);
 
   // Kahn's algorithm with a stable tiebreaker (input order).
   const indeg = new Map<string, number>();
