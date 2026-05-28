@@ -1980,6 +1980,8 @@ declare -A DEPS=(
   [coreos-installer]="Download ISO and embed Ignition"
   [envsubst]="Render template variables"
   [ssh-keygen]="Generate SSH keypair for ServiceBay"
+  [curl]="Fetch Fedora CoreOS stream metadata"
+  [jq]="Parse Fedora CoreOS stream metadata"
 )
 
 MISSING=()
@@ -2129,6 +2131,113 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
 fi
 
 SETTINGS_FILE="$BUILD_DIR/install-settings.env"
+
+# Map `uname -m` to the arch name Fedora CoreOS stream metadata uses.
+detect_host_arch() {
+  case "$(uname -m)" in
+    x86_64) echo "x86_64" ;;
+    aarch64|arm64) echo "aarch64" ;;
+    *) uname -m ;;
+  esac
+}
+
+# Fetch the latest metal ISO entries for one FCoS stream. Emits
+# `<arch>|<release>|<location>` lines, one per architecture available
+# upstream. Silent failure (empty output) when network/jq/curl unavailable
+# so the picker can degrade to local-only without aborting.
+fetch_fcos_stream_images() {
+  local stream="$1"
+  local url="https://builds.coreos.fedoraproject.org/streams/${stream}.json"
+  command -v curl >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  curl -fsSL --max-time 15 "$url" 2>/dev/null | jq -r '
+    .architectures
+    | to_entries[]
+    | "\(.key)|\(.value.artifacts.metal.release)|\(.value.artifacts.metal.formats.iso.disk.location)"
+  ' 2>/dev/null || true
+}
+
+# Combined picker: lists local ISOs (newest first) followed by the latest
+# metal builds for stable/testing/next × every advertised architecture.
+# Writes the chosen ISO path into the variable named by $1. Downloads
+# remote selections via `coreos-installer download` into $BUILD_DIR.
+select_fedora_coreos_iso() {
+  local outvar="$1"
+  local host_arch
+  host_arch="$(detect_host_arch)"
+
+  local -a kinds=() labels=() payloads=()
+  local iso
+  while IFS= read -r iso; do
+    [[ -n "$iso" ]] || continue
+    kinds+=("local")
+    labels+=("$(basename "$iso")  (local, $(date -r "$iso" +%Y-%m-%d 2>/dev/null || echo '?'))")
+    payloads+=("$iso")
+  done < <(ls -1t "$SCRIPT_DIR"/*.iso "$SCRIPT_DIR"/build/*.iso "$BUILD_DIR"/*.iso 2>/dev/null | grep -v 'fedora-coreos-custom\.iso' || true)
+
+  local stream arch release loc marker
+  for stream in stable testing next; do
+    while IFS='|' read -r arch release loc; do
+      [[ -n "$arch" && -n "$loc" ]] || continue
+      marker=""
+      [[ "$arch" == "$host_arch" ]] && marker="  ← host arch"
+      kinds+=("remote")
+      labels+=("$(printf '%-8s %-8s %s%s' "$stream" "$arch" "$release" "$marker")")
+      payloads+=("$stream|$arch|$loc")
+    done < <(fetch_fcos_stream_images "$stream")
+  done
+
+  if [[ ${#kinds[@]} -eq 0 ]]; then
+    echo "ERROR: no local ISOs found and no remote stream metadata reachable." >&2
+    echo "  (Check curl/jq are installed and the network is up.)" >&2
+    exit 1
+  fi
+
+  echo ""
+  echo "Available Fedora CoreOS images:"
+  local i default_idx=0
+  for i in "${!kinds[@]}"; do
+    printf "  %2d) %s\n" "$((i+1))" "${labels[$i]}"
+    if (( default_idx == 0 )) && [[ "${kinds[$i]}" == "local" ]]; then default_idx=$((i+1)); fi
+  done
+  if (( default_idx == 0 )); then
+    for i in "${!kinds[@]}"; do
+      if [[ "${kinds[$i]}" == "remote" && "${payloads[$i]}" == "stable|$host_arch|"* ]]; then
+        default_idx=$((i+1)); break
+      fi
+    done
+  fi
+  (( default_idx == 0 )) && default_idx=1
+
+  local choice
+  read -r -p "Select image [$default_idx]: " choice
+  choice="${choice:-$default_idx}"
+  if ! [[ "$choice" =~ ^[1-9][0-9]*$ ]] || (( choice > ${#kinds[@]} )); then
+    echo "Invalid selection." >&2
+    exit 1
+  fi
+  local idx=$((choice-1))
+
+  if [[ "${kinds[$idx]}" == "local" ]]; then
+    printf -v "$outvar" '%s' "${payloads[$idx]}"
+    return
+  fi
+
+  IFS='|' read -r stream arch loc <<< "${payloads[$idx]}"
+  echo "Downloading Fedora CoreOS $stream/$arch (this may take a few minutes)..."
+  ( cd "$BUILD_DIR" && coreos-installer download -s "$stream" -a "$arch" -p metal -f iso -C . ) || {
+    echo "ERROR: download failed." >&2
+    exit 1
+  }
+  local downloaded
+  downloaded="$(ls -1t "$BUILD_DIR"/*.iso 2>/dev/null | grep -v 'fedora-coreos-custom\.iso' | head -1 || echo '')"
+  if [[ -z "$downloaded" ]]; then
+    echo "ERROR: download appeared to succeed but no ISO landed in $BUILD_DIR." >&2
+    exit 1
+  fi
+  echo "Downloaded: $downloaded"
+  printf -v "$outvar" '%s' "$downloaded"
+}
 
 prompt() {
   local var_name="$1"; shift
@@ -2319,22 +2428,7 @@ if $USE_SAVED; then
   DATA_ROOT="/mnt/data"
 
   # Find ISO
-  DEFAULT_ISO="$(ls -1t "$SCRIPT_DIR"/*.iso "$SCRIPT_DIR"/build/*.iso "$BUILD_DIR"/*.iso 2>/dev/null | grep -v 'fedora-coreos-custom\.iso' | head -1 || echo '')"
-  if [[ -z "$DEFAULT_ISO" ]]; then
-    echo "No Fedora CoreOS ISO found locally."
-    read -r -p "Download the latest stable ISO now? [Y/n]: " DO_DOWNLOAD
-    DO_DOWNLOAD=${DO_DOWNLOAD:-Y}
-    if [[ "${DO_DOWNLOAD^^}" != "N" ]]; then
-      echo "Downloading Fedora CoreOS stable ISO (this may take a few minutes)..."
-      ( cd "$BUILD_DIR" && coreos-installer download -s stable -p metal -f iso -C . )
-      DEFAULT_ISO="$(ls -1t "$BUILD_DIR"/*.iso 2>/dev/null | head -1 || echo '')"
-      if [[ -z "$DEFAULT_ISO" ]]; then
-        echo "ERROR: Download failed." >&2
-        exit 1
-      fi
-      echo "Downloaded: $DEFAULT_ISO"
-    fi
-  fi
+  select_fedora_coreos_iso DEFAULT_ISO
   prompt ISO_PATH "Path to Fedora CoreOS ISO" "$DEFAULT_ISO"
 
   # Prompt only for passwords
@@ -2418,25 +2512,7 @@ else
 
   # --- ISO ---
 
-  echo ""
-  DEFAULT_ISO="$(ls -1t "$SCRIPT_DIR"/*.iso "$SCRIPT_DIR"/build/*.iso "$BUILD_DIR"/*.iso 2>/dev/null | grep -v 'fedora-coreos-custom\.iso' | head -1 || echo '')"
-
-  if [[ -z "$DEFAULT_ISO" ]]; then
-    echo "No Fedora CoreOS ISO found locally."
-    read -r -p "Download the latest stable ISO now? [Y/n]: " DO_DOWNLOAD
-    DO_DOWNLOAD=${DO_DOWNLOAD:-Y}
-    if [[ "${DO_DOWNLOAD^^}" != "N" ]]; then
-      echo "Downloading Fedora CoreOS stable ISO (this may take a few minutes)..."
-      ( cd "$BUILD_DIR" && coreos-installer download -s stable -p metal -f iso -C . )
-      DEFAULT_ISO="$(ls -1t "$BUILD_DIR"/*.iso 2>/dev/null | head -1 || echo '')"
-      if [[ -z "$DEFAULT_ISO" ]]; then
-        echo "ERROR: Download failed." >&2
-        exit 1
-      fi
-      echo "Downloaded: $DEFAULT_ISO"
-    fi
-  fi
-
+  select_fedora_coreos_iso DEFAULT_ISO
   prompt ISO_PATH "Path to Fedora CoreOS ISO" "$DEFAULT_ISO"
 
   # --- ServiceBay ---
@@ -2998,3 +3074,20 @@ if [[ -n "${BACKUP_STAGED:-}" ]]; then
 fi
 echo "After install, add the second SSD to the RAID:"
 echo "  sudo mdadm --add /dev/md/data /dev/disk/by-partlabel/raid1-ssd2"
+
+# Hand off to install-tui: the watch dashboard already auto-discovers
+# the target host/port from $BUILD_DIR/install-settings.env, which this
+# script writes earlier. exec means the script PID is replaced — Ctrl+C
+# in the TUI exits cleanly. Suppress with SB_NO_WATCH=1 for CI / scripted
+# runs where there's no terminal to display the dashboard.
+TUI_SCRIPT="$SCRIPT_DIR/scripts/install-tui.sh"
+if [[ "${SB_NO_WATCH:-0}" == "1" ]]; then
+  echo ""
+  echo "SB_NO_WATCH=1 set — skipping install-tui auto-launch."
+  echo "Run manually with: $TUI_SCRIPT"
+elif [[ -x "$TUI_SCRIPT" ]]; then
+  echo ""
+  echo "Boot the target now — opening install dashboard (Ctrl+C to exit)..."
+  echo ""
+  exec "$TUI_SCRIPT"
+fi
