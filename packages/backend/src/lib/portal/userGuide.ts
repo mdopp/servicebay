@@ -181,7 +181,13 @@ function parseRecommendedApps(input: unknown): RecommendedApp[] {
       if (!entry || typeof entry !== 'object') return null;
       const e = entry as Record<string, unknown>;
       if (typeof e.name !== 'string' || typeof e.url !== 'string') return null;
-      if (!/^https?:\/\//i.test(e.url)) return null;
+      // Accept absolute http(s) links and same-origin root-relative paths
+      // (e.g. `/api/system/downloads/...` for a dynamically-resolved, always-
+      // latest download). Reject protocol-relative `//host` and dangerous
+      // schemes (`javascript:`, `data:`) — these become an `href`.
+      const isHttp = /^https?:\/\//i.test(e.url);
+      const isRootRelative = e.url.startsWith('/') && !e.url.startsWith('//');
+      if (!isHttp && !isRootRelative) return null;
       const out: RecommendedApp = { name: e.name, url: e.url };
       if (Array.isArray(e.platforms)) {
         const platforms = e.platforms

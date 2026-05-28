@@ -74,6 +74,20 @@ recommended_apps:
     expect(result!.frontmatter.recommended_apps?.[0].name).toBe('Real');
   });
 
+  it('accepts same-origin root-relative URLs but rejects protocol-relative ones', () => {
+    const raw = `---
+recommended_apps:
+  - name: "Dynamic download"
+    url: "/api/system/downloads/basicsync?abi=arm64-v8a"
+  - name: "Off-origin"
+    url: "//evil.example/x"
+---
+`;
+    const result = parseUserGuide(raw, 'rel');
+    expect(result!.frontmatter.recommended_apps).toHaveLength(1);
+    expect(result!.frontmatter.recommended_apps?.[0].url).toBe('/api/system/downloads/basicsync?abi=arm64-v8a');
+  });
+
   it('lifts legacy mobile_apps into recommended_apps with inferred platforms', () => {
     const raw = `---
 mobile_apps:
