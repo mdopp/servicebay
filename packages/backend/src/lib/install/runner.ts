@@ -34,7 +34,7 @@ import {
 } from '@/lib/registry';
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import { parseTemplateManifest } from '@/lib/template/contract';
-import { topoSortByDependencies } from '@/lib/stackInstall/dependencies';
+import { topoSortByDependencies, resolveAlreadyInstalled } from '@/lib/stackInstall/dependencies';
 import { parseTemplateTier } from '@/lib/templateTier';
 import { selectMigrationChain } from '@/lib/stackInstall/migrations';
 import {
@@ -712,6 +712,12 @@ async function runJob(jobId: string): Promise<void> {
   // gate, an unrelated feature with no declared deps (ollama, hermes)
   // races nginx and ends up registering NPM proxy hosts that the
   // late-running NPM credentials self-heal then wipes.
+  // A dependency is satisfied by anything already deployed on the node, not
+  // just by items re-selected in this batch. Fold the live twin's service
+  // names in (node-scoped) so installing e.g. `hermes` isn't wrongly blocked
+  // on `home-assistant` when HA is already running but wasn't re-checked.
+  const installNode = input.node || 'Local';
+  const deployedOnNode = (getStoreSnapshot().nodes?.[installNode]?.services ?? []).map(s => s.name);
   const sortResult = topoSortByDependencies(
     checked.map(i => ({
       name: i.name,
@@ -722,7 +728,7 @@ async function runJob(jobId: string): Promise<void> {
       dependencies: i.dependencies ?? [],
       tier: i.yaml ? parseTemplateTier(i.yaml) : 'feature',
     })),
-    { alreadyInstalled: new Set(input.items.filter(i => i.alreadyInstalled).map(i => i.name)) },
+    { alreadyInstalled: resolveAlreadyInstalled(input.items, deployedOnNode) },
   );
   if (!sortResult.ok) {
     const msg = sortResult.reason === 'missing'
