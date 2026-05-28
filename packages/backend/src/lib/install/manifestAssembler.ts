@@ -56,8 +56,11 @@ export interface AssembleManifestInput {
    *  the headless path reads them from the baked `config.json`. */
   prefilled?: Record<string, string>;
   /** Template source — `'Built-in'` for the bundled catalogue, or a
-   *  registry name. */
-  templateSource: string;
+   *  registry name. **Omit (undefined)** to walk every registry then fall
+   *  back to built-in per template, which is what lets a single assemble
+   *  call span multiple sources (#1177). A pinned `'Built-in'` skips the
+   *  registry walk, so external-registry templates resolve to null. */
+  templateSource?: string;
 }
 
 export interface AssembledManifest {

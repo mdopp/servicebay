@@ -72,6 +72,18 @@ beforeEach(() => {
 });
 
 describe('assembleManifest', () => {
+  it('omitting templateSource walks every registry (undefined), not a pinned Built-in (#1177)', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', []));
+    getTemplateVariables.mockResolvedValue({});
+
+    await assembleManifest({ items: [{ name: 'svc', checked: true }] });
+
+    // undefined → getTemplateYaml/getTemplateVariables walk registries then
+    // fall back to built-in; a pinned 'Built-in' would skip externals (the bug).
+    expect(getTemplateYaml).toHaveBeenCalledWith('svc', undefined);
+    expect(getTemplateVariables).toHaveBeenCalledWith('svc', undefined);
+  });
+
   it('builds items with parsed dependencies and the fetched yaml', async () => {
     getTemplateYaml.mockImplementation(async (n) =>
       n === 'auth' ? tmplYaml('auth', []) : tmplYaml('media', ['auth', 'nginx']),
