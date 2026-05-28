@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.44.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.43.0...servicebay-v4.44.0) (2026-05-28)
+
+
+### Features
+
+* **backup:** add sb-config-upload CLI to seed the NAS from a non-SB source ([c3f8633](https://github.com/mdopp/servicebay/commit/c3f8633d6c2b4ffd89e95c66943216d42dac9554))
+* **backup:** add sb-config-upload CLI to seed the NAS from a non-SB source ([92209e1](https://github.com/mdopp/servicebay/commit/92209e1a5e08387a7f59ec80d11f290b9d9d7a45))
+* **backup:** diagnose probe for FritzBox NAS backup reachability ([1a0cd97](https://github.com/mdopp/servicebay/commit/1a0cd97d77857b35a76f3fd39aa798b64f7c5c6c))
+* **backup:** diagnose probe for FritzBox NAS backup reachability ([da8d1c5](https://github.com/mdopp/servicebay/commit/da8d1c5696b72142218284180e640b9080fbedde))
+* **backup:** produce per-service config tarballs and write them to the NAS ([dabba6b](https://github.com/mdopp/servicebay/commit/dabba6b3180b8454da8c8f82ca0ff8962ad34f4d))
+* **backup:** produce per-service config tarballs and write them to the NAS ([ae0c74a](https://github.com/mdopp/servicebay/commit/ae0c74af0560c1cabbced647d00cf96193d83839))
+
 ## [4.43.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.42.0...servicebay-v4.43.0) (2026-05-28)
 
 
