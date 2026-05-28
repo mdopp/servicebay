@@ -8,74 +8,78 @@ import { logger } from '../logger';
 
 const execAsync = promisify(exec);
 
-// Simple tokenizer
-const tokenize = (input: string) => {
-  const tokens: string[] = [];
-  let current = '';
-  let inQuote = false;
-  let quoteChar = '';
-  let isComment = false;
+interface TokenizerState {
+  tokens: string[];
+  current: string;
+  inQuote: boolean;
+  quoteChar: string;
+  isComment: boolean;
+}
 
-  for (let i = 0; i < input.length; i++) {
-    const char = input[i];
-
-    if (isComment) {
-      if (char === '\n') isComment = false;
-      continue;
-    }
-
-    if (char === '#') {
-      isComment = true;
-      continue;
-    }
-
-    if (inQuote) {
-      if (char === quoteChar && input[i - 1] !== '\\') {
-        inQuote = false;
-        tokens.push(current);
-        current = '';
-      } else {
-        current += char;
-      }
-      continue;
-    }
-
-    if (char === '"' || char === "'") {
-      if (current.trim()) {
-          // If we have text before the quote (e.g. prefix"quoted"), push it?
-          // Nginx usually separates by space.
-          // But if we have `server_name "foo" "bar";`
-          // `current` is empty (due to space handling).
-          // If `server_name foo"bar";` -> `foo` is in current.
-          // Let's push current if it exists.
-          tokens.push(current.trim());
-          current = '';
-      }
-      inQuote = true;
-      quoteChar = char;
-      continue;
-    }
-
-    if (['{', '}', ';'].includes(char)) {
-      if (current.trim()) tokens.push(current.trim());
-      tokens.push(char);
-      current = '';
-      continue;
-    }
-
-    if (/\s/.test(char)) {
-      if (current.trim()) {
-        tokens.push(current.trim());
-        current = '';
-      }
-      continue;
-    }
-
-    current += char;
+// Advance the tokenizer one character, mutating `s`. Split out of
+// `tokenize` so the per-character branching doesn't blow the loop's
+// line/complexity budget. `prev` is the preceding char (undefined at
+// index 0) — used only for the backslash-escape check inside quotes.
+const consumeChar = (s: TokenizerState, char: string, prev: string) => {
+  if (s.isComment) {
+    if (char === '\n') s.isComment = false;
+    return;
   }
-  
-  if (current.trim()) tokens.push(current.trim());
-  return tokens;
+
+  if (char === '#') {
+    s.isComment = true;
+    return;
+  }
+
+  if (s.inQuote) {
+    if (char === s.quoteChar && prev !== '\\') {
+      s.inQuote = false;
+      s.tokens.push(s.current);
+      s.current = '';
+    } else {
+      s.current += char;
+    }
+    return;
+  }
+
+  if (char === '"' || char === "'") {
+    // Nginx separates tokens by whitespace, so `current` is usually empty
+    // at a quote start; push it if a bare prefix preceded the quote.
+    if (s.current.trim()) {
+      s.tokens.push(s.current.trim());
+      s.current = '';
+    }
+    s.inQuote = true;
+    s.quoteChar = char;
+    return;
+  }
+
+  if (['{', '}', ';'].includes(char)) {
+    if (s.current.trim()) s.tokens.push(s.current.trim());
+    s.tokens.push(char);
+    s.current = '';
+    return;
+  }
+
+  if (/\s/.test(char)) {
+    if (s.current.trim()) {
+      s.tokens.push(s.current.trim());
+      s.current = '';
+    }
+    return;
+  }
+
+  s.current += char;
+};
+
+// Simple tokenizer
+const tokenize = (input: string): string[] => {
+  const s: TokenizerState = { tokens: [], current: '', inQuote: false, quoteChar: '', isComment: false };
+  for (let i = 0; i < input.length; i++) {
+    consumeChar(s, input[i], input[i - 1]);
+  }
+  if (s.current.trim()) s.tokens.push(s.current.trim());
+  return s.tokens;
 };
 
 export class NginxParser {
