@@ -212,7 +212,7 @@ app.prepare().then(() => {
         // Token path is preferred; cookie kept for back-compat with clients
         // that connected before tokens existed.
         const { verifyToken } = await import('./lib/mcp/tokens');
-        const { verifyBootstrapToken } = await import('./lib/mcp/bootstrapToken');
+        const { verifyBootstrapToken, clientIpForLanGate } = await import('./lib/mcp/bootstrapToken');
         const authHeader = req.headers.authorization || '';
         const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
         let auth: { user: string; scopes: import('./lib/mcp/tokens').ApiScope[]; tokenId?: string } | null = null;
@@ -226,7 +226,10 @@ app.prepare().then(() => {
             // LAN-only, always TTL'd. The verifier handles all three
             // gates — server.ts just hands off remoteAddress.
             if (!auth) {
-              const remoteIp = (req.socket?.remoteAddress) ?? undefined;
+              // Behind NPM the socket peer is always loopback; resolve the
+              // true client IP from proxy headers so the LAN gate can't be
+              // bypassed from the internet (#1204).
+              const remoteIp = clientIpForLanGate(req.headers, req.socket?.remoteAddress ?? undefined);
               const bt = await verifyBootstrapToken(bearerMatch[1], remoteIp);
               if (bt) auth = bt;
             }
