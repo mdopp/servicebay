@@ -73,20 +73,9 @@ const SERVER_RX = /\b(50\d|internal server error)\b/i;
 const SSH_KEY_RX = /(no key|permission denied \(publickey\)|ssh key|host key verification)/i;
 const AGENT_RX = /(agent not connected|agent disconnected|agent unreachable)/i;
 
-export function humanizeError(err: unknown, fallbackTitle = 'Something went wrong'): HumanizedError {
-  // Typed-error fast path (#598). Wording-independent.
-  if (isDomainError(err)) {
-    const typed = humanizeDomainError(err);
-    if (typed) return typed;
-  }
-
-  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
-  const message = raw.trim();
-
-  if (!message) {
-    return { title: fallbackTitle, detail: 'An unexpected error occurred. Try again or check the server logs.' };
-  }
-
+/** Match an opaque error message against the known patterns. Returns null
+ *  when nothing matches so the caller can fall back to the raw message. */
+function humanizeMessagePattern(message: string): HumanizedError | null {
   if (UNAUTHORIZED_RX.test(message)) {
     return { title: 'Session expired', detail: 'Please sign in again to continue.' };
   }
@@ -126,6 +115,22 @@ export function humanizeError(err: unknown, fallbackTitle = 'Something went wron
       detail: `${message}. The server logged a problem — check Settings → Logs for details.`,
     };
   }
+  return null;
+}
 
-  return { title: fallbackTitle, detail: message };
+export function humanizeError(err: unknown, fallbackTitle = 'Something went wrong'): HumanizedError {
+  // Typed-error fast path (#598). Wording-independent.
+  if (isDomainError(err)) {
+    const typed = humanizeDomainError(err);
+    if (typed) return typed;
+  }
+
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  const message = raw.trim();
+
+  if (!message) {
+    return { title: fallbackTitle, detail: 'An unexpected error occurred. Try again or check the server logs.' };
+  }
+
+  return humanizeMessagePattern(message) ?? { title: fallbackTitle, detail: message };
 }
