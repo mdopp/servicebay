@@ -43,7 +43,7 @@ export async function detectPhase(probes: PhaseProbes): Promise<PhaseState> {
   return { phase, isoBuilt, boxReachable: reachable, wizardDone };
 }
 
-export type MenuActionId = 'build-iso' | 'watch-install' | 'refresh' | 'quit';
+export type MenuActionId = 'choose-iso' | 'build-iso' | 'watch-install' | 'refresh' | 'quit';
 
 export interface MenuAction {
   id: MenuActionId;
@@ -52,10 +52,11 @@ export interface MenuAction {
 
 /** The actions offered for a given phase. Runtime actions (edit config, restore
  *  backups, install stacks) are deferred to later #1231 sub-issues — this shell
- *  only wraps the ISO build and the install-watch handoff. */
+ *  wraps the ISO download/build and the install-watch handoff. */
 export function actionsForPhase(state: PhaseState): MenuAction[] {
   const actions: MenuAction[] = [];
   if (!state.boxReachable) {
+    actions.push({ id: 'choose-iso', label: 'Choose / download a Fedora CoreOS ISO' });
     actions.push({
       id: 'build-iso',
       label: state.isoBuilt ? 'Rebuild install ISO + flash USB' : 'Build install ISO + flash USB',

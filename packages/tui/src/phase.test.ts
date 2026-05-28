@@ -52,19 +52,26 @@ describe('actionsForPhase', () => {
     ...over,
   });
 
-  it('no-iso offers Build but not Watch (nothing to watch yet)', () => {
+  it('no-iso offers Choose-ISO + Build but not Watch (nothing to watch yet)', () => {
     const ids = actionsForPhase(state({ phase: 'no-iso' })).map(a => a.id);
+    expect(ids[0]).toBe('choose-iso');
     expect(ids).toContain('build-iso');
     expect(ids).not.toContain('watch-install');
     expect(ids).toContain('quit');
   });
 
-  it('iso-ready offers both Rebuild and Watch', () => {
+  it('iso-ready offers Choose-ISO + Rebuild + Watch', () => {
     const actions = actionsForPhase(state({ phase: 'iso-ready', isoBuilt: true }));
     const ids = actions.map(a => a.id);
+    expect(ids).toContain('choose-iso');
     expect(ids).toContain('build-iso');
     expect(ids).toContain('watch-install');
     expect(actions.find(a => a.id === 'build-iso')!.label).toMatch(/Rebuild/);
+  });
+
+  it('does not offer Choose-ISO once the box is reachable', () => {
+    const ids = actionsForPhase(state({ phase: 'ready', boxReachable: true, wizardDone: true })).map(a => a.id);
+    expect(ids).not.toContain('choose-iso');
   });
 
   it('installing offers Watch but not Build (box is already up)', () => {
