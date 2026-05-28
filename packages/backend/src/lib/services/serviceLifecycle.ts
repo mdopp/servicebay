@@ -47,6 +47,13 @@ interface FileWritingAgent {
  * pod created. The plain write EACCESes there, so a failed write is
  * retried once via the agent's #1000 privileged path (`core` has
  * passwordless sudo on FCoS) before being recorded as a failure.
+ *
+ * #1258 — the agent rejects (the promise throws) when a command replies
+ * with an error, e.g. the EACCES above. The retry therefore has to catch
+ * the thrown error, not inspect a returned value — the original `res !==
+ * 'ok'` check never fired because the await threw first, so the raw
+ * `[Errno 13]` propagated straight to the deploy loop and the sudo retry
+ * was dead code.
  */
 export async function writeExtraConfigFiles(
     agent: FileWritingAgent,
@@ -54,20 +61,31 @@ export async function writeExtraConfigFiles(
     extraFiles: { path: string; content: string }[],
 ): Promise<void> {
     const failures: string[] = [];
+    // Returns 'ok' on success, otherwise the failure reason as a string —
+    // covering both the rejection (agent error reply) and the defensive
+    // non-'ok' return value cases.
+    const attemptWrite = async (target: { path: string; content: string }, sudo: boolean): Promise<string> => {
+        try {
+            const res = await agent.sendCommand('write_file', { path: target.path, content: target.content, ...(sudo ? { sudo: true } : {}) });
+            return res === 'ok' ? 'ok' : JSON.stringify(res);
+        } catch (err) {
+            return err instanceof Error ? err.message : String(err);
+        }
+    };
     for (const f of extraFiles) {
         // Ensure parent directory exists.
         const dir = f.path.substring(0, f.path.lastIndexOf('/'));
         if (dir) {
             await agent.sendCommand('exec', { command: `mkdir -p ${dir}` });
         }
-        let res = await agent.sendCommand('write_file', { path: f.path, content: f.content });
-        if (res !== 'ok') {
-            logger.warn('ServiceManager', `write_file for ${f.path} failed (${JSON.stringify(res)}); retrying with sudo.`);
-            res = await agent.sendCommand('write_file', { path: f.path, content: f.content, sudo: true });
+        let outcome = await attemptWrite(f, false);
+        if (outcome !== 'ok') {
+            logger.warn('ServiceManager', `write_file for ${f.path} failed (${outcome}); retrying with sudo.`);
+            outcome = await attemptWrite(f, true);
         }
-        if (res !== 'ok') {
+        if (outcome !== 'ok') {
             failures.push(f.path);
-            logger.error('ServiceManager', `Failed to write extra file ${f.path}: agent returned ${JSON.stringify(res)}`);
+            logger.error('ServiceManager', `Failed to write extra file ${f.path}: ${outcome}`);
         } else {
             logger.info('ServiceManager', `Wrote extra config file: ${f.path}`);
         }
