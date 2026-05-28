@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.46.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.45.0...servicebay-v4.46.0) (2026-05-28)
+
+
+### Features
+
+* **registry:** give stacks their own section in the registry browser ([9b56615](https://github.com/mdopp/servicebay/commit/9b566157c6659cef45a2d29987095d42ce375436))
+* **registry:** give stacks their own section in the registry browser ([d67fd4d](https://github.com/mdopp/servicebay/commit/d67fd4da971fa125cc30cc322ce014aa4f57c61d))
+
+
+### Bug Fixes
+
+* **frontend:** show signed-in user + working logout on LAN-direct access ([07a4f9d](https://github.com/mdopp/servicebay/commit/07a4f9dfff98209b3e9e2df74741f99322fa5b86))
+* **frontend:** show signed-in user + working logout on LAN-direct access ([22425d4](https://github.com/mdopp/servicebay/commit/22425d49f7f99f12457227d03f68d22916637fc8))
+* **install:** count already-deployed templates as satisfying install-time deps ([f910550](https://github.com/mdopp/servicebay/commit/f910550ff1b89e707dd16ceac03714863b701c03))
+* **install:** count already-deployed templates as satisfying install-time deps ([4e238aa](https://github.com/mdopp/servicebay/commit/4e238aace977d0bbb96e8ae4ac81c09d36b6e2c5))
+
 ## [4.45.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.44.0...servicebay-v4.45.0) (2026-05-28)
 
 
