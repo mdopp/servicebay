@@ -131,6 +131,18 @@ async function deleteRoute({
       refresh: true,
     };
   }
+  return performProxyHostDelete(adminUrl, token, id, itemId);
+}
+
+/** Issue the NPM DELETE for a resolved proxy host id and map the outcome
+ *  to a ProbeActionResult. Split out of deleteRoute to keep it under the
+ *  function-length budget. */
+async function performProxyHostDelete(
+  adminUrl: string,
+  token: string,
+  id: number,
+  itemId: string,
+): Promise<ProbeActionResult> {
   try {
     const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts/${id}`, {
       method: 'DELETE',
