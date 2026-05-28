@@ -158,6 +158,30 @@ export interface AgentHealth {
  */
 const BOOTSTRAP_WINDOW_MS = 60 * 1000;
 
+const SECRET_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_KEY)/i;
+
+/**
+ * Redact secret material from a command payload before it is logged.
+ *
+ * The rendered pod YAML shipped to the agent via `write_file` carries
+ * plaintext `env` secrets (HERMES_TOKEN, …); logging the payload verbatim
+ * leaked live credentials into the journal (#1211). Replace any `content`
+ * blob with a size marker and mask the value of any secret-looking key.
+ */
+export function redactCommandPayloadForLog(params: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (key === 'content' && typeof value === 'string') {
+      out[key] = `<${value.length} chars redacted>`;
+    } else if (SECRET_KEY_RE.test(key) && typeof value === 'string') {
+      out[key] = '***';
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 export class AgentHandler extends EventEmitter {
   public nodeName: string;
   private channel: ClientChannel | null = null;
@@ -566,7 +590,7 @@ export class AgentHandler extends EventEmitter {
     const payloadPreview = (() => {
       if (!params || Object.keys(params).length === 0) return '{}';
       try {
-        const serialized = JSON.stringify(params);
+        const serialized = JSON.stringify(redactCommandPayloadForLog(params));
         return serialized.length > 400 ? `${serialized.slice(0, 400)}…` : serialized;
       } catch {
         return '[unserializable payload]';

@@ -192,6 +192,30 @@ def log_structured(event: str, payload: Any):
     sys.stderr.write(json.dumps(structured) + "\n")
     sys.stderr.flush()
 
+_SECRET_KEY_RE = re.compile(r'(TOKEN|SECRET|PASSWORD|API_KEY)', re.IGNORECASE)
+
+
+def _redact_for_log(payload):
+    """Redact secret material from a command payload before it hits the logs.
+
+    The rendered pod YAML shipped via `write_file` carries plaintext `env`
+    secrets (HERMES_TOKEN, …); logging the payload verbatim leaked live
+    credentials into the journal (#1211). Replace any `content` blob with a
+    size marker and mask the value of any secret-looking key.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    out = {}
+    for key, value in payload.items():
+        if key == 'content' and isinstance(value, str):
+            out[key] = f'<{len(value)} chars redacted>'
+        elif isinstance(key, str) and _SECRET_KEY_RE.search(key) and isinstance(value, str):
+            out[key] = '***'
+        else:
+            out[key] = value
+    return out
+
+
 def _extract_session_id(cmdline: str) -> Optional[str]:
     if not cmdline:
         return None
@@ -1887,7 +1911,7 @@ class Agent:
         req_id = msg.get('id')
         payload = msg.get('payload', {})
         
-        log_info(f"Received command: {cmd} (ID: {req_id}, Payload: {json.dumps(payload)})")
+        log_info(f"Received command: {cmd} (ID: {req_id}, Payload: {json.dumps(_redact_for_log(payload))})")
         sys.stderr.flush()
 
         # Fallback response helper
