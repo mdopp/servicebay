@@ -13,6 +13,29 @@ export interface FritzBoxOptions {
 }
 
 /**
+ * Build the SOAP 1.1 envelope FritzBox's TR-064 endpoints expect.
+ * Pure string assembly — extracted from `soapRequest` so the caller
+ * stays under the complexity ceiling.
+ */
+function buildSoapEnvelope(
+  action: string,
+  serviceType: string,
+  args: Record<string, string | number>,
+): string {
+  const argsXml = Object.entries(args)
+    .map(([key, value]) => `<${key}>${value}</${key}>`)
+    .join('');
+  return `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+<s:Body>
+<u:${action} xmlns:u="${serviceType}">
+${argsXml}
+</u:${action}>
+</s:Body>
+</s:Envelope>`;
+}
+
+/**
  * Validate a FritzBox host string. The gateway is always on the LAN,
  * so reject everything that is NOT a legitimate LAN address (#578, #1069):
  *
@@ -251,20 +274,7 @@ export class FritzBoxClient {
     }
 
     const url = `http://${this.host}:${this.port}${controlUrl}`;
-    
-    let argsXml = '';
-    for (const [key, value] of Object.entries(args)) {
-      argsXml += `<${key}>${value}</${key}>`;
-    }
-
-    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
-<s:Body>
-<u:${action} xmlns:u="${serviceType}">
-${argsXml}
-</u:${action}>
-</s:Body>
-</s:Envelope>`;
+    const soapBody = buildSoapEnvelope(action, serviceType, args);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
