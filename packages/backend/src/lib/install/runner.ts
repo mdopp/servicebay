@@ -369,7 +369,13 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // Inject dynamic variables for self-healing and template rendering
   if (item.name === 'auth') {
     const isRegenerated = !ctx.reusedSecretNames.has('LLDAP_ADMIN_PASSWORD');
-    view['LLDAP_FORCE_LDAP_USER_PASS_RESET'] = isRegenerated ? 'true' : 'false';
+    // 'always' (not 'true'): in LLDAP 0.6.x the bare `true` is a break-glass
+    // one-shot that resets the admin password and then *exits* asking to be
+    // restarted without the flag — fatal here, where the flag is baked into the
+    // pod env permanently, so LLDAP reset-exits-restart-loops and never serves.
+    // 'always' re-syncs the password to the config secret on every start AND
+    // keeps serving, which is the self-healing behaviour this is meant to give.
+    view['LLDAP_FORCE_LDAP_USER_PASS_RESET'] = isRegenerated ? 'always' : 'false';
   }
   // Render YAML with unified template renderer
   const yamlContent = renderTemplate(item.yaml, view);
@@ -876,7 +882,7 @@ async function runJob(jobId: string): Promise<void> {
   // The pathological combination is "wipe secrets, preserve identity": the wizard
   // generates a fresh LLDAP_ADMIN_PASSWORD, but the LLDAP image does not rotate
   // the admin password from env on subsequent starts. We solve this by dynamically
-  // injecting `LLDAP_FORCE_LDAP_USER_PASS_RESET=true` into the environment, which
+  // injecting `LLDAP_FORCE_LDAP_USER_PASS_RESET=always` into the environment, which
   // forces LLDAP to synchronize its database credentials to the freshly generated
   // password in config.json, avoiding user lockouts.
   //
