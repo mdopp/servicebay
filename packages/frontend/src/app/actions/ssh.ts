@@ -2,8 +2,10 @@
 
 import { checkTcpConnection, setupSSHKey, verifySSHConnection } from '@/lib/ssh';
 import { SSH_DIR } from '@/lib/dirs';
+import { assertAdminSession } from './_session';
 
 export async function checkConnection(host: string, port: number) {
+    await assertAdminSession();
     try {
         const isOpen = await checkTcpConnection(host, port);
         return { success: true, isOpen };
@@ -13,6 +15,7 @@ export async function checkConnection(host: string, port: number) {
 }
 
 export async function checkFullConnection(host: string, port: number, user: string, identity: string) {
+    await assertAdminSession();
     try {
         const isOpen = await checkTcpConnection(host, port);
         if (!isOpen) return { success: false, stage: 'tcp', error: 'TCP Connection Failed' };
@@ -27,6 +30,7 @@ export async function checkFullConnection(host: string, port: number, user: stri
 }
 
 export async function installSSHKey(host: string, port: number, user: string, pass: string) {
+    await assertAdminSession();
     try {
         const result = await setupSSHKey(host, port, user, pass);
         return result;
@@ -36,6 +40,7 @@ export async function installSSHKey(host: string, port: number, user: string, pa
 }
 
 export async function generateLocalKey() {
+    await assertAdminSession();
     try {
         const fs = await import('fs');
         const path = await import('path');

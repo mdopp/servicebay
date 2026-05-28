@@ -7,12 +7,15 @@ import { revalidatePath } from 'next/cache';
 import * as fs from 'fs';
 import * as os from 'os';
 import crypto from 'crypto';
+import { assertAdminSession } from './_session';
 
 export async function getNodes(): Promise<PodmanConnection[]> {
+  await assertAdminSession();
   return listNodes();
 }
 
 export async function createNode(name: string, destination: string, identity: string) {
+  await assertAdminSession();
   try {
     // Verify identity file exists
     const resolvedIdentity = identity.replace(/^~(?=$|\/|\\)/, os.homedir());
@@ -65,6 +68,7 @@ export async function createNode(name: string, destination: string, identity: st
 }
 
 export async function editNode(oldName: string, newName: string, destination: string, identity: string) {
+  await assertAdminSession();
   try {
      // Verify identity file exists
      const resolvedIdentity = identity.replace(/^~(?=$|\/|\\)/, os.homedir());
@@ -100,6 +104,7 @@ export async function editNode(oldName: string, newName: string, destination: st
 }
 
 export async function deleteNode(name: string) {
+  await assertAdminSession();
   try {
     await removeNode(name);
     
@@ -121,6 +126,7 @@ export async function deleteNode(name: string) {
 }
 
 export async function setNodeAsDefault(name: string) {
+  await assertAdminSession();
   try {
     await setDefaultNode(name);
     revalidatePath('/settings');
