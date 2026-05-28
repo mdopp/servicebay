@@ -1919,8 +1919,11 @@ class Agent:
             if error:
                 log_error(f"Command {cmd} (ID: {req_id}) failed: {error}")
             else:
-                # Log success but truncate result if large (e.g. logs)
-                res_str = str(result)
+                # Redact secrets (e.g. read_file returns {'content': ...} which
+                # may hold a config file's tokens) before logging, then truncate
+                # — truncation alone would keep the first 100 chars verbatim and
+                # leak a secret near the top of the content (#1211 follow-up).
+                res_str = str(_redact_for_log(result))
                 if len(res_str) > 100: res_str = res_str[:100] + "..."
                 log_info(f"Command {cmd} (ID: {req_id}) completed. Result: {res_str}")
 
