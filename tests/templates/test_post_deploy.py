@@ -320,6 +320,24 @@ class AuthScript(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("Could not fully seed LLDAP groups after 3 attempts", out)
 
+    def test_smtp_notifier_disables_fatal_startup_check(self):
+        """Authelia's notifier startup check is fatal on failure, so a
+        transient or rate-limited SMTP server (e.g. Gmail '454 too many
+        login attempts') would crash the entire auth pod and lock
+        everyone out. The rendered SMTP notifier must disable that check
+        so email problems degrade instead of taking down auth."""
+        m = load_script("auth")
+        block = m._smtp_notifier_block({
+            "host": "smtp.gmail.com",
+            "port": 587,
+            "secure": False,
+            "user": "me@example.com",
+            "pass": "p",
+            "from": "me@example.com",
+        })
+        self.assertIn("disable_startup_check: true", block)
+        self.assertNotIn("disable_startup_check: false", block)
+
 
 class FileShareScript(unittest.TestCase):
     def test_samba_credential_emitted_when_password_set(self):

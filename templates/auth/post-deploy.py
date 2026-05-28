@@ -389,7 +389,12 @@ def _smtp_notifier_block(em: dict) -> str:
     submission_uri = f"submissions://{host}:{port}" if secure else f"submission://{host}:{port}"
     lines = [
         "notifier:",
-        "  disable_startup_check: false",
+        # Don't let a flaky/rate-limited SMTP server take down all of auth:
+        # Authelia's notifier startup check is fatal on failure, so a transient
+        # Gmail "454 too many login attempts" (or any SMTP outage) would crash
+        # the whole auth pod and lock everyone out. Degrade instead — emails
+        # just fail to send while authentication keeps working.
+        "  disable_startup_check: true",
         "  smtp:",
         f"    address: {_yaml_quote(submission_uri)}",
         f"    timeout: 10s",
