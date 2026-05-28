@@ -11,6 +11,14 @@ import { logger } from './logger';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
+// Registry git runs unattended in the server — never let git try to prompt for
+// credentials. Without this, an unreachable or private registry repo makes
+// `git clone/fetch` attempt an interactive username prompt, which fails with a
+// cryptic "could not read Username for 'https://github.com'" (and can hang in
+// environments that do have a TTY). GIT_TERMINAL_PROMPT=0 makes it fail fast
+// and clearly so the registry is skipped and the others keep syncing.
+const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 const STACKS_PATH = path.join(process.cwd(), 'stacks');
 const CONTAINER_CONFIG_DIR = '/app/.servicebay';
@@ -279,7 +287,7 @@ function getRegistries(config: Awaited<ReturnType<typeof getConfig>>): RegistryC
 
 async function cloneSparse(url: string, dest: string, dirs: string[]) {
     // Shallow clone with sparse checkout — only pull the directories we need
-    await execFileAsync('git', ['clone', '--depth', '1', '--filter=blob:none', '--sparse', url, dest]);
+    await execFileAsync('git', ['clone', '--depth', '1', '--filter=blob:none', '--sparse', url, dest], { env: GIT_ENV });
     await execFileAsync('git', ['sparse-checkout', 'set', ...dirs], { cwd: dest });
 }
 
@@ -359,8 +367,8 @@ export async function syncRegistries() {
                 // Exists — fetch latest and reset (shallow clones can't reliably git pull)
                 logger.info('registry', `Updating registry ${reg.name}...`);
                 const branch = reg.branch || 'main';
-                await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath });
-                await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath });
+                await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath, env: GIT_ENV });
+                await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath, env: GIT_ENV });
             } catch {
                 // Doesn't exist, clone
                 logger.info('registry', `Cloning registry ${reg.name}...`);
@@ -372,7 +380,7 @@ export async function syncRegistries() {
                     await cloneSparse(reg.url, regPath, ['templates', 'stacks', 'servicebay.json']);
                 } catch {
                     // Fallback to full clone if sparse checkout not supported
-                    await execFileAsync('git', ['clone', '--depth', '1', reg.url, regPath]);
+                    await execFileAsync('git', ['clone', '--depth', '1', reg.url, regPath], { env: GIT_ENV });
                 }
             }
             // Manifest pass: if the registry ships `servicebay.json`, pull
