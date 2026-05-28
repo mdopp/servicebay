@@ -133,11 +133,16 @@ export const handlers = [
 
   // GET /api/auth/me — current-user introspection (consumed by #1001)
   http.get('/api/auth/me', () => HttpResponse.json({
+    authenticated: true,
     username: 'mockuser',
     displayName: 'Mock User',
     email: 'mock@example.com',
     groups: ['family'],
+    source: 'forward-auth',
   })),
+
+  // POST /api/auth/logout — clears the ServiceBay session
+  http.post('/api/auth/logout', () => HttpResponse.json({ success: true })),
 
   // GET /api/logs/query — log viewer empty result
   http.get('/api/logs/query', () => HttpResponse.json({ success: true, logs: [] })),

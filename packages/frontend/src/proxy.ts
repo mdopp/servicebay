@@ -29,6 +29,10 @@ type PublicApiRule = {
 
 const PUBLIC_API_RULES: PublicApiRule[] = [
   { prefix: '/api/auth/login' },
+  // Logout just clears the session cookie — public so a user holding a stale
+  // cookie (e.g. after an AUTH_SECRET rotation) can still drop it instead of
+  // being gated out of logging out.
+  { prefix: '/api/auth/logout', methods: new Set(['POST']) },
   { prefix: '/api/auth/oidc' },
   { prefix: '/api/auth/lldap-url' },
   { prefix: '/api/system/access-requests', methods: new Set(['POST']) },

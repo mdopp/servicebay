@@ -24,6 +24,7 @@ const API_ROOT = path.join(REPO_ROOT, 'packages', 'frontend', 'src', 'app', 'api
 interface PublicRule { prefix: string; methods?: ReadonlySet<string> }
 const PUBLIC_RULES: PublicRule[] = [
   { prefix: '/api/auth/login' },
+  { prefix: '/api/auth/logout', methods: new Set(['POST']) },
   { prefix: '/api/auth/oidc' },
   { prefix: '/api/auth/lldap-url' },
   { prefix: '/api/system/access-requests', methods: new Set(['POST']) },
