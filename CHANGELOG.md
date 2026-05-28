@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.43.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.42.0...servicebay-v4.43.0) (2026-05-28)
+
+
+### Features
+
+* **backup:** FTP NAS client for the FritzBox (reuses gateway creds) ([fdfc58a](https://github.com/mdopp/servicebay/commit/fdfc58afafa5c9a594d4f851784a71c2ebf42f0c))
+* **backup:** FTP NAS client for the FritzBox (reuses gateway creds) ([5cbd4b2](https://github.com/mdopp/servicebay/commit/5cbd4b2f9eca6e18503427183a75e8ec56023d1d))
+* **backup:** per-service config manifest + stripping rules for externalBackup ([ed05b0b](https://github.com/mdopp/servicebay/commit/ed05b0baad97dd9c4fcc5f6ffe683d4a659ab389))
+* **backup:** per-service config manifest + stripping rules for externalBackup ([1b0867a](https://github.com/mdopp/servicebay/commit/1b0867ae09bd9fd489ec04530cb41703a2904567))
+
+
+### Bug Fixes
+
+* **actions:** require admin session on sensitive Server Actions ([f5fd24e](https://github.com/mdopp/servicebay/commit/f5fd24e2f2053e99b3eeffd26cdffbe234c05216))
+* **agent:** redact secret env values from command-payload logs ([2fb4cbd](https://github.com/mdopp/servicebay/commit/2fb4cbd730a3f780f9ee4a17eaf6b6404a5b2468))
+* **agent:** redact secret env values from command-payload logs ([ee66882](https://github.com/mdopp/servicebay/commit/ee66882f557058ee3b7df56c620a909d9406d063))
+* **agent:** redact secrets from command result logs too ([3a16f87](https://github.com/mdopp/servicebay/commit/3a16f8713ee6a225d1759979fb45748e3d97921b))
+* **agent:** redact secrets from command result logs too ([0195bd8](https://github.com/mdopp/servicebay/commit/0195bd8a267bebc738235088548c1cd1cb9893ec))
+* **mcp:** resolve real client IP for bootstrap-token LAN gate ([07033ab](https://github.com/mdopp/servicebay/commit/07033ab46cee18379d2c48990a0aa5322a2d73af))
+
 ## [4.42.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.41.1...servicebay-v4.42.0) (2026-05-28)
 
 
