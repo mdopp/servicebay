@@ -70,7 +70,7 @@ gh issue list --state open --limit 100 --json number,title,labels,body
 
 - Labels include any of: `postponed`, `wontfix`, `duplicate`, `autoloop-open`. (`oscar`-labelled issues are **in scope** — they go through normal classification below.)
 - Issue number appears in `state.completed[]`, `state.skipped[]`, or `state.blocked[]` of the state file.
-- Issue title or body is clearly multi-PR scope: words like "audit", "strategy", "epic", or describes work that obviously spans multiple changes. Mark these as `blocked` in state with reason `"needs scoping"` and move on.
+- Issue title or body is clearly multi-PR scope: words like "audit", "strategy", "epic", or describes work that obviously spans multiple changes. Mark these as `blocked` in state with reason `"needs scoping"` and move on — *or*, in a refine pass (track b) or when the user asks, **decompose** it into bite-sized child issues (see track b's "Decomposing an epic") and keep this one open as the tracking umbrella.
 
 ### Classification (everything that survives the filter)
 
@@ -97,6 +97,12 @@ If Step 1 returns no survivors, **do not auto-default to lint and do not exit.**
 
 - **a) Lint problems** — fall through to **Step 1b (lint sweep)** below: drive the ESLint warning count down with small, single-file extractions.
 - **b) Refine & unblock issues** — walk `state.blocked[]` and the open issues. For each blocked entry, re-check whether a recent merge or a smaller scoping makes it actionable now; if so, remove it from `blocked[]` and either work it (back to Step 2) or carve off a bite-sized first PR. Also tighten thin/ambiguous issue bodies (symptom + repro + starting-point files per memory `feedback_issue_scope`). Deliverable: a refreshed, actionable queue — then pick the head and work it.
+
+  **Decomposing an epic** is a first-class track-b move (and the better alternative to parking a multi-PR issue as `needs scoping`): break it into bite-sized child issues filed in the repo so the loop can actually ship it incrementally. Rules:
+    - Each child is an independently-shippable PR-unit; land **foundational modules first** (pure data/helpers, clients), then their consumers. No dead-code-only stubs — every child must be a genuine, testable unit.
+    - **File them in dependency order so ascending issue number == dependency order.** The loop selects ascending within a bucket and works issues sequentially, so this makes it ship them in the right sequence; a child whose `Depends on #N` sibling is still open is skipped until #N merges.
+    - Each child body gives the deliverable + starting-point files + a `Depends on #N` line for any sibling that must merge first. Label them like any normal issue so classification routes them.
+    - Comment the dependency DAG on the parent and keep the parent **open as the tracking epic** (don't auto-close it).
 - **c) Evaluate the codebase** — run the standing evaluation prompt (below) against HEAD, then file the **Category 2 (Pragmatic)** findings as new issues so the queue refills. Keep issue bodies symptom-style (memory `feedback_issue_scope`): symptom + exact file/line + real-world consequence; do **not** paste the patch outline into the issue (that belongs in the PR). Record **Category 1 (Academic)** findings in `state.notes[]` only — don't file or work them. This is the one sanctioned exception to "does not file new issues."
 
 **How to choose:**
@@ -245,6 +251,14 @@ npm test                    # all unit tests. Must pass.
 then invoke `/verify` against `<SERVICEBAY_BOX>` per `reference_mcp_servicebay_access` **before merge**. CI green is necessary but not sufficient — dev-container can't catch install-path regressions.
 
 If `/verify` fails, treat it like CI-red: stop, post the failure summary on the PR, leave it open, move on to the next issue.
+
+**Narrow, deliberately-logged exception to the pre-merge `/verify`.** You MAY merge a path-mandated change on CI-green + a strong unit test and *defer* the real-box `/verify` — but ONLY when ALL of these hold:
+1. the user has explicitly prioritized it, or a downstream/dependent repo is blocked waiting on it (e.g. `mdopp/oscar` waiting on a ServiceBay install-path fix);
+2. the change adds **no new runtime logic** — it reuses an already-tested, pre-existing code path (removing a coercion, threading an existing-contract value, a docs/string change), so there's nothing the dev-container couldn't already exercise;
+3. a unit test covers the new behaviour;
+4. you document the deferral in the PR body **and** `state` (which check was skipped and why), and the full real-environment check happens at the next natural opportunity (e.g. when the dependent feature is installed/exercised).
+
+Absent that explicit priority/blocked-downstream signal, the default stands: **path-mandated ⇒ `/verify` before merge.** Never apply this exception to a `security`-gated change (those never auto-merge anyway). This is a logged judgement call, not a general loosening — when unsure, don't use it.
 
 If lint warnings increased, fix or rebase. If a test fails, diagnose root cause — **do not** mock around it or skip it. Memory `feedback_vitest_fetch_response_reuse` and `feedback_test_local_node_match_ci` apply.
 
