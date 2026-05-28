@@ -242,7 +242,7 @@ npm test                    # all unit tests. Must pass.
 - `packages/frontend/src/dashboards/`
 - `packages/frontend/src/components/OnboardingWizard.tsx` (or its decomposition)
 
-then invoke `/verify` against `core@192.168.178.100:5888` per `reference_mcp_servicebay_access` **before merge**. CI green is necessary but not sufficient — dev-container can't catch install-path regressions.
+then invoke `/verify` against `<SERVICEBAY_BOX>` per `reference_mcp_servicebay_access` **before merge**. CI green is necessary but not sufficient — dev-container can't catch install-path regressions.
 
 If `/verify` fails, treat it like CI-red: stop, post the failure summary on the PR, leave it open, move on to the next issue.
 
@@ -366,5 +366,5 @@ Tell the user and **do not schedule another /loop firing** if any of these hit:
 - Memory index: `~/.claude/projects/-home-mdopp-servicebay/memory/MEMORY.md`
 - UX contract: `docs/UX_PHILOSOPHY.md` and `docs/UX_DECISIONS.md`
 - Architecture invariants: `docs/ARCHITECTURE_INVARIANTS.md`
-- Real-box access: memory `reference_mcp_servicebay_access` (core@192.168.178.100:5888)
+- Real-box access: memory `reference_mcp_servicebay_access`. `<SERVICEBAY_BOX>` (used above) is the box's SSH/HTTP/MCP address; it lives in that local memory entry, not in this public repo.
 - Release flow: release-please PR on branch `release-please--branches--main--components--servicebay`
