@@ -4,14 +4,17 @@ import { exec } from 'node:child_process';
 import { promisify } from 'util';
 import { getExecutor } from '@/lib/executor';
 import { listNodes, PodmanConnection } from '@/lib/nodes';
+import { assertAdminSession } from './_session';
 
 const execAsync = promisify(exec);
 
 export async function getNodes() {
+  await assertAdminSession();
   return await listNodes();
 }
 
 export async function getSystemUpdates(nodeName?: string): Promise<{ count: number; list: string[] }> {
+  await assertAdminSession();
   if (nodeName && nodeName !== 'Local') {
       return { count: 0, list: [] };
   }
@@ -38,6 +41,7 @@ export async function getSystemUpdates(nodeName?: string): Promise<{ count: numb
 }
 
 export async function readFileContent(path: string, nodeName?: string): Promise<string> {
+  await assertAdminSession();
   let connection: PodmanConnection | undefined;
   if (nodeName && nodeName !== 'Local') {
       const nodes = await listNodes();
