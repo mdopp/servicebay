@@ -13,6 +13,7 @@ vi.mock('@/lib/install/jobStore', () => ({
 
 import {
   isLanIp,
+  clientIpForLanGate,
   lazyInitializeExpiry,
   verifyBootstrapToken,
   revokeBootstrapToken,
@@ -252,5 +253,36 @@ describe('getBootstrapTokenStatus', () => {
     });
     mockWasInstallActiveWithin.mockResolvedValue(true);
     expect(await getBootstrapTokenStatus()).toEqual({ active: true, expiresAt: null, minutesRemaining: null });
+  });
+});
+
+describe('clientIpForLanGate (#1204)', () => {
+  it('returns the socket address unchanged for a direct (non-loopback) peer', () => {
+    expect(clientIpForLanGate({}, '203.0.113.7')).toBe('203.0.113.7');
+  });
+
+  it('ignores proxy headers on a direct connection (no header spoofing)', () => {
+    // A direct internet client cannot fake a LAN IP via headers.
+    expect(clientIpForLanGate({ 'x-real-ip': '192.168.1.5' }, '203.0.113.7')).toBe('203.0.113.7');
+  });
+
+  it('trusts X-Real-IP when the peer is the local proxy (loopback)', () => {
+    expect(clientIpForLanGate({ 'x-real-ip': '203.0.113.7' }, '127.0.0.1')).toBe('203.0.113.7');
+    // and isLanIp then correctly rejects the public client
+    expect(isLanIp(clientIpForLanGate({ 'x-real-ip': '203.0.113.7' }, '127.0.0.1'))).toBe(false);
+  });
+
+  it('uses the RIGHTMOST X-Forwarded-For hop (nginx-appended), not the spoofable left', () => {
+    // Client spoofs a LAN IP; NPM appends the real peer on the right.
+    const xff = '192.168.1.5, 203.0.113.7';
+    expect(clientIpForLanGate({ 'x-forwarded-for': xff }, '::1')).toBe('203.0.113.7');
+  });
+
+  it('prefers X-Real-IP over X-Forwarded-For', () => {
+    expect(clientIpForLanGate({ 'x-real-ip': '203.0.113.7', 'x-forwarded-for': '8.8.8.8' }, '127.0.0.1')).toBe('203.0.113.7');
+  });
+
+  it('falls back to the loopback socket address when no proxy headers are present', () => {
+    expect(clientIpForLanGate({}, '127.0.0.1')).toBe('127.0.0.1');
   });
 });

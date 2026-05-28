@@ -56,6 +56,39 @@ export function isLanIp(addr: string | undefined | null): boolean {
   return false;
 }
 
+/**
+ * Resolve the real client IP for the LAN-only gate (#1204).
+ *
+ * Behind a reverse proxy (NPM forwards to 127.0.0.1) `socket.remoteAddress`
+ * is always loopback, so `isLanIp()` would pass for every caller — including
+ * the public internet if the dashboard is exposed. So: when the socket peer
+ * IS loopback we trust the proxy's authoritative client-IP headers — NPM sets
+ * `X-Real-IP` to nginx's `$remote_addr` (overwriting any client-sent value),
+ * and the LAST `X-Forwarded-For` hop is the one nginx appended. When the peer
+ * is NOT loopback (a direct connection) the headers are attacker-controllable,
+ * so we ignore them and use the socket address. We never take the left-most
+ * XFF entry, which a direct client could spoof with a fake LAN IP.
+ */
+export function clientIpForLanGate(
+  headers: Record<string, string | string[] | undefined>,
+  socketAddr: string | undefined,
+): string | undefined {
+  const loopback = socketAddr === '127.0.0.1' || socketAddr === '::1' || socketAddr === '::ffff:127.0.0.1';
+  if (!loopback) return socketAddr;
+
+  const realRaw = headers['x-real-ip'];
+  const real = (Array.isArray(realRaw) ? realRaw[0] : realRaw)?.trim();
+  if (real) return real;
+
+  const xffRaw = headers['x-forwarded-for'];
+  const xff = Array.isArray(xffRaw) ? xffRaw[0] : xffRaw;
+  if (xff) {
+    const hops = xff.split(',').map(s => s.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
+  }
+  return socketAddr;
+}
+
 function sha256(s: string): string {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
