@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.42.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.41.1...servicebay-v4.42.0) (2026-05-28)
+
+
+### Features
+
+* **file-share:** link the latest BasicSync APK per Android ABI ([51bc2eb](https://github.com/mdopp/servicebay/commit/51bc2eb631627bf12151804f0314e9117ddf2ca0))
+* **file-share:** link the latest BasicSync APK per Android ABI ([894634d](https://github.com/mdopp/servicebay/commit/894634d5563ac418954a2f075920d9477bd17826))
+
+
+### Bug Fixes
+
+* **install:** assemble walks all registries when source is omitted ([48c1088](https://github.com/mdopp/servicebay/commit/48c10882afad7c07a7b0f852d81ae991243209e6))
+* **install:** assemble walks all registries when source is omitted ([10c8451](https://github.com/mdopp/servicebay/commit/10c845160d9b13f832548824cfe366afaf6d0494))
+
 ## [4.41.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.41.0...servicebay-v4.41.1) (2026-05-28)
 
 
