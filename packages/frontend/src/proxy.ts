@@ -51,6 +51,11 @@ const PUBLIC_API_RULES: PublicApiRule[] = [
   // by a wipe-secrets clean install. Returns sanitised progress only
   // — no `input.variables`, no credentials manifest.
   { prefix: '/api/install/progress', methods: new Set(['GET']) },
+  // BasicSync APK download-redirect (file-share user guide → "install the
+  // Android Syncthing client"). GET-only; resolves the latest release asset
+  // for the requested ABI and 302s to a public GitHub URL. Public because
+  // the portal user guide that links it is family-facing — no secrets.
+  { prefix: '/api/system/downloads/basicsync', methods: new Set(['GET']) },
 ];
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);

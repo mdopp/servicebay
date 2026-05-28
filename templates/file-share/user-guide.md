@@ -22,8 +22,12 @@ cards:
     recommended_apps:
       - name: "Syncthing"
         url: "https://syncthing.net/downloads/"
-        platforms: ["desktop", "android"]
-        note: "Two-way folder sync between your devices and the home server."
+        platforms: ["desktop"]
+        note: "Two-way folder sync between your computer and the home server."
+      - name: "BasicSync"
+        url: "/api/system/downloads/basicsync?abi=arm64-v8a"
+        platforms: ["android"]
+        note: "Actively-maintained Android Syncthing client. This link always grabs the latest build for arm64 phones — for older or x86 devices change ?abi= to armeabi-v7a, x86_64 or x86."
       - name: "Möbius Sync"
         url: "https://apps.apple.com/app/m%C3%B6bius-sync/id1539203216"
         platforms: ["ios"]
