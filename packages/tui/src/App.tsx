@@ -17,8 +17,9 @@ import {
 
 export interface AppProps {
   probes: PhaseProbes;
-  /** Called when the operator picks an action that hands off to a bash leg. */
-  onChoose: (action: 'build-iso' | 'watch-install') => void;
+  /** Called when the operator picks an action that hands off (ISO picker or a
+   *  bash leg). */
+  onChoose: (action: 'choose-iso' | 'build-iso' | 'watch-install') => void;
 }
 
 function PhaseMenu({
