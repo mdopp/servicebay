@@ -88,6 +88,25 @@ function computeEffectiveDeps<T extends DependencyAwareItem>(
 }
 
 /**
+ * Build the set of dependency-satisfying names for an install: everything
+ * already deployed on the target node, plus anything the operator flagged as
+ * already-installed in this batch. Pass the result as `topoSortByDependencies`'
+ * `alreadyInstalled`. Without the node set, a dependency on something that's
+ * installed but not re-selected (e.g. `hermes` → `home-assistant`) is wrongly
+ * reported missing just because it wasn't in the current selection.
+ */
+export function resolveAlreadyInstalled(
+  batchItems: ReadonlyArray<{ name: string; alreadyInstalled?: boolean }>,
+  deployedOnNode: Iterable<string>,
+): Set<string> {
+  const set = new Set<string>(deployedOnNode);
+  for (const item of batchItems) {
+    if (item.alreadyInstalled) set.add(item.name);
+  }
+  return set;
+}
+
+/**
  * Topologically sort `items` so every entry's dependencies appear
  * earlier in the result. Items whose dependencies aren't in
  * `candidates` (typically `selectedNames`) return `missing`; cycles

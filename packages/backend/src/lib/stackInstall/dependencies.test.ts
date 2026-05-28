@@ -1,5 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import { parseTemplateDependencies, topoSortByDependencies } from './dependencies';
+import { parseTemplateDependencies, topoSortByDependencies, resolveAlreadyInstalled } from './dependencies';
+
+describe('resolveAlreadyInstalled', () => {
+  it('counts node-deployed templates as satisfiers even when not re-selected', () => {
+    // The hermes → home-assistant case: HA is deployed on the node but not in
+    // this install batch. It must still satisfy the dependency.
+    const set = resolveAlreadyInstalled(
+      [{ name: 'hermes' }, { name: 'ollama' }],
+      ['home-assistant', 'nginx', 'auth'],
+    );
+    expect(set.has('home-assistant')).toBe(true);
+
+    const result = topoSortByDependencies(
+      [{ name: 'hermes', dependencies: ['home-assistant'] }],
+      { alreadyInstalled: set },
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('also folds in batch items flagged alreadyInstalled', () => {
+    const set = resolveAlreadyInstalled(
+      [{ name: 'auth', alreadyInstalled: true }, { name: 'vaultwarden' }],
+      [],
+    );
+    expect(set.has('auth')).toBe(true);
+    expect(set.has('vaultwarden')).toBe(false);
+  });
+});
 
 describe('parseTemplateDependencies', () => {
   it('returns empty array when annotation missing', () => {
