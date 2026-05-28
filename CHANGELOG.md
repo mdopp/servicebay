@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.41.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.40.2...servicebay-v4.41.0) (2026-05-28)
+
+
+### Features
+
+* **install:** fetch remote FCoS image list + auto-launch install-tui ([4ad0f35](https://github.com/mdopp/servicebay/commit/4ad0f359d28dc0df6b1af558c2a204e0642d4f81))
+* **install:** fetch remote FCoS image list + auto-launch install-tui ([bae9b61](https://github.com/mdopp/servicebay/commit/bae9b610768fa8d3208d570ea1b3150a4ff5391b))
+
 ## [4.40.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.40.1...servicebay-v4.40.2) (2026-05-27)
 
 
