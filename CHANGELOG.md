@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.41.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.41.0...servicebay-v4.41.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* **install:** sudo-retry asset write when hostPath is owned by another uid ([b5a50dd](https://github.com/mdopp/servicebay/commit/b5a50dd12cfb46537864cdcbfc634ce0d45303dd))
+* **install:** sudo-retry asset write when hostPath is owned by another uid ([5aa95a3](https://github.com/mdopp/servicebay/commit/5aa95a35da33a85f63567a86e0ae4f6f10314d6c))
+
 ## [4.41.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.40.2...servicebay-v4.41.0) (2026-05-28)
 
 
