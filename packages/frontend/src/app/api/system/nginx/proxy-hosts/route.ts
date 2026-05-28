@@ -221,37 +221,13 @@ function lanCidrFromIp(ip: string): string | null {
  * internet. The wizard's "Access Restrictions (recommended)" manual
  * instruction was the bandaid for this gap.
  */
-async function ensureLanAccessList(baseUrl: string, token: string, nodeIp: string): Promise<number | null> {
-    const cidr = lanCidrFromIp(nodeIp);
-    if (!cidr) {
-        logger.warn('ProxyHosts', `Could not derive LAN CIDR from node IP ${nodeIp}; skipping access-list setup.`);
-        return null;
-    }
-
-    // 1) Look for an existing list by name. expand=clients gives us the
-    //    rule list so we can detect drift and patch instead of duplicating.
-    try {
-        const listRes = await fetch(`${baseUrl}/api/nginx/access-lists?expand=clients`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-            signal: AbortSignal.timeout(10_000),
-        });
-        if (listRes.ok) {
-            const lists = (await listRes.json()) as Array<{
-                id: number;
-                name: string;
-                clients?: Array<{ address: string; directive: string }>;
-            }>;
-            const existing = Array.isArray(lists) ? lists.find(l => l.name === LAN_ACCESS_LIST_NAME) : undefined;
-            if (existing) return existing.id;
-        }
-    } catch (e) {
-        logger.warn('ProxyHosts', `LAN access-list lookup failed: ${e instanceof Error ? e.message : String(e)}`);
-        // fall through to create — worst case we'll get a duplicate-name 400
-    }
-
-    // 2) Create the list. nginx access rules are evaluated top-to-bottom
-    //    and first-match-wins; allow LAN + localhost, then explicit
-    //    deny-all so the rejection is unambiguous in NPM's logs.
+/**
+ * POST a new LAN-only access list to NPM. Returns the new list's id, or
+ * null on any failure (logged). The list's rules are evaluated top-down
+ * with first-match-wins, so the allow-LAN/allow-localhost/deny-all order
+ * is load-bearing.
+ */
+async function createLanAccessList(baseUrl: string, token: string, cidr: string): Promise<number | null> {
     try {
         const createRes = await fetch(`${baseUrl}/api/nginx/access-lists`, {
             method: 'POST',
@@ -285,6 +261,37 @@ async function ensureLanAccessList(baseUrl: string, token: string, nodeIp: strin
         logger.warn('ProxyHosts', `LAN access-list create failed: ${e instanceof Error ? e.message : String(e)}`);
         return null;
     }
+}
+
+async function ensureLanAccessList(baseUrl: string, token: string, nodeIp: string): Promise<number | null> {
+    const cidr = lanCidrFromIp(nodeIp);
+    if (!cidr) {
+        logger.warn('ProxyHosts', `Could not derive LAN CIDR from node IP ${nodeIp}; skipping access-list setup.`);
+        return null;
+    }
+
+    // Look for an existing list by name. expand=clients gives us the
+    // rule list so we can detect drift and patch instead of duplicating.
+    try {
+        const listRes = await fetch(`${baseUrl}/api/nginx/access-lists?expand=clients`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (listRes.ok) {
+            const lists = (await listRes.json()) as Array<{
+                id: number;
+                name: string;
+                clients?: Array<{ address: string; directive: string }>;
+            }>;
+            const existing = Array.isArray(lists) ? lists.find(l => l.name === LAN_ACCESS_LIST_NAME) : undefined;
+            if (existing) return existing.id;
+        }
+    } catch (e) {
+        logger.warn('ProxyHosts', `LAN access-list lookup failed: ${e instanceof Error ? e.message : String(e)}`);
+        // fall through to create — worst case we'll get a duplicate-name 400
+    }
+
+    return createLanAccessList(baseUrl, token, cidr);
 }
 
 /**
