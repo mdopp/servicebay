@@ -33,7 +33,7 @@ describe('writeExtraConfigFiles', () => {
 
         const writes = agent.calls.filter(c => c.action === 'write_file');
         expect(writes).toHaveLength(1);
-        expect(writes[0].params.sudo).toBeUndefined();
+        expect(writes[0].params?.sudo).toBeUndefined();
     });
 
     it('retries with sudo when the plain write_file fails (EACCES on container-owned dir)', async () => {
@@ -48,8 +48,8 @@ describe('writeExtraConfigFiles', () => {
 
         const writes = agent.calls.filter(c => c.action === 'write_file');
         expect(writes).toHaveLength(2);
-        expect(writes[0].params.sudo).toBeUndefined();
-        expect(writes[1].params.sudo).toBe(true);
+        expect(writes[0].params?.sudo).toBeUndefined();
+        expect(writes[1].params?.sudo).toBe(true);
     });
 
     it('throws (deploy fails) when both the plain and sudo writes fail', async () => {
@@ -60,6 +60,6 @@ describe('writeExtraConfigFiles', () => {
 
         const writes = agent.calls.filter(c => c.action === 'write_file');
         expect(writes).toHaveLength(2);
-        expect(writes[1].params.sudo).toBe(true);
+        expect(writes[1].params?.sudo).toBe(true);
     });
 });
