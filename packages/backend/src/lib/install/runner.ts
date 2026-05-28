@@ -35,6 +35,7 @@ import {
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import { parseTemplateManifest } from '@/lib/template/contract';
 import { topoSortByDependencies, resolveAlreadyInstalled } from '@/lib/stackInstall/dependencies';
+import { PullTracker, describePull } from './pullProgress';
 import { parseTemplateTier } from '@/lib/templateTier';
 import { selectMigrationChain } from '@/lib/stackInstall/migrations';
 import {
@@ -1021,23 +1022,23 @@ async function runJob(jobId: string): Promise<void> {
     try {
       const { agentManager } = await import('@/lib/agent/manager');
       const agent = await agentManager.ensureAgent(node);
-      // Per-image progress throttle (#805). The agent emits
-      // PULL_PROGRESS every ~250ms per layer; multiply by N parallel
-      // images and the log floods. We coalesce per-image: one line
-      // every ~2s with the slowest-still-downloading layer's bytes.
-      // Skip events without total bytes (status-only updates like
-      // "Pull complete") so the line is always informative.
+      // Per-image progress (#805). The agent emits PULL_PROGRESS per layer
+      // (docker-compat stream: status + byte progress + "Already exists" for
+      // cached layers). A PullTracker aggregates layers into one coalesced
+      // line every ~2s — bytes + percent once known, otherwise a "preparing"
+      // heartbeat — so a large pull never looks hung and the operator sees how
+      // many layers were already on the box.
+      const trackers = new Map<string, PullTracker>();
       const lastEmit = new Map<string, number>();
-      const onProgress = (image: string) => (ev: { current?: number; total?: number; status?: string }) => {
-        if (!ev.total || ev.current === undefined) return;
+      const onProgress = (image: string) => (ev: { id?: string; status?: string; current?: number; total?: number }) => {
+        let tracker = trackers.get(image);
+        if (!tracker) { tracker = new PullTracker(); trackers.set(image, tracker); }
+        tracker.update(ev);
         const now = Date.now();
-        const prev = lastEmit.get(image) ?? 0;
-        if (now - prev < 2000 && ev.current < ev.total) return;
+        if (now - (lastEmit.get(image) ?? 0) < 2000) return;
         lastEmit.set(image, now);
-        const pct = Math.round((ev.current / ev.total) * 100);
-        const cur = humanBytes(ev.current);
-        const tot = humanBytes(ev.total);
-        void log(jobId, `  Pulling ${image}: ${pct}% (${cur} / ${tot})`);
+        const line = describePull(image, tracker.summary(), humanBytes);
+        if (line) void log(jobId, `  ${line}`);
       };
       const results = await Promise.allSettled(
         imagesToPull.map(image => agent.pullImage(image, onProgress(image))),
@@ -1057,7 +1058,11 @@ async function runJob(jobId: string): Promise<void> {
       });
       await log(jobId, `✅ Pulled ${okCount}/${imagesToPull.length} image${imagesToPull.length === 1 ? '' : 's'}.`);
       for (const f of failures) {
-        await log(jobId, `(note) pre-pull failed for ${f.image}: ${f.reason} — will be retried during deploy.`);
+        const s = trackers.get(f.image)?.summary();
+        const got = s && s.bytesTotal > 0
+          ? ` (reached ${humanBytes(s.bytesCurrent)}/${humanBytes(s.bytesTotal)}${s.cached ? `, ${s.cached} cached` : ''})`
+          : '';
+        await log(jobId, `(note) pre-pull failed for ${f.image}: ${f.reason}${got} — will be retried during deploy.`);
       }
     } catch (e) {
       await log(jobId, `(note) parallel pre-pull skipped: ${e instanceof Error ? e.message : String(e)} — deploy will pull sequentially as usual.`);

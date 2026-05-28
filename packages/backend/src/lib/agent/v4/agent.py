@@ -118,6 +118,20 @@ def _resolve_timeout_env(var_name: str, default: float) -> Optional[float]:
 
 COMMAND_TIMEOUT_SECONDS = _resolve_timeout_env('SERVICEBAY_COMMAND_TIMEOUT', 20.0)
 
+
+def _split_image_ref(image: str) -> Tuple[str, Optional[str]]:
+    """Split an image ref into (fromImage, tag) for the docker-compat
+    /images/create endpoint. A digest-pinned ref (name@sha256:...) is passed
+    whole as fromImage with no tag. A ':' separates the tag only when it comes
+    after the last '/', so a registry:port host isn't mistaken for a tag."""
+    if '@' in image:
+        return image, None
+    slash = image.rfind('/')
+    colon = image.rfind(':')
+    if colon > slash:
+        return image[:colon], image[colon + 1:]
+    return image, 'latest'
+
 # Import paramiko only if containerized
 if IS_CONTAINERIZED:
     try:
@@ -2193,8 +2207,18 @@ class Agent:
                             sock_path = f"/run/user/{uid}/podman/podman.sock"
                             conn = UnixHTTPConnection(sock_path)
                             from urllib.parse import quote
-                            ref = quote(img, safe='')
-                            conn.request('POST', f'/v5.0.0/libpod/images/pull?reference={ref}')
+                            # docker-compat /images/create streams Docker-style
+                            # per-layer progress (status + progressDetail.current
+                            # /total, plus "Already exists" for cached layers).
+                            # The libpod /images/pull endpoint only emitted opaque
+                            # {"stream": "..."} text with no byte progress, so a
+                            # large layer produced no events for minutes — looking
+                            # hung and tripping the socket read timeout.
+                            from_image, tag = _split_image_ref(img)
+                            qs = f"fromImage={quote(from_image, safe='')}"
+                            if tag:
+                                qs += f"&tag={quote(tag, safe='')}"
+                            conn.request('POST', f'/v1.41/images/create?{qs}')
                             resp = conn.getresponse()
                             if resp.status != 200:
                                 body = resp.read().decode('utf-8', errors='replace')
@@ -2217,24 +2241,33 @@ class Agent:
                                         obj = json.loads(line)
                                     except json.JSONDecodeError:
                                         continue
-                                    if 'error' in obj and obj['error']:
-                                        reply_fn(error=obj['error'])
+                                    err = obj.get('error') or (obj.get('errorDetail') or {}).get('message')
+                                    if err:
+                                        reply_fn(error=err)
                                         return
+                                    status = obj.get('status', '')
+                                    detail = obj.get('progressDetail') or {}
+                                    # Throttle the high-frequency "Downloading"
+                                    # byte updates; forward lifecycle events
+                                    # (fs layer / complete / already-exists)
+                                    # immediately so layer counts stay accurate.
+                                    is_download = status == 'Downloading'
                                     now = time.time() * 1000
-                                    if now - last_push >= throttle_ms:
-                                        progress = {
-                                            'pull_id': pid,
-                                            'image': img,
-                                            'id': obj.get('id', ''),
-                                            'status': obj.get('status', ''),
-                                            'stream': obj.get('stream', ''),
-                                        }
-                                        detail = obj.get('progressDetail') or {}
-                                        if detail.get('current') is not None:
-                                            progress['current'] = detail['current']
-                                        if detail.get('total') is not None:
-                                            progress['total'] = detail['total']
-                                        self.push_state('PULL_PROGRESS', progress)
+                                    if is_download and now - last_push < throttle_ms:
+                                        continue
+                                    progress = {
+                                        'pull_id': pid,
+                                        'image': img,
+                                        'id': obj.get('id', ''),
+                                        'status': status,
+                                        'stream': obj.get('stream', ''),
+                                    }
+                                    if detail.get('current') is not None:
+                                        progress['current'] = detail['current']
+                                    if detail.get('total') is not None:
+                                        progress['total'] = detail['total']
+                                    self.push_state('PULL_PROGRESS', progress)
+                                    if is_download:
                                         last_push = now
                             conn.close()
                             reply_fn(result={'success': True, 'image': img})
