@@ -26,6 +26,60 @@ import type { PodLikeDoc, PodLikeVolumeMount } from './containerNameMatcher';
 
 const SYSTEMD_DIR = '.config/containers/systemd';
 
+/** Minimal agent shape needed to ship files to a node. */
+interface FileWritingAgent {
+    sendCommand(action: string, params?: unknown): Promise<unknown>;
+}
+
+/**
+ * Write a template's rendered config + asset files to the node, creating
+ * parent dirs first.
+ *
+ * Failures are FATAL — the previous behaviour was to log a warning and
+ * continue, which produced the radicale crash-loop class of bug: the
+ * service starts, finds its config file missing, dies, and the operator
+ * has no breadcrumb back to the silent write_file failure during deploy.
+ * Throwing surfaces the problem at deploy time with a useful path.
+ *
+ * #1171 — a write target can sit under a hostPath pre-provisioned by a
+ * consumer container (owned by its uid, not the agent's `core`/uid-1000),
+ * e.g. the asset-transport `skills/` dir on a volume the hermes/syncthing
+ * pod created. The plain write EACCESes there, so a failed write is
+ * retried once via the agent's #1000 privileged path (`core` has
+ * passwordless sudo on FCoS) before being recorded as a failure.
+ */
+export async function writeExtraConfigFiles(
+    agent: FileWritingAgent,
+    serviceName: string,
+    extraFiles: { path: string; content: string }[],
+): Promise<void> {
+    const failures: string[] = [];
+    for (const f of extraFiles) {
+        // Ensure parent directory exists.
+        const dir = f.path.substring(0, f.path.lastIndexOf('/'));
+        if (dir) {
+            await agent.sendCommand('exec', { command: `mkdir -p ${dir}` });
+        }
+        let res = await agent.sendCommand('write_file', { path: f.path, content: f.content });
+        if (res !== 'ok') {
+            logger.warn('ServiceManager', `write_file for ${f.path} failed (${JSON.stringify(res)}); retrying with sudo.`);
+            res = await agent.sendCommand('write_file', { path: f.path, content: f.content, sudo: true });
+        }
+        if (res !== 'ok') {
+            failures.push(f.path);
+            logger.error('ServiceManager', `Failed to write extra file ${f.path}: agent returned ${JSON.stringify(res)}`);
+        } else {
+            logger.info('ServiceManager', `Wrote extra config file: ${f.path}`);
+        }
+    }
+    if (failures.length > 0) {
+        throw new Error(
+            `Failed to write ${failures.length} required config file(s) for service "${serviceName}":\n  ${failures.join('\n  ')}\n\n` +
+            `The service was not started. Re-run the deploy or check the agent's write permissions on the target paths.`,
+        );
+    }
+}
+
 /** Extract string content from agent read_file response. */
 function extractFileContent(res: unknown): string {
     if (typeof res === 'string') return res;
@@ -664,36 +718,11 @@ export class ServiceLifecycle {
             logger.debug('ServiceManager', 'Could not verify template configFiles parity:', e);
         }
 
-        // Write extra config files (e.g. Authelia configuration.yml) to the node filesystem.
-        // Failures here are FATAL — the previous behaviour was to log a warning
-        // and continue, which produced the radicale crash-loop class of bug:
-        // service starts, looks for a config file that's not there, dies, and
-        // the operator has no breadcrumb back to the real cause (the silent
-        // write_file failure during deploy). Raising here surfaces the
-        // problem at deploy time with a useful path.
+        // Write extra config files (e.g. Authelia configuration.yml) to the
+        // node filesystem. Failures are FATAL (see writeExtraConfigFiles).
         if (extraFiles?.length) {
             const agent = await agentManager.ensureAgent(nodeName);
-            const failures: string[] = [];
-            for (const f of extraFiles) {
-                // Ensure parent directory exists
-                const dir = f.path.substring(0, f.path.lastIndexOf('/'));
-                if (dir) {
-                    await agent.sendCommand('exec', { command: `mkdir -p ${dir}` });
-                }
-                const res = await agent.sendCommand('write_file', { path: f.path, content: f.content });
-                if (res !== 'ok') {
-                    failures.push(f.path);
-                    logger.error('ServiceManager', `Failed to write extra file ${f.path}: agent returned ${JSON.stringify(res)}`);
-                } else {
-                    logger.info('ServiceManager', `Wrote extra config file: ${f.path}`);
-                }
-            }
-            if (failures.length > 0) {
-                throw new Error(
-                    `Failed to write ${failures.length} required config file(s) for service "${name}":\n  ${failures.join('\n  ')}\n\n` +
-                    `The service was not started. Re-run the deploy or check the agent's write permissions on the target paths.`,
-                );
-            }
+            await writeExtraConfigFiles(agent, name, extraFiles);
         }
 
         // Ensure unprivileged port binding if any port < 1024 is used
