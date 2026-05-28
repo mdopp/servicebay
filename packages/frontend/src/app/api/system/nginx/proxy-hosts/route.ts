@@ -438,6 +438,68 @@ async function patchProxyHostAdvancedConfig(
  * Idempotent: skips if Remote-User is already present, or if the
  * server-level advanced_config doesn't contain `auth_request`.
  */
+/**
+ * Pure transform: given a proxy_host conf body, return the patched body with
+ * forward-auth Remote-* headers (and an optional Host override for strict-host
+ * upstreams) injected into the `location /` block. Returns `{ skip }` with a
+ * reason whenever there's nothing to do, keeping the async caller free of the
+ * branchy string surgery — which is also why it's exported for unit tests.
+ */
+export function buildForwardAuthPatch(
+    content: string,
+    upstreamHostHeader: string | undefined,
+): { content: string } | { skip: string } {
+    // Skip if not a forward-auth proxy_host.
+    if (!/auth_request\s+\/authelia/.test(content)) {
+        return { skip: 'no forward-auth' };
+    }
+    // Skip if Remote-User is already inside the location / block.
+    const locationMatch = content.match(/location\s+\/\s*\{[\s\S]*?\n\s*\}/);
+    if (!locationMatch) {
+        return { skip: 'no `location /` block' };
+    }
+    const locationBlock = locationMatch[0];
+    const needsHeaders = !/proxy_set_header\s+Remote-User/.test(locationBlock);
+    const needsHostRewrite = !!upstreamHostHeader && !locationBlock.includes(`proxy_set_header Host ${upstreamHostHeader}`);
+    if (!needsHeaders && !needsHostRewrite) {
+        return { skip: 'already patched' };
+    }
+    let patchedLocation = locationBlock;
+    if (needsHeaders) {
+        // Inject before `include conf.d/include/proxy.conf;`. The
+        // include is where NPM lays down Host $host; doing the
+        // Remote-* set BEFORE the include keeps the standard
+        // X-Forwarded-* chain intact and lets nginx's "all
+        // proxy_set_header in this location" rule pick up our
+        // additions.
+        patchedLocation = patchedLocation.replace(
+            /(\s+)(include conf\.d\/include\/proxy\.conf;)/,
+            `$1${AUTHELIA_LOCATION_HEADERS}$1$2`,
+        );
+    }
+    if (needsHostRewrite) {
+        // For uvicorn-style strict-host upstreams (hermes), proxy.conf
+        // sets `Host $host` which conflicts with our override. Strip
+        // proxy.conf's Host line by inlining proxy.conf without it,
+        // then add our Host directive at the end.
+        const PROXY_CONF_INLINE = [
+            '    add_header       X-Served-By $host;',
+            '    proxy_set_header X-Forwarded-Scheme $x_forwarded_scheme;',
+            '    proxy_set_header X-Forwarded-Proto  $x_forwarded_proto;',
+            '    proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;',
+            '    proxy_set_header X-Real-IP          $remote_addr;',
+            '    proxy_pass       $forward_scheme://$server:$port$request_uri;',
+        ].join('\n');
+        patchedLocation = patchedLocation
+            .replace(/(\s+)include conf\.d\/include\/proxy\.conf;/, `$1${PROXY_CONF_INLINE}\n    proxy_set_header Host ${upstreamHostHeader};`);
+    }
+    const newContent = content.replace(locationBlock, patchedLocation);
+    if (newContent === content) {
+        return { skip: 'no replacement needed' };
+    }
+    return { content: newContent };
+}
+
 async function patchProxyHostConfFile(
     hostId: number,
     domain: string,
@@ -454,55 +516,11 @@ async function patchProxyHostConfFile(
         if (!content) {
             return { patched: false, reason: `could not read ${confPath}` };
         }
-        // Skip if not a forward-auth proxy_host.
-        if (!/auth_request\s+\/authelia/.test(content)) {
-            return { patched: false, reason: 'no forward-auth' };
+        const patch = buildForwardAuthPatch(content, upstreamHostHeader);
+        if ('skip' in patch) {
+            return { patched: false, reason: patch.skip };
         }
-        // Skip if Remote-User is already inside the location / block.
-        const locationMatch = content.match(/location\s+\/\s*\{[\s\S]*?\n\s*\}/);
-        if (!locationMatch) {
-            return { patched: false, reason: 'no `location /` block' };
-        }
-        const locationBlock = locationMatch[0];
-        const needsHeaders = !/proxy_set_header\s+Remote-User/.test(locationBlock);
-        const needsHostRewrite = !!upstreamHostHeader && !locationBlock.includes(`proxy_set_header Host ${upstreamHostHeader}`);
-        if (!needsHeaders && !needsHostRewrite) {
-            return { patched: false, reason: 'already patched' };
-        }
-        let patchedLocation = locationBlock;
-        if (needsHeaders) {
-            // Inject before `include conf.d/include/proxy.conf;`. The
-            // include is where NPM lays down Host $host; doing the
-            // Remote-* set BEFORE the include keeps the standard
-            // X-Forwarded-* chain intact and lets nginx's "all
-            // proxy_set_header in this location" rule pick up our
-            // additions.
-            patchedLocation = patchedLocation.replace(
-                /(\s+)(include conf\.d\/include\/proxy\.conf;)/,
-                `$1${AUTHELIA_LOCATION_HEADERS}$1$2`,
-            );
-        }
-        if (needsHostRewrite) {
-            // For uvicorn-style strict-host upstreams (hermes), proxy.conf
-            // sets `Host $host` which conflicts with our override. Strip
-            // proxy.conf's Host line by inlining proxy.conf without it,
-            // then add our Host directive at the end.
-            const PROXY_CONF_INLINE = [
-                '    add_header       X-Served-By $host;',
-                '    proxy_set_header X-Forwarded-Scheme $x_forwarded_scheme;',
-                '    proxy_set_header X-Forwarded-Proto  $x_forwarded_proto;',
-                '    proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;',
-                '    proxy_set_header X-Real-IP          $remote_addr;',
-                '    proxy_pass       $forward_scheme://$server:$port$request_uri;',
-            ].join('\n');
-            patchedLocation = patchedLocation
-                .replace(/(\s+)include conf\.d\/include\/proxy\.conf;/, `$1${PROXY_CONF_INLINE}\n    proxy_set_header Host ${upstreamHostHeader};`);
-        }
-        const newContent = content.replace(locationBlock, patchedLocation);
-        if (newContent === content) {
-            return { patched: false, reason: 'no replacement needed' };
-        }
-        const writeRes = await agent.sendCommand('write_file', { path: confPath, content: newContent, sudo: true }) as { result?: string; error?: string };
+        const writeRes = await agent.sendCommand('write_file', { path: confPath, content: patch.content, sudo: true }) as { result?: string; error?: string };
         if (writeRes?.error) {
             logger.warn('ProxyHosts', `Failed to patch ${confPath} for ${domain}: ${writeRes.error}`);
             return { patched: false, reason: writeRes.error };
