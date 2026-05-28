@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.46.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.46.1...servicebay-v4.46.2) (2026-05-28)
+
+
+### Bug Fixes
+
+* **services:** retry asset write with sudo when the agent rejects on EACCES ([44cb1bb](https://github.com/mdopp/servicebay/commit/44cb1bbb21df4595a33b72e61556d18d3523f5bd))
+* **services:** retry asset write with sudo when the agent rejects on EACCES ([e081002](https://github.com/mdopp/servicebay/commit/e081002dc6ec8e07633b1e6a897918bd4edb1b08))
+
 ## [4.46.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.46.0...servicebay-v4.46.1) (2026-05-28)
 
 
