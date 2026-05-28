@@ -688,37 +688,32 @@ async function findReusableCert(
     }
 }
 
-async function requestPublicCert(
+/**
+ * Resolve the NPM certificate id to bind to a host: reuse a still-valid
+ * LE cert when one already covers `domain` (#566 — avoids the LE "5
+ * identical / week" rate limit on re-installs), otherwise ask NPM to
+ * issue a fresh one. NPM blocks until the ACME exchange completes, so the
+ * issue timeout is generous.
+ *
+ * Schema note: recent NPM (master) tightened the certificate `meta`
+ * schema with `additionalProperties: false` and dropped both
+ * `letsencrypt_email` and `letsencrypt_agree`. The ACME email now comes
+ * from the owner user's account (NPM reads `user.email` on the
+ * authenticated principal), set by our bootstrap PUT /api/users/1.
+ * Sending the legacy fields makes NPM 400 "data/meta must NOT have
+ * additional properties". Callers gate on a configured admin email before
+ * reaching here, since NPM can't register with Let's Encrypt without one.
+ */
+async function acquireCertId(
     baseUrl: string,
     token: string,
-    proxyHostId: number,
     domain: string,
-    leEmail: string,
-): Promise<{ ok: true; certId: number; reused?: boolean } | { ok: false; reason: string }> {
-    // 0) Reuse path (#566). If NPM already has a valid LE cert covering
-    //    `domain`, bind that instead of asking ACME for a new one — the
-    //    LE "5 identical / week" rate limit otherwise breaks every
-    //    re-install where the cert files were restored by #534.
+): Promise<{ certId: number; reused: boolean } | { error: string }> {
     const reusable = await findReusableCert(baseUrl, token, domain);
-    let certId: number;
     if (reusable !== null) {
         logger.info('ProxyHosts', `Reusing existing NPM cert #${reusable} for ${domain} (avoids LE rate-limit churn on re-installs)`);
-        certId = reusable;
-    } else {
-    // 1) Create the LE cert in NPM. NPM blocks until the ACME exchange
-    //    completes (success or failure), so the timeout here is generous.
-    //
-    // Schema note: recent NPM (master) tightened the certificate `meta`
-    // schema with `additionalProperties: false` and dropped both
-    // `letsencrypt_email` and `letsencrypt_agree`. The ACME email now
-    // comes from the owner user's account (NPM reads `user.email` on
-    // the authenticated principal), which our bootstrap step already
-    // sets via PUT /api/users/1. Sending the legacy fields makes NPM
-    // 400 with "data/meta must NOT have additional properties". The
-    // `leEmail` param stays only as a precondition gate — callers skip
-    // cert issuance when it isn't set, because "no admin email" means
-    // NPM can't register with Let's Encrypt regardless of payload.
-    void leEmail;
+        return { certId: reusable, reused: true };
+    }
     try {
         const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
             method: 'POST',
@@ -735,17 +730,28 @@ async function requestPublicCert(
         });
         if (!res.ok) {
             const body = await res.text().catch(() => '');
-            return { ok: false, reason: `NPM /api/nginx/certificates returned HTTP ${res.status}: ${body.slice(0, 200) || 'no body'}` };
+            return { error: `NPM /api/nginx/certificates returned HTTP ${res.status}: ${body.slice(0, 200) || 'no body'}` };
         }
         const data = await res.json() as { id?: number };
         if (typeof data.id !== 'number') {
-            return { ok: false, reason: 'NPM accepted the cert request but returned no id.' };
+            return { error: 'NPM accepted the cert request but returned no id.' };
         }
-        certId = data.id;
+        return { certId: data.id, reused: false };
     } catch (e) {
-        return { ok: false, reason: `Cert request failed: ${e instanceof Error ? e.message : String(e)}` };
+        return { error: `Cert request failed: ${e instanceof Error ? e.message : String(e)}` };
     }
-    }
+}
+
+async function requestPublicCert(
+    baseUrl: string,
+    token: string,
+    proxyHostId: number,
+    domain: string,
+): Promise<{ ok: true; certId: number; reused?: boolean } | { ok: false; reason: string }> {
+    // 1) Resolve the cert (reuse an existing one or issue a fresh one).
+    const cert = await acquireCertId(baseUrl, token, domain);
+    if ('error' in cert) return { ok: false, reason: cert.error };
+    const { certId, reused } = cert;
 
     // 2) Bind the cert to the proxy host so HTTPS becomes the canonical
     //    URL. Without this step the cert exists in NPM but the proxy
@@ -774,7 +780,7 @@ async function requestPublicCert(
     } catch (e) {
         return { ok: false, reason: `Cert ${certId} issued but the bind PUT failed: ${e instanceof Error ? e.message : String(e)}` };
     }
-    return { ok: true, certId, reused: reusable !== null };
+    return { ok: true, certId, reused };
 }
 
 /**
@@ -890,7 +896,6 @@ export const POST = withApiHandler({}, async ({ request }) => {
                         token,
                         createdHost.id,
                         host.domain,
-                        leEmail,
                     );
                     if (certResult.ok) {
                         results[results.length - 1].certIssued = true;
