@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.46.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.46.0...servicebay-v4.46.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* **install:** stream real image-pull progress with cached-layer info ([154b151](https://github.com/mdopp/servicebay/commit/154b151503d0aa8ca3ed484b269e749866e4edcc))
+* **install:** stream real image-pull progress with cached-layer info ([7ed65b0](https://github.com/mdopp/servicebay/commit/7ed65b070ecf7731e540da2fbf2f875d4a5508bb))
+* **registry:** list Stacks before Templates in the registry browser ([b7623cf](https://github.com/mdopp/servicebay/commit/b7623cfdbdb7ef017bfc17315936290a339f3ed4))
+* **registry:** list Stacks before Templates in the registry browser ([3d314d8](https://github.com/mdopp/servicebay/commit/3d314d86fad207a6f8d7b99dfe2eadbc2b4022cb))
+* **registry:** run registry git ops non-interactively so unreachable repos fail fast ([9aa7473](https://github.com/mdopp/servicebay/commit/9aa7473e857f253948f91aa4daa831877b7abb14))
+* **registry:** run registry git ops non-interactively so unreachable repos fail fast ([fc771bf](https://github.com/mdopp/servicebay/commit/fc771bf163bd6fb2326a0a8c62b60eefd243d1bd))
+
 ## [4.46.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.45.0...servicebay-v4.46.0) (2026-05-28)
 
 
