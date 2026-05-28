@@ -177,19 +177,19 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
                 ))}
             </div>
 
-            {templateItems.length > 0 && (
+            {stackItems.length > 0 && (
                 <>
-                    <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Templates</div>
-                    {templateItems.map(t => (
+                    <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Stacks</div>
+                    {stackItems.map(t => (
                         <RegistryListItem key={`${t.source}-${t.name}`} item={t} isSelected={isItemSelected(t)} onClick={() => handleTemplateClick(t)} />
                     ))}
                 </>
             )}
 
-            {stackItems.length > 0 && (
+            {templateItems.length > 0 && (
                 <>
-                    <div className="px-4 py-2 mt-1 text-xs font-semibold text-gray-500 uppercase tracking-wider">Stacks</div>
-                    {stackItems.map(t => (
+                    <div className="px-4 py-2 mt-1 text-xs font-semibold text-gray-500 uppercase tracking-wider">Templates</div>
+                    {templateItems.map(t => (
                         <RegistryListItem key={`${t.source}-${t.name}`} item={t} isSelected={isItemSelected(t)} onClick={() => handleTemplateClick(t)} />
                     ))}
                 </>
