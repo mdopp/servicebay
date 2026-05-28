@@ -31,10 +31,15 @@ export const POST = withApiHandler({}, async ({ request }) => {
     const manifest = await assembleManifest({
       items: body.items,
       prefilled: body.prefilled ?? {},
+      // Omitted/empty source → undefined (walk every registry, then
+      // built-in, per template) rather than a pinned 'Built-in' that
+      // skips externals. Lets one assemble call span multiple sources
+      // (#1177). The wizard always sends an explicit source, so its
+      // behaviour is unchanged.
       templateSource:
         typeof body.templateSource === 'string' && body.templateSource
           ? body.templateSource
-          : 'Built-in',
+          : undefined,
     });
     return NextResponse.json(manifest);
   } catch (error) {
