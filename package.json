@@ -37,6 +37,7 @@
     "@servicebay/api-client": "*",
     "@tailwindcss/typography": "^0.5.19",
     "@xyflow/react": "^12.10.0",
+    "basic-ftp": "^6.0.1",
     "bcryptjs": "^3.0.3",
     "jose": "^6.1.3",
     "js-yaml": "^4.1.1",
