@@ -103,132 +103,123 @@ const formatBytes = (bytes: number, decimals = 1) => {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 };
 
-const LogMessage = ({ message }: { message: string }) => {
+/**
+ * Inline collapsible JSON block. Owns its own expanded-state +
+ * max-height animation, so a parent that decides "render JSON here"
+ * doesn't have to thread refs/state through itself.
+ */
+const CollapsibleJsonBlock = ({ data, sizeBytes, buttonLabel }: { data: unknown; sizeBytes: number; buttonLabel: string }) => {
   const [expanded, setExpanded] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const embeddedRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState<number | string>(0);
-  const [embeddedHeight, setEmbeddedHeight] = useState<number | string>(0);
 
   useEffect(() => {
     const handle = requestAnimationFrame(() => {
-      if (expanded) {
-        setContentHeight(contentRef.current?.scrollHeight ?? 'auto');
-        setEmbeddedHeight(embeddedRef.current?.scrollHeight ?? 'auto');
-      } else {
-        setContentHeight(0);
-        setEmbeddedHeight(0);
-      }
+      setContentHeight(expanded ? (contentRef.current?.scrollHeight ?? 'auto') : 0);
     });
     return () => cancelAnimationFrame(handle);
   }, [expanded]);
 
-  // Try to parse the message as JSON if it looks like one
+  return (
+    <>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors select-none"
+      >
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span className="font-mono">{buttonLabel} <span className="text-slate-400">({formatBytes(sizeBytes)})</span> {expanded ? '' : '(click to expand)'}</span>
+      </button>
+      <div
+        ref={contentRef}
+        className="overflow-hidden"
+        style={{
+          maxHeight: expanded ? (contentHeight === 'auto' ? 'auto' : `${contentHeight}px`) : '0px',
+          opacity: expanded ? 1 : 0,
+          transition: 'max-height 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1)'
+        }}
+      >
+        <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700">
+          <code>{JSON.stringify(data, null, 2)}</code>
+        </pre>
+      </div>
+    </>
+  );
+};
+
+interface JsonScan {
+  kind: 'full' | 'embedded' | 'none';
+  prefix: string;
+  data: unknown;
+  sizeBytes: number;
+}
+
+/**
+ * Decide whether a log message is pure JSON, has JSON tacked on after
+ * a `Payload: {...}`-style prefix, or is plain text. Cheap enough to
+ * recompute on every render — no need to memoize.
+ */
+function scanLogMessageJson(message: string): JsonScan {
   const trimmed = message.trim();
-  const isJsonLike = (trimmed.startsWith('{') && trimmed.endsWith('}')) || 
-                     (trimmed.startsWith('[') && trimmed.endsWith(']'));
+  const looksJson = (s: string) =>
+    (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'));
 
-  let parsedJson = null;
-  let jsonSize = 0;
-  let isParsed = false;
-
-  if (isJsonLike) {
+  if (looksJson(trimmed)) {
     try {
-      parsedJson = JSON.parse(trimmed);
-      jsonSize = new TextEncoder().encode(trimmed).length;
-      isParsed = true;
-    } catch {
-      // Failed to parse
-    }
+      return {
+        kind: 'full',
+        prefix: '',
+        data: JSON.parse(trimmed),
+        sizeBytes: new TextEncoder().encode(trimmed).length,
+      };
+    } catch { /* fall through */ }
   }
 
-  if (isParsed) {
-      const summaryLabel = (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson) && 'event' in parsedJson)
-        ? `event: ${String((parsedJson as Record<string, unknown>).event)}`
-        : 'Structured JSON payload';
-      return (
-        <div className="mt-1 space-y-1">
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-tight">{summaryLabel}</span>
-          <button 
-            onClick={() => setExpanded(!expanded)} 
-            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors select-none"
-          >
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <span className="font-mono">JSON Payload <span className="text-slate-400">({formatBytes(jsonSize)})</span> {expanded ? '' : '(click to expand)'}</span>
-          </button>
-          
-          <div
-            ref={contentRef}
-            className="overflow-hidden"
-            style={{
-              maxHeight: expanded ? (contentHeight === 'auto' ? 'auto' : `${contentHeight}px`) : '0px',
-              opacity: expanded ? 1 : 0,
-              transition: 'max-height 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1)'
-            }}
-          >
-            <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700">
-              <code>{JSON.stringify(parsedJson, null, 2)}</code>
-            </pre>
-          </div>
-        </div>
-      );
-  }
-
-  // Check for JSON embedded after a prefix (e.g. "Payload: {...}")
-  const jsonStart = message.search(/[{\[]/);
-  
-  let prefix = '';
-  let embeddedJson = null;
-  let embeddedSize = 0;
-  let hasEmbedded = false;
-
+  const jsonStart = message.search(/[{[]/);
   if (jsonStart > 0) {
-    const potentialJson = message.slice(jsonStart).trim();
-    if ((potentialJson.startsWith('{') && potentialJson.endsWith('}')) || 
-        (potentialJson.startsWith('[') && potentialJson.endsWith(']'))) {
+    const candidate = message.slice(jsonStart).trim();
+    if (looksJson(candidate)) {
       try {
-        embeddedJson = JSON.parse(potentialJson);
-        embeddedSize = new TextEncoder().encode(potentialJson).length;
-        prefix = message.slice(0, jsonStart);
-        hasEmbedded = true;
-      } catch {
-        // Failed to parse
-      }
+        return {
+          kind: 'embedded',
+          prefix: message.slice(0, jsonStart),
+          data: JSON.parse(candidate),
+          sizeBytes: new TextEncoder().encode(candidate).length,
+        };
+      } catch { /* fall through */ }
     }
   }
 
-  if (hasEmbedded) {
-        return (
-          <div className="flex flex-col gap-1">
-            <span className="whitespace-pre-wrap">{prefix}</span>
-            <div className="mt-0.5">
-              <button 
-                onClick={() => setExpanded(!expanded)} 
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors select-none"
-              >
-                {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span className="font-mono">JSON Data <span className="text-slate-400">({formatBytes(embeddedSize)})</span></span>
-              </button>
-              
-              <div
-                ref={embeddedRef}
-                className="overflow-hidden"
-                style={{
-                  maxHeight: expanded ? (embeddedHeight === 'auto' ? 'auto' : `${embeddedHeight}px`) : '0px',
-                  opacity: expanded ? 1 : 0,
-                  transition: 'max-height 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1)'
-                }}
-              >
-                <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700">
-                  <code>{JSON.stringify(embeddedJson, null, 2)}</code>
-                </pre>
-              </div>
-            </div>
-          </div>
-        );
+  return { kind: 'none', prefix: '', data: null, sizeBytes: 0 };
+}
+
+const LogMessage = ({ message }: { message: string }) => {
+  const scan = scanLogMessageJson(message);
+
+  if (scan.kind === 'full') {
+    const obj = scan.data;
+    const summaryLabel = (obj && typeof obj === 'object' && !Array.isArray(obj) && 'event' in obj)
+      ? `event: ${String((obj as Record<string, unknown>).event)}`
+      : 'Structured JSON payload';
+    return (
+      <div className="mt-1 space-y-1">
+        <span className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-tight">{summaryLabel}</span>
+        <CollapsibleJsonBlock data={scan.data} sizeBytes={scan.sizeBytes} buttonLabel="JSON Payload" />
+      </div>
+    );
   }
 
-  // Use whitespace-pre-wrap to respect newlines in non-JSON messages (like stack traces or pre-formatted text)
+  if (scan.kind === 'embedded') {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="whitespace-pre-wrap">{scan.prefix}</span>
+        <div className="mt-0.5">
+          <CollapsibleJsonBlock data={scan.data} sizeBytes={scan.sizeBytes} buttonLabel="JSON Data" />
+        </div>
+      </div>
+    );
+  }
+
+  // Plain text — whitespace-pre-wrap to keep newlines (stack traces, pre-formatted text).
   return <span className="whitespace-pre-wrap">{message}</span>;
 };
 
