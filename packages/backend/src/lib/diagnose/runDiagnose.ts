@@ -26,6 +26,7 @@ import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewrit
 import { checkDomainExternalReachability } from '@/lib/diagnose/probes/domainExternalReachability';
 import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable';
 import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
+import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import '@/lib/diagnose/probes/register';
 
@@ -805,6 +806,28 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     probes.push({
       id: 'adguard_rewrites_missing',
       label: 'AdGuard DNS rewrites',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 18) Config-backup NAS reachability (#1224). Surfaces a silently-broken
+  //     backup target — the FritzBox had file sharing off during #1190
+  //     verification, so backups never landed and nobody knew until a
+  //     reinstall needed them. info when no NAS is configured.
+  try {
+    const nas = await checkNasBackupReachable();
+    probes.push({
+      id: 'nas_backup_reachable',
+      label: 'Config backup (FritzBox NAS)',
+      status: nas.status,
+      detail: nas.detail,
+      hint: nas.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'nas_backup_reachable',
+      label: 'Config backup (FritzBox NAS)',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
