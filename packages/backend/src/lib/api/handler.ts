@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/lib/logger';
-import type { ApiScope } from '@/lib/mcp/scope';
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 export interface ApiErrorBody {
   ok: false;

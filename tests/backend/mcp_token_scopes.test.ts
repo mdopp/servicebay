@@ -14,7 +14,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { TOOL_SCOPES, tokenHasScope } from '@/lib/mcp/server';
-import type { ApiScope } from '@/lib/mcp/tokens';
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 describe('MCP scope mapping (#591)', () => {
   it('update_config is mutate, not destroy', () => {

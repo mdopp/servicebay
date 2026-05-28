@@ -3,7 +3,7 @@
 // which would pull `next/dist/server/app-render/...` into the custom server's
 // CJS load path and trip Next's AsyncLocalStorage invariant under tsx.
 import { SignJWT, jwtVerify } from 'jose';
-import type { ApiScope } from '@/lib/mcp/scope';
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 export interface SessionPayload {
   user: string;

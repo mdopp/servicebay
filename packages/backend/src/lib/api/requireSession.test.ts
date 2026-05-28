@@ -7,13 +7,13 @@ vi.mock('@/lib/auth/session', () => ({
 vi.mock('@/lib/auth/internalToken', () => ({
   getInternalApiToken: vi.fn(() => 'test-internal-token-32-chars-long'),
 }));
-vi.mock('@/lib/mcp/tokens', () => ({
+vi.mock('@/lib/auth/apiTokens', () => ({
   verifyToken: vi.fn(),
 }));
 
 import { requireSession } from './requireSession';
 import { getSessionFromCookieHeader } from '@/lib/auth/session';
-import { verifyToken } from '@/lib/mcp/tokens';
+import { verifyToken } from '@/lib/auth/apiTokens';
 
 const mockCookie = getSessionFromCookieHeader as unknown as {
   mockReset: () => void;

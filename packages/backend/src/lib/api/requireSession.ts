@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSessionFromCookieHeader, type SessionPayload } from '@/lib/auth/session';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
-import type { ApiScope } from '@/lib/mcp/scope';
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 export interface RequireSessionOptions {
   /**
@@ -67,7 +67,7 @@ export async function requireSession(
     const authz = request.headers.get('authorization');
     const bearer = authz?.startsWith('Bearer ') ? authz.slice(7).trim() : undefined;
     if (bearer) {
-      const { verifyToken } = await import('@/lib/mcp/tokens');
+      const { verifyToken } = await import('@/lib/auth/apiTokens');
       const token = await verifyToken(bearer);
       if (token && token.scopes.includes(options.tokenScope)) {
         return {
