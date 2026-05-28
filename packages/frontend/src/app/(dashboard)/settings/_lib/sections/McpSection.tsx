@@ -127,7 +127,7 @@ export default function McpSection() {
   const [secretCopied, setSecretCopied] = useState(false);
 
   const loadTokens = () => {
-    fetch('/api/system/mcp-tokens')
+    fetch('/api/system/api-tokens')
       .then(r => r.ok ? r.json() : { tokens: [] })
       .then(data => setTokens(data.tokens ?? []))
       .catch(() => setTokens([]));
@@ -138,7 +138,7 @@ export default function McpSection() {
     setCreating(true);
     setCreateError(null);
     try {
-      const res = await fetch('/api/system/mcp-tokens', {
+      const res = await fetch('/api/system/api-tokens', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newName.trim(), scopes: newScopes }),
@@ -162,7 +162,7 @@ export default function McpSection() {
 
   const revokeOneToken = async (id: string, name: string) => {
     if (!confirm(`Revoke token "${name}"? Any client using this token will be locked out immediately.`)) return;
-    const res = await fetch(`/api/system/mcp-tokens?id=${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/system/api-tokens?id=${id}`, { method: 'DELETE' });
     if (res.ok) loadTokens();
   };
 
@@ -386,7 +386,7 @@ export default function McpSection() {
         {tokensOpen && (
           <div className="mt-3 space-y-3">
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Per-client credentials with explicit scopes. Pass as <span className="font-mono">Authorization: Bearer sb_…</span> on every MCP request. Revocable here without disturbing other clients.
+              Per-client credentials with explicit scopes. Pass as <span className="font-mono">Authorization: Bearer sb_…</span> on MCP requests and on opt-in REST API routes (e.g. the ServiceBay TUI). Revocable here without disturbing other clients.
             </p>
 
             {revealedSecret && (
@@ -456,7 +456,7 @@ export default function McpSection() {
               </ul>
             )}
             {tokens && tokens.length === 0 && !showCreate && (
-              <p className="text-xs text-gray-500 italic">No tokens yet. Create one for each MCP client (Claude Code, Claude Desktop, …).</p>
+              <p className="text-xs text-gray-500 italic">No tokens yet. Create one per client — an MCP assistant (Claude Code, Claude Desktop, …), the ServiceBay TUI, or a script.</p>
             )}
 
             {showCreate ? (

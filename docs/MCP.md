@@ -202,8 +202,10 @@ ServiceBay has a first-class named API-token surface — long-lived, revocable,
 and scoped — so MCP clients don't have to scrape a browser session cookie.
 
 1. In the ServiceBay UI, go to **Settings → MCP** and create a named token
-   (or `POST /api/system/mcp-tokens`). The secret is shown **once**, in the
-   form `sb_<id>_<secret>`.
+   (or `POST /api/system/api-tokens` — the older `/api/system/mcp-tokens`
+   path still works as an alias). The secret is shown **once**, in the form
+   `sb_<id>_<secret>`. The same token authenticates both MCP and opt-in REST
+   API routes.
 2. Register it with an `Authorization: Bearer` header instead of `Cookie`:
 
    ```bash
