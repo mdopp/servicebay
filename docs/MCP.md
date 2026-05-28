@@ -12,6 +12,9 @@ SMTP/OIDC secrets) are redacted on read and write-allowlisted.
 
 > **Prereq:** you can log into the ServiceBay UI in your browser.
 
+> **Tip:** for a long-lived, revocable connection, prefer a named **API token**
+> over scraping the session cookie — see [API tokens](#api-tokens-recommended) below.
+
 ### 1. Grab a session cookie
 
 ServiceBay's `/mcp` endpoint authenticates the same way the web UI does — a
@@ -193,8 +196,23 @@ Workflow the agent typically follows:
 - **`405 Method not allowed`** — only `POST /mcp` is implemented. If you see
   this, your client is using GET or another verb.
 
-## Future work
+## API tokens (recommended)
 
-A first-class API-token surface (long-lived, revocable, scoped) is on the
-roadmap so MCP clients don't have to scrape a browser cookie. Until that
-lands, the env-var pattern above is the recommended path.
+ServiceBay has a first-class named API-token surface — long-lived, revocable,
+and scoped — so MCP clients don't have to scrape a browser session cookie.
+
+1. In the ServiceBay UI, go to **Settings → MCP** and create a named token
+   (or `POST /api/system/mcp-tokens`). The secret is shown **once**, in the
+   form `sb_<id>_<secret>`.
+2. Register it with an `Authorization: Bearer` header instead of `Cookie`:
+
+   ```bash
+   claude mcp add --transport http servicebay \
+     http://<your-host>:5888/mcp \
+     --header "Authorization: Bearer sb_<id>_<secret>"
+   ```
+3. Revoke it any time from the same **Settings → MCP** screen. Unlike the
+   session cookie, the token does not expire after 24h.
+
+Tokens carry explicit scopes, so prefer a read-only token for an assistant
+that only needs to observe.
