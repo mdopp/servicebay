@@ -1,24 +1,26 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { withApiHandler } from '@/lib/api/handler';
+import { getSessionFromCookieHeader } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/auth/me — current-user introspection from forward-auth headers.
+ * GET /api/auth/me — current-user introspection.
  *
- * #1001. NPM's forward-auth snippet (#999) lays down `Remote-User`,
- * `Remote-Name`, `Remote-Email`, `Remote-Groups` on every request to a
- * gated service domain. We just read them back here so the sidebar +
- * portal can render the user chip + Logout without round-tripping to
- * auth.<domain>.
+ * #1001. When ServiceBay is reached through the Authelia forward-auth chain,
+ * NPM's snippet (#999) lays down `Remote-User`/`Remote-Name`/`Remote-Email`/
+ * `Remote-Groups`; we read those back so the sidebar + portal can render the
+ * user chip + Logout without round-tripping to auth.<domain>.
  *
- * When the request doesn't carry the headers (LAN-direct access,
- * dev mode, mock mode), returns `{ authenticated: false }`. Callers
- * render "Not signed in" + a Login link.
+ * On LAN-direct access those headers don't exist — but the operator still has
+ * a ServiceBay *session* (the cookie set by /api/auth/login). Fall back to it
+ * so the sidebar shows who's signed in and offers a Logout that clears the
+ * ServiceBay session. `source` tells the client which logout path to use.
  *
- * Groups is a comma-separated list of group names (Authelia's
- * `proxy_set_header Remote-Groups $groups;` joins with `,`). Split
- * to an array for cleaner consumption.
+ * Returns `{ authenticated: false }` only when neither is present.
+ *
+ * Groups is a comma-separated list (Authelia's `Remote-Groups` joins with
+ * `,`). Split to an array for cleaner consumption.
  */
 function readUserFromHeaders(req: NextRequest) {
   const username = req.headers.get('remote-user');
@@ -30,11 +32,25 @@ function readUserFromHeaders(req: NextRequest) {
     displayName: req.headers.get('remote-name') || username,
     email: req.headers.get('remote-email') || '',
     groups: groupsRaw.split(',').map(g => g.trim()).filter(Boolean),
+    source: 'forward-auth' as const,
   };
 }
 
 export const GET = withApiHandler({}, async ({ request }) => {
-  const user = readUserFromHeaders(request);
-  if (user) return NextResponse.json(user);
+  const fromHeaders = readUserFromHeaders(request);
+  if (fromHeaders) return NextResponse.json(fromHeaders);
+
+  const session = await getSessionFromCookieHeader(request.headers.get('cookie') ?? undefined);
+  if (session) {
+    return NextResponse.json({
+      authenticated: true,
+      username: session.user,
+      displayName: session.user,
+      email: '',
+      groups: [],
+      source: 'session',
+    });
+  }
+
   return NextResponse.json({ authenticated: false });
 });

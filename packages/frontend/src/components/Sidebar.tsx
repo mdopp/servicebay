@@ -34,7 +34,7 @@ export default function Sidebar() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   // #1001 — Current Authelia user from the forward-auth Remote-* headers.
   // null = not yet fetched, false = no session (LAN-direct or dev).
-  const [currentUser, setCurrentUser] = useState<{ displayName: string; username: string; groups: string[] } | null | false>(null);
+  const [currentUser, setCurrentUser] = useState<{ displayName: string; username: string; groups: string[]; source: 'forward-auth' | 'session' } | null | false>(null);
 
   useEffect(() => {
     if (window.innerWidth < 768) {
@@ -63,6 +63,7 @@ export default function Sidebar() {
             displayName: d.displayName || d.username,
             username: d.username,
             groups: Array.isArray(d.groups) ? d.groups : [],
+            source: d.source === 'session' ? 'session' : 'forward-auth',
           });
         } else {
           setCurrentUser(false);
@@ -82,6 +83,22 @@ export default function Sidebar() {
     if (dotIdx < 0) return '/portal';
     return `https://auth${host.slice(dotIdx)}/logout`;
   })();
+
+  // Two logout paths: a ServiceBay session (LAN-direct) is cleared via the
+  // backend then we bounce to /login; an Authelia forward-auth session is
+  // dropped at auth.<domain>/logout.
+  const handleLogout = async () => {
+    if (currentUser && currentUser.source === 'session') {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+      } catch {
+        /* clear best-effort; redirect regardless so a stale cookie doesn't trap the user */
+      }
+      window.location.href = '/login';
+      return;
+    }
+    window.location.href = logoutHref;
+  };
 
   useEffect(() => {
     fetch('/api/auth/lldap-url')
@@ -259,20 +276,25 @@ export default function Sidebar() {
                     {!isCollapsed && (
                         <div className="flex flex-col min-w-0 flex-1">
                             <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">{currentUser.displayName}</span>
-                            <span className="text-xs text-gray-500 dark:text-gray-500 truncate">{currentUser.groups.join(', ') || 'no groups'}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-500 truncate">
+                                {currentUser.source === 'session'
+                                    ? 'ServiceBay admin'
+                                    : (currentUser.groups.join(', ') || 'no groups')}
+                            </span>
                         </div>
                     )}
                 </div>
             )}
             {currentUser && (
-                <a
-                    href={logoutHref}
+                <button
+                    type="button"
+                    onClick={handleLogout}
                     className={`w-full flex items-center px-3.5 py-2.5 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
-                    title="Log out — drops the Authelia session"
+                    title={currentUser.source === 'session' ? 'Log out of ServiceBay' : 'Log out — drops the Authelia session'}
                 >
                     <LogOut size={18} className="shrink-0" />
                     {!isCollapsed && <span className="text-sm font-semibold whitespace-nowrap overflow-hidden">Log out</span>}
-                </a>
+                </button>
             )}
             <div className={isCollapsed ? 'flex justify-center' : ''}>
                 <SectionHelp

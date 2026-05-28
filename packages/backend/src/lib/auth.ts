@@ -27,3 +27,15 @@ export async function login(username: string, secure: boolean) {
     path: '/',
   });
 }
+
+/** Clear the ServiceBay session cookie. Mirrors `login`'s name + path so the
+ *  browser actually drops it (a Set-Cookie with a different path won't). */
+export async function logout() {
+  const cookieStore = await cookies();
+  cookieStore.set('session', '', {
+    expires: new Date(0),
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+  });
+}
