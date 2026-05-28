@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.45.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.44.0...servicebay-v4.45.0) (2026-05-28)
+
+
+### Features
+
+* **tui:** Fedora CoreOS ISO version-picker panel ([69f34ed](https://github.com/mdopp/servicebay/commit/69f34ed7e597eee0472778b90266d64f8cec63aa))
+* **tui:** Fedora CoreOS ISO version-picker panel ([7c8b6cf](https://github.com/mdopp/servicebay/commit/7c8b6cf91e1d28e62697d06a2c43390b47ff2a1a))
+* **tui:** lifecycle launcher shell with phase detection ([25971b1](https://github.com/mdopp/servicebay/commit/25971b12a8c5d3e51a5f940c051425c975d6a940))
+* **tui:** lifecycle launcher shell with phase detection ([138fb8f](https://github.com/mdopp/servicebay/commit/138fb8f82d92d3177490b49fb9128c0df4162cc5))
+
+
+### Bug Fixes
+
+* **auth:** don't let a failing SMTP check fatal the whole auth pod ([7f0998c](https://github.com/mdopp/servicebay/commit/7f0998cfc1079a08b0e5a7fc724a433e01c6a944))
+* **auth:** stop LLDAP reset-loop on reinstall and SMTP-fatal auth crashes ([207ed06](https://github.com/mdopp/servicebay/commit/207ed06a2120f55f1860e03bd0477f7caf3b4f8b))
+* **ci:** cache workspace node_modules so the root tsc resolves nested deps ([4f002eb](https://github.com/mdopp/servicebay/commit/4f002eb755c127c954371531df768f9469e8368d))
+* **install:** keep LLDAP serving on secret-regen reinstall ([8745dfa](https://github.com/mdopp/servicebay/commit/8745dfac89d9ee2d389f9fed85e417a18a60f1d5))
+
 ## [4.44.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.43.0...servicebay-v4.44.0) (2026-05-28)
 
 
