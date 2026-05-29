@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.53.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.52.0...servicebay-v4.53.0) (2026-05-29)
+
+
+### Features
+
+* **auth:** make scoped REST tokens reachable + redact config for token callers ([d82c579](https://github.com/mdopp/servicebay/commit/d82c579677bb598cbabd7cef0db94651fe2a4efa))
+* **auth:** make scoped REST tokens reachable + redact config for token callers ([aae310a](https://github.com/mdopp/servicebay/commit/aae310ae65380bbe85e4a7b644754f16a32430d9))
+* **mcp:** add guarded factory_reset tool ([14c5710](https://github.com/mdopp/servicebay/commit/14c571065b419ed8c2b22e04fa34401daf5e093e))
+* **tui:** box REST token client + edit-config panel ([1b12e2c](https://github.com/mdopp/servicebay/commit/1b12e2cfd6bff5324283deedf18488927e4183bf))
+* **tui:** box REST token client + edit-config panel ([d37ceaa](https://github.com/mdopp/servicebay/commit/d37ceaa3bb01643bb329082876fecef7a4f85aad))
+* **tui:** full-screen launcher + complete lifecycle menu + auto-launch ([d08434d](https://github.com/mdopp/servicebay/commit/d08434dd653d33871bd6530c7639c0f5b14235b5))
+* **tui:** full-screen launcher, complete lifecycle menu, auto-launch ([b159943](https://github.com/mdopp/servicebay/commit/b1599436c24e2383f708de7554cb0cd58eeca887))
+
 ## [4.52.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.51.1...servicebay-v4.52.0) (2026-05-29)
 
 
