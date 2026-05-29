@@ -90,22 +90,45 @@ func runOpenBox() int {
 	return 0
 }
 
-// runConfig opens the edit-config panel (#1275). It needs a reachable box and a
-// scoped `sb_` API token (SB_TOKEN); both missing-target and missing-token fail
-// with a clear, actionable message rather than a blank panel.
-func runConfig() int {
+// boxClient resolves the box target + scoped `sb_` token (SB_TOKEN) into a REST
+// client shared by the box-control panels. On failure it prints an actionable
+// message and returns a non-zero exit code so the caller can return it directly
+// rather than opening a blank panel.
+func boxClient() (*rest.Client, int) {
 	t := probes.ResolveTarget()
 	if t.Host == "" {
 		fmt.Fprintln(os.Stderr, "no box target — set SB_HOST (and SB_PORT), or build an ISO first so build/fcos/install-settings.env exists.")
-		return 2
+		return nil, 2
 	}
 	client, err := rest.New(t.Host, t.Port, probes.ResolveToken())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintln(os.Stderr, "Mint one in ServiceBay → Settings → API tokens (scope: mutate) and export it as SB_TOKEN.")
-		return 2
+		fmt.Fprintln(os.Stderr, "Mint one in ServiceBay → Settings → API tokens (scopes: mutate + lifecycle) and export it as SB_TOKEN.")
+		return nil, 2
+	}
+	return client, 0
+}
+
+// runConfig opens the edit-config panel (#1275).
+func runConfig() int {
+	client, code := boxClient()
+	if client == nil {
+		return code
 	}
 	if _, err := tea.NewProgram(ui.NewConfig(client), tea.WithAltScreen()).Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+// runInstallStacks opens the stack-install panel (#1276).
+func runInstallStacks() int {
+	client, code := boxClient()
+	if client == nil {
+		return code
+	}
+	if _, err := tea.NewProgram(ui.NewInstall(client), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -140,6 +163,8 @@ func main() {
 			os.Exit(runBuild())
 		case "config":
 			os.Exit(runConfig())
+		case "install":
+			os.Exit(runInstallStacks())
 		}
 	}
 
@@ -164,5 +189,7 @@ func main() {
 		os.Exit(runOpenBox())
 	case phase.EditConfig:
 		os.Exit(runConfig())
+	case phase.InstallStacks:
+		os.Exit(runInstallStacks())
 	}
 }

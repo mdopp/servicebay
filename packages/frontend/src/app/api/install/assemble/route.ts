@@ -14,8 +14,13 @@ export const dynamic = 'force-dynamic';
  * instead of building the manifest itself; the same endpoint is what a
  * future headless / ISO-driven first-boot setup uses to turn baked
  * `config.json` defaults into an installable manifest.
+ *
+ * `tokenScope: 'lifecycle'` (#1276) lets the sb-tui stack-install panel
+ * assemble a manifest with a scoped `sb_` token; the paired
+ * `/api/install/start` carries the same scope so one lifecycle token drives
+ * the whole install.
  */
-export const POST = withApiHandler({}, async ({ request }) => {
+export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request }) => {
   try {
     const body = (await request.json()) as {
       items?: { name: string; checked: boolean; alreadyInstalled?: boolean }[];

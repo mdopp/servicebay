@@ -67,9 +67,21 @@ func New(host, port, token string) (*Client, error) {
 	}, nil
 }
 
-// do issues a request with the bearer token, returning the decoded JSON body on
-// 2xx or a typed error (ErrUnauthorized / *APIError) otherwise.
+// do issues an authenticated request with the bearer token, returning the
+// decoded JSON body on 2xx or a typed error (ErrUnauthorized / *APIError).
 func (c *Client) do(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
+	return c.doRaw(ctx, method, path, body, true)
+}
+
+// doPublic issues a request WITHOUT the bearer token, for endpoints that are
+// intentionally public + self-gated (the jobId-gated /api/install/progress —
+// adding a token scope there would break its AUTH_SECRET-rotation self-heal,
+// so the TUI must not present a token). Same error surface as do.
+func (c *Client) doPublic(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
+	return c.doRaw(ctx, method, path, body, false)
+}
+
+func (c *Client) doRaw(ctx context.Context, method, path string, body any, authed bool) (json.RawMessage, error) {
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -82,7 +94,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (json.Ra
 	if err != nil {
 		return nil, &APIError{Message: err.Error()}
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	if authed {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

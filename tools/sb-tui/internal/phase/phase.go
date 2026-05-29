@@ -51,12 +51,13 @@ func Detect(isoBuilt bool, status BoxStatus) State {
 type ActionID string
 
 const (
-	BuildISO     ActionID = "build-iso"
-	WatchInstall ActionID = "watch-install"
-	OpenBox      ActionID = "open-box"
-	EditConfig   ActionID = "edit-config"
-	Refresh      ActionID = "refresh"
-	Quit         ActionID = "quit"
+	BuildISO      ActionID = "build-iso"
+	WatchInstall  ActionID = "watch-install"
+	OpenBox       ActionID = "open-box"
+	EditConfig    ActionID = "edit-config"
+	InstallStacks ActionID = "install-stacks"
+	Refresh       ActionID = "refresh"
+	Quit          ActionID = "quit"
 )
 
 // editConfigAction is the in-TUI box-control entry (#1275): edit allow-listed
@@ -64,6 +65,12 @@ const (
 // meaningful once the box is reachable.
 var editConfigAction = Action{EditConfig, "Edit config (in-TUI)",
 	"View and edit allow-listed box settings (server name, domain, log level) over the REST API."}
+
+// installStacksAction is the in-TUI stack-install entry (#1276): pick stacks
+// from the box catalog and drive a server-side install over the REST API. Only
+// meaningful once the box is reachable.
+var installStacksAction = Action{InstallStacks, "Install stacks (in-TUI)",
+	"Pick stacks from the box catalog and install them over the REST API, with live progress."}
 
 // Action is one selectable menu entry: a short Label plus a one-line Detail
 // rendered with the selection so the operator always knows what each does.
@@ -113,6 +120,7 @@ func ActionsFor(s State) []Action {
 			Action{OpenBox, "Open ServiceBay in your browser",
 				"Open the setup wizard / dashboard URL for this box."},
 			editConfigAction,
+			installStacksAction,
 			buildAction(s))
 	case Ready:
 		// Box is fully up — manage it via the browser, or reinstall.
@@ -120,6 +128,7 @@ func ActionsFor(s State) []Action {
 			Action{OpenBox, "Open ServiceBay in your browser",
 				"Open this box's dashboard to manage services, users, and settings."},
 			editConfigAction,
+			installStacksAction,
 			Action{WatchInstall, "Watch a reinstall in progress",
 				"Live-track an install if you're reinstalling this box."},
 			buildAction(s))
