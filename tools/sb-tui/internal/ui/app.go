@@ -105,6 +105,12 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Chosen = phase.BuildISO
 		return m, tea.Quit
 
+	case openReinstallWatchMsg:
+		// USB-boot flow succeeded; the box is rebooting → watch the reinstall.
+		m.active = NewWatchReinstall(msg.host, msg.port)
+		m.screen = appPanel
+		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
+
 	case backMsg:
 		// Pop back to the menu and re-detect so its phase/actions refresh.
 		m.screen, m.active = appMenu, nil
@@ -147,6 +153,12 @@ func (m App) route(id phase.ActionID) (tea.Model, tea.Cmd) {
 		m.active = NewBuildForm(m.build.Saved, m.build.Deps)
 		m.screen = appPanel
 		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
+	case phase.BootFromUSB:
+		// Cookie-auth flow (works on the old box); on success it chains into a
+		// reinstall watch via openReinstallWatchMsg.
+		m.active = NewUSBBoot(m.host, m.port)
+		m.screen = appPanel
+		return m, sizeCmd(m.width, m.height)
 	default:
 		// express — hand back to the entrypoint (it runs its own sequence).
 		m.Chosen = id

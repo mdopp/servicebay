@@ -60,6 +60,39 @@ func Login(ctx context.Context, host, port, username, password string) (string, 
 	return minted.Secret, nil
 }
 
+// EnsureUSBBoot logs in with the box admin credentials and sets a one-shot UEFI
+// BootNext to the USB stick (then reboots the box), so the next boot installs
+// from the USB instead of the existing disk. It uses cookie auth — so it works
+// against the CURRENT (possibly old) ServiceBay, which doesn't speak scoped REST
+// tokens. The USB must already be plugged into the server (the box's efibootmgr
+// must see a USB boot entry). Returns the box's confirmation message.
+func EnsureUSBBoot(ctx context.Context, host, port, username, password string) (string, error) {
+	jar, _ := cookiejar.New(nil)
+	httpc := &http.Client{Timeout: defaultTimeout, Jar: jar}
+	base := fmt.Sprintf("http://%s:%s", host, port)
+
+	if err := postJSON(ctx, httpc, base+"/api/auth/login",
+		map[string]string{"username": username, "password": password}, nil); err != nil {
+		if ae, ok := err.(*APIError); ok && ae.Status == http.StatusUnauthorized {
+			return "", ErrLoginRejected
+		}
+		return "", err
+	}
+
+	// reboot:true → set BootNext (auto-detecting the USB entry) and reboot now.
+	var resp struct {
+		Message string `json:"message"`
+	}
+	if err := postJSON(ctx, httpc, base+"/api/system/boot/usb-next",
+		map[string]any{"reboot": true}, &resp); err != nil {
+		return "", err
+	}
+	if resp.Message == "" {
+		resp.Message = "One-shot USB boot set; the box is rebooting."
+	}
+	return resp.Message, nil
+}
+
 // postJSON POSTs body as JSON on httpc (carrying its cookie jar) and decodes a
 // 2xx response into out (when non-nil), or returns a typed error.
 func postJSON(ctx context.Context, httpc *http.Client, url string, body, out any) error {
