@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.51.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.51.0...servicebay-v4.51.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* **dashboards:** sort services by displayName not unit name ([69386b0](https://github.com/mdopp/servicebay/commit/69386b00739c0224b37d055542d6f38c97c7d50a))
+
 ## [4.51.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.50.1...servicebay-v4.51.0) (2026-05-29)
 
 
