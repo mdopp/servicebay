@@ -617,6 +617,20 @@ function transformConfig(obj: any, keysToTransform: string[], transformFn: (val:
 
 const SENSITIVE_KEYS = ['password', 'secret', 'token', 'key', 'apiKey'];
 
+/** Sentinel a redacted secret value is replaced with (#1275). */
+export const REDACTED_SENTINEL = '__REDACTED__';
+
+/**
+ * Replace every secret-valued field (the same `SENSITIVE_KEYS` set used for
+ * at-rest encryption) with `REDACTED_SENTINEL`, so the config can be handed to
+ * a less-trusted caller — e.g. a scoped `sb_` API token reading GET
+ * /api/settings (#1275). Anything encrypted on disk is therefore also redacted
+ * here. Pure: returns a deep copy, never mutates the input.
+ */
+export function redactSensitiveConfig<T>(config: T): T {
+  return transformConfig(config, SENSITIVE_KEYS, () => REDACTED_SENTINEL) as T;
+}
+
 export async function getConfig(): Promise<AppConfig> {
   let rawConfig: unknown = {};
   try {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getConfig, saveConfig, AppConfig } from '@/lib/config';
+import { getConfig, saveConfig, AppConfig, redactSensitiveConfig } from '@/lib/config';
 import { getTemplateSettingsSchema } from '@/lib/registry';
 import { setServerName } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
@@ -8,12 +8,17 @@ import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-export const GET = withApiHandler({}, async () => {
+export const GET = withApiHandler({ tokenScope: 'read' }, async ({ auth }) => {
   const [config, templateSettingsSchema] = await Promise.all([
     getConfig(),
     getTemplateSettingsSchema(),
   ]);
-  return NextResponse.json({ ...config, templateSettingsSchema });
+  // #1275 — a scoped `sb_` API token (Bearer) gets secrets redacted; cookie
+  // (web UI) and internal callers keep plaintext. requireSession tags a token
+  // principal as `token:<name>`, so that prefix is the discriminator.
+  const isToken = auth?.user.startsWith('token:') ?? false;
+  const payload = isToken ? redactSensitiveConfig(config) : config;
+  return NextResponse.json({ ...payload, templateSettingsSchema });
 });
 
 /**
