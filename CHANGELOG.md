@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.50.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.49.0...servicebay-v4.50.0) (2026-05-29)
+
+
+### Features
+
+* **tui-go:** render Butane template for the native ISO build ([645c619](https://github.com/mdopp/servicebay/commit/645c619eaecff549bd00329550f648a4e7189733))
+* **tui-go:** render Butane template for the native ISO build ([db730d8](https://github.com/mdopp/servicebay/commit/db730d8b3ef6353ef52d1157e9be52e0bcb680eb))
+* **tui-go:** transpile and bake the customized installer ISO ([aca1e1f](https://github.com/mdopp/servicebay/commit/aca1e1f68c4ec78c772626c9b50c0315e911d92d))
+* **tui-go:** transpile and bake the customized installer ISO ([d3d2f19](https://github.com/mdopp/servicebay/commit/d3d2f193610d0f60940a9e70a7020cce940fdd0e))
+
 ## [4.49.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.48.0...servicebay-v4.49.0) (2026-05-29)
 
 
