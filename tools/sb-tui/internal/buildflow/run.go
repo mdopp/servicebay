@@ -206,21 +206,9 @@ func isoSearchDirs(buildDir string) []string {
 }
 
 // emitCredentials prints the "save these now" summary and writes the
-// Bitwarden/Vaultwarden CSV for anything generated this run.
+// Bitwarden/Vaultwarden CSV — the Prompter wrapper over emitCredentialsLog.
 func emitCredentials(p Prompter, s build.Settings, secrets build.Secrets, buildDir string) {
-	if !secrets.AnyGenerated() {
-		return
-	}
-	ctx := build.CredentialContext{
-		ServerName: s.ServerName, AdminUser: s.ServicebayAdminUser, HostUser: s.HostUser,
-		IP: s.StaticIP, Port: s.ServicebayPort,
-	}
-	p.Printf("\n%s\n", secrets.Summary(ctx))
-	csvPath := filepath.Join(buildDir, "servicebay-install-credentials.csv")
-	if err := os.WriteFile(csvPath, []byte(secrets.BitwardenCSV(ctx)), 0o600); err == nil {
-		p.Printf("  Bitwarden/Vaultwarden CSV: %s\n", csvPath)
-		p.Printf("  Import via Vaultwarden → Tools → Import → Bitwarden (csv), then delete the file.\n\n")
-	}
+	emitCredentialsLog(s, secrets, buildDir, func(f string, a ...any) { p.Printf(f, a...) })
 }
 
 // flashStep enumerates removable devices and optionally writes the ISO.
@@ -263,8 +251,5 @@ func flashStep(p Prompter, d Deps, customISO string) error {
 }
 
 func printBootHelp(p Prompter, s build.Settings) {
-	p.Printf("\nBoot the target machine from this USB. It will:\n")
-	p.Printf("  1. Auto-detect the smallest disk and install CoreOS there\n")
-	p.Printf("  2. On first boot, auto-detect the largest disk and create a degraded RAID1\n")
-	p.Printf("  3. Mount RAID at /mnt/data, start ServiceBay on port %s\n\n", s.ServicebayPort)
+	printBootHelpLog(s, func(f string, a ...any) { p.Printf(f, a...) })
 }
