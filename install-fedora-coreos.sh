@@ -18,8 +18,8 @@ mkdir -p "$BUILD_DIR"
 
 # Pre-seed env vars from the gitignored settings file so any secrets
 # the operator (or a debug workflow) stored there land in the
-# environment before `prompt_secret` / `prompt_optional_secret`
-# decide whether to ask. We can't `source` the file because values
+# environment before `prompt_secret` / `secret_or_generate`
+# decide whether to ask or generate. We can't `source` the file because values
 # routinely contain spaces (e.g. SSH_AUTHORIZED_KEY = "ssh-rsa AAAA…
 # user@host"); a plain `source` would treat the trailing tokens as
 # commands. Read the file KEY=VALUE-line by line instead — the value
@@ -2292,26 +2292,108 @@ prompt_secret() {
   done
 }
 
-# Prompt for an *optional* secret. No "Confirm:" pass — the operator
-# is pasting a value they already generated locally (e.g. via
-# `openssl rand -hex 32`) and they keep the cleartext on their side.
-# Empty input means "skip" — the calling code treats that as "no
-# bootstrap token, MCP-during-install disabled".
-prompt_optional_secret() {
-  local var_name="$1"; shift
-  local prompt_text="$1"; shift
-  local value
-  # Same env-var pre-seed pattern as `prompt_secret` — lets the gitignored
-  # install-settings.env carry tokens for unattended/debug runs without
-  # ever putting them in source control. `${!var_name-}` guards against
-  # `set -u` aborting on undefined indirect expansion.
+# --- Auto-generated ServiceBay-owned bootstrap secrets (#1284) ---
+#
+# The host (console) password, the ServiceBay admin password, and the MCP
+# bootstrap token are ServiceBay's own secrets — there's no reason to make the
+# operator invent them on every build. They're generated here instead of
+# prompted, then surfaced (terminal summary + a Bitwarden/Vaultwarden CSV) at
+# the end so they can be saved to a password manager. External accounts
+# ServiceBay can't own (FRITZ!Box gateway, SMTP) still use `prompt_secret`.
+#
+# Escape hatch: a value pre-seeded via env / the gitignored
+# install-settings.env still wins (same path `prompt_secret` honours), so an
+# operator can pin a memorable password. Pre-seeded values are NOT echoed back
+# in the summary — only freshly-generated ones, which the operator hasn't seen.
+GENERATED_ADMIN_PASSWORD=""
+GENERATED_HOST_PASSWORD=""
+GENERATED_BOOTSTRAP_TOKEN=""
+
+# secret_or_generate VAR LABEL MIRROR_VAR — use a pre-seeded VAR if present
+# (validated like prompt_secret), else generate a hex secret into VAR and
+# record the cleartext in MIRROR_VAR for the end-of-run summary. Hex is
+# login-safe and never contains the characters the install pipeline rejects
+# (newline, quote, backslash, $, backtick).
+secret_or_generate() {
+  local var_name="$1" label="$2" mirror="$3"
   if [[ -n "${!var_name-}" ]]; then
+    local existing="${!var_name}"
+    if [[ "$existing" == *$'\n'* || "$existing" == *'"'* || "$existing" == *'\'* || "$existing" == *'$'* || "$existing" == *'`'* ]]; then
+      echo "Pre-seeded $var_name contains characters that break the install pipeline (newline, quote, backslash, \$ or backtick)." >&2
+      exit 1
+    fi
     echo "Using pre-seeded $var_name from environment."
     return
   fi
-  read -r -s -p "$prompt_text: " value || true
-  echo
+  local value; value="$(openssl rand -hex 24)"
   printf -v "$var_name" '%s' "$value"
+  printf -v "$mirror" '%s' "$value"
+  echo "Generated $label (shown in the credentials summary at the end)."
+}
+
+# mint_bootstrap_token — auto-mint the optional MCP bootstrap token (#322:
+# read-only, LAN-only, 30 minutes from first boot) instead of prompting for it.
+# SB_NO_BOOTSTRAP_TOKEN=1 skips it; a pre-seeded SERVICEBAY_BOOTSTRAP_TOKEN env
+# value still wins.
+mint_bootstrap_token() {
+  if [[ "${SB_NO_BOOTSTRAP_TOKEN:-0}" == "1" ]]; then
+    SERVICEBAY_BOOTSTRAP_TOKEN=""
+    echo "SB_NO_BOOTSTRAP_TOKEN=1 — skipping the MCP bootstrap token."
+    return
+  fi
+  if [[ -n "${SERVICEBAY_BOOTSTRAP_TOKEN:-}" ]]; then
+    echo "Using pre-seeded SERVICEBAY_BOOTSTRAP_TOKEN from environment."
+    return
+  fi
+  SERVICEBAY_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)"
+  GENERATED_BOOTSTRAP_TOKEN="$SERVICEBAY_BOOTSTRAP_TOKEN"
+  echo "Generated MCP bootstrap token (shown in the credentials summary at the end)."
+}
+
+# csv_field — RFC4180-quote a CSV value (double internal quotes).
+csv_field() { printf '"%s"' "${1//\"/\"\"}"; }
+
+# emit_generated_credentials — print a "save these now" summary and write a
+# Bitwarden/Vaultwarden-importable CSV for any secrets generated this run.
+# Skips entirely when everything was pre-seeded/skipped.
+emit_generated_credentials() {
+  if [[ -z "$GENERATED_ADMIN_PASSWORD" && -z "$GENERATED_HOST_PASSWORD" && -z "$GENERATED_BOOTSTRAP_TOKEN" ]]; then
+    return
+  fi
+  local admin_user="${SERVICEBAY_ADMIN_USER:-admin}" host_user="${HOST_USER:-core}"
+  local ip="${STATIC_IP:-<server-ip>}" port="${SERVICEBAY_PORT:-5888}"
+  local url="http://${ip}:${port}"
+  local csv="$BUILD_DIR/servicebay-install-credentials.csv"
+
+  echo ""
+  echo "================ SAVE THESE CREDENTIALS NOW ================"
+  echo "ServiceBay generated these secrets for this build. They are NOT stored"
+  echo "anywhere else — save them to your password manager now."
+  echo ""
+  [[ -n "$GENERATED_ADMIN_PASSWORD" ]] && printf '  ServiceBay admin   %s / %s\n                     %s\n' "$admin_user" "$GENERATED_ADMIN_PASSWORD" "$url"
+  [[ -n "$GENERATED_HOST_PASSWORD" ]]  && printf '  Host console       %s / %s\n                     ssh %s@%s\n' "$host_user" "$GENERATED_HOST_PASSWORD" "$host_user" "$ip"
+  [[ -n "$GENERATED_BOOTSTRAP_TOKEN" ]] && printf '  MCP bootstrap      %s\n                     read-only, LAN-only, 30 min from first boot\n' "$GENERATED_BOOTSTRAP_TOKEN"
+
+  {
+    echo "folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp"
+    [[ -n "$GENERATED_ADMIN_PASSWORD" ]] && printf ',,login,%s,%s,,0,%s,%s,%s,\n' \
+      "$(csv_field "ServiceBay Admin — ${SERVER_NAME:-ServiceBay}")" "$(csv_field 'ServiceBay web admin login.')" \
+      "$(csv_field "$url")" "$(csv_field "$admin_user")" "$(csv_field "$GENERATED_ADMIN_PASSWORD")"
+    [[ -n "$GENERATED_HOST_PASSWORD" ]] && printf ',,login,%s,%s,,0,%s,%s,%s,\n' \
+      "$(csv_field "ServiceBay Host console — ${SERVER_NAME:-ServiceBay}")" "$(csv_field 'Console / SSH login for the Fedora CoreOS host user.')" \
+      "$(csv_field "ssh://${ip}")" "$(csv_field "$host_user")" "$(csv_field "$GENERATED_HOST_PASSWORD")"
+    [[ -n "$GENERATED_BOOTSTRAP_TOKEN" ]] && printf ',,login,%s,%s,,0,%s,%s,%s,\n' \
+      "$(csv_field "ServiceBay MCP bootstrap token — ${SERVER_NAME:-ServiceBay}")" "$(csv_field 'Read-only, LAN-only, 30 minutes from first boot.')" \
+      "$(csv_field "$url")" "$(csv_field '')" "$(csv_field "$GENERATED_BOOTSTRAP_TOKEN")"
+  } > "$csv"
+  chmod 600 "$csv" 2>/dev/null || true
+
+  echo ""
+  echo "  Bitwarden/Vaultwarden CSV: $csv"
+  echo "  Import via Vaultwarden → Tools → Import → Bitwarden (csv), then delete the file."
+  echo "  (Re-running the build generates NEW secrets; pre-seed install-settings.env to pin them.)"
+  echo "==========================================================="
+  echo ""
 }
 
 # --- Load / save settings ---
@@ -2330,9 +2412,10 @@ load_setting() {
 # picks it up. Remove a variable: drop it here and old values stop
 # being read on the next run — no migration needed.
 #
-# Secrets (passwords, API keys, the bootstrap MCP token) are NEVER
-# saved — they're prompted fresh on every run. They're listed in the
-# prompt blocks below, not here.
+# Secrets are NEVER saved here. ServiceBay-owned ones (host/admin password,
+# MCP bootstrap token) are auto-generated fresh each run (#1284); external
+# ones (FRITZ!Box, SMTP) are prompted. Either way they're handled in the
+# prompt/generate blocks below, not persisted.
 PERSISTED_SETTINGS=(
   SERVER_NAME
   HOST_USER
@@ -2403,7 +2486,7 @@ if [[ -f "$SETTINGS_FILE" ]]; then
   fi
   echo "===================================="
   echo ""
-  read -r -p "Accept these settings? (passwords + the optional MCP bootstrap token will still be prompted) [Y/n]: " ACCEPT_SAVED
+  read -r -p "Accept these settings? (ServiceBay secrets are auto-generated; only FRITZ!Box / SMTP passwords are prompted) [Y/n]: " ACCEPT_SAVED
   ACCEPT_SAVED=${ACCEPT_SAVED:-Y}
   if [[ "${ACCEPT_SAVED^^}" =~ ^Y ]]; then
     USE_SAVED=true
@@ -2431,10 +2514,11 @@ if $USE_SAVED; then
   select_fedora_coreos_iso DEFAULT_ISO
   prompt ISO_PATH "Path to Fedora CoreOS ISO" "$DEFAULT_ISO"
 
-  # Prompt only for passwords
+  # ServiceBay-owned secrets are auto-generated (#1284); only external
+  # accounts (FRITZ!Box, SMTP) are prompted.
   echo ""
-  prompt_secret SERVICEBAY_ADMIN_PASSWORD "ServiceBay admin password"
-  prompt_secret HOST_PASSWORD "Host user console password (will be hashed)"
+  secret_or_generate SERVICEBAY_ADMIN_PASSWORD "ServiceBay admin password" GENERATED_ADMIN_PASSWORD
+  secret_or_generate HOST_PASSWORD "Host user console password" GENERATED_HOST_PASSWORD
   if [[ -n "$GW_USER" ]]; then
     prompt_secret GW_PASS "Gateway password ($GW_USER@$GW_HOST)"
   else
@@ -2444,19 +2528,10 @@ if $USE_SAVED; then
     prompt_secret EMAIL_PASS "SMTP password ($EMAIL_USER)"
   fi
 
-  # Bootstrap MCP token (#322): optional, LAN-only, read-only,
-  # 30 minutes of usable life from first server boot. If the operator
-  # leaves it empty we don't write anything — they'll mint MCP tokens
-  # via the dashboard later. To enable: paste a token they generated
-  # locally (e.g. `openssl rand -hex 32`) — the script SHA-256s it
-  # before writing into config.json so the cleartext never leaves the
-  # operator's terminal.
-  echo ""
-  echo "Optional: MCP bootstrap token for install-time diagnostics."
-  echo "  - Generate locally with: openssl rand -hex 32"
-  echo "  - Read-only, LAN-only, 30 minutes from first boot."
-  echo "  - Press Enter to skip (you can mint MCP tokens later via the dashboard)."
-  prompt_optional_secret SERVICEBAY_BOOTSTRAP_TOKEN "Paste bootstrap token (or Enter to skip)"
+  # MCP bootstrap token (#322): LAN-only, read-only, 30 minutes from first
+  # boot. Auto-minted now (#1284) rather than prompted; the script SHA-256s it
+  # into config.json (cleartext only in the end-of-run summary + CSV).
+  mint_bootstrap_token
 
   # Backup restore (also available in saved-settings mode)
   echo ""
@@ -2548,8 +2623,9 @@ else
   esac
 
   prompt SERVICEBAY_ADMIN_USER "ServiceBay admin user" "$(prev SERVICEBAY_ADMIN_USER "admin")"
-  prompt_secret SERVICEBAY_ADMIN_PASSWORD "ServiceBay admin password"
-  prompt_secret HOST_PASSWORD "Host user console password (will be hashed)"
+  # ServiceBay-owned secrets are auto-generated (#1284), not prompted.
+  secret_or_generate SERVICEBAY_ADMIN_PASSWORD "ServiceBay admin password" GENERATED_ADMIN_PASSWORD
+  secret_or_generate HOST_PASSWORD "Host user console password" GENERATED_HOST_PASSWORD
 
   # --- Public domain (used by Authelia, NPM, all OIDC clients) ---
   echo ""
@@ -2617,14 +2693,9 @@ else
     BACKUP_FILE=""
   fi
 
-  # Bootstrap MCP token (#322) — same prompt as the saved-settings
-  # branch above, repeated here for the full-interactive path.
-  echo ""
-  echo "Optional: MCP bootstrap token for install-time diagnostics."
-  echo "  - Generate locally with: openssl rand -hex 32"
-  echo "  - Read-only, LAN-only, 30 minutes from first boot."
-  echo "  - Press Enter to skip (you can mint MCP tokens later via the dashboard)."
-  prompt_optional_secret SERVICEBAY_BOOTSTRAP_TOKEN "Paste bootstrap token (or Enter to skip)"
+  # MCP bootstrap token (#322) — auto-minted (#1284), same as the
+  # saved-settings branch above.
+  mint_bootstrap_token
 fi
 
 # --- Save settings for next run ---
@@ -3074,6 +3145,10 @@ if [[ -n "${BACKUP_STAGED:-}" ]]; then
 fi
 echo "After install, add the second SSD to the RAID:"
 echo "  sudo mdadm --add /dev/md/data /dev/disk/by-partlabel/raid1-ssd2"
+
+# Surface any auto-generated ServiceBay secrets (#1284) before handing off to
+# the watch dashboard — the `exec` below replaces this PID, so it must print first.
+emit_generated_credentials
 
 # Hand off to the install-watch dashboard — now the native Go launcher
 # (tools/sb-tui, #1274 ported scripts/install-tui.sh into Go). `watch` skips
