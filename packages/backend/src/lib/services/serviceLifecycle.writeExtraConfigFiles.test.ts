@@ -44,6 +44,50 @@ describe('writeExtraConfigFiles', () => {
         expect(writes[0].params?.sudo).toBeUndefined();
     });
 
+    it('does NOT chown when the plain (core-owned) write succeeds', async () => {
+        // #1298 — a core-owned dir needs no realignment; the only exec is the
+        // mkdir, never a chown.
+        const agent = makeAgent((action) => (action === 'exec' ? { code: 0 } : 'ok'));
+        await writeExtraConfigFiles(agent, 'oscar-household', [file]);
+
+        const chowns = agent.calls.filter(c => c.action === 'exec' && /chown/.test(c.params?.command ?? ''));
+        expect(chowns).toHaveLength(0);
+    });
+
+    it('realigns ownership to the parent dir after a sudo write (#1298)', async () => {
+        // A sudo write lands the file root-owned inside a subuid-owned asset
+        // dir, which breaks the next rootless `kube play --replace` relabel.
+        // After the sudo write we `chown --reference=<dir>` so the new file
+        // matches its siblings' (subuid) ownership.
+        const agent = makeAgent((action, params) => {
+            if (action === 'exec') return { code: 0 };
+            if (params?.sudo) return 'ok';
+            throw new Error("[Errno 13] Permission denied: '" + file.path + "'");
+        });
+
+        await writeExtraConfigFiles(agent, 'oscar-household', [file]);
+
+        const dir = file.path.substring(0, file.path.lastIndexOf('/'));
+        const chowns = agent.calls.filter(c => c.action === 'exec' && /chown/.test(c.params?.command ?? ''));
+        expect(chowns).toHaveLength(1);
+        expect(chowns[0].params?.command).toBe(`sudo chown --reference=${dir} ${file.path}`);
+    });
+
+    it('does not fail the deploy when the post-sudo chown fails (#1298)', async () => {
+        // The file is already written; an ownership mismatch only bites a later
+        // relabel, so a chown rejection must be swallowed (logged), not fatal.
+        const agent = makeAgent((action, params) => {
+            if (action === 'exec' && /chown/.test(params?.command ?? '')) {
+                throw new Error('chown: invalid user');
+            }
+            if (action === 'exec') return { code: 0 };
+            if (params?.sudo) return 'ok';
+            throw new Error('[Errno 13] Permission denied');
+        });
+
+        await expect(writeExtraConfigFiles(agent, 'oscar-household', [file])).resolves.toBeUndefined();
+    });
+
     it('retries with sudo when the plain write_file rejects (EACCES on container-owned dir)', async () => {
         // #1171/#1258 — first (unprivileged) write rejects because the
         // hostPath is owned by a consumer container's uid; the agent throws
