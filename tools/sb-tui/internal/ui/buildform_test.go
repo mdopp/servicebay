@@ -48,11 +48,11 @@ func TestConditionalFieldsHiddenAndRevealed(t *testing.T) {
 	}
 }
 
-// TestChannelCycleAndValidation: ←/→ cycles the channel enum; a bad hostname is
-// rejected on commit.
+// TestChannelCycleAndValidation: ←/→ cycles the channel enum; Enter (advance) is
+// blocked while a field is invalid.
 func TestChannelCycleAndValidation(t *testing.T) {
 	m := NewBuildForm(build.Settings{ServicebayChannel: "stable"}, noDeps())
-	// Cursor 0 is Server name (text). Move to the channel field.
+	// Move focus to the channel field and cycle it with →.
 	for m.visible[m.sCursor].label != "ServiceBay channel" {
 		mi, _ := m.Update(namedKey(tea.KeyDown))
 		m = mi.(BuildFormModel)
@@ -63,18 +63,20 @@ func TestChannelCycleAndValidation(t *testing.T) {
 		t.Errorf("channel after right = %q, want test", m.settings.ServicebayChannel)
 	}
 
-	// Back to Server name, edit to an invalid hostname → rejected.
+	// Type an invalid hostname into Server name (live), then Enter must NOT
+	// advance — it surfaces the validation error and stays on Settings.
 	m.sCursor = 0
-	mi, _ = m.Update(namedKey(tea.KeyEnter)) // start editing
-	m = mi.(BuildFormModel)
-	m.buf = "Bad_Name"
-	mi, _ = m.Update(namedKey(tea.KeyEnter)) // commit
-	m = mi.(BuildFormModel)
-	if m.sErr == "" {
-		t.Error("invalid hostname should be rejected with an error")
+	for _, r := range "Bad_Name" {
+		mi, _ := m.Update(runeKey(r))
+		m = mi.(BuildFormModel)
 	}
-	if m.settings.ServerName == "Bad_Name" {
-		t.Error("invalid value must not be stored")
+	if m.settings.ServerName != "Bad_Name" {
+		t.Fatalf("live edit should update the value, got %q", m.settings.ServerName)
+	}
+	mi, _ = m.Update(namedKey(tea.KeyEnter))
+	m = mi.(BuildFormModel)
+	if m.sErr == "" || m.step != stepSettings {
+		t.Errorf("invalid hostname should block advance: err=%q step=%v", m.sErr, m.step)
 	}
 }
 

@@ -5,9 +5,29 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"servicebay-tui/internal/usb"
 )
 
-// Update drives the wizard: per-step field editing + step navigation.
+// One coherent interaction model across every step:
+//
+//	↑/↓    move between fields / list rows
+//	←/→    change the focused choice field (Y/N, channel)
+//	type   edit the focused text field in place (the label is static)
+//	enter  Continue ▸ (next step; on Review, build)
+//	s-tab  ◂ back a step
+//	esc    back to the launcher menu
+var (
+	inputStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color("236"))
+	inputFocused = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color("63"))
+	labelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	labelFocused = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231"))
+	contIdle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	contStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("63")).Padding(0, 1)
+)
+
+// Update drives the wizard.
 func (m BuildFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case imagesLoadedMsg:
@@ -25,6 +45,10 @@ func (m BuildFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.devErr = msg.err.Error()
 		}
 		return m, nil
+	case buildConfirmedMsg:
+		// Standalone (`sb-tui build`): quit so the entrypoint reads Plan back.
+		// When hosted by App, App intercepts this first and never forwards it.
+		return m, tea.Quit
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
@@ -35,143 +59,45 @@ func (m BuildFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m BuildFormModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
-		return m, tea.Quit // cancel
-	}
-	// Editing a text field captures most keys.
-	if m.editing {
-		return m.handleEditKey(msg)
-	}
 	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
 	case "esc":
-		return m, tea.Quit // cancel the whole wizard
-	case "tab":
-		return m.nextStep()
+		// Back to the launcher menu (App intercepts backMsg); standalone quits.
+		return m, backCmd()
+	case "enter":
+		return m.advance()
 	case "shift+tab":
-		return m.prevStep()
+		if m.step > stepSettings {
+			m.step--
+		}
+		return m, nil
+	case "up":
+		m.moveCursor(-1)
+		return m, nil
+	case "down":
+		m.moveCursor(+1)
+		return m, nil
 	}
+	// Field-specific edits on the focused row.
 	switch m.step {
 	case stepSettings:
-		return m.handleSettingsKey(msg)
-	case stepImage:
-		return m.handleListKey(msg, len(m.images), &m.iCursor)
+		return m.editSettings(msg)
 	case stepSecrets:
-		return m.handleSecretsKey(msg)
-	case stepFlash:
-		return m.handleListKey(msg, len(m.devices)+1, &m.fCursor) // +1 for "skip"
-	case stepReview:
-		if msg.String() == "enter" {
-			m.Confirmed = true
-			return m, tea.Quit
-		}
+		return m.editSecret(msg)
 	}
 	return m, nil
 }
 
-// handleEditKey edits the focused text field (settings or secret).
-func (m BuildFormModel) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.editing, m.buf, m.sErr = false, "", ""
-		return m, nil
-	case "enter":
-		return m.commitEdit()
-	case "backspace":
-		if m.buf != "" {
-			m.buf = m.buf[:len(m.buf)-1]
-		}
-		return m, nil
-	default:
-		if msg.Type == tea.KeyRunes {
-			m.buf += string(msg.Runes)
-		}
-		return m, nil
-	}
-}
-
-// commitEdit validates + stores the edit buffer back into settings/secrets.
-func (m BuildFormModel) commitEdit() (tea.Model, tea.Cmd) {
-	if m.step == stepSecrets {
-		m.secrets[m.secCursor].value = m.buf
-		m.editing, m.buf = false, ""
-		return m, nil
-	}
-	f := m.visible[m.sCursor]
-	v := strings.TrimSpace(m.buf)
-	if f.valid != nil {
-		if e := f.valid(v); e != "" {
+// advance moves to the next step (Enter = Continue), validating settings first;
+// on the Review step it confirms the build.
+func (m BuildFormModel) advance() (tea.Model, tea.Cmd) {
+	switch m.step {
+	case stepSettings:
+		if e := m.validateSettings(); e != "" {
 			m.sErr = e
 			return m, nil
 		}
-	}
-	f.set(&m.settings, v)
-	m.editing, m.buf, m.sErr = false, "", ""
-	// An edit (e.g. FRITZ!Box host) can change which fields/secrets apply.
-	m.recomputeVisible()
-	m.rebuildSecrets()
-	return m, nil
-}
-
-func (m BuildFormModel) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if len(m.visible) == 0 {
-		return m, nil
-	}
-	f := m.visible[m.sCursor]
-	switch msg.String() {
-	case "up", "k":
-		m.sCursor = (m.sCursor - 1 + len(m.visible)) % len(m.visible)
-		m.sErr = ""
-	case "down", "j":
-		m.sCursor = (m.sCursor + 1) % len(m.visible)
-		m.sErr = ""
-	case "left", "right":
-		if f.kind == fChoice {
-			f.set(&m.settings, cycle(f.options, f.get(&m.settings), msg.String() == "right"))
-			m.recomputeVisible()
-			m.rebuildSecrets()
-		}
-	case "enter":
-		if f.kind == fText {
-			m.editing, m.buf, m.sErr = true, f.get(&m.settings), ""
-		}
-	}
-	return m, nil
-}
-
-func (m BuildFormModel) handleSecretsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if len(m.secrets) == 0 {
-		return m, nil
-	}
-	switch msg.String() {
-	case "up", "k":
-		m.secCursor = (m.secCursor - 1 + len(m.secrets)) % len(m.secrets)
-	case "down", "j":
-		m.secCursor = (m.secCursor + 1) % len(m.secrets)
-	case "enter":
-		m.editing, m.buf = true, m.secrets[m.secCursor].value
-	}
-	return m, nil
-}
-
-// handleListKey moves a cursor over n items (used for image + flash lists).
-func (m BuildFormModel) handleListKey(msg tea.KeyMsg, n int, cursor *int) (tea.Model, tea.Cmd) {
-	if n == 0 {
-		return m, nil
-	}
-	switch msg.String() {
-	case "up", "k":
-		*cursor = (*cursor - 1 + n) % n
-	case "down", "j":
-		*cursor = (*cursor + 1) % n
-	}
-	return m, nil
-}
-
-// nextStep advances the wizard, running per-step side effects + validation.
-func (m BuildFormModel) nextStep() (tea.Model, tea.Cmd) {
-	switch m.step {
-	case stepSettings:
-		// Block leaving settings with an invalid value on the focused field.
 		m.rebuildSecrets()
 		m.step = stepImage
 	case stepImage:
@@ -185,16 +111,85 @@ func (m BuildFormModel) nextStep() (tea.Model, tea.Cmd) {
 		m.step = stepReview
 	case stepReview:
 		m.Confirmed = true
-		return m, tea.Quit
+		plan := m.Plan()
+		return m, func() tea.Msg { return buildConfirmedMsg{plan: plan} }
 	}
 	return m, nil
 }
 
-func (m BuildFormModel) prevStep() (tea.Model, tea.Cmd) {
-	if m.step > stepSettings {
-		m.step--
+// moveCursor moves the focus within the current step's list.
+func (m *BuildFormModel) moveCursor(d int) {
+	switch m.step {
+	case stepSettings:
+		if n := len(m.visible); n > 0 {
+			m.sCursor = (m.sCursor + d + n) % n
+			m.sErr = ""
+		}
+	case stepImage:
+		if n := len(m.images); n > 0 {
+			m.iCursor = (m.iCursor + d + n) % n
+		}
+	case stepSecrets:
+		if n := len(m.secrets); n > 0 {
+			m.secCursor = (m.secCursor + d + n) % n
+		}
+	case stepFlash:
+		n := len(m.devices) + 1 // +1 for "skip"
+		m.fCursor = (m.fCursor + d + n) % n
+	}
+}
+
+// editSettings edits the focused settings field live: ←/→ cycles a choice,
+// runes/backspace edit text.
+func (m BuildFormModel) editSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if len(m.visible) == 0 {
+		return m, nil
+	}
+	f := m.visible[m.sCursor]
+	switch {
+	case f.kind == fChoice && (msg.String() == "left" || msg.String() == "right"):
+		f.set(&m.settings, cycle(f.options, f.get(&m.settings), msg.String() == "right"))
+		// A choice change (email on/off) can reveal/hide other fields + secrets.
+		m.recomputeVisible()
+		m.rebuildSecrets()
+	case f.kind == fText && msg.String() == "backspace":
+		v := f.get(&m.settings)
+		if v != "" {
+			f.set(&m.settings, v[:len(v)-1])
+			m.recomputeVisible() // clearing FRITZ!Box host hides its username
+		}
+	case f.kind == fText && msg.Type == tea.KeyRunes:
+		f.set(&m.settings, f.get(&m.settings)+string(msg.Runes))
+		m.recomputeVisible()
 	}
 	return m, nil
+}
+
+func (m BuildFormModel) editSecret(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if len(m.secrets) == 0 {
+		return m, nil
+	}
+	switch {
+	case msg.String() == "backspace":
+		if v := m.secrets[m.secCursor].value; v != "" {
+			m.secrets[m.secCursor].value = v[:len(v)-1]
+		}
+	case msg.Type == tea.KeyRunes:
+		m.secrets[m.secCursor].value += string(msg.Runes)
+	}
+	return m, nil
+}
+
+// validateSettings returns the first field error (or "").
+func (m BuildFormModel) validateSettings() string {
+	for _, f := range m.visible {
+		if f.valid != nil {
+			if e := f.valid(strings.TrimSpace(f.get(&m.settings))); e != "" {
+				return f.label + ": " + e
+			}
+		}
+	}
+	return ""
 }
 
 func (m BuildFormModel) loadDevicesCmd() tea.Cmd {
@@ -205,7 +200,8 @@ func (m BuildFormModel) loadDevicesCmd() tea.Cmd {
 	}
 }
 
-// View renders the current step.
+// View renders the current step with a consistent header, body, Continue
+// button, and key legend.
 func (m BuildFormModel) View() string {
 	width := m.width
 	if width <= 0 {
@@ -228,7 +224,14 @@ func (m BuildFormModel) View() string {
 		m.viewReview(&b)
 	}
 
-	b.WriteString("\n" + footerStyle.Render(m.footer()))
+	// The Continue button makes "what advances the wizard" visible — Enter
+	// activates it (tab is not required / not the only way).
+	label := "Continue ▸"
+	if m.step == stepReview {
+		label = "Build ▸"
+	}
+	b.WriteString("\n" + contStyle.Render(label) + contIdle.Render("  (Enter)") + "\n")
+	b.WriteString(footerStyle.Render(m.legend()))
 	return frame(b.String(), m.width, m.height)
 }
 
@@ -245,33 +248,41 @@ func (m BuildFormModel) stepCrumb() string {
 	return strings.Join(parts, " › ")
 }
 
-func (m BuildFormModel) footer() string {
-	if m.editing {
-		return "type to edit · enter save · esc cancel"
-	}
+func (m BuildFormModel) legend() string {
+	base := "↑/↓ move · enter continue · shift+tab back · esc menu"
 	switch m.step {
-	case stepReview:
-		return "enter build · shift+tab back · esc cancel"
 	case stepSettings:
-		return "↑/↓ move · ←/→ choose · enter edit · tab next · esc cancel"
+		return "↑/↓ move · ←/→ change choice · type to edit · enter continue · esc menu"
 	default:
-		return "↑/↓ move · tab next · shift+tab back · esc cancel"
+		return base
 	}
+}
+
+// fieldRowText renders "Label  [value]" with the value in an input box, so it's
+// clear the label is static and only the value is editable. Focused rows get a
+// caret + highlight.
+func renderField(label, value string, focused, choice bool) string {
+	ls, is := labelStyle, inputStyle
+	if focused {
+		ls, is = labelFocused, inputFocused
+	}
+	box := value
+	if focused && !choice {
+		box = value + "▌"
+	}
+	if choice {
+		box = "‹ " + value + " ›"
+	}
+	cursor := "  "
+	if focused {
+		cursor = "❯ "
+	}
+	return cursor + ls.Render(fmt.Sprintf("%-22s", label)) + is.Render(" "+box+" ")
 }
 
 func (m BuildFormModel) viewSettings(b *strings.Builder) {
 	for i, f := range m.visible {
-		val := f.get(&m.settings)
-		if m.editing && i == m.sCursor {
-			b.WriteString(cfgEditingStyle.Render(f.label+": "+m.buf+"▌") + "\n")
-			continue
-		}
-		rendered := f.label + ": " + valueText(val)
-		if i == m.sCursor {
-			b.WriteString(selectedStyle.Render("❯ "+f.label+": ") + valueText(val) + "\n")
-		} else {
-			b.WriteString(normalStyle.Render("  "+rendered) + "\n")
-		}
+		b.WriteString(renderField(f.label, f.get(&m.settings), i == m.sCursor, f.kind == fChoice) + "\n")
 	}
 	if m.sCursor < len(m.visible) {
 		b.WriteString("\n" + helpStyle.Render(m.visible[m.sCursor].help) + "\n")
@@ -290,59 +301,53 @@ func (m BuildFormModel) viewImage(b *strings.Builder) {
 		b.WriteString(detailStyle.Render("Loading available images…") + "\n")
 		return
 	}
-	b.WriteString(phaseStyle.Render("Pick the Fedora CoreOS image to build from:") + "\n\n")
+	b.WriteString(phaseStyle.Render("Choose the Fedora CoreOS image (↑/↓), then Enter:") + "\n\n")
 	for i, c := range m.images {
-		line := "  " + c.Label
 		if i == m.iCursor {
-			line = selectedStyle.Render("❯ " + c.Label)
+			b.WriteString(selectedStyle.Render("❯ "+c.Label) + cfgOKStyle.Render("  ● will be used") + "\n")
+		} else {
+			b.WriteString(normalStyle.Render("  "+c.Label) + "\n")
 		}
-		b.WriteString(line + "\n")
 	}
 }
 
 func (m BuildFormModel) viewSecrets(b *strings.Builder) {
 	if len(m.secrets) == 0 {
-		b.WriteString(detailStyle.Render("No external passwords needed — press tab to continue.") + "\n")
+		b.WriteString(detailStyle.Render("No external passwords needed — press Enter to continue.") + "\n")
 		return
 	}
 	b.WriteString(phaseStyle.Render("External account passwords ServiceBay can't generate:") + "\n\n")
 	for i, sr := range m.secrets {
-		masked := strings.Repeat("•", len(sr.value))
-		if m.editing && i == m.secCursor {
-			b.WriteString(cfgEditingStyle.Render(sr.envLabel+": "+masked+"▌") + "\n")
-			continue
-		}
-		row := sr.envLabel + ": " + valueText(masked)
-		if i == m.secCursor {
-			b.WriteString(selectedStyle.Render("❯ "+sr.envLabel+": ") + valueText(masked) + "\n")
-		} else {
-			b.WriteString(normalStyle.Render("  "+row) + "\n")
-		}
+		b.WriteString(renderField(sr.envLabel, strings.Repeat("•", len(sr.value)), i == m.secCursor, false) + "\n")
 	}
 }
 
 func (m BuildFormModel) viewFlash(b *strings.Builder) {
-	b.WriteString(phaseStyle.Render("Write the baked ISO to a USB stick? (chosen at Review)") + "\n\n")
-	skip := "  Skip — don't write to USB"
-	if m.fCursor == 0 {
-		skip = selectedStyle.Render("❯ Skip — don't write to USB")
+	b.WriteString(phaseStyle.Render("Write the baked ISO to a USB stick? (↑/↓ choose, Enter continue)") + "\n\n")
+	rows := append([]string{"Skip — don't write to USB"}, deviceLabels(m.devices)...)
+	for i, label := range rows {
+		if i == m.fCursor {
+			b.WriteString(selectedStyle.Render("❯ "+label) + "\n")
+		} else {
+			b.WriteString(normalStyle.Render("  "+label) + "\n")
+		}
 	}
-	b.WriteString(skip + "\n")
 	if m.devErr != "" {
 		b.WriteString(detailStyle.Render(cfgEmptyStyle.Render("(USB enumeration unavailable: "+m.devErr+")")) + "\n")
 	}
-	for i, d := range m.devices {
-		line := "  " + d.Label()
-		if m.fCursor == i+1 {
-			line = selectedStyle.Render("❯ " + d.Label())
-		}
-		b.WriteString(line + "\n")
+}
+
+func deviceLabels(devs []usb.Device) []string {
+	out := make([]string, len(devs))
+	for i, d := range devs {
+		out[i] = d.Label()
 	}
+	return out
 }
 
 func (m BuildFormModel) viewReview(b *strings.Builder) {
 	s := m.settings
-	b.WriteString(phaseStyle.Render("Review — press enter to build.") + "\n\n")
+	b.WriteString(phaseStyle.Render("Review — press Enter to build.") + "\n\n")
 	row := func(k, v string) { b.WriteString(normalStyle.Render(fmt.Sprintf("  %-20s %s", k+":", v)) + "\n") }
 	row("Server", s.ServerName)
 	row("Network", s.StaticIP+"/"+s.StaticPrefix+" via "+s.NetInterface)

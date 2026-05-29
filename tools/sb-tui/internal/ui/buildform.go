@@ -135,6 +135,13 @@ type BuildDeps struct {
 	USB    func() ([]usb.Device, error)
 }
 
+// BuildConfig is what the App needs to open the build form in-app: the IO deps
+// plus the seeded settings (saved install-settings.env merged with defaults).
+type BuildConfig struct {
+	Deps  BuildDeps
+	Saved build.Settings
+}
+
 // BuildFormModel is the multi-step build wizard.
 type BuildFormModel struct {
 	deps          BuildDeps
@@ -143,11 +150,10 @@ type BuildFormModel struct {
 	step     buildStep
 	settings build.Settings
 
-	// settings step
+	// settings step. The focused field is edited live — no separate edit mode:
+	// text fields take typed runes, choice fields cycle with ←/→.
 	visible []sfield
 	sCursor int
-	editing bool
-	buf     string
 	sErr    string
 
 	// image step
@@ -184,6 +190,11 @@ type devicesLoadedMsg struct {
 	err     error
 }
 
+// buildConfirmedMsg is emitted when the operator confirms the Review step. It
+// carries the assembled Plan so the App (in-app hosting) can run the build, or
+// the standalone `sb-tui build` program can quit and read it back.
+type buildConfirmedMsg struct{ plan buildflow.Plan }
+
 // NewBuildForm builds the wizard seeded from saved settings.
 func NewBuildForm(saved build.Settings, deps BuildDeps) BuildFormModel {
 	m := BuildFormModel{deps: deps, settings: saved, step: stepSettings}
@@ -206,6 +217,9 @@ func (m *BuildFormModel) recomputeVisible() {
 // Init loads the image choices in the background.
 func (m BuildFormModel) Init() tea.Cmd {
 	deps := m.deps
+	if deps.Images == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		imgs, def := deps.Images()
 		return imagesLoadedMsg{images: imgs, defIdx: def}

@@ -14,6 +14,7 @@ package ui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
+	"servicebay-tui/internal/buildflow"
 	"servicebay-tui/internal/phase"
 	"servicebay-tui/internal/rest"
 )
@@ -48,22 +49,25 @@ type App struct {
 	host, port    string
 	token         string // current credential, "" until logged in
 	save          TokenSaver
+	build         BuildConfig
 	width, height int
 
 	screen  appScreen
 	menu    Model
-	active  tea.Model      // login or a panel, when screen != appMenu
+	active  tea.Model      // login, a panel, or the build form, when screen != appMenu
 	pending phase.ActionID // panel to open once authenticated
 
-	// Chosen is set to a handoff leg (build/express/watch/open-box) when the
-	// operator picks one; the entrypoint reads it after the App exits.
-	Chosen phase.ActionID
+	// Chosen is set to a handoff leg (express) when the operator picks one;
+	// BuildPlan is set when the in-app build form is confirmed. The entrypoint
+	// reads both after the App exits.
+	Chosen    phase.ActionID
+	BuildPlan *buildflow.Plan
 }
 
 // NewApp builds the root model. token may be a pre-resolved credential (env or
 // the saved per-host file); empty means the box-control views will log in first.
-func NewApp(detect DetectFunc, host, port, token string, save TokenSaver) App {
-	return App{host: host, port: port, token: token, save: save, screen: appMenu, menu: New(detect, host, port)}
+func NewApp(detect DetectFunc, host, port, token string, save TokenSaver, build BuildConfig) App {
+	return App{host: host, port: port, token: token, save: save, build: build, screen: appMenu, menu: New(detect, host, port)}
 }
 
 // Init starts the menu's phase detection.
@@ -91,6 +95,15 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.save(m.host, msg.token)
 		}
 		return m.openPanel(m.pending)
+
+	case buildConfirmedMsg:
+		// The in-app build form confirmed: stash the plan and quit so the
+		// entrypoint runs the bake + flash in the normal terminal (sudo dd
+		// needs a real TTY, so it can't run inside the alt-screen app).
+		plan := msg.plan
+		m.BuildPlan = &plan
+		m.Chosen = phase.BuildISO
+		return m, tea.Quit
 
 	case backMsg:
 		// Pop back to the menu and re-detect so its phase/actions refresh.
@@ -128,8 +141,14 @@ func (m App) route(id phase.ActionID) (tea.Model, tea.Cmd) {
 		m.active = NewWatch(m.host, m.port)
 		m.screen = appPanel
 		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
+	case phase.BuildISO:
+		// In-app so esc returns to the menu; on confirm it quits via
+		// buildConfirmedMsg and the entrypoint runs the build.
+		m.active = NewBuildForm(m.build.Saved, m.build.Deps)
+		m.screen = appPanel
+		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
 	default:
-		// build / express — hand back to the entrypoint.
+		// express — hand back to the entrypoint (it runs its own sequence).
 		m.Chosen = id
 		return m, tea.Quit
 	}
