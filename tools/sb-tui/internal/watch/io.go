@@ -75,6 +75,26 @@ func fetchRootTitle(host, port string) string {
 	return strings.TrimSpace(m[1])
 }
 
+// AppServing reports whether the box's REAL app (not the install splash, not a
+// closed port) is serving at host:port — the same "takeover" signal the
+// dashboard exits on, but decoupled from ICMP so it works where ping is
+// blocked. It returns false when the port is closed or the install splash is
+// still up. This is the reliable "box is up and manageable" signal for phase
+// detection — more robust than /api/install/status's jobIsActive, which stays
+// true on a job left stuck in running/needs_credentials from a past install.
+func AppServing(host, port string) bool {
+	if !TCPOpen(host, port) {
+		return false
+	}
+	// Splash still publishing a status TSV → still installing, not the app.
+	if raw, err := httpGet("http://" + host + ":" + port + "/status.txt"); err == nil {
+		if _, ok := ParseStatus(raw); ok {
+			return false
+		}
+	}
+	return IsTakeover(fetchRootTitle(host, port))
+}
+
 // Observe runs one tick of probes against the box and returns the folded facts
 // plus whether ServiceBay has taken over (the caller should then exit). The
 // ladder mirrors install-tui.sh: ping first; only check the port when ping is
