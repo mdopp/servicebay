@@ -35,28 +35,36 @@ export const BUILTIN_PORT_SOURCES: ReadonlyArray<readonly [number, string]> = [
 /** Build a `port → source-name` map from a twin node. First writer
  *  wins so service-level mappings (the meaningful name) take priority
  *  over the raw container names. */
+/** Add each item's host ports to `out` under a derived label. First writer
+ *  wins (existing entries are kept). Shared by the service + container passes
+ *  so the per-item loop lives in one place. */
+function addPortSources<T extends { ports?: { hostPort?: number }[] }>(
+  out: Map<number, string>,
+  items: T[] | undefined,
+  label: (item: T) => string,
+): void {
+  for (const item of items ?? []) {
+    const name = label(item);
+    for (const p of item.ports ?? []) {
+      if (typeof p.hostPort === 'number' && !out.has(p.hostPort)) {
+        out.set(p.hostPort, name);
+      }
+    }
+  }
+}
+
 export function buildPortSourceMap(
   services: TwinPortService[] | undefined,
   containers: TwinPortContainer[] | undefined,
 ): Map<number, string> {
   const out = new Map<number, string>(BUILTIN_PORT_SOURCES);
-  for (const svc of services ?? []) {
-    const label = svc.name ?? 'unknown service';
-    for (const p of svc.ports ?? []) {
-      if (typeof p.hostPort === 'number' && !out.has(p.hostPort)) {
-        out.set(p.hostPort, label);
-      }
-    }
-  }
-  for (const c of containers ?? []) {
-    const label =
-      c.names?.[0]?.replace(/^\//, '') ?? `container ${c.id?.slice(0, 12) ?? 'unknown'}`;
-    for (const p of c.ports ?? []) {
-      if (typeof p.hostPort === 'number' && !out.has(p.hostPort)) {
-        out.set(p.hostPort, label);
-      }
-    }
-  }
+  // Services first so their (meaningful) name wins over raw container names.
+  addPortSources(out, services, svc => svc.name ?? 'unknown service');
+  addPortSources(
+    out,
+    containers,
+    c => c.names?.[0]?.replace(/^\//, '') ?? `container ${c.id?.slice(0, 12) ?? 'unknown'}`,
+  );
   return out;
 }
 
