@@ -31,8 +31,14 @@ export const GET = withApiHandler({ tokenScope: 'read' }, async ({ auth }) => {
  * formats errors with the more detailed `formatConfigErrors` shape the
  * settings UI displays. Re-routing through the handler's Zod path would
  * lose that fidelity.
+ *
+ * `tokenScope: 'mutate'` (#1275) lets a scoped `sb_` API token (the sb-tui
+ * edit-config panel) write config, not just read it via GET. The body is a
+ * Partial<AppConfig> that's merged with the persisted config, so a token
+ * caller sends only the field(s) it changes — it never round-trips the
+ * redacted secrets it received from GET back into the store.
  */
-export const POST = withApiHandler({}, async ({ request }) => {
+export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request }) => {
   let body: unknown;
   try {
     body = await request.json();

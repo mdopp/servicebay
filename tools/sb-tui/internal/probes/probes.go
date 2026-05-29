@@ -77,6 +77,14 @@ func ResolveTarget() Target {
 	return Target{Host: host, Port: port}
 }
 
+// ResolveToken returns the scoped `sb_…` API token the box-control panels
+// authenticate with (#1275), read from SB_TOKEN. Empty when unset — the panel
+// then shows mint instructions rather than making a doomed 401 call. Mint one
+// in ServiceBay → Settings → API tokens with the `mutate` scope.
+func ResolveToken() string {
+	return strings.TrimSpace(os.Getenv("SB_TOKEN"))
+}
+
 // BoxStatus probes /api/install/status (unauthed). Unreachable host or any
 // transport error reads as not-reachable; a non-2xx reads as reachable but
 // not-done. wizardDone mirrors the Ink probe: no active job and no pending
