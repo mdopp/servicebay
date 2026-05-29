@@ -57,8 +57,9 @@ func TestActionsFor(t *testing.T) {
 	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{WatchInstall, OpenBox, EditConfig, InstallStacks, Backups, BuildISO, Refresh, Quit}) {
 		t.Fatalf("installing actions = %v", got)
 	}
-	// ready: open-box + edit-config + install-stacks + backups + watch + reinstall, then refresh/quit
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{OpenBox, EditConfig, InstallStacks, Backups, WatchInstall, BuildISO, Refresh, Quit}) {
+	// ready: open-box + edit-config + install-stacks + backups + reinstall, then refresh/quit
+	// (no Watch on an up box — nothing to watch).
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{OpenBox, EditConfig, InstallStacks, Backups, BuildISO, Refresh, Quit}) {
 		t.Fatalf("ready actions = %v", got)
 	}
 }

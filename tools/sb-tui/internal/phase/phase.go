@@ -141,15 +141,16 @@ func ActionsFor(s State) []Action {
 			backupsAction,
 			buildAction(s))
 	case Ready:
-		// Box is fully up — manage it via the browser, or reinstall.
+		// Box is fully up — manage it in-TUI or via the browser, or reinstall.
+		// No Watch action here: there's nothing to watch on an up box (it would
+		// just bounce straight back), and a reinstall drops the box into the
+		// ISOReady/Installing phases where Watch is offered.
 		a = append(a,
 			Action{OpenBox, "Open ServiceBay in your browser",
 				"Open this box's dashboard to manage services, users, and settings."},
 			editConfigAction,
 			installStacksAction,
 			backupsAction,
-			Action{WatchInstall, "Watch a reinstall in progress",
-				"Live-track an install if you're reinstalling this box."},
 			buildAction(s))
 	}
 	a = append(a,
