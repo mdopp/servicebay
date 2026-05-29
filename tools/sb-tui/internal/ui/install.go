@@ -133,6 +133,8 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case backMsg:
+		return m, tea.Quit // standalone-only; App intercepts when hosted
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -173,10 +175,10 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "q", "esc":
-		// Quitting mid-install only detaches the watcher; the server job keeps
+		// Leaving mid-install only detaches the watcher; the server job keeps
 		// running. Safe because progress is resumable by jobId.
 		if m.stage != stageStarting {
-			return m, tea.Quit
+			return m, backCmd()
 		}
 	}
 	if m.stage != stageSelect {

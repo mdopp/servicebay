@@ -36,16 +36,15 @@ var (
 	footerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MarginTop(1)
 )
 
-// Model is the Bubble Tea model for the launcher menu.
+// Model is the Bubble Tea model for the launcher menu. It is hosted by App
+// (app.go): selecting an action emits a menuSelectedMsg the App routes, rather
+// than quitting the program itself, so the launcher stays one continuous app.
 type Model struct {
 	detect        DetectFunc
 	state         *phase.State
 	actions       []phase.Action
 	cursor        int
 	width, height int
-	// Chosen is set to a handoff action (build/watch/open-box) when the operator
-	// picks one; the entrypoint reads it after the program exits.
-	Chosen phase.ActionID
 }
 
 // New builds a launcher model with the given phase-detection function.
@@ -95,8 +94,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actions = nil
 				return m, m.detectCmd()
 			default:
-				m.Chosen = a.ID
-				return m, tea.Quit
+				// Hand the choice to the App, which routes it (open a panel,
+				// or quit the App so the entrypoint runs a bootstrap leg).
+				id := a.ID
+				return m, func() tea.Msg { return menuSelectedMsg{id: id} }
 			}
 		}
 	}

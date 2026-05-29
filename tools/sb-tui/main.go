@@ -101,10 +101,10 @@ func boxClient() (*rest.Client, int) {
 		fmt.Fprintln(os.Stderr, "no box target — set SB_HOST (and SB_PORT), or build an ISO first so build/fcos/install-settings.env exists.")
 		return nil, 2
 	}
-	client, err := rest.New(t.Host, t.Port, probes.ResolveToken())
+	client, err := rest.New(t.Host, t.Port, probes.ResolveToken(t.Host))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintln(os.Stderr, "Mint one in ServiceBay → Settings → API tokens (scopes: mutate + lifecycle) and export it as SB_TOKEN.")
+		fmt.Fprintln(os.Stderr, "Run `sb-tui` (no subcommand) and pick a box-control action to sign in — the TUI mints + saves its own token.")
 		return nil, 2
 	}
 	return client, 0
@@ -216,19 +216,26 @@ func main() {
 		}
 	}
 
-	// Full-screen (alt-screen): the launcher owns the terminal like a real
-	// installer rather than scrolling inline.
-	final, err := tea.NewProgram(ui.New(detect), tea.WithAltScreen()).Run()
+	// Full-screen unified app (alt-screen): the menu, login, and the
+	// box-control panels (edit-config / install / backups) all live in one
+	// program — sub-views return to the menu instead of exiting, and the box
+	// panels sign in + mint a token in-flow rather than dead-ending on a
+	// missing SB_TOKEN. The bootstrap/watch legs below are the only handoffs
+	// that quit the app, because build is an interactive stdin wizard and the
+	// rest are natural one-shots.
+	t := probes.ResolveTarget()
+	app := ui.NewApp(detect, t.Host, t.Port, probes.ResolveToken(t.Host), probes.SaveToken)
+	final, err := tea.NewProgram(app, tea.WithAltScreen()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	m, ok := final.(ui.Model)
+	res, ok := final.(ui.App)
 	if !ok {
 		return
 	}
 
-	switch m.Chosen {
+	switch res.Chosen {
 	case phase.Express:
 		os.Exit(runExpress())
 	case phase.BuildISO:
@@ -237,11 +244,5 @@ func main() {
 		os.Exit(runWatch())
 	case phase.OpenBox:
 		os.Exit(runOpenBox())
-	case phase.EditConfig:
-		os.Exit(runConfig())
-	case phase.InstallStacks:
-		os.Exit(runInstallStacks())
-	case phase.Backups:
-		os.Exit(runBackups())
 	}
 }
