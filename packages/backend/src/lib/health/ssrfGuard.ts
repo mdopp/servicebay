@@ -56,6 +56,13 @@ function isPrivateIpv4(ip: string): boolean {
   const parts = ip.split('.').map(Number);
   if (parts.length !== 4 || parts.some(p => Number.isNaN(p) || p < 0 || p > 255)) return true;
   const [a, b] = parts;
+  return isReservedIpv4Range(a, b);
+}
+
+// Octet-range classification split out of isPrivateIpv4 to keep that function
+// under the complexity budget. Covers RFC1918 + loopback + "this network" +
+// link-local + CGNAT + multicast/reserved.
+function isReservedIpv4Range(a: number, b: number): boolean {
   if (a === 10) return true;
   if (a === 127) return true;
   if (a === 0) return true;
