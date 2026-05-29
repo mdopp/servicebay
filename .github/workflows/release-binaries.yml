@@ -1,0 +1,121 @@
+# Cross-compiled sb-tui release binaries (#1279). The Go lifecycle launcher
+# (tools/sb-tui, #1272) is distributed as static, dependency-free binaries so an
+# operator who doesn't clone the repo can `curl … | sh` it (install-sb-tui.sh).
+#
+# This is intentionally a SEPARATE workflow from release.yml (the Docker image
+# publish): a failure here must never break image publishing, and vice versa.
+#
+# Trigger model mirrors release.yml: release-please publishes the GitHub Release
+# via GITHUB_TOKEN, and GitHub's anti-recursion rule means the `release:
+# published` event never fires another workflow run. So the real attach happens
+# on the `push` of the `chore(main): release` merge commit (package.json already
+# carries the new version at that point). `release`/`workflow_dispatch` are kept
+# for manual re-runs.
+name: Release binaries
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'tools/sb-tui/**'
+      - '.github/workflows/release-binaries.yml'
+      - 'install-sb-tui.sh'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Always cross-compile the full matrix (also on PRs that touch the launcher),
+  # so a build break in any target is caught before merge. Artifacts are handed
+  # to the publish job for release upload.
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - linux/amd64
+          - linux/arm64
+          - darwin/amd64
+          - darwin/arm64
+          - windows/amd64
+          - windows/arm64
+    defaults:
+      run:
+        working-directory: tools/sb-tui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: tools/sb-tui/go.sum
+      - name: Cross-compile sb-tui
+        run: |
+          os="${{ matrix.target }}"; os="${os%/*}"
+          arch="${{ matrix.target }}"; arch="${arch#*/}"
+          out="sb-tui-${os}-${arch}"
+          [ "$os" = windows ] && out="${out}.exe"
+          mkdir -p dist
+          echo "Building dist/${out} (GOOS=${os} GOARCH=${arch})"
+          CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+            go build -trimpath -ldflags "-s -w" -o "dist/${out}" .
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sb-tui-${{ matrix.target == 'windows/amd64' && 'windows-amd64' || matrix.target == 'windows/arm64' && 'windows-arm64' || matrix.target == 'darwin/amd64' && 'darwin-amd64' || matrix.target == 'darwin/arm64' && 'darwin-arm64' || matrix.target == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }}
+          path: tools/sb-tui/dist/*
+          if-no-files-found: error
+
+  # Attach the binaries to the GitHub Release on a release commit. Skipped on PRs
+  # and on ordinary pushes to main (the `if` gate below).
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.event_name == 'release'
+          || github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'push'
+              && github.ref == 'refs/heads/main'
+              && contains(github.event.head_commit.message, 'chore(main): release')) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve release tag from package.json
+        id: ver
+        run: |
+          VERSION=$(jq -r .version package.json)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=servicebay-v${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sb-tui-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum sb-tui-* > SHA256SUMS
+          ls -l
+      - name: Wait for the release to exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+          for i in $(seq 1 30); do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag is present."
+              exit 0
+            fi
+            echo "Waiting for release $tag to be created ($i/30)…"
+            sleep 10
+          done
+          echo "::error::Release $tag was not created within the timeout."
+          exit 1
+      - name: Upload binaries to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.ver.outputs.tag }}" dist/* --clobber

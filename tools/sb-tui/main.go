@@ -6,8 +6,9 @@
 // gone.
 //
 // Run from the repo: `go run ./tools/sb-tui` for the menu, or
-// `go run ./tools/sb-tui watch` to open the install-watch dashboard directly
-// (the distributable binary + curl|sh installer come in #1279).
+// `go run ./tools/sb-tui watch` to open the install-watch dashboard directly.
+// Operators who don't clone the repo install a cross-compiled binary via the
+// curl|sh installer (install-sb-tui.sh) — see .github/workflows/release-binaries.yml.
 package main
 
 import (
