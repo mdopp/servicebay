@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.47.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.46.2...servicebay-v4.47.0) (2026-05-29)
+
+
+### Features
+
+* **api:** scoped API tokens on REST + unify the token store ([a5f1c05](https://github.com/mdopp/servicebay/commit/a5f1c054e43cf2a0f504ff515c9080bde189d6ec))
+* **mcp:** add reboot_node tool with SSH fallback ([57cfa3e](https://github.com/mdopp/servicebay/commit/57cfa3eebf43e08bb0ff79059c104cae5a9aacfd))
+* **mcp:** add reboot_node tool with SSH fallback ([54e45b7](https://github.com/mdopp/servicebay/commit/54e45b7ab29060a78773b74a01d9664aea269585))
+* **mcp:** add verify_usb_boot reinstall-readiness check ([3cb7f1a](https://github.com/mdopp/servicebay/commit/3cb7f1abe6a20b8fa1484a7d9b6a33bc5ff42159))
+* **mcp:** add verify_usb_boot reinstall-readiness check ([06391b8](https://github.com/mdopp/servicebay/commit/06391b841f334732cd9367eeff5442cb661064dc))
+* **tui-go:** scaffold Go + Bubble Tea launcher with phase menu ([077c301](https://github.com/mdopp/servicebay/commit/077c3014d6ee5b881c1c3bf77202f1be8a3c3c26))
+* **tui-go:** scaffold Go + Bubble Tea launcher with phase menu ([cc857f2](https://github.com/mdopp/servicebay/commit/cc857f233aaaeb69dfab0dfd458acff2db5afd26))
+
+
+### Bug Fixes
+
+* **help:** dedupe and de-jargon the What's New changelog ([c583309](https://github.com/mdopp/servicebay/commit/c583309b1f4a325b93e332ceb6a8c784fdbdc594))
+* **help:** dedupe and de-jargon the What's New changelog ([528f0b5](https://github.com/mdopp/servicebay/commit/528f0b5aca84fe87b5e45e5c4b09ecb752f05a66))
+
 ## [4.46.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.46.1...servicebay-v4.46.2) (2026-05-28)
 
 
