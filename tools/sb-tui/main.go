@@ -136,7 +136,13 @@ func runWatch() int {
 		fmt.Fprintln(os.Stderr, "no target host — set SB_HOST (and SB_PORT), or build an ISO first so build/fcos/install-settings.env exists.")
 		return 2
 	}
-	final, err := tea.NewProgram(ui.NewWatch(t.Host, t.Port), tea.WithAltScreen()).Run()
+	return watchTarget(ui.NewWatch(t.Host, t.Port), t.Host, t.Port)
+}
+
+// watchTarget runs a watch dashboard model and prints the handoff banner on a
+// takeover exit. Shared by runWatch and the post-build reinstall continuation.
+func watchTarget(model ui.WatchModel, host, port string) int {
+	final, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -144,8 +150,8 @@ func runWatch() int {
 	if wm, ok := final.(ui.WatchModel); ok && wm.Takeover {
 		elapsed, reboots := wm.Stats()
 		fmt.Printf("\n→ ServiceBay wizard is live\n\n")
-		fmt.Printf("   Setup wizard:  http://%s:%s/setup\n", t.Host, t.Port)
-		fmt.Printf("   Dashboard:     http://%s:%s/\n\n", t.Host, t.Port)
+		fmt.Printf("   Setup wizard:  http://%s:%s/setup\n", host, port)
+		fmt.Printf("   Dashboard:     http://%s:%s/\n\n", host, port)
 		fmt.Printf("   Total: %s, %d reboot(s) observed.\n\n", watch.FmtDur(elapsed), reboots)
 	}
 	return 0
@@ -285,8 +291,27 @@ func main() {
 	// terminal), and Express's guided sequence.
 	switch {
 	case res.BuildPlan != nil:
-		os.Exit(runExecute(*res.BuildPlan))
+		os.Exit(runBuildThenWatch(*res.BuildPlan))
 	case res.Chosen == phase.Express:
 		os.Exit(runExpress())
 	}
+}
+
+// runBuildThenWatch runs a confirmed build Plan, then — instead of stopping —
+// keeps going: it tells the operator to boot the server from the USB and opens
+// the install-watch dashboard on the target box (offline → reboot → install →
+// live). Reinstall mode waits for the box to reboot first, so the still-running
+// old install isn't mistaken for the finished new one.
+func runBuildThenWatch(plan buildflow.Plan) int {
+	if code := runExecute(plan); code != 0 {
+		return code
+	}
+	host, port := plan.Settings.StaticIP, plan.Settings.ServicebayPort
+	if host == "" {
+		return 0 // nothing to watch (no target); build is done
+	}
+	fmt.Printf("\n→ USB is ready. Take it to the server and boot from it now.\n")
+	fmt.Printf("  Watching %s:%s — it'll show offline → reboot → install progress → live.\n", host, port)
+	fmt.Printf("  (Ctrl+C to stop watching; the install continues on the box regardless.)\n\n")
+	return watchTarget(ui.NewWatchReinstall(host, port), host, port)
 }
