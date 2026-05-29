@@ -69,7 +69,7 @@ const MUTATING_TOOLS = new Set([
   'run_backup', 'restore_backup',
   'update_config', 'exec_command', 'refresh_agent',
   'merge_unmanaged_bundle',
-  'set_boot_next_usb',
+  'set_boot_next_usb', 'reboot_node',
 ]);
 
 /**
@@ -110,7 +110,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   delete_service: 'destroy', delete_health_check: 'destroy',
   remove_proxy_route: 'destroy', restore_backup: 'destroy',
   purge_trashed_service: 'destroy',
-  set_boot_next_usb: 'destroy',
+  set_boot_next_usb: 'destroy', reboot_node: 'destroy',
   // exec (shell — own scope so tokens can grant config writes without it)
   exec_command: 'exec',
 };
@@ -1148,6 +1148,33 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
           success: true,
           bootNum: targetBootNum,
           message: reboot ? 'One-shot BootNext set. System is rebooting.' : 'One-shot BootNext set successfully.',
+        });
+      } catch (err: unknown) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // --- Reboot Node (#1235) ---
+  // Plain node reboot, distinct from set_boot_next_usb (no boot-order change).
+  // Gated under 'destroy' scope + allowMutations. Not in DESTRUCTIVE_TOOLS: a
+  // reboot doesn't mutate disk, so a pre-mutation snapshot would be wasted work
+  // and would delay the reboot. The agent layer falls back to a direct SSH
+  // reboot when the agent process itself is unreachable.
+  server.tool(
+    'reboot_node',
+    'Reboot a node now. Distinct from set_boot_next_usb — this does not change boot order. Falls back to a direct SSH reboot when the agent process is unreachable but the box is up.',
+    { node: nodeParam },
+    async ({ node }) => {
+      const nodeName = await resolveNode(node);
+      try {
+        const agent = agentManager.getAgent(nodeName);
+        const { via } = await agent.rebootNode();
+        return textResult({
+          success: true,
+          node: nodeName,
+          via,
+          message: `Reboot initiated on ${nodeName} (via ${via}). The node will be unreachable for a short while.`,
         });
       } catch (err: unknown) {
         return errorResult(err instanceof Error ? err.message : String(err));
