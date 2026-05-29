@@ -15,6 +15,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -71,6 +73,38 @@ func runWatch() int {
 	return 0
 }
 
+// runOpenBox prints the box's setup + dashboard URLs and best-effort opens the
+// dashboard in the operator's browser (#1272 menu action OpenBox).
+func runOpenBox() int {
+	t := probes.ResolveTarget()
+	if t.Host == "" {
+		fmt.Fprintln(os.Stderr, "no box target — set SB_HOST (and SB_PORT), or build an ISO first so build/fcos/install-settings.env exists.")
+		return 2
+	}
+	dashboard := fmt.Sprintf("http://%s:%s/", t.Host, t.Port)
+	fmt.Printf("\n→ ServiceBay\n\n")
+	fmt.Printf("   Dashboard:     %s\n", dashboard)
+	fmt.Printf("   Setup wizard:  http://%s:%s/setup\n\n", t.Host, t.Port)
+	openBrowser(dashboard)
+	return 0
+}
+
+// openBrowser best-effort launches the host's default browser; failures are
+// ignored (the URLs are already printed for the operator to copy).
+func openBrowser(url string) {
+	var name string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		name, args = "open", []string{url}
+	case "windows":
+		name, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
+	default:
+		name, args = "xdg-open", []string{url}
+	}
+	_ = exec.Command(name, args...).Start()
+}
+
 func main() {
 	// Subcommands skip the menu and run one leg directly. `watch` is used by the
 	// install scripts' auto-launch; `build` runs the native ISO-build wizard
@@ -84,7 +118,9 @@ func main() {
 		}
 	}
 
-	final, err := tea.NewProgram(ui.New(detect)).Run()
+	// Full-screen (alt-screen): the launcher owns the terminal like a real
+	// installer rather than scrolling inline.
+	final, err := tea.NewProgram(ui.New(detect), tea.WithAltScreen()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -99,5 +135,7 @@ func main() {
 		os.Exit(runBuild())
 	case phase.WatchInstall:
 		os.Exit(runWatch())
+	case phase.OpenBox:
+		os.Exit(runOpenBox())
 	}
 }

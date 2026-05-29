@@ -1,15 +1,18 @@
 // Package ui is the Bubble Tea presentation layer for the launcher (#1273,
 // porting packages/tui/src/App.tsx). Thin over the phase package: detect the
 // phase, render the relevant actions, and report a terminal choice (build /
-// watch) back to the entrypoint, which hands off. Quit + Refresh are handled
-// here.
+// watch / open-box) back to the entrypoint, which hands off. Quit + Refresh
+// are handled here. Runs full-screen (alt-screen) so it owns the terminal like
+// a real installer.
 package ui
 
 import (
-	"context"
 	"strings"
 
+	"context"
+
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"servicebay-tui/internal/phase"
 )
@@ -20,14 +23,28 @@ type DetectFunc func(context.Context) (isoBuilt bool, status phase.BoxStatus)
 
 type phaseMsg struct{ state phase.State }
 
+var (
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("231")).
+			Background(lipgloss.Color("63")).
+			Padding(0, 1)
+	phaseStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).MarginTop(1)
+	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("63"))
+	normalStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	detailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).MarginLeft(4).MarginTop(1)
+	footerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MarginTop(1)
+)
+
 // Model is the Bubble Tea model for the launcher menu.
 type Model struct {
-	detect  DetectFunc
-	state   *phase.State
-	actions []phase.Action
-	cursor  int
-	// Chosen is set to a handoff action (build/watch) when the operator picks
-	// one; the entrypoint reads it after the program exits.
+	detect        DetectFunc
+	state         *phase.State
+	actions       []phase.Action
+	cursor        int
+	width, height int
+	// Chosen is set to a handoff action (build/watch/open-box) when the operator
+	// picks one; the entrypoint reads it after the program exits.
 	Chosen phase.ActionID
 }
 
@@ -52,6 +69,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = &s
 		m.actions = phase.ActionsFor(s)
 		m.cursor = 0
+		return m, nil
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
@@ -82,22 +103,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the menu.
+// View renders the full-screen menu.
 func (m Model) View() string {
+	width := m.width
+	if width <= 0 {
+		width = 72
+	}
+	title := titleStyle.Width(width).Render("ServiceBay  ·  lifecycle launcher")
+
 	var b strings.Builder
-	b.WriteString("ServiceBay — lifecycle launcher\n\n")
+	b.WriteString(title + "\n")
 	if m.state == nil {
-		b.WriteString("Detecting phase…\n")
-		return b.String()
+		b.WriteString(phaseStyle.Render("Detecting box + ISO state…"))
+		return frame(b.String(), m.width, m.height)
 	}
-	b.WriteString(phase.Describe(*m.state) + "\n\n")
+	b.WriteString(phaseStyle.Render(phase.Describe(*m.state)) + "\n\n")
+
 	for i, a := range m.actions {
-		marker := "  "
 		if i == m.cursor {
-			marker = "❯ "
+			b.WriteString(selectedStyle.Render("❯ "+a.Label) + "\n")
+		} else {
+			b.WriteString(normalStyle.Render("  "+a.Label) + "\n")
 		}
-		b.WriteString(marker + a.Label + "\n")
 	}
-	b.WriteString("\n↑/↓ to move · Enter to select · Ctrl+C to quit\n")
-	return b.String()
+
+	if m.cursor < len(m.actions) {
+		b.WriteString(detailStyle.Render(m.actions[m.cursor].Detail) + "\n")
+	}
+	b.WriteString(footerStyle.Render("↑/↓ move · enter select · ctrl+c quit"))
+	return frame(b.String(), m.width, m.height)
+}
+
+// frame pins the content to the top-left of the alt-screen so the launcher
+// fills the terminal rather than floating mid-scroll.
+func frame(content string, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return content
+	}
+	return lipgloss.NewStyle().Width(width).Height(height).Render(content)
 }
