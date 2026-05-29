@@ -112,26 +112,34 @@ export async function createLldapUser(input: CreateUserInput): Promise<LldapCrea
       }),
       signal: AbortSignal.timeout(GRAPHQL_TIMEOUT_MS),
     });
-    const data = await res.json().catch(() => ({})) as {
-      data?: { createUser?: { id: string; displayName?: string } };
-      errors?: Array<{ message?: string }>;
-    };
-    if (data.errors?.length) {
-      const msg = data.errors[0]?.message ?? 'Unknown LLDAP error.';
-      const lower = msg.toLowerCase();
-      if (lower.includes('already exists') || lower.includes('duplicate')) {
-        return { ok: false, reason: 'username_taken', message: `The username "${input.id}" is already in use in LLDAP.` };
-      }
-      return { ok: false, reason: 'graphql_error', message: msg };
-    }
-    const created = data.data?.createUser;
-    if (!created) {
-      return { ok: false, reason: 'graphql_error', message: 'LLDAP response did not include the created user.' };
-    }
-    return { ok: true, userId: created.id, displayName: created.displayName ?? input.displayName ?? input.id };
+    const data = await res.json().catch(() => ({})) as CreateUserResponse;
+    return classifyCreateUserResponse(data, input);
   } catch (e) {
     return { ok: false, reason: 'network_error', message: e instanceof Error ? e.message : 'Network error talking to LLDAP.' };
   }
+}
+
+interface CreateUserResponse {
+  data?: { createUser?: { id: string; displayName?: string } };
+  errors?: Array<{ message?: string }>;
+}
+
+/** Map a GraphQL createUser response to the discriminated result. Split out of
+ *  createLldapUser to keep that function under the complexity budget. */
+function classifyCreateUserResponse(data: CreateUserResponse, input: CreateUserInput): LldapCreateUserResult {
+  if (data.errors?.length) {
+    const msg = data.errors[0]?.message ?? 'Unknown LLDAP error.';
+    const lower = msg.toLowerCase();
+    if (lower.includes('already exists') || lower.includes('duplicate')) {
+      return { ok: false, reason: 'username_taken', message: `The username "${input.id}" is already in use in LLDAP.` };
+    }
+    return { ok: false, reason: 'graphql_error', message: msg };
+  }
+  const created = data.data?.createUser;
+  if (!created) {
+    return { ok: false, reason: 'graphql_error', message: 'LLDAP response did not include the created user.' };
+  }
+  return { ok: true, userId: created.id, displayName: created.displayName ?? input.displayName ?? input.id };
 }
 
 export interface LldapUser {
