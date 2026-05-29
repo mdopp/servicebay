@@ -6,6 +6,8 @@
 package ui
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,6 +28,9 @@ type WatchModel struct {
 	// REINSTALL, the box is currently up (old install) and we must wait for it to
 	// reboot into the installer before "the app is serving" means the new box.
 	requireReboot bool
+	// live is set once the box is up — the dashboard switches to the "✓ live"
+	// landing and stops polling, staying until the operator leaves.
+	live bool
 	// Takeover is set when the box's real app replaced the splash; the
 	// entrypoint reads it after the program exits to print the handoff banner.
 	Takeover bool
@@ -77,12 +82,12 @@ func (m WatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// rebooted (≥1 observed reboot) — otherwise the still-running old install
 		// would be mistaken for the finished new one before the USB even boots.
 		if msg.takeover && (!m.requireReboot || m.tracker.Reboots >= 1) {
-			// Box is up — leave the dashboard. Hosted by App this pops back to
-			// the menu (which re-detects → now a manageable box); standalone
-			// (`sb-tui watch`) the model's own backMsg case quits and main
-			// prints the handoff banner.
+			// Box is up — stop polling and show a "live" screen. The operator
+			// stays here until they press q/esc (then App pops to the menu, or a
+			// standalone watch quits). It no longer auto-exits to the shell.
 			m.Takeover = true
-			return m, backCmd()
+			m.live = true
+			return m, nil
 		}
 		return m, tea.Tick(watchInterval, func(time.Time) tea.Msg { return scheduledPoll{} })
 	case scheduledPoll:
@@ -103,9 +108,25 @@ func (m WatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the dashboard.
+// View renders the live dashboard, or the "✓ live" landing once the box is up.
 func (m WatchModel) View() string {
+	if m.live {
+		return frame(liveView(m.host, m.port, m.tracker), m.width, 0)
+	}
 	return watch.Render(m.host, m.port, m.tracker, m.last, m.now, m.width)
+}
+
+// liveView is the post-takeover landing: the box is up, the install is done,
+// and the operator decides when to leave.
+func liveView(host, port string, t *watch.Tracker) string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("ServiceBay  ·  install complete") + "\n\n")
+	b.WriteString(cfgOKStyle.Render("  ✓ ServiceBay is live") + "\n\n")
+	b.WriteString(normalStyle.Render("  Dashboard:    ") + cfgValueStyle.Render("http://"+host+":"+port+"/") + "\n")
+	b.WriteString(normalStyle.Render("  Setup wizard: ") + cfgValueStyle.Render("http://"+host+":"+port+"/setup") + "\n\n")
+	b.WriteString(detailStyle.Render(fmt.Sprintf("Observed %d reboot(s).", t.Reboots)) + "\n")
+	b.WriteString("\n" + footerStyle.Render("q/esc — back to menu"))
+	return b.String()
 }
 
 // Stats returns elapsed time and observed reboots for the handoff banner.

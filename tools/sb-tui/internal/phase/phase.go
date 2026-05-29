@@ -57,6 +57,7 @@ const (
 	EditConfig    ActionID = "edit-config"
 	InstallStacks ActionID = "install-stacks"
 	Backups       ActionID = "backups"
+	BootFromUSB   ActionID = "boot-from-usb"
 	Quit          ActionID = "quit"
 )
 
@@ -85,6 +86,12 @@ var installStacksAction = Action{InstallStacks, "Install stacks (in-TUI)",
 // is reachable; restore is confirmation-gated in the panel.
 var backupsAction = Action{Backups, "Backups (in-TUI)",
 	"List, create, and restore the box's system backups over the REST API."}
+
+// bootFromUSBAction reinstalls a reachable box: with the freshly-built USB
+// plugged into the server, sign in and set a one-shot UEFI boot to the USB +
+// reboot, so the next boot installs from it instead of the existing disk.
+var bootFromUSBAction = Action{BootFromUSB, "Boot box from USB (reinstall)",
+	"With the new USB plugged into the server: set it to boot from USB once and reboot, then watch the reinstall."}
 
 // Action is one selectable menu entry: a short Label plus a one-line Detail
 // rendered with the selection so the operator always knows what each does.
@@ -137,6 +144,7 @@ func ActionsFor(s State) []Action {
 			editConfigAction,
 			installStacksAction,
 			backupsAction,
+			bootFromUSBAction,
 			buildAction(s))
 	case Ready:
 		// Box is fully up — manage it in-TUI, or reinstall. No Watch (nothing to
@@ -145,6 +153,7 @@ func ActionsFor(s State) []Action {
 			editConfigAction,
 			installStacksAction,
 			backupsAction,
+			bootFromUSBAction,
 			buildAction(s))
 	}
 	// Quit closes the launcher. Status auto-refreshes on a timer, so there's no
