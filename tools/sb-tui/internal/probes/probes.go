@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
+	"servicebay-tui/internal/build"
 	"servicebay-tui/internal/phase"
 )
 
@@ -49,11 +49,6 @@ func ISOBuilt() bool {
 	return false
 }
 
-var (
-	reStaticIP = regexp.MustCompile(`(?m)^STATIC_IP=(.*)$`)
-	rePort     = regexp.MustCompile(`(?m)^SERVICEBAY_PORT=(.*)$`)
-)
-
 // Target is the resolved box address.
 type Target struct {
 	Host string
@@ -61,26 +56,23 @@ type Target struct {
 }
 
 // ResolveTarget picks the box address: explicit SB_HOST/SB_PORT env wins, else
-// the values parsed from install-settings.env, else the default port. Host is
-// "" when unknown.
+// the values from install-settings.env (parsed via the build-leg settings
+// model, #1289), else the default port. Host is "" when unknown.
 func ResolveTarget() Target {
 	host, port := os.Getenv("SB_HOST"), os.Getenv("SB_PORT")
 	if host == "" || port == "" {
-		if raw, err := os.ReadFile(settingsFile()); err == nil {
+		if s, err := build.Load(settingsFile()); err == nil {
+			fileHost, filePort := s.Target()
 			if host == "" {
-				if m := reStaticIP.FindSubmatch(raw); m != nil {
-					host = strings.TrimSpace(string(m[1]))
-				}
+				host = strings.TrimSpace(fileHost)
 			}
 			if port == "" {
-				if m := rePort.FindSubmatch(raw); m != nil {
-					port = strings.TrimSpace(string(m[1]))
-				}
+				port = strings.TrimSpace(filePort)
 			}
 		}
 	}
 	if port == "" {
-		port = "5888"
+		port = build.DefaultPort
 	}
 	return Target{Host: host, Port: port}
 }
