@@ -826,6 +826,25 @@ export class DigitalTwinStore {
           return cached.ports;
       }
 
+      const ports = this.collectStaticPortsFromUnitFiles(kubeEntry, containerEntry, node.files, service.name, nodeIPs);
+      this.staticPortsCache.set(baseName, { contentKey, ports });
+      return ports;
+  }
+
+  /**
+   * Parse the `.kube`/`.container` unit files into a port list. Split out
+   * of `extractStaticPortsForService` so that method stays a thin
+   * guard + cache + delegate (its complexity was over budget); the
+   * file-format branches live here. Kube ports take precedence: if the
+   * kube YAML yields any port the container file is not consulted.
+   */
+  private collectStaticPortsFromUnitFiles(
+      kubeEntry: [string, WatchedFile] | undefined,
+      containerEntry: [string, WatchedFile] | undefined,
+      files: Record<string, WatchedFile>,
+      serviceName: string | undefined,
+      nodeIPs: string[],
+  ): PortMapping[] {
       const ports: PortMapping[] = [];
       const pushPort = (hostPort?: number, containerPort?: number, protocol?: string, hostIp?: string) => {
           const normalizedContainer = containerPort ?? hostPort;
@@ -839,18 +858,14 @@ export class DigitalTwinStore {
           });
       };
 
-      const files = node.files;
       if (kubeEntry) {
           const [kubePath, kubeFile] = kubeEntry;
           const match = kubeFile.content?.match(/^Yaml=(.+)$/m);
           if (match) {
               const yamlContent = this.getYamlContent(files, kubePath, match[1].trim());
-              if (yamlContent) extractPortsFromKubeYaml(yamlContent, service.name, pushPort);
+              if (yamlContent) extractPortsFromKubeYaml(yamlContent, serviceName, pushPort);
           }
-          if (ports.length > 0) {
-              this.staticPortsCache.set(baseName, { contentKey, ports });
-              return ports;
-          }
+          if (ports.length > 0) return ports;
       }
 
       if (containerEntry) {
@@ -860,7 +875,6 @@ export class DigitalTwinStore {
           }
       }
 
-      this.staticPortsCache.set(baseName, { contentKey, ports });
       return ports;
   }
 
