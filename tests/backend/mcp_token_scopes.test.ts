@@ -29,6 +29,10 @@ describe('MCP scope mapping (#591)', () => {
     expect(TOOL_SCOPES.set_boot_next_usb).toBe('destroy');
   });
 
+  it('reboot_node is destroy (#1235)', () => {
+    expect(TOOL_SCOPES.reboot_node).toBe('destroy');
+  });
+
   it('every entry uses one of the five known scopes', () => {
     const known: ReadonlySet<ApiScope> = new Set<ApiScope>(['read', 'lifecycle', 'mutate', 'destroy', 'exec']);
     for (const [tool, scope] of Object.entries(TOOL_SCOPES)) {

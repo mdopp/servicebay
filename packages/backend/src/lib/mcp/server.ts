@@ -32,6 +32,7 @@ import { recordAudit } from './audit';
 import { notifyDestructiveOp } from './notify';
 import { redactLogText, redactServiceFiles } from './redact';
 import type { ApiScope } from '@/lib/auth/apiScope';
+import { parseEfibootmgr, assessUsbBootReadiness } from './efibootmgr';
 
 interface McpAuthContext {
   user: string;
@@ -69,7 +70,7 @@ const MUTATING_TOOLS = new Set([
   'run_backup', 'restore_backup',
   'update_config', 'exec_command', 'refresh_agent',
   'merge_unmanaged_bundle',
-  'set_boot_next_usb',
+  'set_boot_next_usb', 'reboot_node',
 ]);
 
 /**
@@ -93,6 +94,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_gateway_status: 'read', get_proxy_routes: 'read', get_config: 'read',
   get_podman_logs: 'read', list_system_services: 'read',
   list_backups: 'read', diagnose: 'read', verify_node_connection: 'read',
+  verify_usb_boot: 'read',
   list_trashed_services: 'read',
   get_unmanaged_bundles: 'read',
   // lifecycle
@@ -110,7 +112,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   delete_service: 'destroy', delete_health_check: 'destroy',
   remove_proxy_route: 'destroy', restore_backup: 'destroy',
   purge_trashed_service: 'destroy',
-  set_boot_next_usb: 'destroy',
+  set_boot_next_usb: 'destroy', reboot_node: 'destroy',
   // exec (shell — own scope so tokens can grant config writes without it)
   exec_command: 'exec',
 };
@@ -1068,43 +1070,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
           if (res.code !== 0) {
             return errorResult('Failed to query efibootmgr');
           }
-          const stdout = res.stdout ?? '';
-          const entries: Array<{ bootNum: string; name: string; active: boolean; description: string; current: boolean }> = [];
-          const lines = stdout.split('\n');
-          let bootNext: string | null = null;
-          let bootCurrent: string | null = null;
-          let bootOrder: string[] = [];
-          
-          for (const line of lines) {
-            if (line.startsWith('BootNext:')) {
-              bootNext = line.replace('BootNext:', '').trim();
-            } else if (line.startsWith('BootCurrent:')) {
-              bootCurrent = line.replace('BootCurrent:', '').trim();
-            } else if (line.startsWith('BootOrder:')) {
-              bootOrder = line.replace('BootOrder:', '').trim().split(',');
-            } else if (line.startsWith('Boot')) {
-              const match = line.match(/^Boot([0-9A-Fa-f]+)(\*?)\s+(.+)$/);
-              if (match) {
-                const num = match[1];
-                const active = match[2] === '*';
-                const description = match[3];
-                entries.push({
-                  bootNum: num,
-                  name: description.split('\t')[0] || description,
-                  active,
-                  description,
-                  current: bootCurrent === num,
-                });
-              }
-            }
-          }
-          const candidates = entries.filter(e => 
-            e.description.toLowerCase().includes('usb') || 
-            e.description.toLowerCase().includes('removable') ||
-            e.description.toLowerCase().includes('disk') ||
-            e.description.includes('\\EFI\\boot\\')
-          );
-          return textResult({ entries, candidates, bootNext, bootCurrent, bootOrder });
+          return textResult(parseEfibootmgr(res.stdout ?? ''));
         }
         
         // action === 'set'
@@ -1148,6 +1114,67 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
           success: true,
           bootNum: targetBootNum,
           message: reboot ? 'One-shot BootNext set. System is rebooting.' : 'One-shot BootNext set successfully.',
+        });
+      } catch (err: unknown) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // --- Verify USB boot reinstall-readiness (#1236) ---
+  // Read-only: reports whether the firmware has an active USB/removable UEFI
+  // entry to boot from, so the launcher (#1231) can confirm "reinstall-ready"
+  // (and surface a fix when it isn't) BEFORE setting BootNext + rebooting.
+  server.tool(
+    'verify_usb_boot',
+    'Check whether the node can boot from USB for a reinstall: reports if an active USB/removable UEFI boot entry exists, with a fix hint when it does not. Read-only; does not change boot order.',
+    { node: nodeParam },
+    async ({ node }) => {
+      const nodeName = await resolveNode(node);
+      try {
+        const agent = agentManager.getAgent(nodeName);
+        const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -v' }) as { code?: number; stdout?: string };
+        if (res.code !== 0) {
+          return errorResult('Failed to query efibootmgr (is this a UEFI node with efibootmgr installed?)');
+        }
+        const parsed = parseEfibootmgr(res.stdout ?? '');
+        const readiness = assessUsbBootReadiness(parsed);
+        return textResult({
+          node: nodeName,
+          reinstallReady: readiness.reinstallReady,
+          activeUsbEntries: readiness.activeUsbEntries,
+          usbCandidates: readiness.usbCandidates,
+          bootNext: parsed.bootNext,
+          bootCurrent: parsed.bootCurrent,
+          bootOrder: parsed.bootOrder,
+          ...(readiness.hint ? { hint: readiness.hint } : {}),
+        });
+      } catch (err: unknown) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // --- Reboot Node (#1235) ---
+  // Plain node reboot, distinct from set_boot_next_usb (no boot-order change).
+  // Gated under 'destroy' scope + allowMutations. Not in DESTRUCTIVE_TOOLS: a
+  // reboot doesn't mutate disk, so a pre-mutation snapshot would be wasted work
+  // and would delay the reboot. The agent layer falls back to a direct SSH
+  // reboot when the agent process itself is unreachable.
+  server.tool(
+    'reboot_node',
+    'Reboot a node now. Distinct from set_boot_next_usb — this does not change boot order. Falls back to a direct SSH reboot when the agent process is unreachable but the box is up.',
+    { node: nodeParam },
+    async ({ node }) => {
+      const nodeName = await resolveNode(node);
+      try {
+        const agent = agentManager.getAgent(nodeName);
+        const { via } = await agent.rebootNode();
+        return textResult({
+          success: true,
+          node: nodeName,
+          via,
+          message: `Reboot initiated on ${nodeName} (via ${via}). The node will be unreachable for a short while.`,
         });
       } catch (err: unknown) {
         return errorResult(err instanceof Error ? err.message : String(err));
