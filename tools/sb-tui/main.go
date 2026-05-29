@@ -310,8 +310,13 @@ func runBuildThenWatch(plan buildflow.Plan) int {
 	if host == "" {
 		return 0 // nothing to watch (no target); build is done
 	}
-	fmt.Printf("\n→ USB is ready. Take it to the server and boot from it now.\n")
-	fmt.Printf("  Watching %s:%s — it'll show offline → reboot → install progress → live.\n", host, port)
-	fmt.Printf("  (Ctrl+C to stop watching; the install continues on the box regardless.)\n\n")
+	fmt.Printf("\n→ USB is ready. Now make the SERVER boot FROM this USB stick:\n\n")
+	fmt.Printf("   1. Plug the USB into the server.\n")
+	fmt.Printf("   2. Boot it FROM the USB — pick the stick in the firmware boot menu\n")
+	fmt.Printf("      (often F12/F11/Esc right after power-on), or set USB first in BIOS\n")
+	fmt.Printf("      boot order. A plain reboot just boots the existing install again.\n")
+	fmt.Printf("      (On a running ServiceBay box you can instead use Settings → Boot →\n")
+	fmt.Printf("       \"boot from USB next\", which sets a one-shot UEFI entry and reboots.)\n\n")
+	fmt.Printf("   Watching %s:%s — offline → reboot → install → live. Ctrl+C to stop.\n\n", host, port)
 	return watchTarget(ui.NewWatchReinstall(host, port), host, port)
 }
