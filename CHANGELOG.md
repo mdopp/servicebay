@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.48.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.47.0...servicebay-v4.48.0) (2026-05-29)
+
+
+### Features
+
+* **install:** auto-generate ServiceBay-owned bootstrap secrets ([8d57ce8](https://github.com/mdopp/servicebay/commit/8d57ce8aeea40a012f994a7bd9f8e7d908526c05))
+* **install:** auto-generate ServiceBay-owned bootstrap secrets ([6b10d64](https://github.com/mdopp/servicebay/commit/6b10d64552dab9f6f41dd59ff2d4666aaf74dd83))
+* **tui-go:** build-leg install-settings model ([ff08a21](https://github.com/mdopp/servicebay/commit/ff08a21fa99d809f103f9c0450c3f2feaf59068e))
+* **tui-go:** build-leg install-settings model ([8d4d255](https://github.com/mdopp/servicebay/commit/8d4d2555dd003acc4baa15a31762266e50b2446c))
+* **tui-go:** native install-watch dashboard, remove install-tui.sh ([e2b1869](https://github.com/mdopp/servicebay/commit/e2b1869b7b10fae6ac07bcca042a6f0b94a5ba90))
+* **tui-go:** native install-watch dashboard, remove install-tui.sh ([d8b7192](https://github.com/mdopp/servicebay/commit/d8b71927afd1ceaf6f377098b3fb15dc5961ac60))
+
 ## [4.47.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.46.2...servicebay-v4.47.0) (2026-05-29)
 
 
