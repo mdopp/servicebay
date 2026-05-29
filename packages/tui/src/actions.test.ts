@@ -14,9 +14,10 @@ describe('command builders', () => {
     expect(cmd.args).toEqual(['/repo/install-fedora-coreos.sh']);
   });
 
-  it('installWatchCommand shells out to scripts/install-tui.sh', () => {
+  it('installWatchCommand hands off to the native Go launcher watch subcommand', () => {
     const cmd = installWatchCommand('/repo');
-    expect(cmd.args).toEqual(['/repo/scripts/install-tui.sh']);
+    expect(cmd.cmd).toBe('go');
+    expect(cmd.args).toEqual(['run', '/repo/tools/sb-tui', 'watch']);
   });
 });
 
