@@ -60,19 +60,27 @@ func (m WatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tracker.Apply(msg.probe, msg.at)
 		m.last = msg.probe
 		if msg.takeover {
+			// Box is up — leave the dashboard. Hosted by App this pops back to
+			// the menu (which re-detects → now a manageable box); standalone
+			// (`sb-tui watch`) the model's own backMsg case quits and main
+			// prints the handoff banner.
 			m.Takeover = true
-			return m, tea.Quit
+			return m, backCmd()
 		}
 		return m, tea.Tick(watchInterval, func(time.Time) tea.Msg { return scheduledPoll{} })
 	case scheduledPoll:
 		return m, m.pollCmd()
+	case backMsg:
+		return m, tea.Quit // standalone-only; App intercepts when hosted
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "q", "esc":
+			return m, backCmd()
 		}
 	}
 	return m, nil

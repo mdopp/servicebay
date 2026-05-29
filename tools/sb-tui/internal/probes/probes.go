@@ -114,8 +114,12 @@ func tokenPath(host string) string {
 
 // BoxStatus probes /api/install/status (unauthed). Unreachable host or any
 // transport error reads as not-reachable; a non-2xx reads as reachable but
-// not-done. wizardDone mirrors the Ink probe: no active job and no pending
-// stack setup.
+// not-done. WizardDone means "the box is up and manageable" — the app is
+// serving and no install job is ACTIVELY running. A box that booted fine but
+// hasn't had its stacks set up yet (stackSetupPending) is still up/manageable:
+// installing stacks is a management action (the in-TUI Install panel), not a
+// reason to push the operator at the watch dashboard. Only an active install
+// job keeps the launcher in the "watch" phase.
 func BoxStatus(ctx context.Context) phase.BoxStatus {
 	t := ResolveTarget()
 	if t.Host == "" {
@@ -136,13 +140,13 @@ func BoxStatus(ctx context.Context) phase.BoxStatus {
 		return phase.BoxStatus{Reachable: true}
 	}
 	var body struct {
-		JobIsActive       *bool `json:"jobIsActive"`
-		StackSetupPending *bool `json:"stackSetupPending"`
+		JobIsActive *bool `json:"jobIsActive"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return phase.BoxStatus{Reachable: true}
 	}
-	done := body.JobIsActive != nil && !*body.JobIsActive &&
-		body.StackSetupPending != nil && !*body.StackSetupPending
+	// Up/manageable unless an install job is actively running. Absent field
+	// (app serving, nothing installing) counts as up.
+	done := body.JobIsActive == nil || !*body.JobIsActive
 	return phase.BoxStatus{Reachable: true, WizardDone: done}
 }

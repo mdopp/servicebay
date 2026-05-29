@@ -111,21 +111,30 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// route handles a menu selection: box-control views open in-app (after login if
-// needed); bootstrap/watch legs quit the App for the entrypoint to run.
+// route handles a menu selection. Box-control panels open in-app (after login
+// if needed); watch + open-box open in-app too (no auth) and return to the
+// menu; only the build/express bootstrap legs quit the App for the entrypoint,
+// since build is an interactive stdin wizard whose USB flash needs a real TTY.
 func (m App) route(id phase.ActionID) (tea.Model, tea.Cmd) {
 	switch id {
 	case phase.EditConfig, phase.InstallStacks, phase.Backups:
 		if m.token == "" {
 			m.pending = id
 			m.screen = appLogin
-			login := NewLogin(m.host, m.port)
-			m.active = login
+			m.active = NewLogin(m.host, m.port)
 			return m, sizeCmd(m.width, m.height)
 		}
 		return m.openPanel(id)
+	case phase.WatchInstall:
+		m.active = NewWatch(m.host, m.port)
+		m.screen = appPanel
+		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
+	case phase.OpenBox:
+		m.active = NewOpen(m.host, m.port)
+		m.screen = appPanel
+		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
 	default:
-		// build / express / watch / open-box — hand back to the entrypoint.
+		// build / express — hand back to the entrypoint.
 		m.Chosen = id
 		return m, tea.Quit
 	}
