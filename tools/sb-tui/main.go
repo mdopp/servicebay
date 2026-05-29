@@ -16,14 +16,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"servicebay-tui/internal/build"
 	"servicebay-tui/internal/buildflow"
+	"servicebay-tui/internal/iso"
 	"servicebay-tui/internal/phase"
 	"servicebay-tui/internal/probes"
 	"servicebay-tui/internal/rest"
 	"servicebay-tui/internal/ui"
+	"servicebay-tui/internal/usb"
 	"servicebay-tui/internal/watch"
 )
 
@@ -31,17 +35,42 @@ func detect(ctx context.Context) (bool, phase.BoxStatus) {
 	return probes.ISOBuilt(), probes.BoxStatus(ctx)
 }
 
-// runBuild runs the native interactive ISO-build wizard (#1295). Build-host
-// tools (butane, coreos-installer, openssl, ssh-keygen) must be on PATH; the
-// wizard surfaces a clear error if a step can't find one.
+// runBuild runs the native ISO-build wizard (#1233): a full-screen Bubble Tea
+// form gathers a build Plan, then buildflow.Execute runs the operations in the
+// normal terminal (the bake streams output and the USB flash needs sudo + a
+// real TTY, so they run after the alt-screen form exits). Build-host tools
+// (butane, coreos-installer, openssl, ssh-keygen) must be on PATH.
 func runBuild() int {
 	if missing := buildflow.MissingTools(); len(missing) > 0 {
 		fmt.Fprintf(os.Stderr, "Cannot build an ISO — missing build-host tools: %v\n", missing)
 		fmt.Fprintln(os.Stderr, "Install them and retry (Fedora: sudo dnf install butane coreos-installer openssl openssh).")
 		return 2
 	}
-	p := buildflow.NewIOPrompter(os.Stdin, os.Stdout)
-	if err := buildflow.Run(p, buildflow.Options{BuildDir: probes.BuildDir(), Deps: buildflow.DefaultDeps()}); err != nil {
+	buildDir := probes.BuildDir()
+	saved, _ := build.Load(filepath.Join(buildDir, "install-settings.env"))
+	deps := ui.BuildDeps{
+		Images: func() ([]iso.Choice, int) {
+			host := iso.HostArch()
+			local := iso.ListLocalISOs(buildflow.ISOSearchDirs(buildDir))
+			remote := iso.FetchAllStreams(context.Background())
+			ch := iso.BuildChoices(local, remote, host)
+			return ch, iso.DefaultChoiceIndex(ch, host)
+		},
+		USB: usb.Enumerate,
+	}
+
+	final, err := tea.NewProgram(ui.NewBuildForm(buildflow.WithDefaults(saved), deps), tea.WithAltScreen()).Run()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	bf, ok := final.(ui.BuildFormModel)
+	if !ok || !bf.Confirmed {
+		return 0 // operator cancelled the wizard
+	}
+
+	if err := buildflow.Execute(bf.Plan(), buildflow.Options{BuildDir: buildDir, Deps: buildflow.DefaultDeps()},
+		func(f string, a ...any) { fmt.Printf(f, a...) }); err != nil {
 		fmt.Fprintln(os.Stderr, "build failed:", err)
 		return 1
 	}
