@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.51.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.50.1...servicebay-v4.51.0) (2026-05-29)
+
+
+### Features
+
+* **tui-go:** USB device enumeration and ISO flash ([5ec7d73](https://github.com/mdopp/servicebay/commit/5ec7d73ec55e60bb0869992e80f683b1ede77e9d))
+
 ## [4.50.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.50.0...servicebay-v4.50.1) (2026-05-29)
 
 
