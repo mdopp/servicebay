@@ -81,4 +81,16 @@ case ":${PATH}:" in
   *) echo "Note: ${INSTALL_DIR} is not on your PATH — add it:" >&2
      echo "  export PATH=\"${INSTALL_DIR}:\$PATH\"" >&2 ;;
 esac
-echo "Run '${BIN}' to open the ServiceBay lifecycle launcher."
+
+# Launch the launcher straight away. Even via `curl … | sh` (stdin is the
+# piped script, not a keyboard) the controlling terminal is still reachable at
+# /dev/tty, so hand it to the TUI. SB_TUI_NO_LAUNCH=1 opts out (CI / scripted
+# installs); if there's no tty we just print the run hint.
+if [ "${SB_TUI_NO_LAUNCH:-}" = "1" ]; then
+  echo "Run '${BIN}' to open the ServiceBay lifecycle launcher."
+elif [ -r /dev/tty ] && [ -w /dev/tty ]; then
+  echo "Launching the ServiceBay lifecycle launcher…"
+  exec "$dest" < /dev/tty > /dev/tty 2>&1
+else
+  echo "Run '${BIN}' to open the ServiceBay lifecycle launcher."
+fi

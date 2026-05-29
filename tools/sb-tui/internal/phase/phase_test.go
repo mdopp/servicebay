@@ -53,13 +53,29 @@ func TestActionsFor(t *testing.T) {
 	if got := ids(ActionsFor(Detect(true, BoxStatus{}))); !eq(got, []ActionID{BuildISO, WatchInstall, Refresh, Quit}) {
 		t.Fatalf("iso-ready actions = %v", got)
 	}
-	// installing: watch only
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{WatchInstall, Refresh, Quit}) {
+	// installing: watch + open-box + reinstall, then refresh/quit
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{WatchInstall, OpenBox, BuildISO, Refresh, Quit}) {
 		t.Fatalf("installing actions = %v", got)
 	}
-	// ready: watch (reinstall)
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{WatchInstall, Refresh, Quit}) {
+	// ready: open-box + watch + reinstall, then refresh/quit
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{OpenBox, WatchInstall, BuildISO, Refresh, Quit}) {
 		t.Fatalf("ready actions = %v", got)
+	}
+}
+
+func TestEveryActionHasLabelAndDetail(t *testing.T) {
+	phases := []State{
+		Detect(false, BoxStatus{}),
+		Detect(true, BoxStatus{}),
+		Detect(true, BoxStatus{Reachable: true}),
+		Detect(true, BoxStatus{Reachable: true, WizardDone: true}),
+	}
+	for _, s := range phases {
+		for _, a := range ActionsFor(s) {
+			if a.Label == "" || a.Detail == "" {
+				t.Fatalf("phase %q action %q missing label/detail", s.Phase, a.ID)
+			}
+		}
 	}
 }
 

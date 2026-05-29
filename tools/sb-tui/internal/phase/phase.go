@@ -53,41 +53,71 @@ type ActionID string
 const (
 	BuildISO     ActionID = "build-iso"
 	WatchInstall ActionID = "watch-install"
+	OpenBox      ActionID = "open-box"
 	Refresh      ActionID = "refresh"
 	Quit         ActionID = "quit"
 )
 
-// Action is one selectable menu entry.
+// Action is one selectable menu entry: a short Label plus a one-line Detail
+// rendered with the selection so the operator always knows what each does.
 type Action struct {
-	ID    ActionID
-	Label string
+	ID     ActionID
+	Label  string
+	Detail string
 }
 
-// ActionsFor returns the menu entries relevant to a phase.
-//
-// Note vs the Ink original: the "Choose / download a Fedora CoreOS ISO" entry
-// (the ISO picker sub-screen) is intentionally deferred to the build/flash
-// leg (#1278), which owns the picker. The build + watch handoffs shell to the
-// existing bash scripts for now; #1274 / #1278 replace those with native Go
-// and delete the scripts.
+// buildAction returns the build/reinstall entry, with the verb adapted to the
+// phase: a fresh "Build" when nothing exists, "Rebuild" once an ISO is baked,
+// and "Reinstall" framing once the box is up.
+func buildAction(s State) Action {
+	switch {
+	case s.BoxReachable:
+		return Action{BuildISO, "Reinstall — build install ISO + flash USB",
+			"Bake a fresh ServiceBay installer and write it to a USB stick to reinstall this box from scratch."}
+	case s.ISOBuilt:
+		return Action{BuildISO, "Rebuild install ISO + flash USB",
+			"Re-bake the installer ISO with fresh secrets / config and flash it to a USB stick."}
+	default:
+		return Action{BuildISO, "Build install ISO + flash USB",
+			"Bake a ServiceBay installer ISO from Fedora CoreOS and write it to a USB stick."}
+	}
+}
+
+// ActionsFor returns the menu entries relevant to a phase. The list is
+// comprehensive — every action that makes sense in the phase is shown, with
+// the recommended next step first — rather than a single-action stub.
 func ActionsFor(s State) []Action {
 	var a []Action
-	switch {
-	case !s.BoxReachable:
-		label := "Build install ISO + flash USB"
-		if s.ISOBuilt {
-			label = "Rebuild install ISO + flash USB"
-		}
-		a = append(a, Action{BuildISO, label})
-		if s.ISOBuilt {
-			a = append(a, Action{WatchInstall, "Boot the USB, then watch the install"})
-		}
-	case s.Phase == Installing:
-		a = append(a, Action{WatchInstall, "Watch install progress"})
-	default:
-		a = append(a, Action{WatchInstall, "Watch a reinstall"})
+	switch s.Phase {
+	case NoISO:
+		// Nothing built and no box — the only move is to bake an installer.
+		a = append(a, buildAction(s))
+	case ISOReady:
+		// ISO baked, box not up yet — rebuild, or boot-then-watch.
+		a = append(a,
+			buildAction(s),
+			Action{WatchInstall, "Boot the USB, then watch the install",
+				"Power on the box from the USB stick; this live-tracks the install until the setup wizard is up."})
+	case Installing:
+		// Box is up mid-install — watch it, jump to the wizard, or reinstall.
+		a = append(a,
+			Action{WatchInstall, "Watch install progress",
+				"Live-track the running install until ServiceBay's setup wizard takes over."},
+			Action{OpenBox, "Open ServiceBay in your browser",
+				"Open the setup wizard / dashboard URL for this box."},
+			buildAction(s))
+	case Ready:
+		// Box is fully up — manage it via the browser, or reinstall.
+		a = append(a,
+			Action{OpenBox, "Open ServiceBay in your browser",
+				"Open this box's dashboard to manage services, users, and settings."},
+			Action{WatchInstall, "Watch a reinstall in progress",
+				"Live-track an install if you're reinstalling this box."},
+			buildAction(s))
 	}
-	a = append(a, Action{Refresh, "Refresh status"}, Action{Quit, "Quit"})
+	a = append(a,
+		Action{Refresh, "Refresh status", "Re-probe the box and ISO state."},
+		Action{Quit, "Quit", "Exit the launcher."})
 	return a
 }
 
