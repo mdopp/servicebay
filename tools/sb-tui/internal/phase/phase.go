@@ -51,6 +51,7 @@ func Detect(isoBuilt bool, status BoxStatus) State {
 type ActionID string
 
 const (
+	Express       ActionID = "express"
 	BuildISO      ActionID = "build-iso"
 	WatchInstall  ActionID = "watch-install"
 	OpenBox       ActionID = "open-box"
@@ -60,6 +61,14 @@ const (
 	Refresh       ActionID = "refresh"
 	Quit          ActionID = "quit"
 )
+
+// expressAction is the guided happy-path entry (#1233): chain the
+// auto-sequenceable pre-boot legs — build + flash the ISO, prompt the operator
+// to boot, then watch the install — behind one confirm screen. The post-boot
+// restore + stack-install steps are token-gated, so they stay as the dedicated
+// panels reached once the box is up. Offered when no box is reachable yet.
+var expressAction = Action{Express, "Express setup — build, boot, watch",
+	"Guided happy path: build + flash the install ISO, boot the box, and watch the install through to the setup wizard."}
 
 // editConfigAction is the in-TUI box-control entry (#1275): edit allow-listed
 // config over the authenticated REST API without leaving the launcher. Only
@@ -111,8 +120,9 @@ func ActionsFor(s State) []Action {
 	var a []Action
 	switch s.Phase {
 	case NoISO:
-		// Nothing built and no box — the only move is to bake an installer.
-		a = append(a, buildAction(s))
+		// Nothing built and no box — express (guided) is the recommended path,
+		// with a plain build available for operators who want only the ISO.
+		a = append(a, expressAction, buildAction(s))
 	case ISOReady:
 		// ISO baked, box not up yet — rebuild, or boot-then-watch.
 		a = append(a,

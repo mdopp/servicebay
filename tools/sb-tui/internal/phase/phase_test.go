@@ -45,8 +45,8 @@ func TestDetect(t *testing.T) {
 }
 
 func TestActionsFor(t *testing.T) {
-	// no-iso: build only, then refresh/quit
-	if got := ids(ActionsFor(Detect(false, BoxStatus{}))); !eq(got, []ActionID{BuildISO, Refresh, Quit}) {
+	// no-iso: express (recommended) + build, then refresh/quit
+	if got := ids(ActionsFor(Detect(false, BoxStatus{}))); !eq(got, []ActionID{Express, BuildISO, Refresh, Quit}) {
 		t.Fatalf("no-iso actions = %v", got)
 	}
 	// iso-ready: build + watch, then refresh/quit
@@ -80,7 +80,8 @@ func TestEveryActionHasLabelAndDetail(t *testing.T) {
 }
 
 func TestBuildLabelFlipsOnRebuild(t *testing.T) {
-	fresh := ActionsFor(Detect(false, BoxStatus{}))[0]
+	// NoISO leads with Express; the plain build action follows at index 1.
+	fresh := ActionsFor(Detect(false, BoxStatus{}))[1]
 	rebuilt := ActionsFor(Detect(true, BoxStatus{}))[0]
 	if fresh.Label != "Build install ISO + flash USB" {
 		t.Fatalf("fresh label = %q", fresh.Label)
