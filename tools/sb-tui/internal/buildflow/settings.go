@@ -31,6 +31,28 @@ func defaultSSHKey() string {
 	return "ssh-ed25519 YOUR_KEY_HERE"
 }
 
+// WithDefaults fills any blank field with the standard seed value, so a fresh
+// build form (no saved install-settings.env) starts from sensible defaults
+// rather than empty inputs. Mirrors the per-field defaults gatherSettings used.
+func WithDefaults(s build.Settings) build.Settings {
+	s.ServerName = def(s.ServerName, "servicebay")
+	s.HostUser = def(s.HostUser, "core")
+	s.SSHAuthorizedKey = def(s.SSHAuthorizedKey, defaultSSHKey())
+	s.NetInterface = def(s.NetInterface, "eno1")
+	s.StaticIP = def(s.StaticIP, "192.168.178.99")
+	s.StaticPrefix = def(s.StaticPrefix, "24")
+	s.Gateway = def(s.Gateway, "192.168.178.1")
+	s.DNSServers = def(s.DNSServers, "192.168.178.1;8.8.8.8")
+	s.ServicebayPort = def(s.ServicebayPort, "5888")
+	s.ServicebayChannel = def(s.ServicebayChannel, "stable")
+	s.ServicebayAdminUser = def(s.ServicebayAdminUser, "admin")
+	s.EnableRegistries = def(s.EnableRegistries, "Y")
+	s.EnableOscarRegistry = def(s.EnableOscarRegistry, "N")
+	s.EnableEmail = def(s.EnableEmail, "N")
+	s.EmailPort = def(s.EmailPort, "587")
+	return s
+}
+
 // gatherSettings runs the full interactive prompt sequence, seeding each field's
 // default from the saved settings (prev). Mirrors the bash interactive block.
 func gatherSettings(p Prompter, saved build.Settings) build.Settings {

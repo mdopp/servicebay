@@ -161,7 +161,7 @@ func externalSecret(p Prompter, envKey, label string, needed bool) (string, erro
 // downloading a remote selection.
 func pickISO(p Prompter, d Deps, buildDir string) (string, error) {
 	hostArch := d.HostArch()
-	local := d.ListLocal(isoSearchDirs(buildDir))
+	local := d.ListLocal(ISOSearchDirs(buildDir))
 	remote := d.FetchStreams(context.Background())
 	choices := iso.BuildChoices(local, remote, hostArch)
 	if len(choices) == 0 {
@@ -198,8 +198,8 @@ func pickISO(p Prompter, d Deps, buildDir string) (string, error) {
 	return path, nil
 }
 
-// isoSearchDirs mirrors the bash search set: repo root, build/, build/fcos.
-func isoSearchDirs(buildDir string) []string {
+// ISOSearchDirs mirrors the bash search set: repo root, build/, build/fcos.
+func ISOSearchDirs(buildDir string) []string {
 	parent := filepath.Dir(buildDir) // build/
 	root := filepath.Dir(parent)     // repo root
 	return []string{root, parent, buildDir}
