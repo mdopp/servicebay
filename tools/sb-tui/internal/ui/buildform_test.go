@@ -143,6 +143,46 @@ func TestEscCancels(t *testing.T) {
 	}
 }
 
+// TestHostnameAllowsMixedCase: RFC-1123 mixed-case hostnames are valid.
+func TestHostnameAllowsMixedCase(t *testing.T) {
+	m := NewBuildForm(build.Settings{ServerName: "atHome-Server"}, noDeps())
+	if e := m.validateSettings(); e != "" {
+		t.Errorf("mixed-case hostname rejected: %q", e)
+	}
+	bad := NewBuildForm(build.Settings{ServerName: "-bad"}, noDeps())
+	if bad.validateSettings() == "" {
+		t.Error("leading-hyphen hostname should still be rejected")
+	}
+}
+
+// TestInFieldCursorEdit: ←/→ move the caret and edits happen at it.
+func TestInFieldCursorEdit(t *testing.T) {
+	m := NewBuildForm(build.Settings{ServerName: "abc"}, noDeps())
+	// Focus is Server name, caret parked at end (3).
+	if m.tCursor != 3 {
+		t.Fatalf("initial caret = %d, want 3", m.tCursor)
+	}
+	// Move left twice → between 'a' and 'b', insert 'X' → "aXbc".
+	mi, _ := m.Update(namedKey(tea.KeyLeft))
+	m = mi.(BuildFormModel)
+	mi, _ = m.Update(namedKey(tea.KeyLeft))
+	m = mi.(BuildFormModel)
+	if m.tCursor != 1 {
+		t.Fatalf("caret after 2×left = %d, want 1", m.tCursor)
+	}
+	mi, _ = m.Update(runeKey('X'))
+	m = mi.(BuildFormModel)
+	if m.settings.ServerName != "aXbc" {
+		t.Errorf("mid-field insert = %q, want aXbc", m.settings.ServerName)
+	}
+	// Backspace deletes before the caret (now at index 2) → "abc".
+	mi, _ = m.Update(namedKey(tea.KeyBackspace))
+	m = mi.(BuildFormModel)
+	if m.settings.ServerName != "abc" {
+		t.Errorf("backspace at caret = %q, want abc", m.settings.ServerName)
+	}
+}
+
 // TestSettingsViewShowsHelp: the focused field's help text renders.
 func TestSettingsViewShowsHelp(t *testing.T) {
 	m := NewBuildForm(build.Settings{ServerName: "box"}, noDeps())

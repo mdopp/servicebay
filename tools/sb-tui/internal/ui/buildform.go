@@ -24,7 +24,10 @@ var (
 	stepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)
 )
 
-var formHostnameRE = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
+// RFC 1123 hostname: letters (either case), digits, hyphens; 1–63 chars; starts
+// with a letter, no trailing hyphen. Case-insensitive per the RFC — mixed case
+// like "atHome-Server" is valid (and is what real boxes run).
+var formHostnameRE = regexp.MustCompile(`^[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 
 type buildStep int
 
@@ -59,11 +62,11 @@ type sfield struct {
 // settingsFields is the ordered, documented field set — the "real config
 // screen" the operator asked for. Conditionals hide irrelevant fields.
 var settingsFields = []sfield{
-	{label: "Server name", help: "Hostname for the box. Lowercase letters/digits/hyphens, 1–63 chars, must start with a letter.",
+	{label: "Server name", help: "Hostname for the box. Letters/digits/hyphens, 1–63 chars, must start with a letter.",
 		get: func(s *build.Settings) string { return s.ServerName }, set: func(s *build.Settings, v string) { s.ServerName = v },
 		valid: func(v string) string {
 			if !formHostnameRE.MatchString(v) {
-				return "invalid hostname (lowercase, start with a letter, no trailing hyphen)"
+				return "must start with a letter; only letters, digits, hyphens; no trailing hyphen"
 			}
 			return ""
 		}},
@@ -154,6 +157,7 @@ type BuildFormModel struct {
 	// text fields take typed runes, choice fields cycle with ←/→.
 	visible []sfield
 	sCursor int
+	tCursor int // caret position (rune index) within the focused text field
 	sErr    string
 
 	// image step
@@ -199,7 +203,24 @@ type buildConfirmedMsg struct{ plan buildflow.Plan }
 func NewBuildForm(saved build.Settings, deps BuildDeps) BuildFormModel {
 	m := BuildFormModel{deps: deps, settings: saved, step: stepSettings}
 	m.recomputeVisible()
+	m.tCursor = m.focusedRuneLen() // caret at end of the first field
 	return m
+}
+
+// focusedRuneLen is the rune length of the currently-focused editable value
+// (settings text field or secret), used to place/clamp the edit caret.
+func (m BuildFormModel) focusedRuneLen() int {
+	switch m.step {
+	case stepSettings:
+		if m.sCursor < len(m.visible) {
+			return len([]rune(m.visible[m.sCursor].get(&m.settings)))
+		}
+	case stepSecrets:
+		if m.secCursor < len(m.secrets) {
+			return len([]rune(m.secrets[m.secCursor].value))
+		}
+	}
+	return 0
 }
 
 func (m *BuildFormModel) recomputeVisible() {
