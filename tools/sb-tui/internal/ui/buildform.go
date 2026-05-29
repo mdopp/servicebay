@@ -57,6 +57,7 @@ type sfield struct {
 	set     func(*build.Settings, string)
 	visible func(build.Settings) bool // nil → always
 	valid   func(string) string       // "" → ok, else error message
+	genSSH  bool                      // offer Ctrl+G to generate an SSH keypair
 }
 
 // settingsFields is the ordered, documented field set — the "real config
@@ -72,8 +73,9 @@ var settingsFields = []sfield{
 		}},
 	{label: "Host username", help: "Linux account created on the box for SSH/console login.",
 		get: func(s *build.Settings) string { return s.HostUser }, set: func(s *build.Settings, v string) { s.HostUser = v }},
-	{label: "SSH public key", help: "Authorized key for the host user. Paste a full ssh-ed25519/ssh-rsa public key.",
-		get: func(s *build.Settings) string { return s.SSHAuthorizedKey }, set: func(s *build.Settings, v string) { s.SSHAuthorizedKey = v }},
+	{label: "SSH public key", genSSH: true,
+		help: "Public key for SSH login to the box (ssh user@ip). Auto-filled from ~/.ssh/*.pub. No key? Press Ctrl+G to generate an ed25519 keypair into ~/.ssh/id_ed25519.",
+		get:  func(s *build.Settings) string { return s.SSHAuthorizedKey }, set: func(s *build.Settings, v string) { s.SSHAuthorizedKey = v }},
 	{label: "Network interface", help: "NIC the static IP binds to (e.g. eno1, enp1s0).",
 		get: func(s *build.Settings) string { return s.NetInterface }, set: func(s *build.Settings, v string) { s.NetInterface = v }},
 	{label: "Static IPv4", help: "The box's fixed LAN address.",
@@ -136,6 +138,9 @@ func yn(v string) string {
 type BuildDeps struct {
 	Images func() ([]iso.Choice, int) // available images + default index
 	USB    func() ([]usb.Device, error)
+	// GenerateSSHKey ensures a local SSH keypair exists and returns the public
+	// key (Ctrl+G on the SSH field). nil disables the generate option.
+	GenerateSSHKey func() (string, error)
 }
 
 // BuildConfig is what the App needs to open the build form in-app: the IO deps
@@ -192,6 +197,12 @@ type imagesLoadedMsg struct {
 type devicesLoadedMsg struct {
 	devices []usb.Device
 	err     error
+}
+
+// sshKeyGeneratedMsg carries the result of a Ctrl+G SSH-key generation.
+type sshKeyGeneratedMsg struct {
+	pub string
+	err error
 }
 
 // buildConfirmedMsg is emitted when the operator confirms the Review step. It

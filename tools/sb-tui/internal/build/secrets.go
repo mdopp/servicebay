@@ -69,20 +69,25 @@ func randHex(rnd io.Reader, n int) (string, error) {
 }
 
 // resolveSecret returns the pre-seeded value (validated) when present, else a
-// freshly generated hex secret flagged as generated. Ports secret_or_generate.
-func resolveSecret(preseed, name string, rnd io.Reader) (value string, generated bool, err error) {
+// freshly generated secret flagged as generated. gen produces the fresh value
+// (hex for the admin password; a memorable passphrase for the host console).
+// Ports secret_or_generate.
+func resolveSecret(preseed, name string, rnd io.Reader, gen func(io.Reader) (string, error)) (value string, generated bool, err error) {
 	if preseed != "" {
 		if pipelineUnsafe(preseed) {
 			return "", false, fmt.Errorf("pre-seeded %s contains characters that break the install pipeline (newline, quote, backslash, $ or backtick)", name)
 		}
 		return preseed, false, nil
 	}
-	v, err := randHex(rnd, secretHexBytes)
+	v, err := gen(rnd)
 	if err != nil {
 		return "", false, err
 	}
 	return v, true, nil
 }
+
+// hexSecret generates the 48-char hex admin password (openssl rand -hex 24).
+func hexSecret(rnd io.Reader) (string, error) { return randHex(rnd, secretHexBytes) }
 
 // GenerateSecrets resolves the three ServiceBay-owned bootstrap secrets for one
 // build run, reading randomness from rnd (callers pass crypto/rand.Reader;
@@ -94,10 +99,13 @@ func GenerateSecrets(in SecretInputs, rnd io.Reader) (Secrets, error) {
 	var s Secrets
 	var err error
 
-	if s.AdminPassword, s.AdminGenerated, err = resolveSecret(in.AdminPassword, "SERVICEBAY_ADMIN_PASSWORD", rnd); err != nil {
+	// Admin password stays a strong 48-char hex (used via password manager / the
+	// in-TUI sign-in paste). The host-console password is a memorable passphrase
+	// — it's the one an operator may type at a physical keyboard.
+	if s.AdminPassword, s.AdminGenerated, err = resolveSecret(in.AdminPassword, "SERVICEBAY_ADMIN_PASSWORD", rnd, hexSecret); err != nil {
 		return Secrets{}, err
 	}
-	if s.HostPassword, s.HostGenerated, err = resolveSecret(in.HostPassword, "HOST_PASSWORD", rnd); err != nil {
+	if s.HostPassword, s.HostGenerated, err = resolveSecret(in.HostPassword, "HOST_PASSWORD", rnd, Passphrase); err != nil {
 		return Secrets{}, err
 	}
 

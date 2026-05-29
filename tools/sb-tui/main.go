@@ -16,7 +16,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -51,9 +53,38 @@ func buildConfig() ui.BuildConfig {
 				ch := iso.BuildChoices(local, remote, host)
 				return ch, iso.DefaultChoiceIndex(ch, host)
 			},
-			USB: usb.Enumerate,
+			USB:            usb.Enumerate,
+			GenerateSSHKey: generateSSHKey,
 		},
 	}
+}
+
+// generateSSHKey returns the operator's SSH public key, generating an ed25519
+// keypair at ~/.ssh/id_ed25519 if none exists yet (Ctrl+G in the build form).
+// An existing key is reused, never overwritten.
+func generateSSHKey() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	sshDir := filepath.Join(home, ".ssh")
+	priv := filepath.Join(sshDir, "id_ed25519")
+	pub := priv + ".pub"
+	if b, err := os.ReadFile(pub); err == nil {
+		return strings.TrimSpace(string(b)), nil // already have one — reuse
+	}
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		return "", err
+	}
+	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-f", priv, "-C", "servicebay")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	b, err := os.ReadFile(pub)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
 }
 
 // runExecute runs a confirmed build Plan in the normal terminal: the bake
