@@ -19,19 +19,24 @@ func seqBytes(n int) []byte {
 }
 
 func TestGenerateSecrets_AllGenerated(t *testing.T) {
-	seq := seqBytes(secretHexBytes*2 + tokenHexBytes)
+	const passphraseBytes = 5 // Passphrase consumes 4 word bytes + 1 number byte
+	seq := seqBytes(secretHexBytes + passphraseBytes + tokenHexBytes)
 	s, err := GenerateSecrets(SecretInputs{}, bytes.NewReader(seq))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// Admin = strong hex; host = memorable passphrase; token = hex after both.
 	wantAdmin := hex.EncodeToString(seq[:secretHexBytes])
-	wantHost := hex.EncodeToString(seq[secretHexBytes : secretHexBytes*2])
-	wantToken := hex.EncodeToString(seq[secretHexBytes*2:])
+	wantHost, _ := Passphrase(bytes.NewReader(seq[secretHexBytes : secretHexBytes+passphraseBytes]))
+	wantToken := hex.EncodeToString(seq[secretHexBytes+passphraseBytes:])
 	if s.AdminPassword != wantAdmin || !s.AdminGenerated {
 		t.Errorf("admin = %q gen=%v, want %q gen=true", s.AdminPassword, s.AdminGenerated, wantAdmin)
 	}
 	if s.HostPassword != wantHost || !s.HostGenerated {
 		t.Errorf("host = %q gen=%v, want %q gen=true", s.HostPassword, s.HostGenerated, wantHost)
+	}
+	if !strings.Contains(s.HostPassword, "-") || strings.ToLower(s.HostPassword) != s.HostPassword {
+		t.Errorf("host password %q is not a memorable lowercase passphrase", s.HostPassword)
 	}
 	if s.BootstrapToken != wantToken || !s.BootstrapGenerated {
 		t.Errorf("token = %q gen=%v, want %q gen=true", s.BootstrapToken, s.BootstrapGenerated, wantToken)

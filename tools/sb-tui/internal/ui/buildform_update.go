@@ -45,6 +45,21 @@ func (m BuildFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.devErr = msg.err.Error()
 		}
 		return m, nil
+	case sshKeyGeneratedMsg:
+		if msg.err != nil {
+			m.sErr = "SSH key generation failed: " + msg.err.Error()
+			return m, nil
+		}
+		// Drop the generated public key into the SSH field.
+		for i, f := range m.visible {
+			if f.genSSH {
+				f.set(&m.settings, msg.pub)
+				m.sCursor = i
+				m.tCursor = m.focusedRuneLen()
+				m.sErr = ""
+			}
+		}
+		return m, nil
 	case buildConfirmedMsg:
 		// Standalone (`sb-tui build`): quit so the entrypoint reads Plan back.
 		// When hosted by App, App intercepts this first and never forwards it.
@@ -78,6 +93,18 @@ func (m BuildFormModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "down":
 		m.moveCursor(+1)
+		return m, nil
+	case "ctrl+g":
+		// Generate an SSH keypair when the focused field offers it.
+		if m.step == stepSettings && m.sCursor < len(m.visible) &&
+			m.visible[m.sCursor].genSSH && m.deps.GenerateSSHKey != nil {
+			gen := m.deps.GenerateSSHKey
+			m.sErr = "generating SSH key…"
+			return m, func() tea.Msg {
+				pub, err := gen()
+				return sshKeyGeneratedMsg{pub: pub, err: err}
+			}
+		}
 		return m, nil
 	}
 	// Field-specific edits on the focused row.
@@ -285,7 +312,11 @@ func (m BuildFormModel) legend() string {
 	base := "↑/↓ move · enter continue · shift+tab back · esc menu"
 	switch m.step {
 	case stepSettings:
-		return "↑/↓ move · ←/→ change choice · type to edit · enter continue · esc menu"
+		s := "↑/↓ move · ←/→ change choice · type to edit · enter continue · esc menu"
+		if m.sCursor < len(m.visible) && m.visible[m.sCursor].genSSH {
+			s = "ctrl+g generate key · " + s
+		}
+		return s
 	default:
 		return base
 	}

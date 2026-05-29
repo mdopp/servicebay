@@ -183,6 +183,28 @@ func TestInFieldCursorEdit(t *testing.T) {
 	}
 }
 
+// TestSSHKeyGenerate: Ctrl+G on the SSH field runs GenerateSSHKey and fills the
+// field with the returned public key.
+func TestSSHKeyGenerate(t *testing.T) {
+	deps := noDeps()
+	deps.GenerateSSHKey = func() (string, error) { return "ssh-ed25519 AAAAGEN test@host", nil }
+	m := NewBuildForm(build.Settings{}, deps)
+	for m.visible[m.sCursor].label != "SSH public key" {
+		mi, _ := m.Update(namedKey(tea.KeyDown))
+		m = mi.(BuildFormModel)
+	}
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m = mi.(BuildFormModel)
+	if cmd == nil {
+		t.Fatal("ctrl+g on the SSH field should issue a generate command")
+	}
+	mi, _ = m.Update(cmd()) // deliver sshKeyGeneratedMsg
+	m = mi.(BuildFormModel)
+	if m.settings.SSHAuthorizedKey != "ssh-ed25519 AAAAGEN test@host" {
+		t.Errorf("generated key not stored: %q", m.settings.SSHAuthorizedKey)
+	}
+}
+
 // TestSettingsViewShowsHelp: the focused field's help text renders.
 func TestSettingsViewShowsHelp(t *testing.T) {
 	m := NewBuildForm(build.Settings{ServerName: "box"}, noDeps())
