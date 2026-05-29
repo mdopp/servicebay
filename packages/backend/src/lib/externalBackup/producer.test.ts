@@ -23,6 +23,7 @@ import {
   stageServiceBackup,
   buildServiceBackupTar,
   backupServiceToNas,
+  stageUploadedServiceTar,
   resolveServiceDataDir,
   listServiceBackups,
   fetchServiceBackup,
@@ -237,5 +238,34 @@ describe('manifest integration', () => {
     await writeFile(src, 'data/querylog.json', '[]');
     const staged = await stageServiceBackup(src, getServiceManifest('adguard')!, staging);
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
+  });
+});
+
+describe('stageUploadedServiceTar', () => {
+  it('writes the uploaded tar + meta to the NAS in restore layout', async () => {
+    const tar = Buffer.alloc(1024, 7); // >=512 bytes, written verbatim
+    const res = await stageUploadedServiceTar('adguard', tar);
+
+    const paths = mockNas.nasUpload.mock.calls.map(c => c[0]);
+    expect(paths).toContain(`${NAS_BACKUP_DIR}/adguard.tar`);
+    expect(paths).toContain(`${NAS_BACKUP_DIR}/adguard.tar.meta.json`);
+    expect(res.tarName).toBe('adguard.tar');
+
+    const tarCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/adguard.tar'))!;
+    expect(tarCall[1]).toEqual(tar); // bytes passed through unchanged
+    const metaCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('.meta.json'))!;
+    expect(JSON.parse(String(metaCall[1])).service).toBe('adguard');
+  });
+
+  it('rejects a service with no backup manifest', async () => {
+    await expect(stageUploadedServiceTar('not-a-real-service', Buffer.alloc(1024)))
+      .rejects.toThrow(/manifest/);
+    expect(mockNas.nasUpload).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty / non-tar upload', async () => {
+    await expect(stageUploadedServiceTar('adguard', Buffer.alloc(10)))
+      .rejects.toThrow(/empty|tar/);
+    expect(mockNas.nasUpload).not.toHaveBeenCalled();
   });
 });

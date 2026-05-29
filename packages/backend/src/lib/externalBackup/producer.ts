@@ -181,7 +181,16 @@ export async function backupServiceToNas(
   }
   const serviceDataDir = opts.serviceDataDir ?? (await resolveServiceDataDir(service));
   const tar = await buildServiceBackupTar(serviceDataDir, manifest);
+  return writeServiceBackupToNas(service, tar);
+}
 
+/**
+ * Write an already-built `<service>.tar` buffer to the NAS in the canonical
+ * restore layout (`sb-backup/<service>.tar` + `.meta.json`). Shared by the
+ * dir-based producer (`backupServiceToNas`) and the upload route (#1351) so the
+ * on-NAS format has a single source of truth.
+ */
+async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<ServiceBackupResult> {
   const meta: ServiceBackupMeta = {
     service,
     schemaVersion: META_SCHEMA_VERSION,
@@ -199,6 +208,26 @@ export async function backupServiceToNas(
 
   logger.info('ExternalBackup', `Wrote ${tarName} to NAS (${tar.length} bytes)`);
   return { service, tarName, metaName, size: tar.length, meta };
+}
+
+/**
+ * Stage an uploaded, already-container-shaped `<service>.tar` onto the NAS in
+ * the restore layout (#1351). Lets the TUI / extractors seed a fresh install's
+ * NAS from the operator's machine. The service must have a backup manifest (so
+ * the restore flow knows how to consume it); the bytes are written verbatim
+ * (box-side backups apply the whitelist/strip via the producer, while uploaded
+ * archives are shaped by their own producer — e.g. the HA-OS extractor #1353).
+ */
+export async function stageUploadedServiceTar(service: string, tar: Buffer): Promise<ServiceBackupResult> {
+  if (!getServiceManifest(service)) {
+    throw new Error(`No backup manifest for service "${service}"`);
+  }
+  // A valid (GNU/ustar) tar is at least one 512-byte record; reject obviously
+  // non-tar uploads early rather than writing garbage to the NAS.
+  if (tar.length < 512) {
+    throw new Error('uploaded archive is empty or not a tar');
+  }
+  return writeServiceBackupToNas(service, tar);
 }
 
 /** List the service backups currently on the NAS. */
