@@ -1,5 +1,10 @@
 /**
- * Cross-scope dependency lint for `install-fedora-coreos.sh` (#586).
+ * Cross-scope dependency lint for the embedded Butane template (#586).
+ *
+ * The template was ported out of install-fedora-coreos.sh into the native Go
+ * build leg (#1293/#1295); it now lives verbatim at
+ * tools/sb-tui/internal/build/assets/fedora-coreos.bu (the raw Butane, no
+ * heredoc wrapping). This test reads that asset directly.
  *
  * The butane template embeds units in two systemd instances:
  *   - user-scope  : /var/home/<user>/.config/{containers/systemd,systemd/user}/*
@@ -33,7 +38,15 @@ import yaml from 'js-yaml';
 import { describe, it, expect } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const INSTALL_SCRIPT = path.join(REPO_ROOT, 'install-fedora-coreos.sh');
+const BUTANE_TEMPLATE = path.join(
+  REPO_ROOT,
+  'tools',
+  'sb-tui',
+  'internal',
+  'build',
+  'assets',
+  'fedora-coreos.bu',
+);
 
 const DEP_DIRECTIVES = [
   'After', 'Before', 'Requires', 'Requisite', 'Wants', 'BindsTo', 'PartOf', 'Conflicts',
@@ -55,24 +68,6 @@ interface DeclaredUnit {
   scope: Scope;
   /** Lines of the unit body (only present for `contents.inline` declarations, not symlinks). */
   body?: string;
-}
-
-function extractButaneTemplate(script: string): string {
-  // The template is written by a single heredoc:
-  //   cat <<'EOF' > "$TEMPLATE"
-  //   ...
-  //   EOF
-  const startRe = /^cat\s+<<'EOF'\s+>\s+"\$TEMPLATE"\s*$/m;
-  const startMatch = script.match(startRe);
-  if (!startMatch || startMatch.index === undefined) {
-    throw new Error('Could not locate butane heredoc start (cat <<\'EOF\' > "$TEMPLATE")');
-  }
-  const afterStart = script.slice(startMatch.index + startMatch[0].length).replace(/^\n/, '');
-  const endMatch = afterStart.match(/^EOF$/m);
-  if (!endMatch || endMatch.index === undefined) {
-    throw new Error('Could not locate butane heredoc EOF terminator');
-  }
-  return afterStart.slice(0, endMatch.index);
 }
 
 /** Map a butane file path to systemd scope, or null if it's not a unit declaration. */
@@ -134,8 +129,7 @@ function depsFromUnitBody(body: string): Map<string, { directive: string; line: 
 }
 
 function loadDeclaredUnits(): DeclaredUnit[] {
-  const script = fs.readFileSync(INSTALL_SCRIPT, 'utf8');
-  let template = extractButaneTemplate(script);
+  let template = fs.readFileSync(BUTANE_TEMPLATE, 'utf8');
   // Three placeholders (`${SERVICEBAY_CONFIG_JSON}`, `${SERVICEBAY_SSH_PRIV}`,
   // `${SERVICEBAY_SSH_PUB}` in some contexts) are injected at column 0 and
   // expand to multi-line content via envsubst at render time. Raw, they break
@@ -169,7 +163,7 @@ function loadDeclaredUnits(): DeclaredUnit[] {
   return units;
 }
 
-describe('install-fedora-coreos.sh: cross-scope systemd dependencies', () => {
+describe('fedora-coreos.bu: cross-scope systemd dependencies', () => {
   it('user-scope units do not declare dependencies on system-scope units (#586)', () => {
     const units = loadDeclaredUnits();
     const systemUnitNames = new Set(
