@@ -35,31 +35,55 @@ func detect(ctx context.Context) (bool, phase.BoxStatus) {
 	return probes.ISOBuilt(), probes.BoxStatus(ctx)
 }
 
-// runBuild runs the native ISO-build wizard (#1233): a full-screen Bubble Tea
-// form gathers a build Plan, then buildflow.Execute runs the operations in the
-// normal terminal (the bake streams output and the USB flash needs sudo + a
-// real TTY, so they run after the alt-screen form exits). Build-host tools
-// (butane, coreos-installer, openssl, ssh-keygen) must be on PATH.
+// buildConfig assembles the build form's seeded settings + IO deps, shared by
+// the in-app build form (menu BuildISO) and the standalone runBuild path
+// (Express + the `build` subcommand).
+func buildConfig() ui.BuildConfig {
+	buildDir := probes.BuildDir()
+	saved, _ := build.Load(filepath.Join(buildDir, "install-settings.env"))
+	return ui.BuildConfig{
+		Saved: buildflow.WithDefaults(saved),
+		Deps: ui.BuildDeps{
+			Images: func() ([]iso.Choice, int) {
+				host := iso.HostArch()
+				local := iso.ListLocalISOs(buildflow.ISOSearchDirs(buildDir))
+				remote := iso.FetchAllStreams(context.Background())
+				ch := iso.BuildChoices(local, remote, host)
+				return ch, iso.DefaultChoiceIndex(ch, host)
+			},
+			USB: usb.Enumerate,
+		},
+	}
+}
+
+// runExecute runs a confirmed build Plan in the normal terminal: the bake
+// streams output and the USB flash needs sudo + a real TTY, so this runs after
+// any alt-screen program has exited.
+func runExecute(plan buildflow.Plan) int {
+	if missing := buildflow.MissingTools(); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "Cannot build an ISO — missing build-host tools: %v\n", missing)
+		fmt.Fprintln(os.Stderr, "Install them and retry (Fedora: sudo dnf install butane coreos-installer openssl openssh).")
+		return 2
+	}
+	if err := buildflow.Execute(plan, buildflow.Options{BuildDir: probes.BuildDir(), Deps: buildflow.DefaultDeps()},
+		func(f string, a ...any) { fmt.Printf(f, a...) }); err != nil {
+		fmt.Fprintln(os.Stderr, "build failed:", err)
+		return 1
+	}
+	return 0
+}
+
+// runBuild runs the build wizard standalone (the `build` subcommand + Express):
+// the full-screen form gathers a Plan, then runExecute runs it. The menu's
+// BuildISO action instead hosts the form in-app so esc returns to the menu.
 func runBuild() int {
 	if missing := buildflow.MissingTools(); len(missing) > 0 {
 		fmt.Fprintf(os.Stderr, "Cannot build an ISO — missing build-host tools: %v\n", missing)
 		fmt.Fprintln(os.Stderr, "Install them and retry (Fedora: sudo dnf install butane coreos-installer openssl openssh).")
 		return 2
 	}
-	buildDir := probes.BuildDir()
-	saved, _ := build.Load(filepath.Join(buildDir, "install-settings.env"))
-	deps := ui.BuildDeps{
-		Images: func() ([]iso.Choice, int) {
-			host := iso.HostArch()
-			local := iso.ListLocalISOs(buildflow.ISOSearchDirs(buildDir))
-			remote := iso.FetchAllStreams(context.Background())
-			ch := iso.BuildChoices(local, remote, host)
-			return ch, iso.DefaultChoiceIndex(ch, host)
-		},
-		USB: usb.Enumerate,
-	}
-
-	final, err := tea.NewProgram(ui.NewBuildForm(buildflow.WithDefaults(saved), deps), tea.WithAltScreen()).Run()
+	cfg := buildConfig()
+	final, err := tea.NewProgram(ui.NewBuildForm(cfg.Saved, cfg.Deps), tea.WithAltScreen()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -68,13 +92,7 @@ func runBuild() int {
 	if !ok || !bf.Confirmed {
 		return 0 // operator cancelled the wizard
 	}
-
-	if err := buildflow.Execute(bf.Plan(), buildflow.Options{BuildDir: buildDir, Deps: buildflow.DefaultDeps()},
-		func(f string, a ...any) { fmt.Printf(f, a...) }); err != nil {
-		fmt.Fprintln(os.Stderr, "build failed:", err)
-		return 1
-	}
-	return 0
+	return runExecute(bf.Plan())
 }
 
 // runWatch opens the native install-watch dashboard against the resolved box
@@ -219,7 +237,7 @@ func main() {
 	// that quit the app, because build is an interactive stdin wizard and the
 	// rest are natural one-shots.
 	t := probes.ResolveTarget()
-	app := ui.NewApp(detect, t.Host, t.Port, probes.ResolveToken(t.Host), probes.SaveToken)
+	app := ui.NewApp(detect, t.Host, t.Port, probes.ResolveToken(t.Host), probes.SaveToken, buildConfig())
 	final, err := tea.NewProgram(app, tea.WithAltScreen()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -230,12 +248,14 @@ func main() {
 		return
 	}
 
-	// Only the bootstrap legs hand off here; watch + open-box now run inside the
-	// App and return to the menu.
-	switch res.Chosen {
-	case phase.Express:
+	// Watch / edit-config / install / backups / the build form all run inside
+	// the App and return to the menu. Only these need a post-exit handoff: the
+	// build form's confirmed Plan (bake + sudo flash run in the normal
+	// terminal), and Express's guided sequence.
+	switch {
+	case res.BuildPlan != nil:
+		os.Exit(runExecute(*res.BuildPlan))
+	case res.Chosen == phase.Express:
 		os.Exit(runExpress())
-	case phase.BuildISO:
-		os.Exit(runBuild())
 	}
 }

@@ -6,6 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"servicebay-tui/internal/build"
+	"servicebay-tui/internal/buildflow"
+	"servicebay-tui/internal/iso"
 	"servicebay-tui/internal/phase"
 )
 
@@ -13,10 +16,14 @@ func testDetect(context.Context) (bool, phase.BoxStatus) {
 	return true, phase.BoxStatus{Reachable: true, WizardDone: true}
 }
 
+func buildflowPlanStub() buildflow.Plan {
+	return buildflow.Plan{Settings: build.Settings{ServerName: "box"}, Image: iso.Choice{Kind: "local", Path: "/x.iso"}}
+}
+
 func newTestApp(token string) (App, *[]string) {
 	var saved []string
 	save := func(host, tok string) error { saved = append(saved, host+"="+tok); return nil }
-	return NewApp(testDetect, "box", "5888", token, save), &saved
+	return NewApp(testDetect, "box", "5888", token, save, BuildConfig{}), &saved
 }
 
 // TestRouteToLoginWhenNoToken: picking a box-control action with no token opens
@@ -80,17 +87,44 @@ func TestBackReturnsToMenu(t *testing.T) {
 	}
 }
 
-// TestBootstrapLegQuitsApp: build/express set Chosen and quit so the entrypoint
-// runs them (build is an interactive stdin wizard).
-func TestBootstrapLegQuitsApp(t *testing.T) {
+// TestExpressQuitsApp: Express hands off to the entrypoint (sets Chosen + quits).
+func TestExpressQuitsApp(t *testing.T) {
 	app, _ := newTestApp("")
-	mi, cmd := app.Update(menuSelectedMsg{id: phase.BuildISO})
+	mi, cmd := app.Update(menuSelectedMsg{id: phase.Express})
 	app = mi.(App)
-	if app.Chosen != phase.BuildISO {
+	if app.Chosen != phase.Express {
 		t.Errorf("Chosen = %v", app.Chosen)
 	}
 	if cmd == nil || cmd() != tea.Quit() {
-		t.Error("bootstrap leg should quit the app")
+		t.Error("Express should quit the app")
+	}
+}
+
+// TestBuildOpensFormInApp: BuildISO opens the build form in-app (esc → menu),
+// it does NOT immediately set Chosen / quit.
+func TestBuildOpensFormInApp(t *testing.T) {
+	app, _ := newTestApp("")
+	mi, _ := app.Update(menuSelectedMsg{id: phase.BuildISO})
+	app = mi.(App)
+	if app.screen != appPanel || app.Chosen != "" {
+		t.Fatalf("build: screen=%v chosen=%q", app.screen, app.Chosen)
+	}
+	if _, ok := app.active.(BuildFormModel); !ok {
+		t.Errorf("active = %T, want BuildFormModel", app.active)
+	}
+}
+
+// TestBuildConfirmedHandsOffPlan: the form's confirm sets the BuildPlan + Chosen
+// and quits so the entrypoint runs the bake/flash.
+func TestBuildConfirmedHandsOffPlan(t *testing.T) {
+	app, _ := newTestApp("")
+	mi, cmd := app.Update(buildConfirmedMsg{plan: buildflowPlanStub()})
+	app = mi.(App)
+	if app.BuildPlan == nil || app.Chosen != phase.BuildISO {
+		t.Fatalf("expected BuildPlan + Chosen=BuildISO, got %v / %q", app.BuildPlan, app.Chosen)
+	}
+	if cmd == nil || cmd() != tea.Quit() {
+		t.Error("confirm should quit the app to run the build")
 	}
 }
 
