@@ -54,11 +54,9 @@ const (
 	Express       ActionID = "express"
 	BuildISO      ActionID = "build-iso"
 	WatchInstall  ActionID = "watch-install"
-	OpenBox       ActionID = "open-box"
 	EditConfig    ActionID = "edit-config"
 	InstallStacks ActionID = "install-stacks"
 	Backups       ActionID = "backups"
-	Refresh       ActionID = "refresh"
 	Quit          ActionID = "quit"
 )
 
@@ -130,32 +128,28 @@ func ActionsFor(s State) []Action {
 			Action{WatchInstall, "Boot the USB, then watch the install",
 				"Power on the box from the USB stick; this live-tracks the install until the setup wizard is up."})
 	case Installing:
-		// Box is up mid-install — watch it, jump to the wizard, or reinstall.
+		// Box is up mid-install — watch it, or start managing it / reinstall.
+		// The dashboard URL is shown persistently by the menu, so there's no
+		// separate "open in browser" action.
 		a = append(a,
 			Action{WatchInstall, "Watch install progress",
 				"Live-track the running install until ServiceBay's setup wizard takes over."},
-			Action{OpenBox, "Open ServiceBay in your browser",
-				"Open the setup wizard / dashboard URL for this box."},
 			editConfigAction,
 			installStacksAction,
 			backupsAction,
 			buildAction(s))
 	case Ready:
-		// Box is fully up — manage it in-TUI or via the browser, or reinstall.
-		// No Watch action here: there's nothing to watch on an up box (it would
-		// just bounce straight back), and a reinstall drops the box into the
-		// ISOReady/Installing phases where Watch is offered.
+		// Box is fully up — manage it in-TUI, or reinstall. No Watch (nothing to
+		// watch on an up box) and no "open in browser" (the URL is always shown).
 		a = append(a,
-			Action{OpenBox, "Open ServiceBay in your browser",
-				"Open this box's dashboard to manage services, users, and settings."},
 			editConfigAction,
 			installStacksAction,
 			backupsAction,
 			buildAction(s))
 	}
-	a = append(a,
-		Action{Refresh, "Refresh status", "Re-probe the box and ISO state."},
-		Action{Quit, "Quit", "Exit the launcher."})
+	// Quit closes the launcher. Status auto-refreshes on a timer, so there's no
+	// manual "Refresh" action.
+	a = append(a, Action{Quit, "Quit", "Exit the launcher."})
 	return a
 }
 

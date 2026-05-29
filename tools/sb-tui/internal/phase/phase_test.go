@@ -45,21 +45,22 @@ func TestDetect(t *testing.T) {
 }
 
 func TestActionsFor(t *testing.T) {
-	// no-iso: express (recommended) + build, then refresh/quit
-	if got := ids(ActionsFor(Detect(false, BoxStatus{}))); !eq(got, []ActionID{Express, BuildISO, Refresh, Quit}) {
+	// Auto-refresh + persistent URL mean no Refresh / Open-in-browser actions.
+	// no-iso: express (recommended) + build, then quit
+	if got := ids(ActionsFor(Detect(false, BoxStatus{}))); !eq(got, []ActionID{Express, BuildISO, Quit}) {
 		t.Fatalf("no-iso actions = %v", got)
 	}
-	// iso-ready: build + watch, then refresh/quit
-	if got := ids(ActionsFor(Detect(true, BoxStatus{}))); !eq(got, []ActionID{BuildISO, WatchInstall, Refresh, Quit}) {
+	// iso-ready: build + watch, then quit
+	if got := ids(ActionsFor(Detect(true, BoxStatus{}))); !eq(got, []ActionID{BuildISO, WatchInstall, Quit}) {
 		t.Fatalf("iso-ready actions = %v", got)
 	}
-	// installing: watch + open-box + edit-config + install-stacks + backups + reinstall, then refresh/quit
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{WatchInstall, OpenBox, EditConfig, InstallStacks, Backups, BuildISO, Refresh, Quit}) {
+	// installing: watch + edit-config + install-stacks + backups + reinstall, then quit
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{WatchInstall, EditConfig, InstallStacks, Backups, BuildISO, Quit}) {
 		t.Fatalf("installing actions = %v", got)
 	}
-	// ready: open-box + edit-config + install-stacks + backups + reinstall, then refresh/quit
-	// (no Watch on an up box — nothing to watch).
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{OpenBox, EditConfig, InstallStacks, Backups, BuildISO, Refresh, Quit}) {
+	// ready: edit-config + install-stacks + backups + reinstall, then quit
+	// (no Watch on an up box, no Open-in-browser — URL is shown persistently).
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{EditConfig, InstallStacks, Backups, BuildISO, Quit}) {
 		t.Fatalf("ready actions = %v", got)
 	}
 }
