@@ -34,6 +34,30 @@
 
 import { isIP } from 'net';
 
+/**
+ * Block loopback / link-local IP *literals* as OIDC issuers. RFC1918 is
+ * deliberately allowed (a homelab Authelia on 10.0.0.5 is legitimate).
+ * Split out of assertValidOidcIssuer to keep that function under the
+ * complexity budget.
+ */
+function assertIssuerHostNotBlockedIp(host: string): void {
+  // Direct IPv4 check covers /etc/hosts overrides + IP literals.
+  if (isIP(host) === 4) {
+    const parts = host.split('.').map(Number);
+    if (parts[0] === 127 || parts[0] === 0) {
+      throw new Error(`OIDC issuer must not be loopback (${host})`);
+    }
+    if (parts[0] === 169 && parts[1] === 254) {
+      throw new Error(`OIDC issuer must not be link-local (${host})`);
+    }
+  }
+  if (isIP(host) === 6) {
+    if (host === '::1' || host === '::' || host.startsWith('fe80')) {
+      throw new Error(`OIDC issuer must not be loopback / link-local (${host})`);
+    }
+  }
+}
+
 export function assertValidOidcIssuer(rawUrl: string): void {
   let url: URL;
   try {
@@ -54,19 +78,5 @@ export function assertValidOidcIssuer(rawUrl: string): void {
   if (host === 'localhost' || host.endsWith('.localhost')) {
     throw new Error('OIDC issuer must not be localhost — set the public auth hostname');
   }
-  // Direct IPv4 check covers /etc/hosts overrides + IP literals.
-  if (isIP(host) === 4) {
-    const parts = host.split('.').map(Number);
-    if (parts[0] === 127 || parts[0] === 0) {
-      throw new Error(`OIDC issuer must not be loopback (${host})`);
-    }
-    if (parts[0] === 169 && parts[1] === 254) {
-      throw new Error(`OIDC issuer must not be link-local (${host})`);
-    }
-  }
-  if (isIP(host) === 6) {
-    if (host === '::1' || host === '::' || host.startsWith('fe80')) {
-      throw new Error(`OIDC issuer must not be loopback / link-local (${host})`);
-    }
-  }
+  assertIssuerHostNotBlockedIp(host);
 }
