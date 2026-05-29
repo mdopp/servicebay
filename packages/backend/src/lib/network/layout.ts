@@ -153,6 +153,34 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
     };
 }
 
+/** Detail-grid row count per node kind, mirroring NetworkDashboard.tsx. Split
+ *  out of calculateNodeHeight to keep that function under the complexity
+ *  budget. */
+function countDetailRows(
+    type: unknown,
+    raw: Record<string, unknown>,
+    metadata: Record<string, unknown>,
+): number {
+    if (type === 'container') {
+        // Created, Status (1 row) + Network (optional)
+        return raw.hostNetwork ? 2 : 1;
+    }
+    if (type === 'service' || type === 'unmanaged-service') {
+        // State, Load (1 row) + Network (optional)
+        return raw.hostNetwork ? 2 : 1;
+    }
+    if (type === 'link') {
+        // URL (Full width -> 1 row)
+        return 1;
+    }
+    if (type === 'router') {
+        // Ext IP, Int IP (1 row) + Uptime (1 row) + DNS (optional 1 row)
+        const dnsServers = metadata.dnsServers;
+        return Array.isArray(dnsServers) && dnsServers.length > 0 ? 3 : 2;
+    }
+    return 0;
+}
+
 function calculateNodeHeight(node: Node): number | undefined {
     if (node.data.type === 'group') return 320;
     if (node.data.type === 'internet') return 150;
@@ -164,9 +192,7 @@ function calculateNodeHeight(node: Node): number | undefined {
     // SubLabel (IP or Image) - ~28px
     if (data.subLabel) height += 28;
     
-    // Details Grid
-    // We need to replicate the logic from NetworkDashboard.tsx to count rows
-    let detailRows = 0;
+    // Details Grid — replicates the row count from NetworkDashboard.tsx.
     // #969 — rawData / metadata carry per-node-kind discriminated shapes
     // (container / service / router / link). Type as Record<string, unknown>;
     // every field access narrows at the call site with a typeof / truthiness
@@ -174,26 +200,8 @@ function calculateNodeHeight(node: Node): number | undefined {
     const raw = (data.rawData as Record<string, unknown> | undefined) ?? {};
     const metadata = (data.metadata as Record<string, unknown> | undefined) ?? {};
 
-    if (node.data.type === 'container') {
-        // Created, Status (1 row) + Network (optional)
-        detailRows = 1;
-        if (raw.hostNetwork) detailRows += 1;
-    } else if (node.data.type === 'service' || node.data.type === 'unmanaged-service') {
-        // State, Load (1 row) + Network (optional)
-        detailRows = 1;
-        if (raw.hostNetwork) detailRows += 1;
-    } else if (node.data.type === 'link') {
-        // URL (Full width -> 1 row)
-        detailRows = 1;
-    } else if (node.data.type === 'router') {
-        // Ext IP, Int IP (1 row) + Uptime (1 row) + DNS (optional 1 row)
-        detailRows = 2;
-        const dnsServers = metadata.dnsServers;
-        if (Array.isArray(dnsServers) && dnsServers.length > 0) detailRows += 1;
-    }
-
     // Each detail row is approx 40px (label + value + gap)
-    height += detailRows * 40;
+    height += countDetailRows(node.data.type, raw, metadata) * 40;
 
     // Verified Domains (Nginx / Router)
     const domains = Array.isArray(metadata.verifiedDomains) ? metadata.verifiedDomains as string[] : undefined;
