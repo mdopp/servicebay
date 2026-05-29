@@ -13,6 +13,16 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+// Status colours for the connection glyphs/badge: green = up, amber =
+// reconnecting/transitional, red = down.
+var (
+	upStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
+	warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	downStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 )
 
 // Status is one decoded /status.txt line. The splash writes a single
@@ -153,12 +163,26 @@ func connLabel(l ConnLevel) string {
 	}
 }
 
-// glyph renders a filled/hollow dot for an up/down state.
+// glyph renders a filled/hollow dot for an up/down state: green ● when up, red
+// ○ when down.
 func glyph(up bool) string {
 	if up {
-		return "●"
+		return upStyle.Render("●")
 	}
-	return "○"
+	return downStyle.Render("○")
+}
+
+// badge renders the connection label coloured by level: green connected, amber
+// reconnecting, red offline.
+func badge(l ConnLevel) string {
+	switch l {
+	case Connected:
+		return upStyle.Render(connLabel(l))
+	case Reconnecting:
+		return warnStyle.Render(connLabel(l))
+	default:
+		return downStyle.Render(connLabel(l))
+	}
 }
 
 // truncate cuts s to at most max runes (no ellipsis), so a long line can't
@@ -222,7 +246,7 @@ func Render(host, port string, t *Tracker, p Probe, now time.Time, width int) st
 
 	// Status + meta rows.
 	fmt.Fprintf(&b, "  Status   %s ping   %s :%s   [%s]\n",
-		glyph(p.ICMP), glyph(p.TCP), port, connLabel(t.Conn(p)))
+		glyph(p.ICMP), glyph(p.TCP), port, badge(t.Conn(p)))
 	meta := "  Meta     elapsed " + FmtDur(now.Sub(t.Start))
 	if t.Stage != "" {
 		meta += "   |   at stage " + FmtDur(now.Sub(t.StageStart))
