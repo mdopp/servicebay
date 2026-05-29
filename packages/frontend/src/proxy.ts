@@ -102,6 +102,23 @@ function isInternalCall(request: NextRequest): boolean {
   }
 }
 
+// Named API token presented and valid? Validates the `Authorization: Bearer
+// sb_…` header so a token-bearing request (CLI / TUI / scripts) can bypass the
+// cookie + CSRF gates. Returns false for an absent/malformed/invalid token so
+// the request falls through to the normal session checks. Scope is NOT checked
+// here — that's the per-route handler's job (`requireSession({ tokenScope })`).
+async function isValidBearerToken(request: NextRequest): Promise<boolean> {
+  const authz = request.headers.get('authorization');
+  const bearer = authz?.startsWith('Bearer ') ? authz.slice(7).trim() : undefined;
+  if (!bearer) return false;
+  try {
+    const { verifyToken } = await import('@/lib/auth/apiTokens');
+    return (await verifyToken(bearer)) !== null;
+  } catch {
+    return false;
+  }
+}
+
 // Same-origin CSRF check: for state-changing methods, the request's Origin
 // (or Referer fallback) must match the Host the browser saw. Behind NPM the
 // Host header is the public hostname and the browser's Origin uses that same
@@ -168,6 +185,16 @@ export async function proxy(request: NextRequest) {
   // Internal calls (post-deploy scripts on the agent host) bypass
   // both CSRF and session checks — the token authenticates them.
   if (isInternalCall(request)) return NextResponse.next();
+
+  // Named API token (`Authorization: Bearer sb_…`, #1265/#1275). A *valid*
+  // token bypasses the CSRF + cookie gates exactly like the internal token —
+  // a token-bearing CLI/TUI has no browser Origin or session cookie. Per-route
+  // scope enforcement still happens at the handler (`requireSession` with the
+  // route's `tokenScope`); the proxy only decides reachability. We MUST verify
+  // the token here: passing an unvalidated `Bearer` header through would let an
+  // attacker append `Bearer x` to a cookie'd victim's request to skip the CSRF
+  // check. An invalid/absent Bearer just falls through to the normal checks.
+  if (await isValidBearerToken(request)) return NextResponse.next();
 
   if (!SAFE_METHODS.has(request.method) && !isSameOrigin(request)) {
     return NextResponse.json({ error: 'Forbidden: cross-site request' }, { status: 403 });

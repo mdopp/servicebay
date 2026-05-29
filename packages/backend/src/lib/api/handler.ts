@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/lib/logger';
 import type { ApiScope } from '@/lib/auth/apiScope';
+import type { SessionPayload } from '@/lib/auth/session';
 
 export interface ApiErrorBody {
   ok: false;
@@ -71,6 +72,14 @@ export interface ParsedRequest<B, Q> {
   body: B;
   query: Q;
   request: NextRequest;
+  /**
+   * The authenticated principal, when the gate ran (mutating verbs, a route
+   * with `tokenScope`, or any request carrying a `Bearer` token). `undefined`
+   * for unauthenticated/public GETs that skip the gate. Routes branch on
+   * `auth?.user` — e.g. `auth?.user.startsWith('token:')` to redact secrets
+   * for a scoped API-token caller (#1275).
+   */
+  auth?: SessionPayload;
 }
 
 export interface ParsedRequestWithParams<B, Q, P> extends ParsedRequest<B, Q> {
@@ -85,15 +94,27 @@ const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 async function runHandler<B, Q>(
   options: ApiHandlerOptions<B, Q>,
   request: NextRequest,
-  invoke: (parsed: { body: B; query: Q }) => Promise<Response | NextResponse | unknown>,
+  invoke: (parsed: { body: B; query: Q; auth?: SessionPayload }) => Promise<Response | NextResponse | unknown>,
 ): Promise<Response> {
   try {
-    if (!options.skipAuth && MUTATING_METHODS.has(request.method)) {
+    // Run the gate when: a mutating verb (the original #596 check), a route
+    // that opts into token auth, or ANY request carrying a Bearer token. The
+    // last case lets a token reach an opted-in GET (the proxy passes valid
+    // tokens through, #1275) while a Bearer to a route WITHOUT `tokenScope`
+    // still 401s — requireSession ignores Bearer when no scope is set and
+    // falls through to the (absent) cookie. Public GETs with no Bearer skip
+    // the gate exactly as before.
+    let auth: SessionPayload | undefined;
+    const hasBearer = (request.headers.get('authorization') ?? '').startsWith('Bearer ');
+    const needsAuth = !options.skipAuth
+      && (MUTATING_METHODS.has(request.method) || options.tokenScope !== undefined || hasBearer);
+    if (needsAuth) {
       // Lazy import to keep handler.ts free of the cookie-parse import
       // chain when the module is loaded by middleware-adjacent code.
       const { requireSession } = await import('./requireSession');
-      const auth = await requireSession(request, { tokenScope: options.tokenScope });
-      if (auth instanceof NextResponse) return auth;
+      const result = await requireSession(request, { tokenScope: options.tokenScope });
+      if (result instanceof NextResponse) return result;
+      auth = result;
     }
 
     const rawBody = options.body ? await readJsonBody(request) : undefined;
@@ -101,7 +122,7 @@ async function runHandler<B, Q>(
     const rawQuery = searchParamsToObject(request.nextUrl.searchParams);
     const query = options.query ? options.query.parse(rawQuery) : (undefined as Q);
 
-    const result = await invoke({ body, query });
+    const result = await invoke({ body, query, auth });
     if (result instanceof Response) return result;
     return NextResponse.json({ ok: true, data: result });
   } catch (e) {
@@ -145,8 +166,8 @@ export function withApiHandler<B = undefined, Q = undefined>(
   handler: (input: ParsedRequest<B, Q>) => Promise<Response | NextResponse | unknown>,
 ) {
   return async (request: NextRequest): Promise<Response> => {
-    return runHandler(options, request, ({ body, query }) =>
-      handler({ body, query, request }),
+    return runHandler(options, request, ({ body, query, auth }) =>
+      handler({ body, query, request, auth }),
     );
   };
 }
@@ -163,9 +184,9 @@ export function withApiHandlerParams<B = undefined, Q = undefined, P = unknown>(
   handler: (input: ParsedRequestWithParams<B, Q, P>) => Promise<Response | NextResponse | unknown>,
 ) {
   return async (request: NextRequest, ctx: { params: Promise<P> }): Promise<Response> => {
-    return runHandler(options, request, async ({ body, query }) => {
+    return runHandler(options, request, async ({ body, query, auth }) => {
       const params = await ctx.params;
-      return handler({ body, query, request, params });
+      return handler({ body, query, request, params, auth });
     });
   };
 }
