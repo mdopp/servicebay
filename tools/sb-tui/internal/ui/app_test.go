@@ -94,9 +94,9 @@ func TestBootstrapLegQuitsApp(t *testing.T) {
 	}
 }
 
-// TestWatchAndOpenRunInApp: watch + open-box open as in-app sub-views (no auth)
-// and do NOT set Chosen / quit the app.
-func TestWatchAndOpenRunInApp(t *testing.T) {
+// TestWatchRunsInApp: watch opens as an in-app sub-view (no auth) and does NOT
+// set Chosen / quit the app.
+func TestWatchRunsInApp(t *testing.T) {
 	app, _ := newTestApp("")
 	mi, _ := app.Update(menuSelectedMsg{id: phase.WatchInstall})
 	app = mi.(App)
@@ -105,12 +105,5 @@ func TestWatchAndOpenRunInApp(t *testing.T) {
 	}
 	if _, ok := app.active.(WatchModel); !ok {
 		t.Errorf("watch active = %T, want WatchModel", app.active)
-	}
-
-	app2, _ := newTestApp("")
-	mi, _ = app2.Update(menuSelectedMsg{id: phase.OpenBox})
-	app2 = mi.(App)
-	if _, ok := app2.active.(OpenModel); !ok || app2.Chosen != "" {
-		t.Errorf("open active = %T chosen=%q", app2.active, app2.Chosen)
 	}
 }

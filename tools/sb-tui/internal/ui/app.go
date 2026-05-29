@@ -63,7 +63,7 @@ type App struct {
 // NewApp builds the root model. token may be a pre-resolved credential (env or
 // the saved per-host file); empty means the box-control views will log in first.
 func NewApp(detect DetectFunc, host, port, token string, save TokenSaver) App {
-	return App{host: host, port: port, token: token, save: save, screen: appMenu, menu: New(detect)}
+	return App{host: host, port: port, token: token, save: save, screen: appMenu, menu: New(detect, host, port)}
 }
 
 // Init starts the menu's phase detection.
@@ -95,8 +95,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case backMsg:
 		// Pop back to the menu and re-detect so its phase/actions refresh.
 		m.screen, m.active = appMenu, nil
-		fresh := New(m.menu.detect)
-		m.menu = fresh
+		m.menu = New(m.menu.detect, m.host, m.port)
 		return m, m.menu.Init()
 	}
 
@@ -127,10 +126,6 @@ func (m App) route(id phase.ActionID) (tea.Model, tea.Cmd) {
 		return m.openPanel(id)
 	case phase.WatchInstall:
 		m.active = NewWatch(m.host, m.port)
-		m.screen = appPanel
-		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
-	case phase.OpenBox:
-		m.active = NewOpen(m.host, m.port)
 		m.screen = appPanel
 		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
 	default:
