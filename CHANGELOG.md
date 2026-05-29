@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.50.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.50.0...servicebay-v4.50.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* **tui-go:** reuse an existing ServiceBay SSH keypair when baking ([77a84bb](https://github.com/mdopp/servicebay/commit/77a84bbc091b3341d0d30627b68953901b4094fe))
+* **tui-go:** reuse an existing ServiceBay SSH keypair when baking ([ece2a7f](https://github.com/mdopp/servicebay/commit/ece2a7f8e091c8b7439d40804b1df5661018311e))
+
 ## [4.50.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.49.0...servicebay-v4.50.0) (2026-05-29)
 
 
