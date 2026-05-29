@@ -593,8 +593,8 @@ storage:
     # The split means a stage change only rewrites a tiny TSV file, the
     # SPA in the browser persists across the whole install, and the
     # operator sees both the current stage AND a live tail of activity.
-    # The same status.txt is consumed by scripts/install-tui.sh on the
-    # operator's machine — no HTML scraping required.
+    # The same status.txt is consumed by the native install-watch dashboard
+    # (tools/sb-tui watch, #1274) on the operator's machine — no HTML scraping.
     #
     # Takeover detection: when servicebay.service activates, its
     # ExecStartPre kills the splash. The SPA's polled fetches start
@@ -3075,19 +3075,25 @@ fi
 echo "After install, add the second SSD to the RAID:"
 echo "  sudo mdadm --add /dev/md/data /dev/disk/by-partlabel/raid1-ssd2"
 
-# Hand off to install-tui: the watch dashboard already auto-discovers
-# the target host/port from $BUILD_DIR/install-settings.env, which this
-# script writes earlier. exec means the script PID is replaced — Ctrl+C
-# in the TUI exits cleanly. Suppress with SB_NO_WATCH=1 for CI / scripted
-# runs where there's no terminal to display the dashboard.
-TUI_SCRIPT="$SCRIPT_DIR/scripts/install-tui.sh"
+# Hand off to the install-watch dashboard — now the native Go launcher
+# (tools/sb-tui, #1274 ported scripts/install-tui.sh into Go). `watch` skips
+# the menu and opens the dashboard, auto-discovering the target host/port from
+# $BUILD_DIR/install-settings.env, which this script writes earlier. exec means
+# the script PID is replaced — Ctrl+C in the TUI exits cleanly. Needs Go on the
+# build host; #1278/#1279 replace this with the bundled binary. Suppress with
+# SB_NO_WATCH=1 for CI / scripted runs where there's no terminal.
+WATCH_CMD=(go run "$SCRIPT_DIR/tools/sb-tui" watch)
 if [[ "${SB_NO_WATCH:-0}" == "1" ]]; then
   echo ""
-  echo "SB_NO_WATCH=1 set — skipping install-tui auto-launch."
-  echo "Run manually with: $TUI_SCRIPT"
-elif [[ -x "$TUI_SCRIPT" ]]; then
+  echo "SB_NO_WATCH=1 set — skipping install-watch auto-launch."
+  echo "Run manually with: ${WATCH_CMD[*]}"
+elif command -v go >/dev/null 2>&1; then
   echo ""
   echo "Boot the target now — opening install dashboard (Ctrl+C to exit)..."
   echo ""
-  exec "$TUI_SCRIPT"
+  exec "${WATCH_CMD[@]}"
+else
+  echo ""
+  echo "Boot the target now. Install Go to auto-open the watch dashboard, then run:"
+  echo "  ${WATCH_CMD[*]}"
 fi
