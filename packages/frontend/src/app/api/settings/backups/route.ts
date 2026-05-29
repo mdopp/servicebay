@@ -5,7 +5,9 @@ import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-export const GET = withApiHandler({}, async () => {
+// tokenScope: 'read' (#1277) lets the sb-tui backup panel list backups with a
+// scoped `sb_` token; the handler gate still covers the web UI's cookie.
+export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
   const backups = await listSystemBackups();
   const payload = backups.map(({ fileName, createdAt, size }) => ({ fileName, createdAt, size }));
   return NextResponse.json(payload);
@@ -15,8 +17,11 @@ export const GET = withApiHandler({}, async () => {
  * POST — create a new system backup. Streams progress as NDJSON. Body
  * deliberately unused; `withApiHandler` skips body parsing when
  * `options.body` isn't set.
+ *
+ * tokenScope: 'lifecycle' (#1277) lets the sb-tui backup panel trigger a
+ * backup with a scoped `sb_` token.
  */
-export const POST = withApiHandler({}, async () => {
+export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async () => {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
