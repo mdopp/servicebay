@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.55.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.54.0...servicebay-v4.55.0) (2026-05-29)
+
+
+### Features
+
+* **tui:** after build, guide boot + watch the install (reinstall-aware) ([8185d38](https://github.com/mdopp/servicebay/commit/8185d38397ecd230bff8fa5b3e5d37e774a7d7e0))
+* **tui:** after build, guide boot + watch the install (reinstall-aware) ([f7e0f99](https://github.com/mdopp/servicebay/commit/f7e0f99c2c041ce768688472591f098c5a55bf2d))
+* **tui:** full-screen build wizard form replacing stdin Q&A ([7feeee0](https://github.com/mdopp/servicebay/commit/7feeee0eabc721b66a48c155fd0c6c87d81c2826))
+* **tui:** full-screen build wizard form replacing stdin Q&A ([b36dc03](https://github.com/mdopp/servicebay/commit/b36dc033e6605d961e2a8fa67b8950eff759855c))
+* **tui:** memorable host password + SSH-key guidance/generation ([3c4ce79](https://github.com/mdopp/servicebay/commit/3c4ce793632f939b7420d97643398ce89c70f607))
+* **tui:** memorable host password + SSH-key guidance/generation ([0a0936c](https://github.com/mdopp/servicebay/commit/0a0936cef8a08dd730f6ebaccd39ad24b4410bda))
+* **tui:** stay on a live screen + "boot box from USB" reinstall action ([84c2075](https://github.com/mdopp/servicebay/commit/84c2075bb4b88b5620b7c4d0f5f01a8b45219c40))
+* **tui:** stay on live screen + boot-box-from-USB reinstall action ([4221654](https://github.com/mdopp/servicebay/commit/422165452f6b76d2f131fb3aba383a92ed64ab2e))
+
+
+### Bug Fixes
+
+* **tui:** accept mixed-case hostnames + in-field caret editing ([58b4265](https://github.com/mdopp/servicebay/commit/58b4265d3c884ab9e37b0b6e512e710948f8fff6))
+* **tui:** accept mixed-case hostnames + in-field caret editing ([c9646e3](https://github.com/mdopp/servicebay/commit/c9646e3a630ac331dca2e705cbbb63e7d26c68a4))
+* **tui:** auto-refresh the menu + show box URL persistently ([6dd89ed](https://github.com/mdopp/servicebay/commit/6dd89edce31a9ff82312ea85c7502217adffea08))
+* **tui:** auto-refresh the menu + show box URL persistently ([bf8e352](https://github.com/mdopp/servicebay/commit/bf8e3526813bab91e025c2d5c0c2f7bd65e57854))
+* **tui:** coherent build-form interaction + esc returns to menu ([e727ffc](https://github.com/mdopp/servicebay/commit/e727ffc9ae75bac195c2d70f6ff39f3f8dcbc8ab))
+* **tui:** coherent build-form interaction + esc returns to menu ([ef55c30](https://github.com/mdopp/servicebay/commit/ef55c30b8ea6619516d592c511e60db0a1a15a45))
+* **tui:** colour the watch status dots + guide booting FROM the USB ([4dc4ab3](https://github.com/mdopp/servicebay/commit/4dc4ab3e743d06d488f832f946531c7511188649))
+* **tui:** colour watch status dots + guide booting FROM the USB ([1b17875](https://github.com/mdopp/servicebay/commit/1b17875a9e2166dd711f1700aad46502fe0afa26))
+
 ## [4.54.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.53.0...servicebay-v4.54.0) (2026-05-29)
 
 
