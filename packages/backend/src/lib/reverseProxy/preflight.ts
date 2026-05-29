@@ -105,6 +105,37 @@ async function defaultFritzboxResult(): Promise<{ status: 'ok' | 'fail'; message
 }
 
 /**
+ * Resolve the port-forward check from the latest fritzbox health-check
+ * result. Split out of getPreflightStatus to keep that function under the
+ * complexity budget. `unknown` (not a block) when no fritzbox result is
+ * available — letsdebug success already confirms internet-side reachability.
+ */
+async function resolvePortForwardCheck(
+  getFritz: () => Promise<{ status: 'ok' | 'fail'; message?: string } | null>,
+): Promise<{ status: CheckStatus; detail: string }> {
+  try {
+    const fritz = await getFritz();
+    if (!fritz) {
+      const config = await getConfig();
+      const hasGateway = !!config.gateway?.type;
+      return {
+        status: 'unknown',
+        detail: hasGateway
+          ? 'No FritzBox health-check result yet — run it from the diagnose page or wait for the next scheduled tick.'
+          : 'No router gateway configured; relying on the letsdebug result above to confirm ports 80/443 reach the internet.',
+      };
+    }
+    if (fritz.status === 'ok') {
+      return { status: 'pass', detail: 'Router reports the expected port-forward rules for 80/443.' };
+    }
+    return { status: 'fail', detail: fritz.message ?? 'FritzBox health check reports a port-forward problem.' };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { status: 'unknown', detail: `FritzBox check read failed: ${msg}` };
+  }
+}
+
+/**
  * Run the three pre-flight checks. Always returns a status object — a
  * single failed check makes `ready` false but the other two still
  * report their last known state so the UI can show partial progress.
@@ -139,31 +170,9 @@ export async function getPreflightStatus(
   }
 
   // Port-forward — read latest fritzbox health-check result if present.
-  try {
-    const fritz = await getFritz();
-    if (!fritz) {
-      // No fritzbox check configured. Per the locked design's fallback,
-      // letsdebug success implies ports work end-to-end, so we report
-      // 'unknown' rather than blocking — the UI can let the operator
-      // override with a "I know my port-forward is set up" toggle in
-      // PR-2 if needed.
-      const config = await getConfig();
-      const hasGateway = !!config.gateway?.type;
-      checks[2].status = hasGateway ? 'unknown' : 'unknown';
-      checks[2].detail = hasGateway
-        ? 'No FritzBox health-check result yet — run it from the diagnose page or wait for the next scheduled tick.'
-        : 'No router gateway configured; relying on the letsdebug result above to confirm ports 80/443 reach the internet.';
-    } else if (fritz.status === 'ok') {
-      checks[2].status = 'pass';
-      checks[2].detail = 'Router reports the expected port-forward rules for 80/443.';
-    } else {
-      checks[2].status = 'fail';
-      checks[2].detail = fritz.message ?? 'FritzBox health check reports a port-forward problem.';
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    checks[2].detail = `FritzBox check read failed: ${msg}`;
-  }
+  const portForward = await resolvePortForwardCheck(getFritz);
+  checks[2].status = portForward.status;
+  checks[2].detail = portForward.detail;
 
   // Ready iff DNS + http01 are green and the port-forward check is not
   // an outright fail (unknown is acceptable when the letsdebug result
