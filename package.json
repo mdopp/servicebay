@@ -20,7 +20,6 @@
     "test": "vitest run",
     "gen-template-docs": "tsx scripts/gen-template-docs.ts",
     "sb-config-upload": "tsx scripts/sb-config-upload.ts",
-    "tui": "tsx packages/tui/src/index.tsx",
     "check:invariants": "tsx scripts/check-invariants.ts",
     "check:deps": "depcruise --config .dependency-cruiser.cjs packages/frontend/src packages/backend/src",
     "check:arch": "npm run check:invariants && npm run check:deps",
