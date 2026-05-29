@@ -39,6 +39,27 @@ func TestPatchISOLabel_RejectsLonger(t *testing.T) {
 	}
 }
 
+func TestGenerateSSHKeypair_ReusesExisting(t *testing.T) {
+	dir := t.TempDir()
+	// Seed a pre-existing keypair; GenerateSSHKeypair must reuse it verbatim
+	// rather than prompting to overwrite (which would hang a build).
+	wantPub := "ssh-rsa AAAApre existing@host\n"
+	wantPriv := "-----BEGIN OPENSSH PRIVATE KEY-----\npre-existing\n-----END OPENSSH PRIVATE KEY-----\n"
+	if err := os.WriteFile(filepath.Join(dir, "id_rsa"), []byte(wantPriv), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "id_rsa.pub"), []byte(wantPub), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pub, priv, err := GenerateSSHKeypair(dir)
+	if err != nil {
+		t.Fatalf("GenerateSSHKeypair: %v", err)
+	}
+	if pub != wantPub || priv != wantPriv {
+		t.Errorf("existing keypair not reused verbatim:\n pub=%q\npriv=%q", pub, priv)
+	}
+}
+
 func TestCopyFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")

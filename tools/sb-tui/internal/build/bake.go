@@ -40,15 +40,21 @@ func HostPasswordHash(password string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// GenerateSSHKeypair creates an RSA-4096 ServiceBay->host keypair under dir via
-// ssh-keygen and returns the public key (authorized_keys line) and private key
-// (PEM). The host disables password auth, so this key is baked into the
-// Ignition for container->host SSH. Mirrors the ssh-keygen call in the bash.
+// GenerateSSHKeypair returns the RSA-4096 ServiceBay->host keypair under dir —
+// the public key (authorized_keys line) and private key (PEM). An existing
+// keypair is reused as-is; otherwise a fresh one is generated with ssh-keygen.
+// The host disables password auth, so this key is baked into the Ignition for
+// container->host SSH. Reusing a present key matches the bash `[[ ! -f id_rsa ]]`
+// guard (and lets an existing FCoS install keep authenticating) — and avoids
+// ssh-keygen's interactive overwrite prompt, which would otherwise hang a
+// non-interactive build.
 func GenerateSSHKeypair(dir string) (pub, priv string, err error) {
 	keyPath := filepath.Join(dir, "id_rsa")
-	cmd := exec.Command("ssh-keygen", "-t", "rsa", "-b", "4096", "-f", keyPath, "-N", "", "-q")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", "", fmt.Errorf("ssh-keygen: %w: %s", err, out)
+	if _, statErr := os.Stat(keyPath); statErr != nil {
+		cmd := exec.Command("ssh-keygen", "-t", "rsa", "-b", "4096", "-f", keyPath, "-N", "", "-q")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", "", fmt.Errorf("ssh-keygen: %w: %s", err, out)
+		}
 	}
 	pubB, err := os.ReadFile(keyPath + ".pub")
 	if err != nil {
