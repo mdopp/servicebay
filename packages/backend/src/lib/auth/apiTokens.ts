@@ -1,6 +1,12 @@
 /**
- * Scoped API tokens for MCP. Replaces the all-or-nothing session-cookie
- * auth path with named, revocable tokens that carry an explicit scope set.
+ * Scoped API tokens — the single store for ServiceBay's named, revocable
+ * Bearer credentials. Originally MCP-only (`mcp/tokens.ts`); relocated here
+ * under `auth/` in #1264 once `requireSession` started accepting the same
+ * tokens on REST too, so both surfaces share one place. The MCP server and
+ * the REST gate both import from here.
+ *
+ * Replaces the all-or-nothing session-cookie auth path with named, revocable
+ * tokens that carry an explicit scope set.
  *
  * Scopes (cumulative — a token can have any subset; the gate is per-tool):
  *   - read       list_*, get_*, diagnose, list_trashed_services
@@ -27,7 +33,7 @@ import { DATA_DIR } from '@/lib/dirs';
 import { atomicWriteFile } from '@/lib/util/atomicWrite';
 import { logger } from '@/lib/logger';
 
-// Scope grain lives in `./scope.ts` (#601 cycle-break) — re-exported
+// Scope grain lives in `./apiScope.ts` (#601 cycle-break) — re-exported
 // here so existing consumers don't need to change imports.
 //
 // Scope grain — each tool is mapped to exactly one (`TOOL_SCOPES` in
@@ -37,8 +43,8 @@ import { logger } from '@/lib/logger';
 // reaches the shell. Tokens issued today as `destroy` continue to work
 // for everything they previously could — we additively add `exec`
 // without removing `destroy`'s grants.
-export { type ApiScope, ALL_SCOPES } from './scope';
-import { ALL_SCOPES, type ApiScope } from './scope';
+export { type ApiScope, ALL_SCOPES } from './apiScope';
+import { ALL_SCOPES, type ApiScope } from './apiScope';
 
 export interface ApiToken {
   id: string;            // 8-hex public id
@@ -52,7 +58,11 @@ export interface ApiToken {
   createdBy: string;     // session.user at creation time
 }
 
-const TOKENS_FILE = path.join(DATA_DIR, 'mcp-tokens.json');
+const TOKENS_FILE = path.join(DATA_DIR, 'api-tokens.json');
+// Pre-#1264 location, back when the store was MCP-only. loadFile adopts it
+// once if the new file is absent so tokens minted before the relocation
+// keep authenticating.
+const LEGACY_TOKENS_FILE = path.join(DATA_DIR, 'mcp-tokens.json');
 const SECRET_LEN = 32;
 const SECRET_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // base32-ish, no I/0/O/1
 
@@ -63,7 +73,20 @@ async function loadFile(): Promise<TokensFile> {
     const raw = await fsp.readFile(TOKENS_FILE, 'utf-8');
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.tokens)) return parsed;
-  } catch { /* fall through to empty */ }
+  } catch { /* fall through to legacy / empty */ }
+  // One-time migration from the pre-relocation mcp-tokens.json (#1264).
+  // Best-effort: adopt the legacy file, persist it under the new name at
+  // 0600, then remove the old one so this runs at most once.
+  try {
+    const legacyRaw = await fsp.readFile(LEGACY_TOKENS_FILE, 'utf-8');
+    const legacy = JSON.parse(legacyRaw);
+    if (legacy && Array.isArray(legacy.tokens)) {
+      await saveFile(legacy);
+      await fsp.unlink(LEGACY_TOKENS_FILE).catch(() => { /* best-effort */ });
+      logger.info('auth:apiTokens', `Migrated ${legacy.tokens.length} token(s) from legacy mcp-tokens.json to api-tokens.json`);
+      return legacy;
+    }
+  } catch { /* no legacy file — fall through to empty */ }
   return { tokens: [] };
 }
 
@@ -132,14 +155,13 @@ export async function createToken(input: {
   };
   data.tokens.push(token);
   await saveFile(data);
-  logger.info('mcp:tokens', `Created MCP token ${id} ("${token.name}") scopes=[${token.scopes.join(',')}] by ${input.createdBy}`);
+  logger.info('auth:apiTokens', `Created API token ${id} ("${token.name}") scopes=[${token.scopes.join(',')}] by ${input.createdBy}`);
 
-  // The "first user-minted MCP token revokes the bootstrap" rule
-  // (#322) used to live here as a dynamic `await import('./bootstrapToken')`
-  // — that formed a mcp/tokens ↔ mcp/bootstrapToken cycle that
-  // depcruise flagged. Moved to the calling route
-  // (src/app/api/system/mcp-tokens/route.ts) so this module no
-  // longer reaches into bootstrapToken (#601).
+  // The "first user-minted token revokes the bootstrap" rule (#322) used
+  // to live here as a dynamic `await import('../mcp/bootstrapToken')` —
+  // that formed a tokens ↔ bootstrapToken cycle that depcruise flagged.
+  // Moved to the calling route (app/api/system/api-tokens/route.ts) so
+  // this module no longer reaches into bootstrapToken (#601).
 
   // The clear-text token is `sb_<id>_<secret>` — returned exactly once.
   return { token: publicView(token), secret: `sb_${id}_${secret}` };
@@ -151,7 +173,7 @@ export async function revokeToken(id: string): Promise<boolean> {
   data.tokens = data.tokens.filter(t => t.id !== id);
   if (data.tokens.length === before) return false;
   await saveFile(data);
-  logger.info('mcp:tokens', `Revoked MCP token ${id}`);
+  logger.info('auth:apiTokens', `Revoked API token ${id}`);
   return true;
 }
 
@@ -180,7 +202,7 @@ export async function verifyToken(raw: string): Promise<Omit<ApiToken, 'hash'> |
 
   // Stamp lastUsedAt — best-effort, doesn't block auth.
   token.lastUsedAt = new Date().toISOString();
-  saveFile(data).catch(e => logger.warn('mcp:tokens', `Could not update lastUsedAt for ${id}: ${e instanceof Error ? e.message : String(e)}`));
+  saveFile(data).catch(e => logger.warn('auth:apiTokens', `Could not update lastUsedAt for ${id}: ${e instanceof Error ? e.message : String(e)}`));
 
   return publicView(token);
 }

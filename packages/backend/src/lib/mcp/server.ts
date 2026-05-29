@@ -31,7 +31,7 @@ import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
 import { recordAudit } from './audit';
 import { notifyDestructiveOp } from './notify';
 import { redactLogText, redactServiceFiles } from './redact';
-import type { ApiScope } from './tokens';
+import type { ApiScope } from '@/lib/auth/apiScope';
 import { parseEfibootmgr, assessUsbBootReadiness } from './efibootmgr';
 
 interface McpAuthContext {

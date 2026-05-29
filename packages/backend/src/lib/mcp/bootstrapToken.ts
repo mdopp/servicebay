@@ -29,7 +29,7 @@
 import crypto from 'crypto';
 import { getConfig, updateConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
-import type { ApiScope } from './tokens';
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 const TTL_MIN = 30;
 

@@ -211,11 +211,11 @@ app.prepare().then(() => {
         //   2. Cookie: session=...                      — full-access (legacy)
         // Token path is preferred; cookie kept for back-compat with clients
         // that connected before tokens existed.
-        const { verifyToken } = await import('./lib/mcp/tokens');
+        const { verifyToken } = await import('./lib/auth/apiTokens');
         const { verifyBootstrapToken, clientIpForLanGate } = await import('./lib/mcp/bootstrapToken');
         const authHeader = req.headers.authorization || '';
         const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
-        let auth: { user: string; scopes: import('./lib/mcp/tokens').ApiScope[]; tokenId?: string } | null = null;
+        let auth: { user: string; scopes: import('./lib/auth/apiScope').ApiScope[]; tokenId?: string } | null = null;
         let authError: string | null = null;
         try {
           if (bearerMatch) {

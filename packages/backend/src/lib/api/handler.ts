@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/lib/logger';
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 export interface ApiErrorBody {
   ok: false;
@@ -57,6 +58,13 @@ export interface ApiHandlerOptions<B, Q> {
    * routes must never set this.
    */
   skipAuth?: boolean;
+  /**
+   * Opt this route into named API token (`Bearer sb_…`) auth, requiring the
+   * given scope (#1264). Without it the built-in gate accepts only a session
+   * cookie or the internal token. Set this on routes the TUI / scripts reach
+   * with a scoped token (e.g. `tokenScope: 'mutate'` on config edits).
+   */
+  tokenScope?: ApiScope;
 }
 
 export interface ParsedRequest<B, Q> {
@@ -84,7 +92,7 @@ async function runHandler<B, Q>(
       // Lazy import to keep handler.ts free of the cookie-parse import
       // chain when the module is loaded by middleware-adjacent code.
       const { requireSession } = await import('./requireSession');
-      const auth = await requireSession(request);
+      const auth = await requireSession(request, { tokenScope: options.tokenScope });
       if (auth instanceof NextResponse) return auth;
     }
 

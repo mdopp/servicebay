@@ -3,10 +3,18 @@
 // which would pull `next/dist/server/app-render/...` into the custom server's
 // CJS load path and trip Next's AsyncLocalStorage invariant under tsx.
 import { SignJWT, jwtVerify } from 'jose';
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 export interface SessionPayload {
   user: string;
   expires: string | Date;
+  /**
+   * Scopes the caller holds. Cookie sessions and the internal token carry
+   * all scopes (omitted == all, for back-compat); a named API token
+   * (Bearer `sb_`) carries exactly the scopes minted into it. Set by
+   * `requireSession` — see #1264.
+   */
+  scopes?: ApiScope[];
 }
 
 /**

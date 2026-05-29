@@ -7,11 +7,10 @@ import {
 } from '@/lib/api/apiTokenRoutes';
 import type { z } from 'zod';
 
-// Back-compat alias (#1264). Named API tokens moved to the neutral
-// `/api/system/api-tokens` once they began authenticating REST as well as
-// MCP. This path is preserved so the existing Settings UI and any operator
-// scripts/bookmarks keep working — it wraps the same shared handlers. New
-// callers should use `/api/system/api-tokens`.
+// Canonical home for named API tokens (#1264). These tokens authenticate
+// both the MCP server and (opt-in) REST routes, so the store + route live
+// under a neutral name rather than `mcp-tokens`. The old `/api/system/
+// mcp-tokens` path wraps the same handlers for back-compat.
 export const dynamic = 'force-dynamic';
 
 export const GET = withApiHandler({}, getTokensHandler);
