@@ -19,7 +19,7 @@ import ServiceCard from '@/components/ServiceCard';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { buildServiceViewModel } from '@servicebay/api-client';
-import { ServiceViewModel } from '@servicebay/api-client';
+import { ServiceViewModel, sortServicesByDisplayName } from '@servicebay/api-client';
 import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
 import type { TerminalRef } from '@/components/Terminal';
 import type { EnrichedContainer } from '@servicebay/api-client';
@@ -996,7 +996,7 @@ export default function ServicesDashboard() {
                 (s.nodeName && s.nodeName.toLowerCase().includes(q))
             )
           : services;
-      const sorted = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+      const sorted = sortServicesByDisplayName(filtered);
       setFilteredServices(sorted);
 
       const filteredBundleList = q

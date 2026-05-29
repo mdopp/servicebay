@@ -65,3 +65,14 @@ export interface ServiceViewModel {
   containerIds?: string[];
   attachedContainers?: EnrichedContainer[];
 }
+
+/** Sort services alphabetically by the user-facing label. Cards render
+ *  `displayName`, so sorting by `name` (the systemd unit id) produces a
+ *  visibly mis-ordered list whenever the backend rewrites the label —
+ *  e.g. `nginx.service` → "Reverse Proxy (Nginx)" sorted under `n`, not
+ *  `R`. Sort by the same field the UI shows. (#1287, see #844) */
+export function sortServicesByDisplayName<T extends Pick<ServiceViewModel, 'displayName'>>(
+    services: readonly T[],
+): T[] {
+    return [...services].sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
