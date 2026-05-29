@@ -23,6 +23,7 @@ import (
 	"servicebay-tui/internal/buildflow"
 	"servicebay-tui/internal/phase"
 	"servicebay-tui/internal/probes"
+	"servicebay-tui/internal/rest"
 	"servicebay-tui/internal/ui"
 	"servicebay-tui/internal/watch"
 )
@@ -89,6 +90,28 @@ func runOpenBox() int {
 	return 0
 }
 
+// runConfig opens the edit-config panel (#1275). It needs a reachable box and a
+// scoped `sb_` API token (SB_TOKEN); both missing-target and missing-token fail
+// with a clear, actionable message rather than a blank panel.
+func runConfig() int {
+	t := probes.ResolveTarget()
+	if t.Host == "" {
+		fmt.Fprintln(os.Stderr, "no box target — set SB_HOST (and SB_PORT), or build an ISO first so build/fcos/install-settings.env exists.")
+		return 2
+	}
+	client, err := rest.New(t.Host, t.Port, probes.ResolveToken())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Mint one in ServiceBay → Settings → API tokens (scope: mutate) and export it as SB_TOKEN.")
+		return 2
+	}
+	if _, err := tea.NewProgram(ui.NewConfig(client), tea.WithAltScreen()).Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
 // openBrowser best-effort launches the host's default browser; failures are
 // ignored (the URLs are already printed for the operator to copy).
 func openBrowser(url string) {
@@ -115,6 +138,8 @@ func main() {
 			os.Exit(runWatch())
 		case "build":
 			os.Exit(runBuild())
+		case "config":
+			os.Exit(runConfig())
 		}
 	}
 
@@ -137,5 +162,7 @@ func main() {
 		os.Exit(runWatch())
 	case phase.OpenBox:
 		os.Exit(runOpenBox())
+	case phase.EditConfig:
+		os.Exit(runConfig())
 	}
 }

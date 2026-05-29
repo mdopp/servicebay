@@ -54,9 +54,16 @@ const (
 	BuildISO     ActionID = "build-iso"
 	WatchInstall ActionID = "watch-install"
 	OpenBox      ActionID = "open-box"
+	EditConfig   ActionID = "edit-config"
 	Refresh      ActionID = "refresh"
 	Quit         ActionID = "quit"
 )
+
+// editConfigAction is the in-TUI box-control entry (#1275): edit allow-listed
+// config over the authenticated REST API without leaving the launcher. Only
+// meaningful once the box is reachable.
+var editConfigAction = Action{EditConfig, "Edit config (in-TUI)",
+	"View and edit allow-listed box settings (server name, domain, log level) over the REST API."}
 
 // Action is one selectable menu entry: a short Label plus a one-line Detail
 // rendered with the selection so the operator always knows what each does.
@@ -105,12 +112,14 @@ func ActionsFor(s State) []Action {
 				"Live-track the running install until ServiceBay's setup wizard takes over."},
 			Action{OpenBox, "Open ServiceBay in your browser",
 				"Open the setup wizard / dashboard URL for this box."},
+			editConfigAction,
 			buildAction(s))
 	case Ready:
 		// Box is fully up — manage it via the browser, or reinstall.
 		a = append(a,
 			Action{OpenBox, "Open ServiceBay in your browser",
 				"Open this box's dashboard to manage services, users, and settings."},
+			editConfigAction,
 			Action{WatchInstall, "Watch a reinstall in progress",
 				"Live-track an install if you're reinstalling this box."},
 			buildAction(s))
