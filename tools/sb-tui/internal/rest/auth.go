@@ -72,6 +72,12 @@ func postJSON(ctx context.Context, httpc *http.Client, url string, body, out any
 		return &APIError{Message: err.Error()}
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// The box's proxy CSRF-gates mutating POSTs: it 403s ("cross-site request")
+	// unless the Origin host matches the Host header, OR a valid Bearer is
+	// present. Login + token-mint happen BEFORE we have a token, so set a
+	// same-origin header. Go sets Host from the URL, so scheme://URL.Host
+	// matches by construction.
+	req.Header.Set("Origin", req.URL.Scheme+"://"+req.URL.Host)
 	resp, err := httpc.Do(req)
 	if err != nil {
 		return &APIError{Message: fmt.Sprintf("cannot reach box: %v", err)}

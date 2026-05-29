@@ -15,6 +15,11 @@ import (
 func TestLoginFlow(t *testing.T) {
 	var mintGotCookie bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The proxy CSRF gate needs a same-origin header on these mutating
+		// POSTs; Login must set it or the box 403s "cross-site request".
+		if o := r.Header.Get("Origin"); o != "http://"+r.Host {
+			t.Errorf("Origin = %q, want http://%s", o, r.Host)
+		}
 		switch r.URL.Path {
 		case "/api/auth/login":
 			var body map[string]string
