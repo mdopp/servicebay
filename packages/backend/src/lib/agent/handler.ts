@@ -706,6 +706,45 @@ export class AgentHandler extends EventEmitter {
       await this.start();
     }
 
+  /**
+   * Reboot the underlying node now (#1235). Distinct from `restart()`, which
+   * only restarts the agent process, and from `set_boot_next_usb`, which
+   * changes boot order. The reboot tears its own transport down, so we fire
+   * the command and report which path was used rather than awaiting a reply
+   * that will never arrive.
+   *
+   * Primary path is the agent's `exec` channel. When the agent process is
+   * unreachable but the box itself is up — the recovery case the launcher
+   * (#1231) needs — fall back to a direct SSH exec via the connection pool.
+   */
+  public async rebootNode(): Promise<{ via: 'agent' | 'ssh' }> {
+      if (this.isConnected) {
+          this.sendCommand('exec', { command: 'sudo -n systemctl reboot' })
+              .catch(() => { /* connection drop mid-reboot is expected */ });
+          this.log(this.nodeName, 'info', 'Reboot initiated via agent exec.');
+          return { via: 'agent' };
+      }
+      this.log(this.nodeName, 'warn', 'Agent not connected; rebooting via direct SSH.');
+      await this.rebootViaSsh();
+      return { via: 'ssh' };
+  }
+
+  private async rebootViaSsh(): Promise<void> {
+      const conn = await SSHConnectionPool.getInstance().getConnection(this.nodeName);
+      await new Promise<void>((resolve, reject) => {
+          conn.exec('sudo -n systemctl reboot', (err, stream) => {
+              if (err) { reject(err); return; }
+              // The reboot drops the link, so resolve on close/error rather
+              // than waiting for a clean exit, with a short timeout so a stuck
+              // channel can't hang the caller.
+              const done = () => resolve();
+              stream.on('close', done);
+              stream.on('error', done);
+              setTimeout(done, 5000);
+          });
+      });
+  }
+
   public disconnect() {
       if (this.channel) {
           this.channel.close(); // sends EOF
