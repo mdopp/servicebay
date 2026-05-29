@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.54.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.53.0...servicebay-v4.54.0) (2026-05-29)
+
+
+### Features
+
+* **tui:** backup list/create/restore panel over REST ([26fe93d](https://github.com/mdopp/servicebay/commit/26fe93d38bdf692b8169269cb0d66d4b1a03f4a5))
+* **tui:** backup list/create/restore panel over REST ([263a2b8](https://github.com/mdopp/servicebay/commit/263a2b8d6b87116f96a2f5605479e0388ac00901))
+* **tui:** guided Express setup for the pre-boot happy path ([ed13ef9](https://github.com/mdopp/servicebay/commit/ed13ef962cef67d6f648848326345c886b1e46d7))
+* **tui:** guided Express setup for the pre-boot happy path ([6469d39](https://github.com/mdopp/servicebay/commit/6469d3950224a4a525aedadfac177a2e7218aa55))
+* **tui:** stack-install panel over REST ([92a73e2](https://github.com/mdopp/servicebay/commit/92a73e211f58f3bb0947667b101e03dc2a47b55b))
+* **tui:** stack-install panel over REST ([2a044cb](https://github.com/mdopp/servicebay/commit/2a044cb870d84e0f92104b09ae940bd8df00168d))
+* **tui:** unified app shell + in-TUI sign-in ([e219f3c](https://github.com/mdopp/servicebay/commit/e219f3ccb5b41b558c3051e80331164d21af710e))
+* **tui:** unified app shell + in-TUI sign-in ([967ef5f](https://github.com/mdopp/servicebay/commit/967ef5f5398871d5721f55131797a1fe5f1540c1))
+
+
+### Bug Fixes
+
+* **tui:** detect box phase by what it serves, not a stale job flag ([4f15de8](https://github.com/mdopp/servicebay/commit/4f15de8ac95d4be5e6a860f3e659fe4efa3a5e26))
+* **tui:** detect box phase by what it serves, not a stale job flag ([7825687](https://github.com/mdopp/servicebay/commit/78256878aac7c622fe1c6e98be89c7ea861bdbb4))
+* **tui:** drop dead Watch action on an up box; explain the sign-in ([5cf7c38](https://github.com/mdopp/servicebay/commit/5cf7c38a0b92012cdd3b1b69ade197f0e4492cbc))
+* **tui:** drop dead Watch action on an up box; explain the sign-in ([3e3955b](https://github.com/mdopp/servicebay/commit/3e3955ba1b408d184e664f40e1df98b7899e71b2))
+* **tui:** reachable idle box is manageable; watch + open run in-app ([5e9a35c](https://github.com/mdopp/servicebay/commit/5e9a35c97712e7de3f3afad07f7411686696c16b))
+* **tui:** send same-origin header on login + token mint ([88cd4b5](https://github.com/mdopp/servicebay/commit/88cd4b5f04a533a076a92a48da9c2e840088b0f5))
+* **tui:** send same-origin header on login + token mint ([5e3e966](https://github.com/mdopp/servicebay/commit/5e3e9660a4aa6bd3c7f6a5680f1ef02346c7958a))
+* **tui:** treat a reachable idle box as manageable; watch + open run in-app ([6eed976](https://github.com/mdopp/servicebay/commit/6eed976c4533f7cb66624b775ae77dddff91739e))
+
 ## [4.53.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.52.0...servicebay-v4.53.0) (2026-05-29)
 
 
