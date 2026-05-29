@@ -80,8 +80,8 @@ func TestBackReturnsToMenu(t *testing.T) {
 	}
 }
 
-// TestBootstrapLegQuitsApp: build/express/watch/open set Chosen and quit so the
-// entrypoint runs them.
+// TestBootstrapLegQuitsApp: build/express set Chosen and quit so the entrypoint
+// runs them (build is an interactive stdin wizard).
 func TestBootstrapLegQuitsApp(t *testing.T) {
 	app, _ := newTestApp("")
 	mi, cmd := app.Update(menuSelectedMsg{id: phase.BuildISO})
@@ -91,5 +91,26 @@ func TestBootstrapLegQuitsApp(t *testing.T) {
 	}
 	if cmd == nil || cmd() != tea.Quit() {
 		t.Error("bootstrap leg should quit the app")
+	}
+}
+
+// TestWatchAndOpenRunInApp: watch + open-box open as in-app sub-views (no auth)
+// and do NOT set Chosen / quit the app.
+func TestWatchAndOpenRunInApp(t *testing.T) {
+	app, _ := newTestApp("")
+	mi, _ := app.Update(menuSelectedMsg{id: phase.WatchInstall})
+	app = mi.(App)
+	if app.screen != appPanel || app.Chosen != "" {
+		t.Fatalf("watch: screen=%v chosen=%q", app.screen, app.Chosen)
+	}
+	if _, ok := app.active.(WatchModel); !ok {
+		t.Errorf("watch active = %T, want WatchModel", app.active)
+	}
+
+	app2, _ := newTestApp("")
+	mi, _ = app2.Update(menuSelectedMsg{id: phase.OpenBox})
+	app2 = mi.(App)
+	if _, ok := app2.active.(OpenModel); !ok || app2.Chosen != "" {
+		t.Errorf("open active = %T chosen=%q", app2.active, app2.Chosen)
 	}
 }

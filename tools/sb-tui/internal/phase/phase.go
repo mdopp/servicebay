@@ -166,9 +166,9 @@ func Describe(s State) string {
 	case ISOReady:
 		return "Install ISO is ready. Boot the box from the USB, then watch the install."
 	case Installing:
-		return "Box is reachable; an install or setup is still in progress."
+		return "Box is reachable; an install is actively running."
 	case Ready:
-		return "Box is up and the setup wizard is complete."
+		return "Box is up and reachable — manage it below."
 	default:
 		return ""
 	}
