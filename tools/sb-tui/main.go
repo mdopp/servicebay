@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -109,6 +110,36 @@ func boxClient() (*rest.Client, int) {
 	return client, 0
 }
 
+// runExpress runs the guided Express setup (#1233): a confirm screen, then the
+// auto-sequenceable pre-boot legs — build + flash, a boot pause, then watch.
+// The post-boot restore/install steps stay as the dedicated panels since they
+// need a reachable box + token. Any leg failing aborts the sequence.
+func runExpress() int {
+	t := probes.ResolveTarget()
+	final, err := tea.NewProgram(ui.NewExpress(t.Host, t.Port), tea.WithAltScreen()).Run()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	em, ok := final.(ui.ExpressModel)
+	if !ok || !em.Confirmed {
+		return 0 // operator cancelled the plan
+	}
+
+	// 1) Build + flash the ISO (the buildflow wizard does both).
+	if code := runBuild(); code != 0 {
+		return code
+	}
+
+	// 2) Boot pause — the physical step Express can't do for the operator.
+	fmt.Print("\n→ Boot the box from the USB stick now.\n")
+	fmt.Print("   Press Enter once it's powering on to watch the install… ")
+	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+
+	// 3) Watch the install through to the wizard handoff.
+	return runWatch()
+}
+
 // runConfig opens the edit-config panel (#1275).
 func runConfig() int {
 	client, code := boxClient()
@@ -174,6 +205,8 @@ func main() {
 			os.Exit(runWatch())
 		case "build":
 			os.Exit(runBuild())
+		case "express":
+			os.Exit(runExpress())
 		case "config":
 			os.Exit(runConfig())
 		case "install":
@@ -196,6 +229,8 @@ func main() {
 	}
 
 	switch m.Chosen {
+	case phase.Express:
+		os.Exit(runExpress())
 	case phase.BuildISO:
 		os.Exit(runBuild())
 	case phase.WatchInstall:
