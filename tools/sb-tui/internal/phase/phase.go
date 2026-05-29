@@ -57,6 +57,7 @@ const (
 	EditConfig    ActionID = "edit-config"
 	InstallStacks ActionID = "install-stacks"
 	Backups       ActionID = "backups"
+	UploadToNAS   ActionID = "upload-to-nas"
 	BootFromUSB   ActionID = "boot-from-usb"
 	Quit          ActionID = "quit"
 )
@@ -86,6 +87,11 @@ var installStacksAction = Action{InstallStacks, "Install stacks (in-TUI)",
 // is reachable; restore is confirmation-gated in the panel.
 var backupsAction = Action{Backups, "Backups (in-TUI)",
 	"List, create, and restore the box's system backups over the REST API."}
+
+// uploadToNASAction stages a local service config archive on the box's NAS
+// (#1352) so a fresh install pulls it. Only meaningful once the box is reachable.
+var uploadToNASAction = Action{UploadToNAS, "Upload backup to NAS",
+	"Stage a local service config archive on the box's NAS for a fresh install to restore."}
 
 // bootFromUSBAction reinstalls a reachable box: with the freshly-built USB
 // plugged into the server, sign in and set a one-shot UEFI boot to the USB +
@@ -144,6 +150,7 @@ func ActionsFor(s State) []Action {
 			editConfigAction,
 			installStacksAction,
 			backupsAction,
+			uploadToNASAction,
 			bootFromUSBAction,
 			buildAction(s))
 	case Ready:
@@ -153,6 +160,7 @@ func ActionsFor(s State) []Action {
 			editConfigAction,
 			installStacksAction,
 			backupsAction,
+			uploadToNASAction,
 			bootFromUSBAction,
 			buildAction(s))
 	}
