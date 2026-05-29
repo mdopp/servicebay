@@ -1,10 +1,9 @@
 // Command sb-tui is the ServiceBay lifecycle launcher (#1272/#1273): one front
 // door for ISO build → boot → watch → install. It ports the Ink launcher's
-// phase-detection menu to Go/Bubble Tea. The install-watch dashboard is now
-// native (#1274, replacing scripts/install-tui.sh); the ISO build still shells
-// to the existing bash script until #1278 ports it and deletes it:
-//
-//	#1278 — native ISO build + USB flash, delete install-fedora-coreos.sh
+// phase-detection menu to Go/Bubble Tea. The install-watch dashboard is native
+// (#1274) and the ISO build is now native too (#1278/#1295): the BuildISO
+// action runs the in-process buildflow wizard — install-fedora-coreos.sh is
+// gone.
 //
 // Run from the repo: `go run ./tools/sb-tui` for the menu, or
 // `go run ./tools/sb-tui watch` to open the install-watch dashboard directly
@@ -13,14 +12,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"servicebay-tui/internal/buildflow"
 	"servicebay-tui/internal/phase"
 	"servicebay-tui/internal/probes"
 	"servicebay-tui/internal/ui"
@@ -31,27 +28,18 @@ func detect(ctx context.Context) (bool, phase.BoxStatus) {
 	return probes.ISOBuilt(), probes.BoxStatus(ctx)
 }
 
-// repoRoot locates the bash legs the launcher still shells to. SB_REPO_ROOT
-// overrides; otherwise the current working directory (the launcher is run from
-// the repo root for now — #1279 makes it relocatable).
-func repoRoot() string {
-	if r := os.Getenv("SB_REPO_ROOT"); r != "" {
-		return r
+// runBuild runs the native interactive ISO-build wizard (#1295). Build-host
+// tools (butane, coreos-installer, openssl, ssh-keygen) must be on PATH; the
+// wizard surfaces a clear error if a step can't find one.
+func runBuild() int {
+	if missing := buildflow.MissingTools(); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "Cannot build an ISO — missing build-host tools: %v\n", missing)
+		fmt.Fprintln(os.Stderr, "Install them and retry (Fedora: sudo dnf install butane coreos-installer openssl openssh).")
+		return 2
 	}
-	wd, _ := os.Getwd()
-	return wd
-}
-
-// runLeg execs a subprocess with inherited stdio and returns its exit code.
-func runLeg(name string, args ...string) int {
-	cmd := exec.Command(name, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		}
-		fmt.Fprintln(os.Stderr, err)
+	p := buildflow.NewIOPrompter(os.Stdin, os.Stdout)
+	if err := buildflow.Run(p, buildflow.Options{BuildDir: probes.BuildDir(), Deps: buildflow.DefaultDeps()}); err != nil {
+		fmt.Fprintln(os.Stderr, "build failed:", err)
 		return 1
 	}
 	return 0
@@ -83,10 +71,16 @@ func runWatch() int {
 }
 
 func main() {
-	// `sb-tui watch` skips the menu and opens the dashboard directly — used by
-	// the install scripts' auto-launch and reachable from the menu's Watch action.
-	if len(os.Args) > 1 && os.Args[1] == "watch" {
-		os.Exit(runWatch())
+	// Subcommands skip the menu and run one leg directly. `watch` is used by the
+	// install scripts' auto-launch; `build` runs the native ISO-build wizard
+	// (the same path the menu's BuildISO action takes).
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "watch":
+			os.Exit(runWatch())
+		case "build":
+			os.Exit(runBuild())
+		}
 	}
 
 	final, err := tea.NewProgram(ui.New(detect)).Run()
@@ -101,7 +95,7 @@ func main() {
 
 	switch m.Chosen {
 	case phase.BuildISO:
-		os.Exit(runLeg("bash", filepath.Join(repoRoot(), "install-fedora-coreos.sh")))
+		os.Exit(runBuild())
 	case phase.WatchInstall:
 		os.Exit(runWatch())
 	}

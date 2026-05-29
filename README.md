@@ -86,7 +86,9 @@ Combined: any stolen token has a bounded blast radius; everything is reversible;
 ServiceBay runs on **Fedora CoreOS** as an immutable, self-updating appliance. See the [Installation Guide](docs/INSTALLATION.md) for the full build pipeline, first-boot sequence, and configuration options.
 
 ```bash
-./install-fedora-coreos.sh
+go run ./tools/sb-tui        # lifecycle launcher; pick "Build ISO"
+# or run the build leg directly:
+go run ./tools/sb-tui build
 ```
 
 The installer creates a bootable USB that provisions the entire system: OS, networking, ServiceBay container, SSH keys, and an admin account. First boot drops you into a wizard that deploys the stacks you select, sets up SSO, configures DNS + proxy routes, and hands you the credentials manifest as a Bitwarden-importable CSV.

@@ -2,10 +2,10 @@
  * Command + box-target builders for the launcher TUI (#1231).
  *
  * Pure helpers — they only build argv / resolve a host:port, so they're
- * unit-testable. The ISO build leg stays a shell-out to `install-fedora-coreos.sh`
- * (needs sudo + a local USB). The install-watch leg now hands off to the native
- * Go launcher's `watch` subcommand (#1274 ported scripts/install-tui.sh into
- * tools/sb-tui); this Ink launcher itself is retired in #1280.
+ * unit-testable. Both the ISO build and install-watch legs now hand off to the
+ * native Go launcher's subcommands (#1278/#1295 ported install-fedora-coreos.sh
+ * and #1274 ported scripts/install-tui.sh into tools/sb-tui); this Ink launcher
+ * itself is retired in #1280.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,7 @@ export interface Command {
 }
 
 export function isoBuildCommand(root: string = REPO_ROOT): Command {
-  return { cmd: 'bash', args: [path.join(root, 'install-fedora-coreos.sh')] };
+  return { cmd: 'go', args: ['run', path.join(root, 'tools', 'sb-tui'), 'build'] };
 }
 
 export function installWatchCommand(root: string = REPO_ROOT): Command {

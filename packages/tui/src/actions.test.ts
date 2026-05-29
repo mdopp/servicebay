@@ -8,10 +8,10 @@ import {
 } from './actions';
 
 describe('command builders', () => {
-  it('isoBuildCommand shells out to install-fedora-coreos.sh at the repo root', () => {
+  it('isoBuildCommand hands off to the native Go launcher build subcommand', () => {
     const cmd = isoBuildCommand('/repo');
-    expect(cmd.cmd).toBe('bash');
-    expect(cmd.args).toEqual(['/repo/install-fedora-coreos.sh']);
+    expect(cmd.cmd).toBe('go');
+    expect(cmd.args).toEqual(['run', '/repo/tools/sb-tui', 'build']);
   });
 
   it('installWatchCommand hands off to the native Go launcher watch subcommand', () => {
