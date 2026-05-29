@@ -33,6 +33,7 @@ import { notifyDestructiveOp } from './notify';
 import { redactLogText, redactServiceFiles } from './redact';
 import type { ApiScope } from '@/lib/auth/apiScope';
 import { parseEfibootmgr, assessUsbBootReadiness } from './efibootmgr';
+import { performStackReset, StackResetError } from '@/lib/install/performStackReset';
 
 interface McpAuthContext {
   user: string;
@@ -70,7 +71,7 @@ const MUTATING_TOOLS = new Set([
   'run_backup', 'restore_backup',
   'update_config', 'exec_command', 'refresh_agent',
   'merge_unmanaged_bundle',
-  'set_boot_next_usb', 'reboot_node',
+  'set_boot_next_usb', 'reboot_node', 'factory_reset',
 ]);
 
 /**
@@ -113,6 +114,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   remove_proxy_route: 'destroy', restore_backup: 'destroy',
   purge_trashed_service: 'destroy',
   set_boot_next_usb: 'destroy', reboot_node: 'destroy',
+  factory_reset: 'destroy',
   // exec (shell — own scope so tokens can grant config writes without it)
   exec_command: 'exec',
 };
@@ -149,6 +151,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   'update_config', 'exec_command',
   'merge_unmanaged_bundle',
   'set_boot_next_usb',
+  'factory_reset',
 ]);
 
 /**
@@ -1177,6 +1180,41 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
           message: `Reboot initiated on ${nodeName} (via ${via}). The node will be unreachable for a short while.`,
         });
       } catch (err: unknown) {
+        return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // --- Factory Reset (#1237) ---
+  // Highest blast radius: wraps performStackReset (the same engine behind
+  // /api/system/stacks/reset, which has caused total data loss). Guards:
+  //   - destroy scope + allowMutations (safeHandler)
+  //   - DESTRUCTIVE_TOOLS ⇒ automatic pre-reset system snapshot + operator email
+  //   - `confirm` must EXACTLY equal the node name, and `node` is required
+  //     (no first-node default) so it can't fire on the wrong/implicit box
+  //   - preserve defaults to performStackReset's safe DEFAULT_PRESERVE; pass
+  //     [] for a full nuke. The engine's own path-whitelist + validation gate
+  //     still apply underneath.
+  server.tool(
+    'factory_reset',
+    'DESTRUCTIVE: reset a node toward factory state via the stack-reset engine — stops and removes all non-protected services and wipes their data under DATA_DIR. `confirm` must exactly equal the node name to proceed. Takes an automatic pre-reset snapshot. `preserve` keeps reset groups (omit for the safe default; pass [] for a full wipe).',
+    {
+      node: z.string().min(1).describe('Node to factory-reset. Required — there is deliberately no default for a node-wide wipe.'),
+      confirm: z.string().describe('Must exactly equal `node` to confirm intent. Any mismatch refuses the reset.'),
+      preserve: z.array(z.string()).optional().describe('Reset groups to preserve. Omit for the safe default-preserve set; pass [] for a full nuke.'),
+    },
+    async ({ node, confirm, preserve }) => {
+      if (confirm !== node) {
+        return errorResult(
+          `Refusing factory reset: \`confirm\` must exactly equal the node name "${node}". ` +
+          `This stops + removes every non-protected service on the node and wipes its data.`,
+        );
+      }
+      try {
+        const result = await performStackReset({ node, preserve });
+        return textResult({ success: true, ...result });
+      } catch (err: unknown) {
+        if (err instanceof StackResetError) return errorResult(err.message);
         return errorResult(err instanceof Error ? err.message : String(err));
       }
     },
