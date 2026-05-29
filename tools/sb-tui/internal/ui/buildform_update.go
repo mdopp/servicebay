@@ -70,6 +70,7 @@ func (m BuildFormModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		if m.step > stepSettings {
 			m.step--
+			m.tCursor = m.focusedRuneLen()
 		}
 		return m, nil
 	case "up":
@@ -114,10 +115,12 @@ func (m BuildFormModel) advance() (tea.Model, tea.Cmd) {
 		plan := m.Plan()
 		return m, func() tea.Msg { return buildConfirmedMsg{plan: plan} }
 	}
+	m.tCursor = m.focusedRuneLen() // park caret at end of the new step's field
 	return m, nil
 }
 
-// moveCursor moves the focus within the current step's list.
+// moveCursor moves the focus within the current step's list, and parks the
+// edit caret at the end of the newly-focused editable value.
 func (m *BuildFormModel) moveCursor(d int) {
 	switch m.step {
 	case stepSettings:
@@ -137,30 +140,65 @@ func (m *BuildFormModel) moveCursor(d int) {
 		n := len(m.devices) + 1 // +1 for "skip"
 		m.fCursor = (m.fCursor + d + n) % n
 	}
+	m.tCursor = m.focusedRuneLen()
 }
 
-// editSettings edits the focused settings field live: ←/→ cycles a choice,
-// runes/backspace edit text.
+// editText applies an in-field edit (←/→ move caret, runes insert, backspace
+// delete) to a value at the caret, returning the new value. The caret is
+// updated in place. Rune-based so it's safe for any input.
+func (m *BuildFormModel) editText(msg tea.KeyMsg, value string) (string, bool) {
+	r := []rune(value)
+	if m.tCursor > len(r) {
+		m.tCursor = len(r)
+	}
+	switch msg.String() {
+	case "left":
+		if m.tCursor > 0 {
+			m.tCursor--
+		}
+	case "right":
+		if m.tCursor < len(r) {
+			m.tCursor++
+		}
+	case "home":
+		m.tCursor = 0
+	case "end":
+		m.tCursor = len(r)
+	case "backspace":
+		if m.tCursor > 0 {
+			r = append(r[:m.tCursor-1], r[m.tCursor:]...)
+			m.tCursor--
+			return string(r), true
+		}
+	default:
+		if msg.Type == tea.KeyRunes {
+			ins := msg.Runes
+			r = append(r[:m.tCursor], append(append([]rune{}, ins...), r[m.tCursor:]...)...)
+			m.tCursor += len(ins)
+			return string(r), true
+		}
+	}
+	return value, false
+}
+
+// editSettings edits the focused settings field live: ←/→ cycles a choice; for
+// text fields ←/→ moves the caret and runes/backspace edit at it.
 func (m BuildFormModel) editSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if len(m.visible) == 0 {
 		return m, nil
 	}
 	f := m.visible[m.sCursor]
-	switch {
-	case f.kind == fChoice && (msg.String() == "left" || msg.String() == "right"):
-		f.set(&m.settings, cycle(f.options, f.get(&m.settings), msg.String() == "right"))
-		// A choice change (email on/off) can reveal/hide other fields + secrets.
-		m.recomputeVisible()
-		m.rebuildSecrets()
-	case f.kind == fText && msg.String() == "backspace":
-		v := f.get(&m.settings)
-		if v != "" {
-			f.set(&m.settings, v[:len(v)-1])
-			m.recomputeVisible() // clearing FRITZ!Box host hides its username
+	if f.kind == fChoice {
+		if msg.String() == "left" || msg.String() == "right" {
+			f.set(&m.settings, cycle(f.options, f.get(&m.settings), msg.String() == "right"))
+			m.recomputeVisible() // email on/off reveals/hides fields
+			m.rebuildSecrets()
 		}
-	case f.kind == fText && msg.Type == tea.KeyRunes:
-		f.set(&m.settings, f.get(&m.settings)+string(msg.Runes))
-		m.recomputeVisible()
+		return m, nil
+	}
+	if v, changed := m.editText(msg, f.get(&m.settings)); changed {
+		f.set(&m.settings, v)
+		m.recomputeVisible() // clearing FRITZ!Box host hides its username
 	}
 	return m, nil
 }
@@ -169,13 +207,8 @@ func (m BuildFormModel) editSecret(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if len(m.secrets) == 0 {
 		return m, nil
 	}
-	switch {
-	case msg.String() == "backspace":
-		if v := m.secrets[m.secCursor].value; v != "" {
-			m.secrets[m.secCursor].value = v[:len(v)-1]
-		}
-	case msg.Type == tea.KeyRunes:
-		m.secrets[m.secCursor].value += string(msg.Runes)
+	if v, changed := m.editText(msg, m.secrets[m.secCursor].value); changed {
+		m.secrets[m.secCursor].value = v
 	}
 	return m, nil
 }
@@ -261,17 +294,25 @@ func (m BuildFormModel) legend() string {
 // fieldRowText renders "Label  [value]" with the value in an input box, so it's
 // clear the label is static and only the value is editable. Focused rows get a
 // caret + highlight.
-func renderField(label, value string, focused, choice bool) string {
+func renderField(label, value string, focused, choice bool, caret int) string {
 	ls, is := labelStyle, inputStyle
 	if focused {
 		ls, is = labelFocused, inputFocused
 	}
 	box := value
-	if focused && !choice {
-		box = value + "▌"
-	}
-	if choice {
+	switch {
+	case choice:
 		box = "‹ " + value + " ›"
+	case focused:
+		// Block caret at the edit position, so ←/→ visibly moves within the text.
+		r := []rune(value)
+		if caret < 0 {
+			caret = 0
+		}
+		if caret > len(r) {
+			caret = len(r)
+		}
+		box = string(r[:caret]) + "▌" + string(r[caret:])
 	}
 	cursor := "  "
 	if focused {
@@ -282,7 +323,7 @@ func renderField(label, value string, focused, choice bool) string {
 
 func (m BuildFormModel) viewSettings(b *strings.Builder) {
 	for i, f := range m.visible {
-		b.WriteString(renderField(f.label, f.get(&m.settings), i == m.sCursor, f.kind == fChoice) + "\n")
+		b.WriteString(renderField(f.label, f.get(&m.settings), i == m.sCursor, f.kind == fChoice, m.tCursor) + "\n")
 	}
 	if m.sCursor < len(m.visible) {
 		b.WriteString("\n" + helpStyle.Render(m.visible[m.sCursor].help) + "\n")
@@ -318,7 +359,8 @@ func (m BuildFormModel) viewSecrets(b *strings.Builder) {
 	}
 	b.WriteString(phaseStyle.Render("External account passwords ServiceBay can't generate:") + "\n\n")
 	for i, sr := range m.secrets {
-		b.WriteString(renderField(sr.envLabel, strings.Repeat("•", len(sr.value)), i == m.secCursor, false) + "\n")
+		masked := strings.Repeat("•", len([]rune(sr.value)))
+		b.WriteString(renderField(sr.envLabel, masked, i == m.secCursor, false, m.tCursor) + "\n")
 	}
 }
 
