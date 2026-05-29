@@ -6,7 +6,6 @@
  * wizard's stack selection step (Phase 5B+).
  */
 import { NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getStackManifest, getTemplates } from '@/lib/registry';
@@ -22,10 +21,10 @@ interface StackSummary {
   health: StackHealth | null;
 }
 
-export const GET = withApiHandler({}, async ({ request }) => {
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
-
+// `tokenScope: 'read'` (#1276) lets the sb-tui stack-install panel enumerate
+// the installable stack catalog with a scoped `sb_` token; the handler gate
+// also covers the web UI's session cookie.
+export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
   try {
     // Enumerate stack names from the union of built-in + every external
     // registry. `getTemplates()` returns `Template[]` covering both
