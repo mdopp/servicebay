@@ -6,18 +6,14 @@ package probes
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"servicebay-tui/internal/build"
 	"servicebay-tui/internal/phase"
+	"servicebay-tui/internal/watch"
 )
-
-const statusTimeout = 3 * time.Second
 
 // BuildDir is where an ISO build leaves its artifacts. Defaults to
 // ./build/fcos (repo-relative, matching the current dev workflow); override
@@ -112,41 +108,22 @@ func tokenPath(host string) string {
 	return filepath.Join(dir, "servicebay", safe+".token")
 }
 
-// BoxStatus probes /api/install/status (unauthed). Unreachable host or any
-// transport error reads as not-reachable; a non-2xx reads as reachable but
-// not-done. WizardDone means "the box is up and manageable" — the app is
-// serving and no install job is ACTIVELY running. A box that booted fine but
-// hasn't had its stacks set up yet (stackSetupPending) is still up/manageable:
-// installing stacks is a management action (the in-TUI Install panel), not a
-// reason to push the operator at the watch dashboard. Only an active install
-// job keeps the launcher in the "watch" phase.
-func BoxStatus(ctx context.Context) phase.BoxStatus {
+// BoxStatus classifies the box by what it's actually serving, not by a job
+// record. WizardDone ("up and manageable") keys off whether the REAL app is
+// serving — the same takeover signal the watch dashboard uses — rather than
+// /api/install/status's jobIsActive, which stays true on a job left stuck in
+// running/needs_credentials from a past install and wrongly pins the launcher
+// in the "watch" phase. So:
+//   - port closed            → not reachable (pre-boot / rebooting)
+//   - install splash serving → reachable, not done → Installing (watch leads)
+//   - real app serving       → reachable + done   → Ready (manage)
+func BoxStatus(_ context.Context) phase.BoxStatus {
 	t := ResolveTarget()
 	if t.Host == "" {
 		return phase.BoxStatus{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, statusTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+t.Host+":"+t.Port+"/api/install/status", nil)
-	if err != nil {
+	if !watch.TCPOpen(t.Host, t.Port) {
 		return phase.BoxStatus{}
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return phase.BoxStatus{}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return phase.BoxStatus{Reachable: true}
-	}
-	var body struct {
-		JobIsActive *bool `json:"jobIsActive"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return phase.BoxStatus{Reachable: true}
-	}
-	// Up/manageable unless an install job is actively running. Absent field
-	// (app serving, nothing installing) counts as up.
-	done := body.JobIsActive == nil || !*body.JobIsActive
-	return phase.BoxStatus{Reachable: true, WizardDone: done}
+	return phase.BoxStatus{Reachable: true, WizardDone: watch.AppServing(t.Host, t.Port)}
 }
