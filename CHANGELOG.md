@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.52.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.51.1...servicebay-v4.52.0) (2026-05-29)
+
+
+### Features
+
+* **tui:** cross-compiled sb-tui release binaries + curl|sh installer ([88964b0](https://github.com/mdopp/servicebay/commit/88964b0202087caa773e22bcf66ffbe5da8c05da))
+* **tui:** cross-compiled sb-tui release binaries + curl|sh installer ([b382a92](https://github.com/mdopp/servicebay/commit/b382a9270918dd0d5895ba2f79b1124a94585125)), closes [#1279](https://github.com/mdopp/servicebay/issues/1279)
+
+
+### Bug Fixes
+
+* **services:** realign sudo-written asset files to their dir owner ([6840b6e](https://github.com/mdopp/servicebay/commit/6840b6e0bff8c3cfd38cf2d57c0401db1acceb8d))
+* **services:** realign sudo-written asset files to their dir owner ([9055e20](https://github.com/mdopp/servicebay/commit/9055e20b0f282b21e6f5c54b7bab830c9f94392e)), closes [#1298](https://github.com/mdopp/servicebay/issues/1298)
+
 ## [4.51.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.51.0...servicebay-v4.51.1) (2026-05-29)
 
 
