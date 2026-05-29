@@ -1,6 +1,7 @@
 'use client';
 
 import AccessRequestsSection from '../_lib/sections/AccessRequestsSection';
+import ApiTokensSection from '../_lib/sections/ApiTokensSection';
 import CredentialsSection from '../_lib/sections/CredentialsSection';
 import EmailNotificationsSection from '../_lib/sections/EmailNotificationsSection';
 import FileShareSection from '../_lib/sections/FileShareSection';
@@ -24,6 +25,7 @@ export default function IntegrationsSettingsPage() {
       <FileShareSection />
       <EmailNotificationsSection />
       <McpSection />
+      <ApiTokensSection />
       <TemplateRegistriesSection />
       <TemplateVariablesSection />
     </>
