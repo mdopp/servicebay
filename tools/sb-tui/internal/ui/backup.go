@@ -125,6 +125,8 @@ func (m BackupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case backMsg:
+		return m, tea.Quit // standalone-only; App intercepts when hosted
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -144,7 +146,7 @@ func (m BackupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.loadEr != nil {
 			switch msg.String() {
 			case "q", "esc":
-				return m, tea.Quit
+				return m, backCmd()
 			case "r":
 				m.loadEr = nil
 				return m, m.loadCmd()
@@ -157,7 +159,7 @@ func (m BackupModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m BackupModel) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
-		return m, tea.Quit
+		return m, backCmd()
 	case "up", "k":
 		if len(m.backups) > 0 {
 			m.cursor = (m.cursor - 1 + len(m.backups)) % len(m.backups)

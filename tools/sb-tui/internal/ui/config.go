@@ -105,6 +105,10 @@ func (m ConfigModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case backMsg:
+		// Standalone (`sb-tui config`): quit. When hosted by App, App intercepts
+		// backMsg first, so this path only fires standalone.
+		return m, tea.Quit
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -118,11 +122,11 @@ func (m ConfigModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.editing {
 		return m.handleEditKey(msg)
 	}
-	// A blocking load error leaves only quit/refresh meaningful.
+	// A blocking load error leaves only back/refresh meaningful.
 	if m.loadEr != nil {
 		switch msg.String() {
 		case "q", "esc":
-			return m, tea.Quit
+			return m, backCmd()
 		case "r":
 			m.loading, m.loadEr = true, nil
 			return m, m.loadCmd()
@@ -134,7 +138,7 @@ func (m ConfigModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "q", "esc":
-		return m, tea.Quit
+		return m, backCmd()
 	case "up", "k":
 		m.cursor = (m.cursor - 1 + len(m.fields)) % len(m.fields)
 		m.status = ""

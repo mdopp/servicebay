@@ -78,11 +78,38 @@ func ResolveTarget() Target {
 }
 
 // ResolveToken returns the scoped `sb_…` API token the box-control panels
-// authenticate with (#1275), read from SB_TOKEN. Empty when unset — the panel
-// then shows mint instructions rather than making a doomed 401 call. Mint one
-// in ServiceBay → Settings → API tokens with the `mutate` scope.
-func ResolveToken() string {
-	return strings.TrimSpace(os.Getenv("SB_TOKEN"))
+// authenticate with (#1275): SB_TOKEN env wins (CI / power users), otherwise the
+// token the TUI minted for this host on a previous in-TUI login. Empty when
+// neither exists — the launcher then runs the login flow rather than dead-ending.
+func ResolveToken(host string) string {
+	if t := strings.TrimSpace(os.Getenv("SB_TOKEN")); t != "" {
+		return t
+	}
+	if b, err := os.ReadFile(tokenPath(host)); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	return ""
+}
+
+// SaveToken persists a minted token for host so future launches skip the login
+// step. Stored 0600 under the user config dir, one file per host.
+func SaveToken(host, token string) error {
+	p := tokenPath(host)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(strings.TrimSpace(token)+"\n"), 0o600)
+}
+
+// tokenPath is ~/.config/servicebay/<host>.token (honoring XDG_CONFIG_HOME).
+func tokenPath(host string) string {
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".config")
+	}
+	safe := strings.NewReplacer("/", "_", ":", "_").Replace(host)
+	return filepath.Join(dir, "servicebay", safe+".token")
 }
 
 // BoxStatus probes /api/install/status (unauthed). Unreachable host or any
