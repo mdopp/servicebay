@@ -135,7 +135,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // since build is an interactive stdin wizard whose USB flash needs a real TTY.
 func (m App) route(id phase.ActionID) (tea.Model, tea.Cmd) {
 	switch id {
-	case phase.EditConfig, phase.InstallStacks, phase.Backups:
+	case phase.EditConfig, phase.InstallStacks, phase.Backups, phase.UploadToNAS:
 		if m.token == "" {
 			m.pending = id
 			m.screen = appLogin
@@ -181,6 +181,8 @@ func (m App) openPanel(id phase.ActionID) (tea.Model, tea.Cmd) {
 		m.active = NewInstall(client)
 	case phase.Backups:
 		m.active = NewBackup(client)
+	case phase.UploadToNAS:
+		m.active = NewNasUpload(client)
 	default:
 		m.screen, m.active = appMenu, nil
 		return m, nil
