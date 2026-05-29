@@ -56,6 +56,7 @@ const (
 	OpenBox       ActionID = "open-box"
 	EditConfig    ActionID = "edit-config"
 	InstallStacks ActionID = "install-stacks"
+	Backups       ActionID = "backups"
 	Refresh       ActionID = "refresh"
 	Quit          ActionID = "quit"
 )
@@ -71,6 +72,12 @@ var editConfigAction = Action{EditConfig, "Edit config (in-TUI)",
 // meaningful once the box is reachable.
 var installStacksAction = Action{InstallStacks, "Install stacks (in-TUI)",
 	"Pick stacks from the box catalog and install them over the REST API, with live progress."}
+
+// backupsAction is the in-TUI backup entry (#1277): list, create, and restore
+// system backups over the authenticated REST API. Only meaningful once the box
+// is reachable; restore is confirmation-gated in the panel.
+var backupsAction = Action{Backups, "Backups (in-TUI)",
+	"List, create, and restore the box's system backups over the REST API."}
 
 // Action is one selectable menu entry: a short Label plus a one-line Detail
 // rendered with the selection so the operator always knows what each does.
@@ -121,6 +128,7 @@ func ActionsFor(s State) []Action {
 				"Open the setup wizard / dashboard URL for this box."},
 			editConfigAction,
 			installStacksAction,
+			backupsAction,
 			buildAction(s))
 	case Ready:
 		// Box is fully up — manage it via the browser, or reinstall.
@@ -129,6 +137,7 @@ func ActionsFor(s State) []Action {
 				"Open this box's dashboard to manage services, users, and settings."},
 			editConfigAction,
 			installStacksAction,
+			backupsAction,
 			Action{WatchInstall, "Watch a reinstall in progress",
 				"Live-track an install if you're reinstalling this box."},
 			buildAction(s))

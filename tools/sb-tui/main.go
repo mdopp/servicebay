@@ -135,6 +135,19 @@ func runInstallStacks() int {
 	return 0
 }
 
+// runBackups opens the backup panel (#1277).
+func runBackups() int {
+	client, code := boxClient()
+	if client == nil {
+		return code
+	}
+	if _, err := tea.NewProgram(ui.NewBackup(client), tea.WithAltScreen()).Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
 // openBrowser best-effort launches the host's default browser; failures are
 // ignored (the URLs are already printed for the operator to copy).
 func openBrowser(url string) {
@@ -165,6 +178,8 @@ func main() {
 			os.Exit(runConfig())
 		case "install":
 			os.Exit(runInstallStacks())
+		case "backups":
+			os.Exit(runBackups())
 		}
 	}
 
@@ -191,5 +206,7 @@ func main() {
 		os.Exit(runConfig())
 	case phase.InstallStacks:
 		os.Exit(runInstallStacks())
+	case phase.Backups:
+		os.Exit(runBackups())
 	}
 }

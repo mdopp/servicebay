@@ -14,7 +14,10 @@ const PostBody = z.object({
   selection: z.unknown().optional(),
 });
 
-export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
+// tokenScope: 'destroy' (#1277) — restore overwrites the box's config/state, so
+// it requires the most privileged scope. The sb-tui backup panel confirms
+// before calling this; the web UI's cookie path is unchanged.
+export const POST = withApiHandler({ body: PostBody, tokenScope: 'destroy' }, async ({ body }) => {
   const { fileName, uploadToken } = body;
   const selection = body.selection as BackupRestoreSelection | undefined;
 
