@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.49.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.48.0...servicebay-v4.49.0) (2026-05-29)
+
+
+### Features
+
+* **tui-go:** bootstrap secret generation and Bitwarden CSV ([a6fffb7](https://github.com/mdopp/servicebay/commit/a6fffb70ee0a633aa661d2be5a72ce299f77c23f))
+* **tui-go:** bootstrap secret generation and Bitwarden CSV ([bdde38a](https://github.com/mdopp/servicebay/commit/bdde38aec8e20d2554bc78f9f4dd5d558206e68b))
+* **tui-go:** FCoS ISO download and version picker ([ab5ba4e](https://github.com/mdopp/servicebay/commit/ab5ba4e96c12794241f248700e0ab099cd11b391))
+* **tui-go:** FCoS ISO download and version picker ([e957207](https://github.com/mdopp/servicebay/commit/e9572073ef04bf6674312bf86ca0ae088fed491b))
+* **tui-go:** ServiceBay config.json builder ([bb8fbdd](https://github.com/mdopp/servicebay/commit/bb8fbdd907c87428d84a80b3ce70ea508258df14))
+* **tui-go:** ServiceBay config.json builder ([bf37b24](https://github.com/mdopp/servicebay/commit/bf37b249ab9389a2e26ecd20a5f770e5839d9fef))
+
 ## [4.48.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.47.0...servicebay-v4.48.0) (2026-05-29)
 
 
