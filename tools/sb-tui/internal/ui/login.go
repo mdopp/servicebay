@@ -115,7 +115,10 @@ func (m LoginModel) View() string {
 	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Width(width).Render("ServiceBay  ·  sign in") + "\n")
-	b.WriteString(phaseStyle.Render("Sign in to "+m.host+" to manage it. The TUI mints + saves its own token.") + "\n\n")
+	b.WriteString(phaseStyle.Render("Managing the box needs a one-time sign-in.") + "\n")
+	b.WriteString(detailStyle.Render("Use your ServiceBay admin login — the same username + password as the web") + "\n")
+	b.WriteString(detailStyle.Render("dashboard at http://"+m.host+":"+m.port+". The TUI then creates + saves its own") + "\n")
+	b.WriteString(detailStyle.Render("access token for this box, so you won't be asked again.") + "\n\n")
 
 	b.WriteString(fieldRow("Username", m.username, m.focus == 0, false) + "\n")
 	b.WriteString(fieldRow("Password", m.password, m.focus == 1, true) + "\n")
