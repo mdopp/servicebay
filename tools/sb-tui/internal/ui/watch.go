@@ -22,15 +22,29 @@ type WatchModel struct {
 	last       watch.Probe
 	width      int
 	now        time.Time
+	// requireReboot gates takeover on first observing the box go offline — for a
+	// REINSTALL, the box is currently up (old install) and we must wait for it to
+	// reboot into the installer before "the app is serving" means the new box.
+	requireReboot bool
 	// Takeover is set when the box's real app replaced the splash; the
 	// entrypoint reads it after the program exits to print the handoff banner.
 	Takeover bool
 }
 
-// NewWatch builds a watch model targeting host:port.
+// NewWatch builds a watch model targeting host:port (fresh-boot watch — takeover
+// counts as soon as the real app serves).
 func NewWatch(host, port string) WatchModel {
 	now := time.Now()
 	return WatchModel{host: host, port: port, tracker: watch.NewTracker(now), width: 80, now: now}
+}
+
+// NewWatchReinstall builds a watch that waits for the box to reboot first, so a
+// reinstall of an already-up box doesn't instantly report "done" before the
+// operator has booted the USB.
+func NewWatchReinstall(host, port string) WatchModel {
+	m := NewWatch(host, port)
+	m.requireReboot = true
+	return m
 }
 
 type watchTickMsg struct {
@@ -59,7 +73,10 @@ func (m WatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.now = msg.at
 		m.tracker.Apply(msg.probe, msg.at)
 		m.last = msg.probe
-		if msg.takeover {
+		// In reinstall mode, ignore "takeover" until the box has actually
+		// rebooted (≥1 observed reboot) — otherwise the still-running old install
+		// would be mistaken for the finished new one before the USB even boots.
+		if msg.takeover && (!m.requireReboot || m.tracker.Reboots >= 1) {
 			// Box is up — leave the dashboard. Hosted by App this pops back to
 			// the menu (which re-detects → now a manageable box); standalone
 			// (`sb-tui watch`) the model's own backMsg case quits and main
