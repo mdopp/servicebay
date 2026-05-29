@@ -3,6 +3,7 @@ import { z } from 'zod';
 import fs from 'fs/promises';
 import path from 'path';
 import { withApiHandler } from '@/lib/api/handler';
+import { renderChangelogForUsers } from './changelog';
 
 const HELP_ALIASES: Record<string, string> = {
   containers: 'container-engine',
@@ -26,7 +27,10 @@ export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
       : path.join(process.cwd(), 'src/content/help', `${normalizedId}.md`);
 
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
+      const raw = await fs.readFile(filePath, 'utf-8');
+      // The changelog is the raw release-please file — dedupe the squash/merge
+      // commit pairs and strip developer noise before showing users (#1262).
+      const content = normalizedId === 'changelog' ? renderChangelogForUsers(raw) : raw;
       return NextResponse.json({ content });
     } catch {
       return NextResponse.json({ error: 'Help content not found' }, { status: 404 });
