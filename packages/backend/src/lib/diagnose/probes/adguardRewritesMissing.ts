@@ -54,52 +54,79 @@ function buildExpectedRewrites(
   return [target, `www.${target}`, `*.${target}`];
 }
 
+// diffRewrites compares the live AdGuard rewrites against the expected set,
+// returning the domains with no rewrite (missing) and those pointing somewhere
+// other than the LAN IP (stale). Extracted to keep the probe under the line limit.
+function diffRewrites(
+  actual: ReadonlyArray<{ domain: string; answer: string }>,
+  expected: string[],
+  lanIp: string,
+): { missing: string[]; stale: string[] } {
+  const byDomain = new Map(actual.map(r => [r.domain, r.answer]));
+  const missing: string[] = [];
+  const stale: string[] = [];
+  for (const d of expected) {
+    const got = byDomain.get(d);
+    if (got === undefined) missing.push(d);
+    else if (got !== lanIp) stale.push(`${d} → ${got}`);
+  }
+  return { missing, stale };
+}
+
+// okRewritesDetail builds the all-good message: lists the mapped domains when
+// there are few enough to scan (#550), else a count. Extracted to keep the
+// probe under the line limit.
+function okRewritesDetail(expected: string[], lanIp: string): string {
+  const LISTING_THRESHOLD = 5;
+  if (expected.length <= LISTING_THRESHOLD) {
+    const listing = expected.map(d => `${d} → ${lanIp}`).join(', ');
+    return `${expected.length} portal/wildcard rewrite${expected.length === 1 ? '' : 's'} in AdGuard: ${listing}.`;
+  }
+  return `${expected.length} portal/wildcard rewrites in AdGuard point at ${lanIp}.`;
+}
+
+// resolveAdguardContext runs the precondition guards (installed? creds? lanIp?)
+// and, when all pass, returns the AdGuard admin credentials + lanIp + expected
+// rewrites. Returns { skip } with the early-return result otherwise. Extracted
+// to keep the probe under the line/complexity limits.
+function resolveAdguardContext(
+  config: Awaited<ReturnType<typeof getConfig>>,
+):
+  | { skip: AdguardRewritesMissingResult }
+  | { creds: { adminUrl: string; username: string; password: string }; lanIp: string; expected: string[] } {
+  if (!config.installedTemplates?.adguard) {
+    return { skip: { status: 'ok', detail: 'AdGuard is not installed — DNS rewrite check skipped.' } };
+  }
+  const adguard = config.adguard;
+  if (!adguard?.password) {
+    return { skip: { status: 'info', detail: 'AdGuard credentials are not recorded yet — DNS rewrite check skipped.' } };
+  }
+  const lanIp = config.reverseProxy?.lanIp;
+  if (!lanIp) {
+    return { skip: { status: 'info', detail: 'No LAN IP recorded in config — DNS rewrite check skipped.' } };
+  }
+  const expected = buildExpectedRewrites(config.reverseProxy?.lanDomain, config.reverseProxy?.publicDomain);
+  return {
+    creds: {
+      adminUrl: adguard.adminUrl || `http://localhost:${config.templateSettings?.ADGUARD_ADMIN_PORT ?? '8083'}`,
+      username: adguard.username || 'admin',
+      password: adguard.password,
+    },
+    lanIp,
+    expected,
+  };
+}
+
 export async function checkAdguardRewritesMissing(): Promise<AdguardRewritesMissingResult> {
   const config = await getConfig();
 
-  // Skip when AdGuard isn't installed — nothing to provision against.
-  // The npm/cert/pods probes already cover the "service missing" case.
-  if (!config.installedTemplates?.adguard) {
-    return {
-      status: 'ok',
-      detail: 'AdGuard is not installed — DNS rewrite check skipped.',
-    };
-  }
-
-  const adguard = config.adguard;
-  if (!adguard?.password) {
-    // Credentials live in a separate config block written by AdGuard's
-    // post-deploy. Without them we can't query /control/rewrite/list —
-    // surface as info so the probe doesn't masquerade as healthy, and
-    // leave the actual remediation to the credentials-saving flow.
-    return {
-      status: 'info',
-      detail: 'AdGuard credentials are not recorded yet — DNS rewrite check skipped.',
-    };
-  }
-
-  const lanIp = config.reverseProxy?.lanIp;
-  if (!lanIp) {
-    return {
-      status: 'info',
-      detail: 'No LAN IP recorded in config — DNS rewrite check skipped.',
-    };
-  }
-
-  const expected = buildExpectedRewrites(
-    config.reverseProxy?.lanDomain,
-    config.reverseProxy?.publicDomain,
-  );
+  const ctx = resolveAdguardContext(config);
+  if ('skip' in ctx) return ctx.skip;
+  const { creds, lanIp, expected } = ctx;
 
   let actual: Awaited<ReturnType<typeof listRewrites>>;
   try {
-    actual = await listRewrites({
-      adminUrl:
-        adguard.adminUrl ||
-        `http://localhost:${config.templateSettings?.ADGUARD_ADMIN_PORT ?? '8083'}`,
-      username: adguard.username || 'admin',
-      password: adguard.password,
-    });
+    actual = await listRewrites(creds);
   } catch (e) {
     return {
       status: 'info',
@@ -112,34 +139,10 @@ export async function checkAdguardRewritesMissing(): Promise<AdguardRewritesMiss
   // were never created" than "AdGuard has zero rewrites by design",
   // so we lean toward warn — the Reprovision action is safe either
   // way because `ensureWildcardRewrite` is idempotent.
-  const byDomain = new Map(actual.map(r => [r.domain, r.answer]));
-  const missing: string[] = [];
-  const stale: string[] = [];
-  for (const d of expected) {
-    const got = byDomain.get(d);
-    if (got === undefined) missing.push(d);
-    else if (got !== lanIp) stale.push(`${d} → ${got}`);
-  }
+  const { missing, stale } = diffRewrites(actual, expected, lanIp);
 
   if (missing.length === 0 && stale.length === 0) {
-    // OK-message polish (#550): when the rewrite count is small enough
-    // to scan at a glance, name them explicitly so the operator sees
-    // *which* domains are mapped — not just a count. Above ~5 entries
-    // the listing turns into noise and the count is more useful.
-    const LISTING_THRESHOLD = 5;
-    if (expected.length <= LISTING_THRESHOLD) {
-      const listing = expected.map(d => `${d} → ${lanIp}`).join(', ');
-      return {
-        status: 'ok',
-        detail: `${expected.length} portal/wildcard rewrite${
-          expected.length === 1 ? '' : 's'
-        } in AdGuard: ${listing}.`,
-      };
-    }
-    return {
-      status: 'ok',
-      detail: `${expected.length} portal/wildcard rewrites in AdGuard point at ${lanIp}.`,
-    };
+    return { status: 'ok', detail: okRewritesDetail(expected, lanIp) };
   }
 
   const parts: string[] = [];
