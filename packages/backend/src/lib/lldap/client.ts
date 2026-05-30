@@ -34,6 +34,17 @@ const LIST_USERS_QUERY = `
   }
 `;
 
+// Full directory dump for the config-survival export (#1354): users (with their
+// group memberships) + the group list. Passwords are intentionally absent —
+// LLDAP uses OPAQUE, so they can't be exported/restored; migrated users set a
+// new password on first login.
+const EXPORT_DIRECTORY_QUERY = `
+  query Directory {
+    users { id email displayName groups { displayName } }
+    groups { displayName }
+  }
+`;
+
 interface LldapCredentials {
   url: string;
   username: string;
@@ -184,6 +195,64 @@ export async function listLldapUsers(): Promise<LldapListUsersResult> {
       return { ok: false, reason: 'graphql_error', message: data.errors[0]?.message ?? 'Unknown LLDAP error.' };
     }
     return { ok: true, users: data.data?.users ?? [] };
+  } catch (e) {
+    return { ok: false, reason: 'network_error', message: e instanceof Error ? e.message : 'Network error talking to LLDAP.' };
+  }
+}
+
+/** One exported user — group memberships by displayName; no password (OPAQUE). */
+export interface LldapDirectoryUser {
+  id: string;
+  email?: string;
+  displayName?: string;
+  groups: string[];
+}
+
+/** A point-in-time dump of the LLDAP directory for config-survival (#1354). */
+export interface LldapDirectory {
+  exportedAt: string;
+  groups: string[];
+  users: LldapDirectoryUser[];
+}
+
+export type LldapExportResult =
+  | { ok: true; directory: LldapDirectory }
+  | { ok: false; reason: 'not_configured' | 'unreachable' | 'auth_failed' | 'graphql_error' | 'network_error'; message: string };
+
+/**
+ * Export the full LLDAP directory — every user (with their group memberships)
+ * plus the group list — for staging onto the NAS so a fresh install can re-seed
+ * the same accounts (#1354). Passwords are NOT included (LLDAP uses OPAQUE, so
+ * they can't leave over GraphQL); migrated users set a new password on first
+ * login. Reuses the same auth + GraphQL path as the other client calls.
+ */
+export async function exportLldapDirectory(): Promise<LldapExportResult> {
+  const auth = await authenticateWithLldap();
+  if (!auth.ok) {
+    return { ok: false, reason: auth.reason, message: auth.message };
+  }
+  try {
+    const res = await fetch(`${auth.baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify({ query: EXPORT_DIRECTORY_QUERY }),
+      signal: AbortSignal.timeout(GRAPHQL_TIMEOUT_MS),
+    });
+    const data = await res.json().catch(() => ({})) as {
+      data?: { users?: Array<{ id: string; email?: string; displayName?: string; groups?: Array<{ displayName: string }> }>; groups?: Array<{ displayName: string }> };
+      errors?: Array<{ message?: string }>;
+    };
+    if (data.errors?.length) {
+      return { ok: false, reason: 'graphql_error', message: data.errors[0]?.message ?? 'Unknown LLDAP error.' };
+    }
+    const users: LldapDirectoryUser[] = (data.data?.users ?? []).map(u => ({
+      id: u.id,
+      email: u.email,
+      displayName: u.displayName,
+      groups: (u.groups ?? []).map(g => g.displayName),
+    }));
+    const groups = (data.data?.groups ?? []).map(g => g.displayName);
+    return { ok: true, directory: { exportedAt: new Date().toISOString(), groups, users } };
   } catch (e) {
     return { ok: false, reason: 'network_error', message: e instanceof Error ? e.message : 'Network error talking to LLDAP.' };
   }
