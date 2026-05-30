@@ -13,7 +13,10 @@ async function getAgent() {
   return agentManager.getAgent(nodeName);
 }
 
-export const GET = withApiHandler({}, async () => {
+// `tokenScope: 'read'` so the sb-tui launcher can poll USB-boot readiness with
+// its scoped token (show "would the box boot from USB?" beside ping/webserver)
+// without an extra cookie login.
+export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
   try {
     const agent = await getAgent();
     const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -v' }) as { code?: number; stdout?: string };
@@ -79,7 +82,10 @@ const PostBody = z.object({
   reboot: z.boolean().optional().default(false),
 });
 
-export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
+// `tokenScope: 'mutate'` — sets the firmware's one-shot BootNext (and optionally
+// reboots), so the sb-tui "ensure USB boot" action can enable it with a scoped
+// token, matching the frontend's enable button.
+export const POST = withApiHandler({ body: PostBody, tokenScope: 'mutate' }, async ({ body }) => {
   try {
     const agent = await getAgent();
     
@@ -136,7 +142,7 @@ export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
   }
 });
 
-export const DELETE = withApiHandler({}, async () => {
+export const DELETE = withApiHandler({ tokenScope: 'mutate' }, async () => {
   try {
     const agent = await getAgent();
     logger.info('api:system:boot:usb-next', 'Clearing UEFI BootNext setting');

@@ -136,7 +136,7 @@ func runWatch() int {
 		fmt.Fprintln(os.Stderr, "no target host — set SB_HOST (and SB_PORT), or build an ISO first so build/fcos/install-settings.env exists.")
 		return 2
 	}
-	return watchTarget(ui.NewWatch(t.Host, t.Port), t.Host, t.Port)
+	return watchTarget(ui.NewWatch(t.Host, t.Port, probes.ResolveToken(t.Host)), t.Host, t.Port)
 }
 
 // watchTarget runs a watch dashboard model and prints the handoff banner on a
@@ -318,5 +318,5 @@ func runBuildThenWatch(plan buildflow.Plan) int {
 	fmt.Printf("      (On a running ServiceBay box you can instead use Settings → Boot →\n")
 	fmt.Printf("       \"boot from USB next\", which sets a one-shot UEFI entry and reboots.)\n\n")
 	fmt.Printf("   Watching %s:%s — offline → reboot → install → live. Ctrl+C to stop.\n\n", host, port)
-	return watchTarget(ui.NewWatchReinstall(host, port), host, port)
+	return watchTarget(ui.NewWatchReinstall(host, port, probes.ResolveToken(host)), host, port)
 }

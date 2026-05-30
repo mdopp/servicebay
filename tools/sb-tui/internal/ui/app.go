@@ -107,7 +107,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openReinstallWatchMsg:
 		// USB-boot flow succeeded; the box is rebooting → watch the reinstall.
-		m.active = NewWatchReinstall(msg.host, msg.port)
+		m.active = NewWatchReinstall(msg.host, msg.port, m.token)
 		m.screen = appPanel
 		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
 
@@ -144,7 +144,7 @@ func (m App) route(id phase.ActionID) (tea.Model, tea.Cmd) {
 		}
 		return m.openPanel(id)
 	case phase.WatchInstall:
-		m.active = NewWatch(m.host, m.port)
+		m.active = NewWatch(m.host, m.port, m.token)
 		m.screen = appPanel
 		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
 	case phase.BuildISO:

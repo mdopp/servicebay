@@ -23,7 +23,33 @@ var (
 	upStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
 	warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	downStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	grayStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
+
+// USBState is the box's USB-boot readiness for the dashboard glyph: would the
+// firmware boot from USB on the next reboot? Unknown when we couldn't query the
+// box (offline mid-reboot, or no token) → gray dot.
+type USBState int
+
+const (
+	USBUnknown  USBState = iota // not queried / box offline — gray
+	USBNotReady                 // no active USB/removable UEFI entry — red
+	USBReady                    // an active USB entry exists (firmware can boot USB) — green
+	USBWillBoot                 // BootNext points at USB (will boot USB next) — green
+)
+
+// usbGlyph renders the USB-boot dot: green when the box can/will boot from USB,
+// red when it can't (no/inactive entry), gray when unknown.
+func usbGlyph(s USBState) string {
+	switch s {
+	case USBReady, USBWillBoot:
+		return upStyle.Render("●")
+	case USBNotReady:
+		return downStyle.Render("●")
+	default:
+		return grayStyle.Render("○")
+	}
+}
 
 // Status is one decoded /status.txt line. The splash writes a single
 // tab-separated line: an RFC3339 UTC timestamp, the current install stage
@@ -84,10 +110,11 @@ func IsTakeover(rootTitle string) bool {
 
 // Probe is one tick's worth of observed facts about the box.
 type Probe struct {
-	ICMP   bool    // host answers ping
-	TCP    bool    // the ServiceBay port accepts a connection
-	Status *Status // decoded /status.txt, nil when unavailable or not-yet-TSV
-	Log    string  // /log.txt body (only fetched when Status is present)
+	ICMP   bool     // host answers ping
+	TCP    bool     // the ServiceBay port accepts a connection
+	Status *Status  // decoded /status.txt, nil when unavailable or not-yet-TSV
+	Log    string   // /log.txt body (only fetched when Status is present)
+	USB    USBState // USB-boot readiness; set by the UI layer (authed query), not Observe
 }
 
 // ConnLevel is the connection-badge state derived from a probe.
@@ -245,8 +272,16 @@ func Render(host, port string, t *Tracker, p Probe, now time.Time, width int) st
 	b.WriteString("\n")
 
 	// Status + meta rows.
-	fmt.Fprintf(&b, "  Status   %s ping   %s :%s   [%s]\n",
-		glyph(p.ICMP), glyph(p.TCP), port, badge(t.Conn(p)))
+	fmt.Fprintf(&b, "  Status   %s ping   %s :%s   %s usb-boot   [%s]\n",
+		glyph(p.ICMP), glyph(p.TCP), port, usbGlyph(p.USB), badge(t.Conn(p)))
+	switch p.USB {
+	case USBNotReady:
+		b.WriteString("           " + warnStyle.Render("USB boot not ready — insert the USB stick, then press u to enable") + "\n")
+	case USBReady:
+		b.WriteString("           " + grayStyle.Render("can boot from USB — press u to set it for the next reboot") + "\n")
+	case USBWillBoot:
+		b.WriteString("           " + upStyle.Render("✓ will boot from USB on the next reboot") + "\n")
+	}
 	meta := "  Meta     elapsed " + FmtDur(now.Sub(t.Start))
 	if t.Stage != "" {
 		meta += "   |   at stage " + FmtDur(now.Sub(t.StageStart))
