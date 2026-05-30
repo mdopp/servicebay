@@ -90,10 +90,42 @@ func generateSSHKey() (string, error) {
 // runExecute runs a confirmed build Plan in the normal terminal: the bake
 // streams output and the USB flash needs sudo + a real TTY, so this runs after
 // any alt-screen program has exited.
+// ensureBuildTools checks for the build-host tools and, when some are missing,
+// OFFERS to auto-install them (butane from its GitHub release binary, the rest
+// via the package manager / cargo) rather than dead-ending with "install them
+// by hand" — restoring the old install-fedora-coreos.sh behaviour (#1327).
+// Returns true when every tool is present.
+func ensureBuildTools() bool {
+	missing := buildflow.MissingTools()
+	if len(missing) == 0 {
+		return true
+	}
+	fmt.Fprintf(os.Stderr, "Missing build-host tools: %v\n", missing)
+	fmt.Fprint(os.Stderr, "Install them now? (curl-fetches butane + uses your package manager; needs sudo) [Y/n] ")
+	if !readYes() {
+		fmt.Fprintln(os.Stderr, "Skipped. Install manually (Fedora: sudo dnf install butane coreos-installer openssl openssh) and retry.")
+		return false
+	}
+	if err := buildflow.InstallMissingTools(missing, func(f string, a ...any) { fmt.Fprintf(os.Stderr, f, a...) }); err != nil {
+		fmt.Fprintln(os.Stderr, "install failed:", err)
+		return false
+	}
+	if still := buildflow.MissingTools(); len(still) > 0 {
+		fmt.Fprintf(os.Stderr, "Still missing after install: %v — check the output above.\n", still)
+		return false
+	}
+	return true
+}
+
+// readYes reads a Y/n answer from stdin, defaulting to yes on empty input.
+func readYes() bool {
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "" || line == "y" || line == "yes"
+}
+
 func runExecute(plan buildflow.Plan) int {
-	if missing := buildflow.MissingTools(); len(missing) > 0 {
-		fmt.Fprintf(os.Stderr, "Cannot build an ISO — missing build-host tools: %v\n", missing)
-		fmt.Fprintln(os.Stderr, "Install them and retry (Fedora: sudo dnf install butane coreos-installer openssl openssh).")
+	if !ensureBuildTools() {
 		return 2
 	}
 	if err := buildflow.Execute(plan, buildflow.Options{BuildDir: probes.BuildDir(), Deps: buildflow.DefaultDeps()},
@@ -108,9 +140,7 @@ func runExecute(plan buildflow.Plan) int {
 // the full-screen form gathers a Plan, then runExecute runs it. The menu's
 // BuildISO action instead hosts the form in-app so esc returns to the menu.
 func runBuild() int {
-	if missing := buildflow.MissingTools(); len(missing) > 0 {
-		fmt.Fprintf(os.Stderr, "Cannot build an ISO — missing build-host tools: %v\n", missing)
-		fmt.Fprintln(os.Stderr, "Install them and retry (Fedora: sudo dnf install butane coreos-installer openssl openssh).")
+	if !ensureBuildTools() {
 		return 2
 	}
 	cfg := buildConfig()
