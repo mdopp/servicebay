@@ -182,6 +182,49 @@ async function adguardCreds(): Promise<{ url: string; username: string; password
 }
 
 /** Top-level probe entry — returns the partial probe payload. */
+// recentlyDismissedDetail returns the "dismissed N days ago" info message when
+// the operator dismissed the check within the window, else null.
+function recentlyDismissedDetail(dismissedAt: string | undefined): string | null {
+  if (!dismissedAt) return null;
+  const ageDays = (Date.now() - Date.parse(dismissedAt)) / (1000 * 60 * 60 * 24);
+  if (ageDays >= 0 && ageDays < DISMISS_DAYS) {
+    return `Router DNS check dismissed ${Math.floor(ageDays)} day${Math.floor(ageDays) === 1 ? '' : 's'} ago — re-checks resume after ${DISMISS_DAYS}d.`;
+  }
+  return null;
+}
+
+// gatewayDnsHasLanIp queries a FritzBox DNS source (DHCP option-6 or WAN
+// upstream, via fetchDns) and reports whether its answer includes the LAN IP.
+// Returns {dns:null, ok:false} when the gateway isn't a credentialed FritzBox.
+// Dedupes the identical DHCP/WAN signal blocks.
+async function gatewayDnsHasLanIp(
+  gateway: Awaited<ReturnType<typeof getConfig>>['gateway'],
+  lanIp: string,
+  fetchDns: (host: string, user: string, pass: string) => Promise<string | null>,
+): Promise<{ dns: string | null; ok: boolean }> {
+  if (gateway?.type !== 'fritzbox' || !gateway.username || !gateway.password) {
+    return { dns: null, ok: false };
+  }
+  const dns = await fetchDns(gateway.host, gateway.username, gateway.password);
+  const ok = !!dns && dns.split(/[,\s]+/).map(s => s.trim()).filter(Boolean).includes(lanIp);
+  return { dns, ok };
+}
+
+// okRoutingDetail explains which valid DNS topology is in effect, for the OK message.
+function okRoutingDetail(dhcpOk: boolean, upstreamOk: boolean, lanIp: string): string {
+  const detail = ['Router DNS routing is working.'];
+  if (dhcpOk) {
+    detail.push(`Pattern: AdGuard as LAN DNS — FritzBox hands out ServiceBay (${lanIp}) via DHCP option 6, so LAN clients query AdGuard directly.`);
+  } else if (upstreamOk) {
+    detail.push(`Pattern: FritzBox stays as LAN DNS, AdGuard is upstream — FritzBox's own resolver queries ServiceBay (${lanIp}). All LAN queries flow client → FritzBox → AdGuard → internet.`);
+  } else {
+    // adguardOk alone — AdGuard sees client traffic (non-FritzBox setup or
+    // TR-064 unreachable); the traffic signal is the source of truth.
+    detail.push(`AdGuard sees LAN-client queries in the last ${QUERYLOG_RECENT_MIN} min — devices are using it for DNS.`);
+  }
+  return detail.join(' ');
+}
+
 export async function checkRouterDnsNotPointing(): Promise<RouterDnsProbeResult> {
   const config = await getConfig();
   const lanIp = config.reverseProxy?.lanIp;
@@ -192,20 +235,9 @@ export async function checkRouterDnsNotPointing(): Promise<RouterDnsProbeResult>
     };
   }
 
-  // Check the dismiss-list — if the operator clicked "I'll handle it
-  // manually" within the last 30 days, return `info` instead of `warn`
-  // so the probe doesn't keep nagging.
-  const dismissedAt = config.reverseProxy?.routerDnsDismissedAt;
-  if (dismissedAt) {
-    const ageMs = Date.now() - Date.parse(dismissedAt);
-    const ageDays = ageMs / (1000 * 60 * 60 * 24);
-    if (ageDays >= 0 && ageDays < DISMISS_DAYS) {
-      return {
-        status: 'info',
-        detail: `Router DNS check dismissed ${Math.floor(ageDays)} day${Math.floor(ageDays) === 1 ? '' : 's'} ago — re-checks resume after ${DISMISS_DAYS}d.`,
-      };
-    }
-  }
+  // Skip nagging if the operator dismissed the check within the window.
+  const dismissed = recentlyDismissedDetail(config.reverseProxy?.routerDnsDismissedAt);
+  if (dismissed) return { status: 'info', detail: dismissed };
 
   // Signal A — AdGuard query-log heuristic. Positive when AdGuard
   // has logged any non-localhost client (LAN device OR the FritzBox
@@ -216,57 +248,21 @@ export async function checkRouterDnsNotPointing(): Promise<RouterDnsProbeResult>
     adguardOk = await adguardSeesLanClients(adguard.url, adguard.username, adguard.password);
   }
 
-  // Signal B — FritzBox DHCP option-6 includes ServiceBay's IP. True
-  // when the operator picked "AdGuard as LAN DNS" — LAN clients query
-  // AdGuard directly.
-  let dhcpOk = false;
-  let dhcpDns: string | null = null;
-  if (config.gateway?.type === 'fritzbox' && config.gateway.username && config.gateway.password) {
-    dhcpDns = await fritzBoxDhcpDns(
-      config.gateway.host,
-      config.gateway.username,
-      config.gateway.password,
-    );
-    if (dhcpDns) {
-      dhcpOk = dhcpDns.split(/[,\s]+/).map(s => s.trim()).filter(Boolean).includes(lanIp);
-    }
-  }
-
-  // Signal C — FritzBox's OWN upstream WAN DNS includes ServiceBay's
-  // IP. True when the operator picked "FritzBox as LAN DNS, AdGuard
-  // as upstream" — LAN clients query FritzBox, FritzBox forwards to
-  // AdGuard. Same household-wide filtering, different topology; both
-  // are valid setups and the probe should recognise either as OK.
-  let upstreamOk = false;
-  let upstreamDns: string | null = null;
-  if (config.gateway?.type === 'fritzbox' && config.gateway.username && config.gateway.password) {
-    upstreamDns = await fritzBoxWanDns(
-      config.gateway.host,
-      config.gateway.username,
-      config.gateway.password,
-    );
-    if (upstreamDns) {
-      upstreamOk = upstreamDns.split(/[,\s]+/).map(s => s.trim()).filter(Boolean).includes(lanIp);
-    }
-  }
+  // Signals B & C — FritzBox DHCP option-6 / its own WAN-upstream DNS includes
+  // ServiceBay's IP. Two valid topologies ("AdGuard as LAN DNS" via DHCP, or
+  // "FritzBox as LAN DNS, AdGuard upstream"); recognise either as OK.
+  const dhcp = await gatewayDnsHasLanIp(config.gateway, lanIp, fritzBoxDhcpDns);
+  const upstream = await gatewayDnsHasLanIp(config.gateway, lanIp, fritzBoxWanDns);
+  const dhcpOk = dhcp.ok;
+  const dhcpDns = dhcp.dns;
+  const upstreamOk = upstream.ok;
+  const upstreamDns = upstream.dns;
 
   // Pattern detection — explain which valid topology is in effect so
   // operators reading the self-test result see the probe understood
   // their deliberate setup choice (not just "ok, trust me").
   if (dhcpOk || upstreamOk || adguardOk) {
-    const detail: string[] = ['Router DNS routing is working.'];
-    if (dhcpOk) {
-      detail.push(`Pattern: AdGuard as LAN DNS — FritzBox hands out ServiceBay (${lanIp}) via DHCP option 6, so LAN clients query AdGuard directly.`);
-    } else if (upstreamOk) {
-      detail.push(`Pattern: FritzBox stays as LAN DNS, AdGuard is upstream — FritzBox's own resolver queries ServiceBay (${lanIp}). All LAN queries flow client → FritzBox → AdGuard → internet.`);
-    } else {
-      // adguardOk alone — neither DHCP option 6 nor WAN-upstream
-      // signal matched, but AdGuard is seeing client traffic. Likely
-      // a non-FritzBox setup, or TR-064 isn't reachable. The traffic
-      // signal is the source of truth either way.
-      detail.push(`AdGuard sees LAN-client queries in the last ${QUERYLOG_RECENT_MIN} min — devices are using it for DNS.`);
-    }
-    return { status: 'ok', detail: detail.join(' ') };
+    return { status: 'ok', detail: okRoutingDetail(dhcpOk, upstreamOk, lanIp) };
   }
 
   // All three signals negative — true fail. Show the operator both
