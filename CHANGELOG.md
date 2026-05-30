@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.56.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.55.0...servicebay-v4.56.0) (2026-05-30)
+
+
+### Features
+
+* **backup:** export lldap users/groups and stage them on the NAS ([4000476](https://github.com/mdopp/servicebay/commit/4000476fb9b5ad0373768cd12100ae3ce491b7c1))
+* **backup:** export lldap users/groups and stage them on the NAS ([99bc624](https://github.com/mdopp/servicebay/commit/99bc62499ecb6244ee5f75d7fac6c88a00dad99d))
+* **backup:** import a Home Assistant OS backup into the NAS ([073f458](https://github.com/mdopp/servicebay/commit/073f458e8c8a77f4b62bee0940ac8ed5459fa40d))
+* **backup:** import a Home Assistant OS backup into the NAS ([1c5177f](https://github.com/mdopp/servicebay/commit/1c5177f43bc5c926a6225e0cd66617a042c99ddc))
+* **backup:** route to stage an uploaded service backup onto the NAS ([12ea906](https://github.com/mdopp/servicebay/commit/12ea9061022f08f73928ec62f95925e0c6de06bc))
+* **backup:** route to stage an uploaded service backup onto the NAS ([81f8c35](https://github.com/mdopp/servicebay/commit/81f8c35028b16b7c5b6e343b5ee2b136b67ccb44))
+* **tui:** upload a service backup archive to the NAS ([43ac35d](https://github.com/mdopp/servicebay/commit/43ac35de2a4461cc971a4ad5ac41af63f64e195d))
+* **tui:** upload a service backup archive to the NAS ([12663cf](https://github.com/mdopp/servicebay/commit/12663cf277a1bde1315e0ff888e43b267865e7d1))
+
 ## [4.55.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.54.0...servicebay-v4.55.0) (2026-05-29)
 
 
