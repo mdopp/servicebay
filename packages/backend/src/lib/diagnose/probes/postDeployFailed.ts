@@ -74,6 +74,31 @@ export async function checkPostDeployFailed(): Promise<PostDeployFailedResult> {
   };
 }
 
+/**
+ * Persist a post-deploy re-run's outcome to servicePostDeploy so the probe
+ * transitions to ok / stays warn. Failure to persist is non-fatal (logged).
+ * Extracted from rerunPostDeploy to keep it under the line limit.
+ */
+async function persistRerunResult(
+  itemId: string,
+  result: { code?: number; stdout?: string },
+): Promise<void> {
+  const stdoutTail = (result.stdout ?? '').slice(-1024) || undefined;
+  try {
+    await updateConfig({
+      servicePostDeploy: {
+        [itemId]: {
+          lastRunAt: new Date().toISOString(),
+          exitCode: result.code ?? -1,
+          stdoutTail,
+        },
+      },
+    });
+  } catch (e) {
+    logger.warn('diagnose:post_deploy_failed', `Could not persist re-run for ${itemId}:`, e);
+  }
+}
+
 async function rerunPostDeploy({
   node,
   itemId,
@@ -108,20 +133,7 @@ async function rerunPostDeploy({
   }, { timeoutMs: 1_200_000 }) as { code?: number; stdout?: string };
 
   // Persist the new run so the probe transitions to ok / stays warn.
-  const stdoutTail = (result.stdout ?? '').slice(-1024) || undefined;
-  try {
-    await updateConfig({
-      servicePostDeploy: {
-        [itemId]: {
-          lastRunAt: new Date().toISOString(),
-          exitCode: result.code ?? -1,
-          stdoutTail,
-        },
-      },
-    });
-  } catch (e) {
-    logger.warn('diagnose:post_deploy_failed', `Could not persist re-run for ${itemId}:`, e);
-  }
+  await persistRerunResult(itemId, result);
 
   if (result.code === 0) {
     return {
