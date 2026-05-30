@@ -30,8 +30,10 @@ export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request
     const result = await stageUploadedServiceTar(service, tar);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
-    // stageUploadedServiceTar throws for an unknown service / non-tar upload —
-    // those are caller errors, so default to 400.
-    return apiError(e, { tag: 'api:system:external-backup:upload', status: 400 });
+    // stageUploadedServiceTar throws for an unknown service / non-tar upload /
+    // unconfigured NAS — all operator-fixable, curated messages, and this route
+    // is token/cookie-gated. Surface them instead of an opaque "Bad request"
+    // (matches export-lldap / import-ha).
+    return apiError(e, { tag: 'api:system:external-backup:upload', status: 400, exposeMessage: true });
   }
 });
