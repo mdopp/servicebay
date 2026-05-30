@@ -127,7 +127,12 @@ export const POST = withApiHandler({ body: PostBody, tokenScope: 'mutate' }, asy
     
     if (body.reboot) {
       logger.info('api:system:boot:usb-next', 'Rebooting system as requested...');
-      agent.sendCommand('exec', { command: 'systemctl reboot' }).catch(() => {});
+      // sudo -n: the agent runs as the rootless `core` user, which can't reboot
+      // the host without it (a plain `systemctl reboot` is polkit-denied for a
+      // non-session service, so it silently no-ops — the box stays armed but
+      // never reboots). `core` has passwordless sudo (same as the efibootmgr
+      // calls above), so this is the working path. (#usb-next-reboot)
+      agent.sendCommand('exec', { command: 'sudo -n systemctl reboot' }).catch(() => {});
     }
     
     return NextResponse.json({
