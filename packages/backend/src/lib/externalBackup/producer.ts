@@ -26,6 +26,7 @@ import { nasUpload, nasDownload, nasList } from './nasClient';
 import {
   getServiceManifest,
   applyStripRules,
+  SERVICE_BACKUP_MANIFESTS,
   type ServiceBackupManifest,
 } from './serviceManifest';
 
@@ -182,6 +183,37 @@ export async function backupServiceToNas(
   const serviceDataDir = opts.serviceDataDir ?? (await resolveServiceDataDir(service));
   const tar = await buildServiceBackupTar(serviceDataDir, manifest);
   return writeServiceBackupToNas(service, tar);
+}
+
+/** One service's outcome in an on-demand backup-all run. */
+export interface ServiceBackupRunEntry {
+  service: string;
+  ok: boolean;
+  tarName?: string;
+  size?: number;
+  error?: string;
+}
+
+/**
+ * On-demand "back up now" (#1217): back up every INSTALLED service that has a
+ * backup manifest to the NAS, in one pass. Per-service failures are captured in
+ * the result (one bad service doesn't abort the rest) — a NAS-not-configured /
+ * connection error surfaces on the first attempt and repeats per service, which
+ * the caller can detect (all `ok:false` with the same error).
+ */
+export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEntry[]> {
+  const installed = new Set(Object.keys((await getConfig()).installedTemplates ?? {}));
+  const results: ServiceBackupRunEntry[] = [];
+  for (const manifest of SERVICE_BACKUP_MANIFESTS) {
+    if (!installed.has(manifest.service)) continue;
+    try {
+      const r = await backupServiceToNas(manifest.service);
+      results.push({ service: manifest.service, ok: true, tarName: r.tarName, size: r.size });
+    } catch (e) {
+      results.push({ service: manifest.service, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return results;
 }
 
 /**
