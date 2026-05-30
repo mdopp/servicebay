@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.57.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.56.1...servicebay-v4.57.0) (2026-05-30)
+
+
+### Features
+
+* **external-backup:** restore a service config backup from the NAS ([#1218](https://github.com/mdopp/servicebay/issues/1218)) ([02b223a](https://github.com/mdopp/servicebay/commit/02b223a711031d2746b736dd3eeabbb20c374487))
+* **external-backup:** restore a service config backup from the NAS ([#1218](https://github.com/mdopp/servicebay/issues/1218)) ([41ddc63](https://github.com/mdopp/servicebay/commit/41ddc634af2e2679db83f93a40ce4d5e829076c0))
+
 ## [4.56.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.56.0...servicebay-v4.56.1) (2026-05-30)
 
 
