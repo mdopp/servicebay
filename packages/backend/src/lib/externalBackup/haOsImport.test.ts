@@ -62,13 +62,19 @@ afterEach(async () => {
   tmpDirs = [];
 });
 
+const HA_INCLUDES = ['configuration.yaml', '.storage/zwave_js', '.storage/core.entity_registry'];
+
 describe('extractHaConfigDir', () => {
-  it('extracts the inner data/ config dir', async () => {
+  it('extracts only the requested include paths from the inner data/ dir', async () => {
     const backup = await buildFakeHaBackup();
     const work = await mkTmp();
-    const dataDir = await extractHaConfigDir(backup, work);
+    const dataDir = await extractHaConfigDir(backup, work, HA_INCLUDES);
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('default_config:');
     expect(await exists(path.join(dataDir, '.storage/zwave_js'))).toBe(true);
+    // The big excluded members are never even unpacked to /tmp (#1353): the
+    // whole point is to not write the DB out and exhaust the container tmpfs.
+    expect(await exists(path.join(dataDir, 'home-assistant_v2.db'))).toBe(false);
+    expect(await exists(path.join(dataDir, 'home-assistant.log'))).toBe(false);
   });
 
   it('rejects a tar that is not an HA backup', async () => {
@@ -76,7 +82,18 @@ describe('extractHaConfigDir', () => {
     await write(dir, 'random.txt', 'x');
     const notHa = path.join(dir, 'not-ha.tar');
     await execFileAsync('tar', ['-cf', notHa, '-C', dir, 'random.txt']);
-    await expect(extractHaConfigDir(notHa, await mkTmp())).rejects.toThrow(/Home Assistant/);
+    await expect(extractHaConfigDir(notHa, await mkTmp(), HA_INCLUDES)).rejects.toThrow(/Home Assistant/);
+  });
+
+  it('rejects an HA archive with no recognised config files', async () => {
+    const innerStage = await mkTmp();
+    await write(innerStage, 'data/home-assistant_v2.db', 'DB'); // present but not an include
+    const outerStage = await mkTmp();
+    await execFileAsync('tar', ['-czf', path.join(outerStage, 'homeassistant.tar.gz'), '-C', innerStage, '.']);
+    const out = await mkTmp();
+    const tarPath = path.join(out, 'ha.tar');
+    await execFileAsync('tar', ['-cf', tarPath, '-C', outerStage, 'homeassistant.tar.gz']);
+    await expect(extractHaConfigDir(tarPath, await mkTmp(), HA_INCLUDES)).rejects.toThrow(/no recognised config/);
   });
 });
 

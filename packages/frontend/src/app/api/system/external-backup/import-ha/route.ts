@@ -29,7 +29,11 @@ export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     // A non-HA / corrupt upload throws from the extractor — caller error → 400.
-    return apiError(e, { tag: 'api:system:external-backup:import-ha', status: 400 });
+    // Surface the message: these are operator-fixable ("not a Home Assistant
+    // backup", "FritzBox NAS not configured", a tar/FTP failure) and this route
+    // is token/cookie-gated. An opaque "Bad request" hid the real cause behind a
+    // multi-hour hunt the error string named outright. Matches export-lldap.
+    return apiError(e, { tag: 'api:system:external-backup:import-ha', status: 400, exposeMessage: true });
   } finally {
     await fs.rm(tmpPath, { force: true });
   }
