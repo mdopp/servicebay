@@ -203,6 +203,31 @@ async function useExistingNpmCreds({
       refresh: false,
     };
   }
+  const failure = await verifyNpmCreds(adminUrl, email, password);
+  if (failure) return failure;
+  await updateConfig({
+    reverseProxy: {
+      npm: { email, password },
+    },
+  });
+  logger.info('diagnose:npm_data_stale', `Saved verified NPM credentials for ${email}`);
+  return {
+    ok: true,
+    message: 'Credentials verified and saved. Future installs and proxy syncs will use these.',
+    refresh: true,
+  };
+}
+
+/**
+ * POST the given admin creds to NPM's /api/tokens to confirm they work, without
+ * persisting. Returns a failure ProbeActionResult, or null when NPM accepts
+ * them. Extracted from useExistingNpmCreds to keep it under the line limit.
+ */
+async function verifyNpmCreds(
+  adminUrl: string,
+  email: string,
+  password: string,
+): Promise<ProbeActionResult | null> {
   let res: Response;
   try {
     res = await fetch(`${adminUrl}/api/tokens`, {
@@ -228,17 +253,7 @@ async function useExistingNpmCreds({
   if (!res.ok) {
     return { ok: false, message: `NPM returned HTTP ${res.status} during verification.`, refresh: false };
   }
-  await updateConfig({
-    reverseProxy: {
-      npm: { email, password },
-    },
-  });
-  logger.info('diagnose:npm_data_stale', `Saved verified NPM credentials for ${email}`);
-  return {
-    ok: true,
-    message: 'Credentials verified and saved. Future installs and proxy syncs will use these.',
-    refresh: true,
-  };
+  return null;
 }
 
 registerProbeAction(
