@@ -85,10 +85,10 @@ func TestBuildLabelFlipsOnRebuild(t *testing.T) {
 	// NoISO leads with Express; the plain build action follows at index 1.
 	fresh := ActionsFor(Detect(false, BoxStatus{}))[1]
 	rebuilt := ActionsFor(Detect(true, BoxStatus{}))[0]
-	if fresh.Label != "Build install ISO + flash USB" {
+	if fresh.Label != "Create install ISO + write it to a USB stick" {
 		t.Fatalf("fresh label = %q", fresh.Label)
 	}
-	if rebuilt.Label != "Rebuild install ISO + flash USB" {
+	if rebuilt.Label != "Rebuild install ISO + write it to a USB stick" {
 		t.Fatalf("rebuilt label = %q", rebuilt.Label)
 	}
 }

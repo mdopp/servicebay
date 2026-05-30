@@ -73,30 +73,30 @@ var expressAction = Action{Express, "Express setup — build, boot, watch",
 // editConfigAction is the in-TUI box-control entry (#1275): edit allow-listed
 // config over the authenticated REST API without leaving the launcher. Only
 // meaningful once the box is reachable.
-var editConfigAction = Action{EditConfig, "Edit config (in-TUI)",
-	"View and edit allow-listed box settings (server name, domain, log level) over the REST API."}
+var editConfigAction = Action{EditConfig, "Edit server config",
+	"Change allow-listed settings on the box — server name, domain, log level."}
 
 // installStacksAction is the in-TUI stack-install entry (#1276): pick stacks
 // from the box catalog and drive a server-side install over the REST API. Only
 // meaningful once the box is reachable.
-var installStacksAction = Action{InstallStacks, "Install stacks (in-TUI)",
-	"Pick stacks from the box catalog and install them over the REST API, with live progress."}
+var installStacksAction = Action{InstallStacks, "Install a stack on the server",
+	"Pick services from the catalog and install them on the box, with live progress."}
 
 // backupsAction is the in-TUI backup entry (#1277): list, create, and restore
 // system backups over the authenticated REST API. Only meaningful once the box
 // is reachable; restore is confirmation-gated in the panel.
-var backupsAction = Action{Backups, "Backups (in-TUI)",
-	"List, create, and restore the box's system backups over the REST API."}
+var backupsAction = Action{Backups, "Create / restore server backups",
+	"List, create, and restore the box's full system backups (config + service data)."}
 
 // uploadToNASAction stages a local service config archive on the box's NAS
 // (#1352) so a fresh install pulls it. Only meaningful once the box is reachable.
-var uploadToNASAction = Action{UploadToNAS, "Upload Home Assistant backup to NAS",
-	"Extract a Home Assistant OS backup locally and send its config straight to the FritzBox NAS for a fresh install to restore."}
+var uploadToNASAction = Action{UploadToNAS, "Upload a Home Assistant backup to the NAS",
+	"Pick a Home Assistant backup file; its config is sent to the FritzBox NAS so a fresh install restores it."}
 
 // bootFromUSBAction reinstalls a reachable box: with the freshly-built USB
 // plugged into the server, sign in and set a one-shot UEFI boot to the USB +
 // reboot, so the next boot installs from it instead of the existing disk.
-var bootFromUSBAction = Action{BootFromUSB, "Boot box from USB (reinstall)",
+var bootFromUSBAction = Action{BootFromUSB, "Boot the server from USB (reinstall)",
 	"With the new USB plugged into the server: set it to boot from USB once and reboot, then watch the reinstall."}
 
 // Action is one selectable menu entry: a short Label plus a one-line Detail
@@ -113,13 +113,13 @@ type Action struct {
 func buildAction(s State) Action {
 	switch {
 	case s.BoxReachable:
-		return Action{BuildISO, "Reinstall — build install ISO + flash USB",
-			"Bake a fresh ServiceBay installer and write it to a USB stick to reinstall this box from scratch."}
+		return Action{BuildISO, "Reinstall — create install ISO + write it to a USB stick",
+			"Bake a fresh ServiceBay installer and write it to a USB stick to reinstall this server from scratch."}
 	case s.ISOBuilt:
-		return Action{BuildISO, "Rebuild install ISO + flash USB",
-			"Re-bake the installer ISO with fresh secrets / config and flash it to a USB stick."}
+		return Action{BuildISO, "Rebuild install ISO + write it to a USB stick",
+			"Re-bake the installer ISO with fresh secrets / config and write it to a USB stick."}
 	default:
-		return Action{BuildISO, "Build install ISO + flash USB",
+		return Action{BuildISO, "Create install ISO + write it to a USB stick",
 			"Bake a ServiceBay installer ISO from Fedora CoreOS and write it to a USB stick."}
 	}
 }
@@ -145,7 +145,7 @@ func ActionsFor(s State) []Action {
 		// The dashboard URL is shown persistently by the menu, so there's no
 		// separate "open in browser" action.
 		a = append(a,
-			Action{WatchInstall, "Watch install progress",
+			Action{WatchInstall, "Watch the server's install logs",
 				"Live-track the running install until ServiceBay's setup wizard takes over."},
 			editConfigAction,
 			installStacksAction,

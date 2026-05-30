@@ -40,7 +40,20 @@ const nasUploadFields = 4
 // upload so the operator only enters them once.
 func NewNasUpload() NasUploadModel {
 	c := fritz.LoadCreds()
-	return NasUploadModel{ftpHost: c.Host, ftpUser: c.User, ftpPass: c.Password}
+	host := c.Host
+	if host == "" {
+		host = "192.168.178.1" // FritzBox's default LAN IP — a sensible starting guess
+	}
+	return NasUploadModel{ftpHost: host, ftpUser: c.User, ftpPass: c.Password}
+}
+
+// fieldHints explains the focused field, so the operator isn't guessing what
+// each one wants (a path? which host? which user?).
+var fieldHints = [nasUploadFields]string{
+	"Path to a Home Assistant backup .tar — export it in HA → Settings → System → Backups, then point here (e.g. ~/Downloads/ha-backup.tar).",
+	"Your FritzBox's LAN IP — usually 192.168.178.1.",
+	"A FritzBox user allowed to access storage/NAS (fritz.box → System → FritzBox Users → enable 'Access to NAS contents').",
+	"That FritzBox user's password.",
 }
 
 func (m NasUploadModel) uploadCmd() tea.Cmd {
@@ -148,6 +161,9 @@ func (m NasUploadModel) View() string {
 	b.WriteString(fieldRow("FritzBox host", m.ftpHost, m.focus == 1, false) + "\n")
 	b.WriteString(fieldRow("FritzBox FTP user", m.ftpUser, m.focus == 2, false) + "\n")
 	b.WriteString(fieldRow("FritzBox FTP password", m.ftpPass, m.focus == 3, true) + "\n")
+
+	// Contextual help for whichever field is focused — so no field is a guess.
+	b.WriteString("\n" + detailStyle.Render("→ "+fieldHints[m.focus]) + "\n")
 
 	if m.submitting {
 		b.WriteString("\n" + detailStyle.Render("Extracting + uploading…") + "\n")
