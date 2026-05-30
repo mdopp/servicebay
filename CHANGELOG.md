@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.60.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.59.0...servicebay-v4.60.0) (2026-05-30)
+
+
+### Features
+
+* **external-backup:** on-demand back-up-all-services-to-NAS endpoint ([7951e27](https://github.com/mdopp/servicebay/commit/7951e27bfbeb8881fe1b2d6c486c1284d8dbf74e))
+* **external-backup:** on-demand back-up-all-services-to-NAS endpoint ([b632652](https://github.com/mdopp/servicebay/commit/b63265295f1aa90b6198b2a409a7e9d57fbc4749))
+
 ## [4.59.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.58.0...servicebay-v4.59.0) (2026-05-30)
 
 
