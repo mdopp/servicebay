@@ -217,6 +217,20 @@ async function runTar(args: string[]) {
  *
  * `assertNoSymlinkEscape` (local path only) stays as defense in depth.
  */
+/**
+ * Whether a symlink's target points outside the extraction root, given the
+ * link's own path within the archive. Absolute targets always escape; relative
+ * targets are resolved against the link's directory and escape only if they
+ * climb above the root. Internal links (Let's Encrypt's
+ * `live/x/cert.pem -> ../../archive/x/cert1.pem`) stay within root → allowed.
+ */
+function linkTargetEscapes(linkName: string, target: string): boolean {
+    if (!target) return false;
+    if (path.posix.isAbsolute(target)) return true;
+    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(linkName), target));
+    return resolved === '..' || resolved.startsWith('../');
+}
+
 async function assertSafeArchiveEntries(archivePath: string, gzip = true): Promise<void> {
     let stdout: string;
     try {
@@ -241,21 +255,28 @@ async function assertSafeArchiveEntries(archivePath: string, gzip = true): Promi
         // 4=time, 5+=name (possibly containing spaces + `-> linkname`).
         const nameField = tokens.slice(5).join(' ');
         if (!nameField) continue;
-        if (typeChar === 'l' || typeChar === 'h') {
-            // For l-type the format is `name -> target`; show both so
-            // the operator sees what was attempted.
+        if (typeChar === 'h') {
+            // Hardlinks would create extra references to already-extracted
+            // files; no legitimate purpose in a config payload.
             throw new Error(
-                `Refused archive ${path.basename(archivePath)}: contains ` +
-                `${typeChar === 'l' ? 'symlink' : 'hardlink'} "${nameField}". ` +
-                `Backup payloads are control-plane configs only — links have ` +
-                `no legitimate purpose and would let a crafted archive escape ` +
-                `the extraction directory.`,
+                `Refused archive ${path.basename(archivePath)}: contains hardlink "${nameField}".`,
             );
         }
-        // The bare entry name is the first token of the name field
-        // (everything before ` -> ` for links, which we already
-        // rejected above — but defensive split).
+        // The bare entry name is everything before ` -> ` (for symlinks).
         const entry = nameField.split(' -> ')[0];
+        if (typeChar === 'l') {
+            // Allow symlinks whose target resolves WITHIN the extraction root
+            // — e.g. Let's Encrypt's `live/x/cert.pem -> ../../archive/x/cert.pem`
+            // that NPM ships in its config (#1381). Refuse only escaping links;
+            // assertNoSymlinkEscape re-validates resolved targets post-extract.
+            const target = nameField.slice(nameField.indexOf(' -> ') + 4);
+            if (linkTargetEscapes(entry, target)) {
+                throw new Error(
+                    `Refused archive ${path.basename(archivePath)}: symlink "${entry}" -> "${target}" ` +
+                    `points outside the extraction directory.`,
+                );
+            }
+        }
         if (entry.startsWith('/')) {
             throw new Error(`Refused archive ${path.basename(archivePath)}: contains absolute path "${entry}"`);
         }
