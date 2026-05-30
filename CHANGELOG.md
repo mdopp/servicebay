@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.59.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.58.0...servicebay-v4.59.0) (2026-05-30)
+
+
+### Features
+
+* **tui:** Home Assistant backup extract + manifest-filter in Go ([ef8e95f](https://github.com/mdopp/servicebay/commit/ef8e95feca52189c73ed983ce72197295e76c0c2))
+* **tui:** Home Assistant backup extract + manifest-filter in Go ([ea7e5cd](https://github.com/mdopp/servicebay/commit/ea7e5cd3108ab1dd38fbdad952c5510cb7813163))
+
 ## [4.58.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.57.0...servicebay-v4.58.0) (2026-05-30)
 
 
