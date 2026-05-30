@@ -217,10 +217,10 @@ async function runTar(args: string[]) {
  *
  * `assertNoSymlinkEscape` (local path only) stays as defense in depth.
  */
-async function assertSafeArchiveEntries(archivePath: string): Promise<void> {
+async function assertSafeArchiveEntries(archivePath: string, gzip = true): Promise<void> {
     let stdout: string;
     try {
-        const result = await execFileAsync('tar', ['-tvzf', archivePath]);
+        const result = await execFileAsync('tar', [gzip ? '-tvzf' : '-tvf', archivePath]);
         // Default to empty string for the mocked-test path where
         // execFileAsync is stubbed to return no stdout. Production
         // tar always emits the listing on stdout.
@@ -325,8 +325,13 @@ async function assertNoSymlinkEscape(dir: string): Promise<void> {
  *      resolved target escapes `destination`. On refusal, the partial
  *      extraction is cleaned up.
  */
-export async function safeTarExtract(archivePath: string, destination: string): Promise<void> {
-    await assertSafeArchiveEntries(archivePath);
+export async function safeTarExtract(
+    archivePath: string,
+    destination: string,
+    opts: { gzip?: boolean } = {},
+): Promise<void> {
+    const gzip = opts.gzip ?? true;
+    await assertSafeArchiveEntries(archivePath, gzip);
     await fs.mkdir(destination, { recursive: true });
     // Note: GNU tar's default behaviour already strips leading `/` —
     // an explicit `--no-absolute-names` flag doesn't exist (the opt-in
@@ -335,7 +340,7 @@ export async function safeTarExtract(archivePath: string, destination: string): 
     // `assertSafeArchiveEntries` pre-pass as the primary defence and
     // the flags below as belt-and-suspenders.
     await runTar([
-        '-xzf', archivePath,
+        gzip ? '-xzf' : '-xf', archivePath,
         '-C', destination,
         '--no-same-owner',
         '--no-overwrite-dir',
