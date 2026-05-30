@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.60.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.60.0...servicebay-v4.60.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* **tui:** auto-install missing build-host tools instead of dead-ending ([06dd435](https://github.com/mdopp/servicebay/commit/06dd435b20df006662074535bf6f3e2e41baf0b0))
+* **tui:** auto-install missing build-host tools instead of dead-ending ([62b49b4](https://github.com/mdopp/servicebay/commit/62b49b494eab9e85ace9122a72420998461e5ba2)), closes [#1327](https://github.com/mdopp/servicebay/issues/1327)
+
 ## [4.60.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.59.0...servicebay-v4.60.0) (2026-05-30)
 
 
