@@ -190,6 +190,45 @@ async function fetchAutheliaLogs(nodeName: string): Promise<string | null> {
   }
 }
 
+// autheliaFail builds a 'fail' result, fetching + classifying Authelia's logs
+// for the cause summary. Shared by the no-response and non-200 paths (#1318
+// lint sweep — was duplicated inline in both).
+async function autheliaFail(nodeName: string, detail: string): Promise<OidcProviderResult> {
+  const logs = await fetchAutheliaLogs(nodeName);
+  const { category, summary } = logs
+    ? classifyAutheliaLogs(logs)
+    : { category: 'unknown' as OidcFailCategory, summary: 'no log output' };
+  return { status: 'fail', detail: `${detail} Cause: ${summary}.`, hint: HINT_BY_CATEGORY[category], category };
+}
+
+// validateDiscoveryDoc parses the discovery JSON and checks the four endpoints
+// relying-party libraries consume. Returns a fail/warn result, or null when the
+// doc is valid.
+async function validateDiscoveryDoc(response: Response): Promise<OidcProviderResult | null> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return {
+      status: 'fail',
+      detail: 'Authelia OIDC discovery answered 200 but the body was not valid JSON.',
+      hint: 'Likely a reverse-proxy mismatch (NPM returned an error page with a 200 status code). Test with `curl -v http://127.0.0.1:9091/.well-known/openid-configuration` on the host.',
+      category: 'unknown',
+    };
+  }
+  const required = ['issuer', 'authorization_endpoint', 'token_endpoint', 'userinfo_endpoint'];
+  const missing = required.filter(k => !(body && typeof body === 'object' && k in (body as Record<string, unknown>)));
+  if (missing.length > 0) {
+    return {
+      status: 'warn',
+      detail: `Authelia OIDC discovery answered 200 but is missing: ${missing.join(', ')}.`,
+      hint: 'Likely an Authelia config that disabled some endpoints, or an in-progress upgrade. Click "Show recent logs" for context, then "Restart auth" once the config is corrected.',
+      category: 'config',
+    };
+  }
+  return null;
+}
+
 export async function checkOidcProviderReachable(nodeName: string = 'Local'): Promise<OidcProviderResult> {
   const cfg = await getConfig();
   const installed = cfg.installedTemplates?.auth;
@@ -217,57 +256,18 @@ export async function checkOidcProviderReachable(nodeName: string = 'Local'): Pr
     });
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
-    const logs = await fetchAutheliaLogs(nodeName);
-    const { category, summary } = logs
-      ? classifyAutheliaLogs(logs)
-      : { category: 'unknown' as OidcFailCategory, summary: 'no log output' };
-    return {
-      status: 'fail',
-      detail: `Authelia OIDC discovery (${url}) did not respond: ${reason}. Cause: ${summary}.`,
-      hint: HINT_BY_CATEGORY[category],
-      category,
-    };
+    return autheliaFail(nodeName, `Authelia OIDC discovery (${url}) did not respond: ${reason}.`);
   }
 
   if (response.status !== 200) {
-    const logs = await fetchAutheliaLogs(nodeName);
-    const { category, summary } = logs
-      ? classifyAutheliaLogs(logs)
-      : { category: 'unknown' as OidcFailCategory, summary: 'no log output' };
-    return {
-      status: 'fail',
-      detail: `Authelia OIDC discovery returned HTTP ${response.status} (expected 200) — every SSO-gated service will be returning 502 to users right now. Cause: ${summary}.`,
-      hint: HINT_BY_CATEGORY[category],
-      category,
-    };
+    return autheliaFail(
+      nodeName,
+      `Authelia OIDC discovery returned HTTP ${response.status} (expected 200) — every SSO-gated service will be returning 502 to users right now.`,
+    );
   }
 
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    return {
-      status: 'fail',
-      detail: 'Authelia OIDC discovery answered 200 but the body was not valid JSON.',
-      hint: 'Likely a reverse-proxy mismatch (NPM returned an error page with a 200 status code). Test with `curl -v http://127.0.0.1:9091/.well-known/openid-configuration` on the host.',
-      category: 'unknown',
-    };
-  }
-
-  // Lightweight schema check: the discovery doc must declare the four
-  // endpoints relying-party libraries actually consume. If any of them
-  // are missing, OIDC clients (Immich, HA, ABS) will fail with "Failed
-  // to discover OpenID provider" even though the 200 looked fine.
-  const required = ['issuer', 'authorization_endpoint', 'token_endpoint', 'userinfo_endpoint'];
-  const missing = required.filter(k => !(body && typeof body === 'object' && k in (body as Record<string, unknown>)));
-  if (missing.length > 0) {
-    return {
-      status: 'warn',
-      detail: `Authelia OIDC discovery answered 200 but is missing: ${missing.join(', ')}.`,
-      hint: 'Likely an Authelia config that disabled some endpoints, or an in-progress upgrade. Click "Show recent logs" for context, then "Restart auth" once the config is corrected.',
-      category: 'config',
-    };
-  }
+  const invalid = await validateDiscoveryDoc(response);
+  if (invalid) return invalid;
 
   return {
     status: 'ok',
