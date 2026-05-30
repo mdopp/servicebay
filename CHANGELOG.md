@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.56.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.56.0...servicebay-v4.56.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* **external-backup:** extract only manifest paths from HA backups ([#1353](https://github.com/mdopp/servicebay/issues/1353)) ([c0d32b4](https://github.com/mdopp/servicebay/commit/c0d32b450a10ccfbfe6d0b4b27ecf09dbc142d1d))
+* **external-backup:** extract only manifest paths from HA backups ([#1353](https://github.com/mdopp/servicebay/issues/1353)) ([01eea6e](https://github.com/mdopp/servicebay/commit/01eea6e342fbec01ab8b40c24f7c74ddf83f9e3c))
+
 ## [4.56.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.55.0...servicebay-v4.56.0) (2026-05-30)
 
 
