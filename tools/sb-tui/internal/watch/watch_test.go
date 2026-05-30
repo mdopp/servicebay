@@ -166,3 +166,19 @@ func TestLastLinesAndTruncate(t *testing.T) {
 		t.Error("truncate(max<=0) should be empty")
 	}
 }
+
+func TestRenderUSBBoot(t *testing.T) {
+	now := time.Now()
+	tr := NewTracker(now)
+	will := Render("h", "5888", tr, Probe{ICMP: true, TCP: true, USB: USBWillBoot}, now, 80)
+	if !strings.Contains(will, "usb-boot") {
+		t.Error("status row should include the usb-boot label")
+	}
+	if !strings.Contains(will, "will boot from USB") {
+		t.Error("USBWillBoot should show the will-boot hint")
+	}
+	notReady := Render("h", "5888", tr, Probe{ICMP: true, TCP: true, USB: USBNotReady}, now, 80)
+	if !strings.Contains(notReady, "not ready") {
+		t.Error("USBNotReady should show the not-ready hint")
+	}
+}
