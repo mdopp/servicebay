@@ -182,7 +182,7 @@ func (m App) openPanel(id phase.ActionID) (tea.Model, tea.Cmd) {
 	case phase.Backups:
 		m.active = NewBackup(client)
 	case phase.UploadToNAS:
-		m.active = NewNasUpload(client)
+		m.active = NewNasUpload() // direct-FTP HA-backup upload; no REST client needed
 	default:
 		m.screen, m.active = appMenu, nil
 		return m, nil

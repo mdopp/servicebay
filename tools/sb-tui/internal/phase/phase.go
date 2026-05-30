@@ -90,8 +90,8 @@ var backupsAction = Action{Backups, "Backups (in-TUI)",
 
 // uploadToNASAction stages a local service config archive on the box's NAS
 // (#1352) so a fresh install pulls it. Only meaningful once the box is reachable.
-var uploadToNASAction = Action{UploadToNAS, "Upload backup to NAS",
-	"Stage a local service config archive on the box's NAS for a fresh install to restore."}
+var uploadToNASAction = Action{UploadToNAS, "Upload Home Assistant backup to NAS",
+	"Extract a Home Assistant OS backup locally and send its config straight to the FritzBox NAS for a fresh install to restore."}
 
 // bootFromUSBAction reinstalls a reachable box: with the freshly-built USB
 // plugged into the server, sign in and set a one-shot UEFI boot to the USB +
