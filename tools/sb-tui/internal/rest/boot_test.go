@@ -7,8 +7,8 @@ func TestAssessUSBBoot(t *testing.T) {
 	usbInactive := usbBootEntry{BootNum: "0003", Active: false, Description: "USB HDD"}
 
 	cases := []struct {
-		name           string
-		in             usbBootResponse
+		name            string
+		in              usbBootResponse
 		ready, willBoot bool
 	}{
 		{
