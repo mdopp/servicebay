@@ -184,6 +184,42 @@ async function showLogTail({ node }: { node: string }): Promise<ProbeActionResul
   };
 }
 
+/**
+ * Find the NPM certificate id whose domain_names include `domain`. Returns the
+ * id on success, or a failure ProbeActionResult (NPM unreachable / HTTP error /
+ * no cert row yet). Extracted from retryRequest to keep it under the line limit.
+ */
+async function findCertId(
+  adminUrl: string,
+  token: string,
+  domain: string,
+): Promise<{ certId: number } | { error: ProbeActionResult }> {
+  try {
+    const res = await fetch(`${adminUrl}/api/nginx/certificates`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) {
+      return { error: { ok: false, message: `NPM returned HTTP ${res.status} listing certificates.`, refresh: false } };
+    }
+    const certs = await res.json() as Array<{ id?: number; domain_names?: string[] }>;
+    for (const c of certs) {
+      if ((c.domain_names ?? []).includes(domain) && typeof c.id === 'number') {
+        return { certId: c.id };
+      }
+    }
+  } catch (e) {
+    return { error: { ok: false, message: `Could not reach NPM: ${e instanceof Error ? e.message : String(e)}`, refresh: false } };
+  }
+  return {
+    error: {
+      ok: false,
+      message: `No NPM certificate exists for ${domain} yet — open NPM admin → SSL Certificates → "Add Let's Encrypt Certificate" to create one. (The failure log entry came from a request that didn't successfully create the cert row.)`,
+      refresh: false,
+    },
+  };
+}
+
 async function retryRequest({ node, itemId }: { node: string; itemId?: string }): Promise<ProbeActionResult> {
   if (!itemId) return { ok: false, message: 'No domain supplied.', refresh: false };
   const adminUrl = await findNpmAdminUrl(node);
@@ -199,32 +235,9 @@ async function retryRequest({ node, itemId }: { node: string; itemId?: string })
     };
   }
 
-  let certId: number | null = null;
-  try {
-    const res = await fetch(`${adminUrl}/api/nginx/certificates`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!res.ok) {
-      return { ok: false, message: `NPM returned HTTP ${res.status} listing certificates.`, refresh: false };
-    }
-    const certs = await res.json() as Array<{ id?: number; domain_names?: string[] }>;
-    for (const c of certs) {
-      if ((c.domain_names ?? []).includes(itemId) && typeof c.id === 'number') {
-        certId = c.id;
-        break;
-      }
-    }
-  } catch (e) {
-    return { ok: false, message: `Could not reach NPM: ${e instanceof Error ? e.message : String(e)}`, refresh: false };
-  }
-  if (certId === null) {
-    return {
-      ok: false,
-      message: `No NPM certificate exists for ${itemId} yet — open NPM admin → SSL Certificates → "Add Let's Encrypt Certificate" to create one. (The failure log entry came from a request that didn't successfully create the cert row.)`,
-      refresh: false,
-    };
-  }
+  const found = await findCertId(adminUrl, token, itemId);
+  if ('error' in found) return found.error;
+  const certId = found.certId;
 
   try {
     const res = await fetch(`${adminUrl}/api/nginx/certificates/${certId}/renew`, {
