@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.58.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.57.0...servicebay-v4.58.0) (2026-05-30)
+
+
+### Features
+
+* **boot:** scope the usb-next endpoint + TUI client for USB-boot status ([c2de209](https://github.com/mdopp/servicebay/commit/c2de209ed324e90b87d8ecb9fe6d8d18eb25dfbe))
+* **tui:** show USB-boot status on the watch dashboard + u to enable ([e0e9688](https://github.com/mdopp/servicebay/commit/e0e96882915b99249a8efbc05a79fad480f4a5a5))
+* **tui:** USB-boot status on the watch dashboard + u to enable ([02b23c4](https://github.com/mdopp/servicebay/commit/02b23c406d558763ba0057bf8a956bbd41a6afcd))
+
 ## [4.57.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.56.1...servicebay-v4.57.0) (2026-05-30)
 
 
