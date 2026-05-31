@@ -16,7 +16,7 @@ func TestListStacksSortsCoreFirst(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"stacks": []any{
 			map[string]any{"name": "zebra", "manifest": map[string]any{"tier": "feature", "description": "Z"}},
 			map[string]any{"name": "core-b", "manifest": map[string]any{"tier": "core"}},
-			map[string]any{"name": "core-a", "manifest": map[string]any{"tier": "core"}, "health": map[string]any{"installed": true}},
+			map[string]any{"name": "core-a", "manifest": map[string]any{"tier": "core", "templates": []string{"nginx", "auth", "adguard"}}, "health": map[string]any{"installed": true}},
 		}})
 	}))
 	defer srv.Close()
@@ -37,6 +37,10 @@ func TestListStacksSortsCoreFirst(t *testing.T) {
 	}
 	if stacks[2].Description != "Z" {
 		t.Errorf("zebra description = %q", stacks[2].Description)
+	}
+	// core-a's spec.templates must be parsed so the install flow can expand it.
+	if got := stacks[0].Templates; len(got) != 3 || got[0] != "nginx" || got[2] != "adguard" {
+		t.Errorf("core-a templates = %v, want [nginx auth adguard]", got)
 	}
 }
 

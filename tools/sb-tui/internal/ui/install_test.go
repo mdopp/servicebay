@@ -33,13 +33,33 @@ func TestInstallSelectThenStart(t *testing.T) {
 	if !m.checked[0] {
 		t.Fatal("space should check the cursor row")
 	}
-	if names := m.selectedNames(); len(names) != 1 || names[0] != "immich" {
-		t.Fatalf("selectedNames = %v", names)
+	// immich here has no Templates → selectedTemplates falls back to the name.
+	if names := m.selectedTemplates(); len(names) != 1 || names[0] != "immich" {
+		t.Fatalf("selectedTemplates = %v", names)
 	}
 	mi, cmd = m.Update(namedKey(tea.KeyEnter))
 	m = mi.(InstallModel)
 	if m.stage != stageStarting || cmd == nil {
 		t.Fatalf("enter should move to starting with a command, stage=%v", m.stage)
+	}
+}
+
+// A selected STACK must expand to its constituent templates (deduped across
+// stacks) — not the stack name, which the box assembler would silently drop.
+func TestInstallSelectedTemplatesExpandsStacks(t *testing.T) {
+	m := NewInstall(&rest.Client{})
+	mi, _ := m.Update(stacksLoadedMsg{stacks: []rest.Stack{
+		{Name: "basic", Tier: "core", Templates: []string{"nginx", "auth", "adguard"}},
+		{Name: "cloud", Tier: "feature", Templates: []string{"immich", "nginx"}}, // nginx shared → deduped
+	}})
+	m = mi.(InstallModel)
+	m.checked[0] = true
+	m.checked[1] = true
+
+	got := m.selectedTemplates()
+	want := []string{"nginx", "auth", "adguard", "immich"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("selectedTemplates = %v, want %v", got, want)
 	}
 }
 
