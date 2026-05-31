@@ -23,8 +23,8 @@ func TestLoginTypeAndSubmit(t *testing.T) {
 	mi, _ := m.Update(namedKey(tea.KeyTab))
 	m = mi.(LoginModel)
 	m = typeStr(m, "pw")
-	if m.username != "admin" || m.password != "pw" {
-		t.Fatalf("fields: user=%q pass=%q", m.username, m.password)
+	if m.username.Value() != "admin" || m.password.Value() != "pw" {
+		t.Fatalf("fields: user=%q pass=%q", m.username.Value(), m.password.Value())
 	}
 	// Enter with both filled submits.
 	mi, cmd := m.Update(namedKey(tea.KeyEnter))
@@ -52,17 +52,19 @@ func TestLoginSuccessEmitsAuth(t *testing.T) {
 
 func TestLoginErrorClearsPassword(t *testing.T) {
 	m := NewLogin("box", "5888")
-	m.username, m.password, m.submitting = "admin", "wrong", true
+	m.username.SetValue("admin")
+	m.password.SetValue("wrong")
+	m.submitting = true
 	mi, _ := m.Update(loginResultMsg{err: rest.ErrLoginRejected})
 	m = mi.(LoginModel)
 	if m.submitting {
 		t.Error("should clear submitting on error")
 	}
-	if m.password != "" {
-		t.Errorf("password should be cleared, got %q", m.password)
+	if m.password.Value() != "" {
+		t.Errorf("password should be cleared, got %q", m.password.Value())
 	}
-	if m.username != "admin" {
-		t.Errorf("username should be kept, got %q", m.username)
+	if m.username.Value() != "admin" {
+		t.Errorf("username should be kept, got %q", m.username.Value())
 	}
 	if !strings.Contains(m.View(), "✗") {
 		t.Error("view should show the error")

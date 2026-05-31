@@ -222,6 +222,15 @@ func runExpress() int {
 		return 0 // operator cancelled the plan
 	}
 
+	// 0) Optional: stage an existing backup on the NAS first (FTP-only, no box
+	// yet) so the fresh install restores it. esc in the panel just continues to
+	// the build — staging is a convenience, not a gate.
+	if em.StageBackup {
+		if code := runNasUpload(); code != 0 {
+			return code
+		}
+	}
+
 	// 1) Build + flash the ISO (the buildflow wizard does both).
 	if code := runBuild(); code != 0 {
 		return code
@@ -234,6 +243,17 @@ func runExpress() int {
 
 	// 3) Watch the install through to the wizard handoff.
 	return runWatch()
+}
+
+// runNasUpload opens the direct-FTP backup-staging panel (#1367). It talks only
+// to the FritzBox over FTP — no box/token — so it needs no boxClient and works
+// before any box exists (the pre-install staging step + Express's optional step 0).
+func runNasUpload() int {
+	if _, err := tea.NewProgram(ui.NewNasUpload(), tea.WithAltScreen()).Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
 }
 
 // runConfig opens the edit-config panel (#1275).
@@ -293,6 +313,8 @@ func main() {
 			os.Exit(runInstallStacks())
 		case "backups":
 			os.Exit(runBackups())
+		case "upload":
+			os.Exit(runNasUpload())
 		}
 	}
 

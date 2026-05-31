@@ -34,7 +34,7 @@ type ConfigModel struct {
 
 	loading bool
 	editing bool
-	buf     string // edit buffer for the field being edited
+	buf     textInput // edit buffer for the field being edited
 
 	status string // transient status / error line
 	loadEr error  // a load/auth error that blocks the whole panel
@@ -150,14 +150,15 @@ func (m ConfigModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadCmd()
 	case "enter":
 		m.editing = true
-		m.buf = m.values[m.fields[m.cursor].Key]
+		m.buf = newTextInput(m.values[m.fields[m.cursor].Key], false)
 		m.status = ""
 	}
 	return m, nil
 }
 
 // handleEditKey drives the in-place editor. Enum fields (logLevel) cycle
-// through their allowed values with ←/→; free-text fields take typed runes.
+// through their allowed values with ←/→; free-text fields get full caret
+// editing via the shared textInput.
 func (m ConfigModel) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	f := m.fields[m.cursor]
 	switch msg.String() {
@@ -166,24 +167,18 @@ func (m ConfigModel) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 		return m, nil
 	case "enter":
-		return m, m.saveCmd(f.Key, strings.TrimSpace(m.buf))
-	case "left", "right":
-		if len(f.Allowed) > 0 {
-			m.buf = cycle(f.Allowed, m.buf, msg.String() == "right")
-		}
-		return m, nil
-	case "backspace":
-		if len(f.Allowed) == 0 && m.buf != "" {
-			m.buf = m.buf[:len(m.buf)-1]
-		}
-		return m, nil
-	default:
-		// Free-text fields take printable runes; enum fields ignore typing.
-		if len(f.Allowed) == 0 && msg.Type == tea.KeyRunes {
-			m.buf += string(msg.Runes)
+		return m, m.saveCmd(f.Key, strings.TrimSpace(m.buf.Value()))
+	}
+	if len(f.Allowed) > 0 {
+		// Enum field: ←/→ cycle through the allowed values; ignore typing/caret.
+		if s := msg.String(); s == "left" || s == "right" {
+			m.buf.SetValue(cycle(f.Allowed, m.buf.Value(), s == "right"))
 		}
 		return m, nil
 	}
+	// Free-text field: caret movement, backspace/delete, runes.
+	m.buf.handleKey(msg)
+	return m, nil
 }
 
 // cycle returns the value before/after cur in vals (wrapping). An unknown cur
@@ -242,7 +237,7 @@ func (m ConfigModel) View() string {
 		var rendered string
 		switch {
 		case m.editing && i == m.cursor:
-			rendered = cfgEditingStyle.Render(f.Label + ": " + m.buf + "▌")
+			rendered = cfgEditingStyle.Render(f.Label + ": " + m.buf.display(true))
 		case i == m.cursor:
 			rendered = selectedStyle.Render("❯ " + f.Label + ": " + valueText(val))
 		default:

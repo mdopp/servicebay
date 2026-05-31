@@ -45,8 +45,8 @@ func TestConfigEditFlow(t *testing.T) {
 	// Cursor starts on serverName (free text). Enter edit, retype.
 	mi, _ = m.Update(namedKey(tea.KeyEnter))
 	m = mi.(ConfigModel)
-	if !m.editing || m.buf != "old" {
-		t.Fatalf("edit mode: editing=%v buf=%q", m.editing, m.buf)
+	if !m.editing || m.buf.Value() != "old" {
+		t.Fatalf("edit mode: editing=%v buf=%q", m.editing, m.buf.Value())
 	}
 	// Backspace the whole buffer, type "new".
 	for range "old" {
@@ -57,8 +57,8 @@ func TestConfigEditFlow(t *testing.T) {
 		mi, _ = m.Update(runeKey(r))
 		m = mi.(ConfigModel)
 	}
-	if m.buf != "new" {
-		t.Fatalf("buf after typing = %q", m.buf)
+	if m.buf.Value() != "new" {
+		t.Fatalf("buf after typing = %q", m.buf.Value())
 	}
 
 	// Enter triggers a save command; execute it and feed the result back as if
@@ -93,14 +93,14 @@ func TestConfigEnumIgnoresTyping(t *testing.T) {
 	// Typing a letter must not mutate an enum buffer.
 	mi, _ = m.Update(runeKey('z'))
 	m = mi.(ConfigModel)
-	if m.buf != "info" {
-		t.Errorf("enum buf changed by typing: %q", m.buf)
+	if m.buf.Value() != "info" {
+		t.Errorf("enum buf changed by typing: %q", m.buf.Value())
 	}
 	// ←/→ cycles instead.
 	mi, _ = m.Update(namedKey(tea.KeyRight))
 	m = mi.(ConfigModel)
-	if m.buf != "warn" {
-		t.Errorf("enum cycle right = %q, want warn", m.buf)
+	if m.buf.Value() != "warn" {
+		t.Errorf("enum cycle right = %q, want warn", m.buf.Value())
 	}
 }
 

@@ -45,23 +45,63 @@ func TestDetect(t *testing.T) {
 }
 
 func TestActionsFor(t *testing.T) {
-	// Auto-refresh + persistent URL mean no Refresh / Open-in-browser actions.
-	// no-iso: express (recommended) + build, then quit
-	if got := ids(ActionsFor(Detect(false, BoxStatus{}))); !eq(got, []ActionID{Express, BuildISO, Quit}) {
+	// The selectable projection of the journey arc (stage → build → boot → manage),
+	// signposts skipped. Auto-refresh + persistent URL mean no Refresh / Open items.
+	// no-iso: stage-backups (step 1, recommended) + build, then express + quit.
+	if got := ids(ActionsFor(Detect(false, BoxStatus{}))); !eq(got, []ActionID{UploadToNAS, BuildISO, Express, Quit}) {
 		t.Fatalf("no-iso actions = %v", got)
 	}
-	// iso-ready: build + watch, then quit
-	if got := ids(ActionsFor(Detect(true, BoxStatus{}))); !eq(got, []ActionID{BuildISO, WatchInstall, Quit}) {
+	// iso-ready: stage-backups + build (done) + boot-and-watch, then quit.
+	if got := ids(ActionsFor(Detect(true, BoxStatus{}))); !eq(got, []ActionID{UploadToNAS, BuildISO, WatchInstall, Quit}) {
 		t.Fatalf("iso-ready actions = %v", got)
 	}
-	// installing: watch + edit-config + install-stacks + backups + upload-nas + boot-from-usb + reinstall, then quit
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{WatchInstall, EditConfig, InstallStacks, Backups, UploadToNAS, BootFromUSB, BuildISO, Quit}) {
+	// installing: stage + reinstall + watch + manage children (config/stacks/backups/boot-usb), then quit.
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{UploadToNAS, BuildISO, WatchInstall, EditConfig, InstallStacks, Backups, BootFromUSB, Quit}) {
 		t.Fatalf("installing actions = %v", got)
 	}
-	// ready: edit-config + install-stacks + backups + upload-nas + boot-from-usb + reinstall, then quit
-	// (no Watch on an up box, no Open-in-browser — URL is shown persistently).
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{EditConfig, InstallStacks, Backups, UploadToNAS, BootFromUSB, BuildISO, Quit}) {
+	// ready: stage + reinstall + manage children, then quit. No Watch on an up box
+	// (step 3 is a done signpost); no Open-in-browser — URL is shown persistently.
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{UploadToNAS, BuildISO, InstallStacks, EditConfig, Backups, BootFromUSB, Quit}) {
 		t.Fatalf("ready actions = %v", got)
+	}
+}
+
+// TestJourneyHasSignpostsAndRecommended checks the journey-map invariants the
+// menu relies on: pre-install phases show greyed future-step signposts, and
+// every phase nominates exactly one recommended (default-cursor) selectable row.
+func TestJourneyHasSignpostsAndRecommended(t *testing.T) {
+	for _, s := range []State{
+		Detect(false, BoxStatus{}),
+		Detect(true, BoxStatus{}),
+		Detect(true, BoxStatus{Reachable: true}),
+		Detect(true, BoxStatus{Reachable: true, WizardDone: true}),
+	} {
+		rows := Journey(s)
+		rec := 0
+		for _, r := range rows {
+			if r.Recommended {
+				if !r.Selectable() {
+					t.Fatalf("phase %q: recommended row %q is not selectable", s.Phase, r.Action.Label)
+				}
+				rec++
+			}
+		}
+		if rec != 1 {
+			t.Fatalf("phase %q: want exactly 1 recommended row, got %d", s.Phase, rec)
+		}
+	}
+	// NoISO must signpost the not-yet-reachable boot + manage steps (greyed).
+	ahead := 0
+	for _, r := range Journey(Detect(false, BoxStatus{})) {
+		if r.Ahead {
+			ahead++
+			if r.Selectable() {
+				t.Fatalf("ahead signpost %q should not be selectable", r.Action.Label)
+			}
+		}
+	}
+	if ahead != 2 {
+		t.Fatalf("NoISO: want 2 ahead signposts (boot, manage), got %d", ahead)
 	}
 }
 
@@ -82,13 +122,13 @@ func TestEveryActionHasLabelAndDetail(t *testing.T) {
 }
 
 func TestBuildLabelFlipsOnRebuild(t *testing.T) {
-	// NoISO leads with Express; the plain build action follows at index 1.
+	// Both phases lead with stage-backups (step 1); the build action is at index 1.
 	fresh := ActionsFor(Detect(false, BoxStatus{}))[1]
-	rebuilt := ActionsFor(Detect(true, BoxStatus{}))[0]
-	if fresh.Label != "Build install ISO + flash USB" {
+	rebuilt := ActionsFor(Detect(true, BoxStatus{}))[1]
+	if fresh.Label != "Build the install USB  ·  server config baked in" {
 		t.Fatalf("fresh label = %q", fresh.Label)
 	}
-	if rebuilt.Label != "Rebuild install ISO + flash USB" {
+	if rebuilt.Label != "Rebuild the install USB  ·  fresh secrets + config" {
 		t.Fatalf("rebuilt label = %q", rebuilt.Label)
 	}
 }
