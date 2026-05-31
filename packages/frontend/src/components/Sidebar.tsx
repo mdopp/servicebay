@@ -6,7 +6,7 @@ import { ChevronLeft, Github, Users, ExternalLink, Sparkles, Home, Wrench, User 
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import { typedFetch, InstallStatusResponseSchema } from '@servicebay/api-client';
-import { NAVIGATION_ENTRIES } from '@/config/navigation';
+import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
 
 // Back-compat re-export — MobileNav imports `dashboards` from here.
 // New code should import NAVIGATION_ENTRIES directly from
@@ -212,7 +212,7 @@ export default function Sidebar() {
             })()}
             {dashboards.map(p => {
                 const Icon = p.icon;
-                const isActive = pathname?.startsWith(p.path) ?? false;
+                const isActive = isNavActive(pathname, p.path);
                 return (
                     <button
                         key={p.id}

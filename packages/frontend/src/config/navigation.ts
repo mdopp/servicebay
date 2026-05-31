@@ -44,6 +44,18 @@ export interface NavigationEntry {
  * "Primary sidebar is a user-task list, not an infrastructure list"
  * — operators who need the raw podman view know to open Diagnostics.
  */
+/**
+ * Active-route test for a nav entry. The root entry (`/`) must match the
+ * pathname EXACTLY — otherwise `startsWith('/')` is true on every page and
+ * Home looks active alongside the real section (e.g. Home + Settings both
+ * highlighted). Deeper entries match by path segment, so `/services/foo`
+ * still highlights Services while `/servicesX` does not.
+ */
+export function isNavActive(pathname: string, path: string): boolean {
+  if (path === '/') return pathname === '/';
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
+
 export const NAVIGATION_ENTRIES: NavigationEntry[] = [
   { id: 'home', name: 'Home', shortLabel: 'Home', icon: Home, path: '/' },
   { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },

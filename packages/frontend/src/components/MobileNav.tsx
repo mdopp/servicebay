@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Github, Settings, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
-import { NAVIGATION_ENTRIES } from '@/config/navigation';
+import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
 import { useToast } from '@/providers/ToastProvider';
 
 const FIRST_VISIT_KEY = 'sb.mobileHintShown.v1';
@@ -125,7 +125,7 @@ export function MobileBottomBar() {
     <div className="h-[72px] bg-gray-100 dark:bg-black border-t border-gray-200 dark:border-gray-800 flex items-center justify-around px-2 shrink-0 md:hidden z-20 pb-2">
        {bottomDashboards.map(p => {
           const Icon = p.icon;
-          const isActive = pathname?.startsWith(p.path);
+          const isActive = isNavActive(pathname, p.path);
           return (
              <button
                 key={p.id}
