@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.62.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.61.0...servicebay-v4.62.0) (2026-05-31)
+
+
+### Features
+
+* **frontend:** red offline banner, drop the always-on "Live" indicator ([b7441b0](https://github.com/mdopp/servicebay/commit/b7441b0c888da366bd149a9ee163d5322e91469c))
+* **frontend:** red offline banner; drop the always-on Live indicator ([3ebd0c1](https://github.com/mdopp/servicebay/commit/3ebd0c11368e5bd488c330d223fd69309c78ed00))
+* **tui:** self-report build version ([5b09727](https://github.com/mdopp/servicebay/commit/5b09727ee8de334b01efc5934dc2abcec9188379))
+* **tui:** self-report build version ([95ed171](https://github.com/mdopp/servicebay/commit/95ed171cd9699bbee18415d172c558c2b8aa107f))
+* **tui:** surface and attach to a running install from the launcher ([d2deedf](https://github.com/mdopp/servicebay/commit/d2deedf4447f7307f805025fa3f97354de61bc87))
+* **tui:** surface and attach to a running install from the launcher ([5f2caa1](https://github.com/mdopp/servicebay/commit/5f2caa128a2b6e3c188a72dfc398ac9a89d503d1))
+
+
+### Bug Fixes
+
+* **frontend:** only highlight Home on the exact root path ([551a3e3](https://github.com/mdopp/servicebay/commit/551a3e315cb4337441f19bac47e53ff57dc550b0))
+* **frontend:** only highlight Home on the exact root path ([287fc9e](https://github.com/mdopp/servicebay/commit/287fc9e89f10a491bd01561cdb3e2dea00cc5b09))
+* **tui:** clearer install monitor — connectivity badge and USB-boot steps ([93371bf](https://github.com/mdopp/servicebay/commit/93371bfd24669063148bce0abb8b0744138ae0a2))
+* **tui:** clearer install monitor — connectivity badge and USB-boot steps ([0420dbf](https://github.com/mdopp/servicebay/commit/0420dbf2018996002440d18b9b04374a2d8b430b))
+* **tui:** find backups in the build dir, robust path entry, boxed input fields ([7c500c1](https://github.com/mdopp/servicebay/commit/7c500c1b565e3f896a681edccf8a4bd318a12f19))
+* **tui:** parse the install progress object so the monitor advances ([cf46842](https://github.com/mdopp/servicebay/commit/cf4684223b96970bd315838c2eeb0a419cc9a0a3))
+* **tui:** parse the install progress object so the monitor advances ([717e7b9](https://github.com/mdopp/servicebay/commit/717e7b9e7257fa29064167bd24e59cbe87b7f330))
+* **tui:** surface install progress errors and needs-credentials state ([f29984d](https://github.com/mdopp/servicebay/commit/f29984d896d86b84dd0e15c8995df284c26483e8))
+* **tui:** surface install progress errors and needs-credentials state ([5cd7ba3](https://github.com/mdopp/servicebay/commit/5cd7ba31b0f321b02a0ab1dbdc663f9bc4287371))
+* **tui:** upload panel finds build-dir backups, robust path entry, boxed fields ([975b461](https://github.com/mdopp/servicebay/commit/975b461dced811f052794ec590e93aa122a5a02d))
+
 ## [4.61.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.60.1...servicebay-v4.61.0) (2026-05-31)
 
 
