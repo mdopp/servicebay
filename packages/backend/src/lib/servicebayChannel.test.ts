@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const calls: string[][] = [];
 const execMock = vi.fn(async (argv: string[], _opts?: any) => {
   calls.push(argv);
-  if (argv.join(' ').includes('grep')) return { stdout: 'servicebay:dev\n', stderr: '' };
+  if (argv.includes('inspect')) return { stdout: 'ghcr.io/mdopp/servicebay:dev\n', stderr: '' };
   return { stdout: '', stderr: '' };
 });
 

@@ -21,21 +21,23 @@ export type Channel = (typeof CHANNELS)[number];
 
 const IMAGE = 'ghcr.io/mdopp/servicebay';
 // $HOME (the box user's home) is resolved by the `sh -c` shell, not us — the
-// quadlet path varies by user, so we don't hardcode it. Scripts are FIXED
-// strings; the only variable (channel) is passed as a positional ($1), never
+// quadlet path varies by user, so we don't hardcode it. The script is a FIXED
+// string; the only variable (channel) is passed as a positional ($1), never
 // interpolated, so there's no shell-injection surface (and it's enum-checked).
-const READ_TAG_SH = 'grep -oE "servicebay:[A-Za-z0-9._-]+" "$HOME/.config/containers/systemd/servicebay.container" | head -1';
 const SWAP_TAG_SH = 'sed -i -E "s#(servicebay):[A-Za-z0-9._-]+#\\1:$1#" "$HOME/.config/containers/systemd/servicebay.container"';
 
 export function isChannel(s: string): s is Channel {
   return (CHANNELS as readonly string[]).includes(s);
 }
 
-/** The channel the running box is pinned to, read from its quadlet image tag.
- *  Falls back to 'latest' if the line can't be parsed. */
+/** The channel actually in effect — read from the RUNNING container's image
+ *  tag, not the quadlet (which can already show a pending switch before the
+ *  restart lands). So a caller polling this only sees the new channel once the
+ *  box has restarted onto it. Falls back to 'latest' if unparseable. */
 export async function getServicebayChannel(): Promise<string> {
-  const { stdout } = await getExecutor('Local').execArgv(['sh', '-c', READ_TAG_SH]);
-  return stdout.trim().split(':')[1] || 'latest';
+  const { stdout } = await getExecutor('Local').execArgv(['podman', 'inspect', 'servicebay', '--format', '{{.ImageName}}']);
+  const tag = stdout.trim().match(/:([A-Za-z0-9._-]+)$/);
+  return tag ? tag[1] : 'latest';
 }
 
 /**

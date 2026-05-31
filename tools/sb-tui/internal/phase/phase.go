@@ -58,6 +58,7 @@ const (
 	EditConfig    ActionID = "edit-config"
 	InstallStacks ActionID = "install-stacks"
 	Backups       ActionID = "backups"
+	SwitchChannel ActionID = "switch-channel"
 	UploadToNAS   ActionID = "upload-to-nas"
 	BootFromUSB   ActionID = "boot-from-usb"
 	Quit          ActionID = "quit"
@@ -88,6 +89,13 @@ var installStacksAction = Action{InstallStacks, "Install a stack on the server",
 // is reachable; restore is confirmation-gated in the panel.
 var backupsAction = Action{Backups, "Create / restore server backups",
 	"List, create, and restore the box's full system backups (config + service data)."}
+
+// switchChannelAction is the in-TUI update-channel switch: run a different
+// release channel on this server (latest / dev / test). Re-points the
+// ServiceBay image + restarts; reverts on reinstall. Mainly to try an
+// unreleased `:dev` build. Only meaningful once the box is reachable.
+var switchChannelAction = Action{SwitchChannel, "Switch update channel (latest / dev / test)",
+	"Run a different release channel on this server — e.g. `dev` to try the latest unreleased build. Pulls the image and restarts ServiceBay; reverts to the baked channel on reinstall."}
 
 // uploadToNASAction stages a local service config archive on the box's NAS
 // (#1352) so a fresh install pulls it. Only meaningful once the box is reachable.
@@ -211,6 +219,7 @@ func Journey(s State) []JourneyRow {
 			{Action: editConfigAction},
 			{Action: installStacksAction},
 			{Action: backupsAction},
+			{Action: switchChannelAction},
 			{Action: bootFromUSBAction},
 			{Action: quitAction},
 		}
@@ -223,6 +232,7 @@ func Journey(s State) []JourneyRow {
 			{Action: installStacksAction, Recommended: true},
 			{Action: editConfigAction},
 			{Action: backupsAction},
+			{Action: switchChannelAction},
 			{Action: bootFromUSBAction},
 			{Action: quitAction},
 		}

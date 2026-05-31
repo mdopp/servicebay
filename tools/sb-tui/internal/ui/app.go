@@ -158,7 +158,7 @@ func (m App) route(id phase.ActionID, jobID string) (tea.Model, tea.Cmd) {
 		m.active = NewNasUpload()
 		m.screen = appPanel
 		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
-	case phase.EditConfig, phase.InstallStacks, phase.Backups:
+	case phase.EditConfig, phase.InstallStacks, phase.Backups, phase.SwitchChannel:
 		if m.token == "" {
 			m.pending = id
 			m.screen = appLogin
@@ -204,6 +204,8 @@ func (m App) openPanel(id phase.ActionID) (tea.Model, tea.Cmd) {
 		m.active = NewInstall(client)
 	case phase.Backups:
 		m.active = NewBackup(client)
+	case phase.SwitchChannel:
+		m.active = NewChannel(client)
 	default:
 		m.screen, m.active = appMenu, nil
 		return m, nil
