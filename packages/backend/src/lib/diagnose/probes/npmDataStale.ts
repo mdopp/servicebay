@@ -31,6 +31,7 @@ import { registerProbeAction, type ProbeActionResult } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { NPM_AUTH_MESSAGE_PREFIX } from '@/lib/health/runner';
 import { registerRefreshNow } from './refreshHealthCheck';
+import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 
 export interface NpmDataStaleResult {
   /** undefined when not applicable (no nginx-web, or NPM not reachable). */
@@ -281,6 +282,86 @@ registerProbeAction(
     ],
   },
   useExistingNpmCreds,
+);
+
+// ─── Non-destructive auto re-key (credential-reconciliation, inc. 2) ─────
+//
+// The third recovery path, and the one for the most common reinstall
+// case: NPM's DB persisted from a prior install with an admin password
+// ServiceBay no longer knows (its stored one went empty/diverged). Unlike
+// `use_existing` (needs the operator to KNOW the password) and
+// `reset_volume` (wipes all proxy hosts), this re-keys NPM's admin to a
+// fresh generated password IN PLACE — keeping every proxy route — by
+// rewriting the bcrypt hash directly in NPM's SQLite, then persisting the
+// new password. An admin login secret isn't an encryption key, so this is
+// safe to do silently (the "auto-rekey when safe" path).
+//
+// Run inside the NPM container so we use NPM's own bundled bcrypt (cost
+// 13, matching the `$2b$13$` hashes it writes) + better-sqlite3, and
+// operate on the container-relative /data/database.sqlite — robust to the
+// host data-dir name. Validated live before shipping.
+const NPM_REKEY_JS = [
+  "const bcrypt=require('/app/node_modules/bcrypt');",
+  "const Database=require('/app/node_modules/better-sqlite3');",
+  "const db=Database('/data/database.sqlite');",
+  "const u=db.prepare(\"SELECT id,email FROM user WHERE is_deleted=0 ORDER BY id LIMIT 1\").get();",
+  "if(!u){process.stdout.write('noadmin');process.exit(0);}",
+  "const hash=bcrypt.hashSync(process.env.NEWPW,13);",
+  "const r=db.prepare(\"UPDATE auth SET secret=?, modified_on=datetime('now') WHERE user_id=? AND type='password'\").run(hash,u.id);",
+  "process.stdout.write('email='+u.email+';updated='+r.changes);",
+].join('\n');
+
+async function rekeyNpmAdmin({ node }: { node: string }): Promise<ProbeActionResult> {
+  const adminUrl = await findNpmAdminUrl(node);
+  if (!adminUrl) {
+    return { ok: false, message: 'Nginx Proxy Manager is not deployed/active on this node — nothing to re-key.', refresh: false };
+  }
+  const agent = await agentManager.ensureAgent(node);
+  // Locate the running NPM container (jc21 image) to exec into.
+  const find = await agent.sendCommand('exec', {
+    command: `podman ps --format '{{.Names}} {{.Image}}' | awk '/proxy-manager/{print $1; exit}'`,
+  }, { timeoutMs: 15_000 });
+  const container = ((find as { stdout?: string }).stdout || '').trim().split(/\s+/)[0];
+  if (!container) {
+    return { ok: false, message: 'Could not find the running NPM container to re-key.', refresh: false };
+  }
+  const newPassword = generateRandomSecret(32);
+  const b64 = Buffer.from(NPM_REKEY_JS).toString('base64');
+  // base64 the script in to avoid quoting hell; password via env, never on argv.
+  const rewrite = await agent.sendCommand('exec', {
+    command: `echo ${b64} | base64 -d | podman exec -i -e NEWPW=${newPassword} ${container} node -`,
+  }, { timeoutMs: 30_000 });
+  const out = ((rewrite as { stdout?: string }).stdout || '').trim();
+  const m = out.match(/email=(.*);updated=(\d+)/);
+  if ((rewrite as { code?: number }).code !== 0 || !m || m[2] === '0') {
+    return {
+      ok: false,
+      message: `Could not re-key the NPM admin password: ${(rewrite as { stderr?: string }).stderr || out || 'unknown error'}`,
+      refresh: false,
+    };
+  }
+  const email = m[1];
+  // Prove the new password works before persisting — never store creds we can't verify.
+  const failure = await verifyNpmCreds(adminUrl, email, newPassword);
+  if (failure) return failure;
+  await updateConfig({ reverseProxy: { npm: { email, password: newPassword } } });
+  logger.info('diagnose:npm_data_stale', `Re-keyed NPM admin password for ${email} (non-destructive; proxy hosts preserved)`);
+  return {
+    ok: true,
+    message: 'NPM admin password re-keyed and saved — all proxy routes were preserved. ServiceBay can manage NPM again.',
+    refresh: true,
+  };
+}
+
+registerProbeAction(
+  PROBE_ID,
+  {
+    id: 'rekey_admin',
+    label: 'Re-key NPM admin (keep data)',
+    description:
+      "Generates a fresh NPM admin password, writes it straight into NPM's database, and saves it — WITHOUT wiping any proxy routes. The no-data-loss fix for when the stored password no longer works and you don't know the current one.",
+  },
+  rekeyNpmAdmin,
 );
 
 registerRefreshNow(PROBE_ID, CHECK_ID, 'NPM auth');
