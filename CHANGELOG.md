@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.64.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.4...servicebay-v4.64.0) (2026-05-31)
+
+
+### Features
+
+* **diagnose:** non-destructive NPM admin re-key (keep proxy routes) ([#1407](https://github.com/mdopp/servicebay/issues/1407)) ([2383c6a](https://github.com/mdopp/servicebay/commit/2383c6aaa2a21ef620f0c88f6ddbb734d36cb44e))
+
 ## [4.63.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.3...servicebay-v4.63.4) (2026-05-31)
 
 
