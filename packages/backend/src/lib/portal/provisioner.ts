@@ -32,7 +32,7 @@ import { logger } from '@/lib/logger';
 
 const LOG = 'portal:provisioner';
 
-type RewriteResult = 'added' | 'updated' | 'unchanged' | 'failed';
+type RewriteResult = 'added' | 'updated' | 'unchanged' | 'failed' | 'skipped';
 
 interface ProvisionResult {
   ok: boolean;
@@ -161,14 +161,25 @@ async function provisionNpmProxyHost(domain: string): Promise<ProvisionResult['p
   }
 }
 
-async function provisionAdguardRewrite(name: string, lanIp: string): Promise<'added' | 'updated' | 'unchanged' | 'failed'> {
-  const creds = await findAdguardCreds();
-  if (!creds) return 'failed';
-  return ensureWildcardRewrite({
-    adminUrl: creds.adminUrl,
-    username: creds.username,
-    password: creds.password,
-  }, name, lanIp);
+/** Whether an AdGuard service is actually deployed and running on this
+ *  node. Mirrors the nginx check in {@link provisionNpmProxyHost}: it
+ *  lets us tell "AdGuard isn't part of this install" (→ rewrites are
+ *  'skipped', nothing to do) apart from "AdGuard is up but the rewrite
+ *  POST failed / its creds aren't written yet" (→ 'failed', worth a
+ *  retry + warning). Without this split a minimal install that never
+ *  deployed AdGuard reported every rewrite as 'failed' and lit up the
+ *  alarming "Portal routing did not fully provision" warning on a
+ *  perfectly healthy fresh box. */
+async function isAdguardDeployed(): Promise<boolean> {
+  try {
+    const services = await ServiceManager.listServices('Local');
+    return services.some(s =>
+      (s.name === 'adguard' || s.name === 'adguardhome' || (s.name.includes('adguard') && !s.name.startsWith('install-')))
+      && s.active,
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -211,20 +222,32 @@ export async function provisionPortalRouting(): Promise<ProvisionResult> {
     rewriteDomains.add('home.arpa');
   }
 
+  // Resolve AdGuard once: present creds → write rewrites; no creds but
+  // AdGuard is up → 'failed' (transient cold-start, retry); no creds and
+  // no AdGuard service → 'skipped' (nothing to wire up on this install).
+  const creds = await findAdguardCreds();
+  const adguardDeployed = creds !== null || (await isAdguardDeployed());
   const rewrites: Record<string, RewriteResult> = {};
   for (const d of rewriteDomains) {
-    rewrites[d] = await provisionAdguardRewrite(d, lanIp);
-    rewrites[`www.${d}`] = await provisionAdguardRewrite(`www.${d}`, lanIp);
-    rewrites[`*.${d}`] = await provisionAdguardRewrite(`*.${d}`, lanIp);
+    for (const name of [d, `www.${d}`, `*.${d}`]) {
+      rewrites[name] = creds
+        ? await ensureWildcardRewrite(creds, name, lanIp)
+        : adguardDeployed ? 'failed' : 'skipped';
+    }
   }
 
   const anyRewriteFailed = Object.values(rewrites).some(r => r === 'failed');
   const ok = proxyHost !== 'failed' && !anyRewriteFailed;
-  const summary = `proxy:${proxyHost} rewrites=${Object.entries(rewrites).map(([k, v]) => `${k}:${v}`).join(',')}`;
+  // On a fresh install neither the reverse proxy nor AdGuard need be
+  // present — say so plainly instead of dumping a row of `:skipped`s.
+  const allSkipped = proxyHost === 'skipped' && Object.values(rewrites).every(r => r === 'skipped');
+  const detail = allSkipped
+    ? 'nothing to wire up yet (no reverse proxy or AdGuard installed)'
+    : `proxy:${proxyHost} rewrites=${Object.entries(rewrites).map(([k, v]) => `${k}:${v}`).join(',')}`;
   if (ok) {
-    logger.info(LOG, `Portal routing provisioned for ${activeDomain} (${summary})`);
+    logger.info(LOG, `Portal routing provisioned for ${activeDomain} (${detail})`);
   } else {
-    logger.warn(LOG, `Portal routing provisioning had failures for ${activeDomain} (${summary})`);
+    logger.warn(LOG, `Portal routing provisioning had failures for ${activeDomain} (${detail})`);
   }
-  return { ok, detail: summary, proxyHost, rewrites };
+  return { ok, detail, proxyHost, rewrites };
 }
