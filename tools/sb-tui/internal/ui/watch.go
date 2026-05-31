@@ -214,6 +214,12 @@ func (m WatchModel) View() string {
 	if m.usbMsg != "" {
 		out += "  " + m.usbMsg + "\n"
 	}
+	// Reinstall, box still up, no reboot yet: the install hasn't started — the
+	// box is serving the OLD install. Spell out what to do so the green dots +
+	// "connected" badge don't read as "done".
+	if m.requireReboot && m.tracker.Reboots == 0 && m.last.TCP {
+		out += "\n" + detailStyle.Render("This is still your CURRENT install — the reinstall hasn't started yet. To begin: plug the USB into THIS server, press u to arm USB boot, then reboot the box (or pick the USB in the box's firmware boot menu). This monitor takes over automatically once the box reboots into the installer.") + "\n"
+	}
 	return out
 }
 
