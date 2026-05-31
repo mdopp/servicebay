@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Box, Network, Activity, Terminal, Settings, ArrowRight, AlertCircle, CheckCircle2, Wrench } from 'lucide-react';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
+import InstallProgressCard from '@/components/InstallProgressCard';
 
 /**
  * Home / Overview dashboard (#803).
@@ -60,6 +61,11 @@ export default function OverviewDashboard() {
             )}
           </p>
         </header>
+
+        {/* Live install monitor — only renders while an install is
+            running, so every web client sees the same progress the
+            sb-tui monitor shows (#A). */}
+        <InstallProgressCard />
 
         {/* Headline status — the single sentence that answers "is everything OK?" */}
         <HealthHeadline tone={healthHeadline.tone} text={healthHeadline.text} />
