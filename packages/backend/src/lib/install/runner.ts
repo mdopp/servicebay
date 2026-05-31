@@ -44,6 +44,7 @@ import {
 } from '@/lib/stackInstall/postInstall';
 import { buildCredentialsManifest, mergeCredentials, type Credential } from '@/lib/stackInstall/credentialsManifest';
 import { provisionPortalWithRetries } from '@/lib/stackInstall/portalProvision';
+import { npmAdminCredStatus, rekeyNpmAdmin } from '@/lib/reverseProxy/npmAdminRekey';
 import { getCapabilityBus } from '@/lib/capabilities/bus';
 import { getStoreSnapshot } from '@/lib/store/repository';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
@@ -1349,6 +1350,27 @@ async function runJob(jobId: string): Promise<void> {
   // containers, which on a fresh install reported a misleading failure
   // (the proxy/DNS *were* being installed, just not up yet).
   await settleWait(jobId, ctx.deployed, input.node || 'Local');
+
+  // NPM admin self-heal (credential-reconciliation, ARCH-15). If nginx is
+  // in this install and its persisted DB holds an admin password
+  // ServiceBay can't authenticate with (empty/diverged across a
+  // reinstall), re-key it in place — non-destructive, every proxy route
+  // preserved — so the portal provisioning below can actually manage NPM.
+  // Best-effort; never fatal (the npm_data_stale diagnose action is the
+  // manual fallback).
+  if (selected.some(s => s.name === 'nginx' && !s.alreadyInstalled)) {
+    try {
+      const node = input.node || 'Local';
+      const status = await npmAdminCredStatus(node);
+      if (status === 'rejected' || status === 'no-creds') {
+        await log(jobId, '🔑 NPM is rejecting/missing the stored admin credentials — re-keying in place (proxy routes preserved)…');
+        const r = await rekeyNpmAdmin(node);
+        await log(jobId, (r.ok ? '✅ ' : '⚠️ ') + r.message);
+      }
+    } catch (e) {
+      await log(jobId, `(note) NPM admin reconcile skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   // Portal routing — apex + wildcard rewrites for the active domain.
   // Always runs after a successful install (#707). Pre-fix this was
