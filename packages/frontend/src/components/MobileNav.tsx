@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Github, Settings, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
+import DomainTag from './DomainTag';
 import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
 import { useToast } from '@/providers/ToastProvider';
 
@@ -78,6 +79,11 @@ export function MobileTopBar() {
              </span>
              <span className="text-[10px] text-gray-500 dark:text-gray-400">by Korgraph.io{appVersion ? ` - v${appVersion}` : ''}</span>
           </div>
+       </div>
+       {/* Center: where this ServiceBay lives — the desktop Sidebar is
+           hidden < md, so the domain surfaces here on mobile (#249). */}
+       <div className="flex-1 min-w-0 flex justify-center px-2">
+          <DomainTag />
        </div>
        {/* Right: Icons */}
        <div className="flex items-center gap-4">
