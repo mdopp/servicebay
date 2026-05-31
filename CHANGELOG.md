@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.63.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.62.0...servicebay-v4.63.0) (2026-05-31)
+
+
+### Features
+
+* **frontend:** live install-progress card on the Home dashboard ([#1396](https://github.com/mdopp/servicebay/issues/1396)) ([48704d5](https://github.com/mdopp/servicebay/commit/48704d5dfd25679b674f5c9b4838a9852de12a96))
+* **frontend:** move active domain into the sidebar near the user ([#1395](https://github.com/mdopp/servicebay/issues/1395)) ([3f57b74](https://github.com/mdopp/servicebay/commit/3f57b746e1f8612afa3e33e7722c46b4006ef753))
+
+
+### Bug Fixes
+
+* **install:** portal routing reports skipped, not failed, when AdGuard is absent ([#1397](https://github.com/mdopp/servicebay/issues/1397)) ([5aa232a](https://github.com/mdopp/servicebay/commit/5aa232af07d5e1499e6631d0e858850be46041f9))
+
 ## [4.62.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.61.0...servicebay-v4.62.0) (2026-05-31)
 
 
