@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -288,6 +289,55 @@ func runInstallStacks() int {
 	return 0
 }
 
+// runChannel is a non-interactive CLI: `sb-tui channel` prints the running
+// box's release channel; `sb-tui channel <latest|dev|test>` flips it (the box
+// re-points its image, pulls, and restarts), then polls until it's back on the
+// new channel. Lets a fix merged to main (auto-published as `:dev`) be verified
+// on the box without cutting a release — and it's scriptable (no TTY).
+func runChannel() int {
+	client, code := boxClient()
+	if client == nil {
+		return code
+	}
+	ctx := context.Background()
+	if len(os.Args) < 3 {
+		ch, err := client.GetChannel(ctx)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Printf("ServiceBay channel: %s\n", ch)
+		fmt.Printf("Switch with: sb-tui channel <%s>\n", strings.Join(rest.Channels, "|"))
+		return 0
+	}
+	target := os.Args[2]
+	valid := false
+	for _, c := range rest.Channels {
+		if c == target {
+			valid = true
+		}
+	}
+	if !valid {
+		fmt.Fprintf(os.Stderr, "unknown channel %q — use one of: %s\n", target, strings.Join(rest.Channels, ", "))
+		return 2
+	}
+	if err := client.SetChannel(ctx, target); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("Switching to '%s' — ServiceBay will pull + restart (~1 min)…\n", target)
+	// The restart drops the API we're talking to; poll until it's back on target.
+	for i := 0; i < 30; i++ {
+		time.Sleep(4 * time.Second)
+		if ch, err := client.GetChannel(ctx); err == nil && ch == target {
+			fmt.Printf("✓ ServiceBay is now on '%s'.\n", target)
+			return 0
+		}
+	}
+	fmt.Println("Still switching — run `sb-tui channel` in a moment to confirm.")
+	return 0
+}
+
 // runBackups opens the backup panel (#1277).
 func runBackups() int {
 	client, code := boxClient()
@@ -329,6 +379,8 @@ func main() {
 			os.Exit(runBackups())
 		case "upload":
 			os.Exit(runNasUpload())
+		case "channel":
+			os.Exit(runChannel())
 		}
 	}
 
