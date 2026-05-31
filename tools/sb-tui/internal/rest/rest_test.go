@@ -32,11 +32,13 @@ func TestGetConfigProjectsAllowList(t *testing.T) {
 		// The settings GET returns the config object directly, with extra
 		// keys (templateSettingsSchema, redacted secrets) the client ignores.
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"serverName":             "homelab",
-			"logLevel":               "debug",
-			"adminPassword":          "__REDACTED__",
+			"serverName":    "homelab",
+			"logLevel":      "debug",
+			"adminPassword": "__REDACTED__",
+			// The domain lives nested at reverseProxy.publicDomain — the
+			// same field the web UI edits — not the dead top-level `domain`.
+			"reverseProxy":           map[string]any{"publicDomain": "dopp.cloud", "lanDomain": "home.arpa"},
 			"templateSettingsSchema": map[string]any{"x": 1},
-			// domain intentionally absent → should read as "".
 		})
 	}))
 	defer srv.Close()
@@ -51,11 +53,27 @@ func TestGetConfigProjectsAllowList(t *testing.T) {
 	if cfg.Values["logLevel"] != "debug" {
 		t.Errorf("logLevel = %q", cfg.Values["logLevel"])
 	}
-	if cfg.Values["domain"] != "" {
-		t.Errorf("absent domain should be empty, got %q", cfg.Values["domain"])
+	if cfg.Values["domain"] != "dopp.cloud" {
+		t.Errorf("domain should read reverseProxy.publicDomain, got %q", cfg.Values["domain"])
 	}
 	if _, ok := cfg.Values["adminPassword"]; ok {
 		t.Error("non-allow-listed key leaked into Values")
+	}
+}
+
+func TestGetConfigDomainAbsentReadsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No reverseProxy block at all (LAN-only minimal install).
+		_ = json.NewEncoder(w).Encode(map[string]any{"serverName": "homelab"})
+	}))
+	defer srv.Close()
+
+	cfg, err := newTestClient(srv).GetConfig(context.Background())
+	if err != nil {
+		t.Fatalf("GetConfig: %v", err)
+	}
+	if cfg.Values["domain"] != "" {
+		t.Errorf("absent domain should be empty, got %q", cfg.Values["domain"])
 	}
 }
 
@@ -75,6 +93,31 @@ func TestUpdateConfigSendsMinimalPatch(t *testing.T) {
 	}
 	if len(gotBody) != 1 || gotBody["serverName"] != "newname" {
 		t.Errorf("expected minimal {serverName:newname} patch, got %v", gotBody)
+	}
+}
+
+func TestUpdateConfigDomainSendsNestedPatch(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+
+	if err := newTestClient(srv).UpdateConfig(context.Background(), "domain", "dopp.cloud"); err != nil {
+		t.Fatalf("UpdateConfig: %v", err)
+	}
+	// Domain must be written nested at reverseProxy.publicDomain so the
+	// backend's one-level deep-merge preserves the rest of the block.
+	rp, ok := gotBody["reverseProxy"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested reverseProxy patch, got %v", gotBody)
+	}
+	if rp["publicDomain"] != "dopp.cloud" {
+		t.Errorf("publicDomain = %v, want dopp.cloud", rp["publicDomain"])
+	}
+	if len(gotBody) != 1 {
+		t.Errorf("patch should carry only reverseProxy, got %v", gotBody)
 	}
 }
 

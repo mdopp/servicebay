@@ -1316,6 +1316,15 @@ async function runJob(jobId: string): Promise<void> {
     await log(jobId, `(note) couldn't persist the credentials manifest: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // Settle-wait against the in-process digital twin FIRST, so the
+  // services portal routing depends on (nginx, AdGuard) are actually
+  // active — and AdGuard's post-deploy hook has had a chance to write
+  // its admin creds — before we try to provision. Running portal
+  // provisioning ahead of this fired it against not-yet-healthy
+  // containers, which on a fresh install reported a misleading failure
+  // (the proxy/DNS *were* being installed, just not up yet).
+  await settleWait(jobId, ctx.deployed, input.node || 'Local');
+
   // Portal routing — apex + wildcard rewrites for the active domain.
   // Always runs after a successful install (#707). Pre-fix this was
   // gated on `adguard ∈ newlyDeployed`, which meant a feature-only
@@ -1323,12 +1332,10 @@ async function runJob(jobId: string): Promise<void> {
   // host) silently skipped DNS-rewrite provisioning even though new
   // subdomains were being created. Now run it whenever the
   // prerequisites (publicDomain + AdGuard reachable) are met; the
-  // provisioner internally no-ops when AdGuard isn't installed yet.
+  // provisioner reports a calm skip only when nginx/AdGuard aren't
+  // part of this install at all.
   await log(jobId, 'Provisioning AdGuard DNS rewrites + portal routing...');
   await provisionPortalWithRetries((line: string) => { void log(jobId, line); });
-
-  // Settle-wait against the in-process digital twin.
-  await settleWait(jobId, ctx.deployed, input.node || 'Local');
 
   await patchJob(jobId, {
     phase: 'done',
