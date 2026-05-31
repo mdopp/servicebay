@@ -243,7 +243,7 @@ func (m Model) View() string {
 	if m.cursor < len(m.rows) {
 		b.WriteString(detailStyle.Render(m.rows[m.cursor].Action.Detail) + "\n")
 	}
-	b.WriteString(footerStyle.Render("↑/↓ move · enter select · auto-refreshing · ctrl+c quit"))
+	b.WriteString(footerStyle.Render("↑/↓ move · enter select · auto-refreshing · ctrl+c quit  ·  sb-tui " + Version))
 	return frame(b.String(), m.width, m.height)
 }
 
