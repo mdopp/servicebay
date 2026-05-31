@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.63.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.0...servicebay-v4.63.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* **install:** provision portal routing after services settle; honest skip ([#1399](https://github.com/mdopp/servicebay/issues/1399)) ([c1c1721](https://github.com/mdopp/servicebay/commit/c1c1721196b4f1262ccf2a3ca2d1c353caf76b3d))
+
 ## [4.63.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.62.0...servicebay-v4.63.0) (2026-05-31)
 
 
