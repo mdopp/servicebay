@@ -121,13 +121,9 @@ tf.close()
     expect(fs.readFileSync(sentinelFile, 'utf8')).toBe('ORIGINAL_CONTENTS');
   });
 
-  maybeIt('refuses any archive containing a symlink (#590 Option B)', async () => {
-    // Backup payloads are control-plane Quadlets + config only —
-    // symlinks have no legitimate purpose. Refusing them at the
-    // pre-check means the local AND remote restore paths get the
-    // same protection. This test used to assert refusal in the
-    // post-extract walk; after #590 it asserts refusal at the
-    // earlier pre-check stage with a clearer message.
+  maybeIt('refuses a symlink with an absolute target', async () => {
+    // Symlinks are allowed only when they resolve within the archive root
+    // (#1381); an absolute target escapes and is refused at the pre-check.
     const src = mktmpDir('symlink-src');
     const linkPath = path.join(src, 'bad-link');
     fs.symlinkSync(sentinelFile, linkPath);
@@ -145,7 +141,7 @@ tf.close()
     expect(fs.readFileSync(sentinelFile, 'utf8')).toBe('ORIGINAL_CONTENTS');
   });
 
-  maybeIt('refuses a relative symlink at pre-check (#590)', async () => {
+  maybeIt('refuses a relative symlink that escapes the root', async () => {
     const src = mktmpDir('relsym-src');
     const upPath = path.relative(src, sentinelFile);
     fs.symlinkSync(upPath, path.join(src, 'rel-link'));
@@ -175,5 +171,21 @@ tf.close()
 
     const dest = mktmpDir('dest-hardlink');
     await expect(safeTarExtract(archive, dest)).rejects.toThrow(/(hardlink|link)/i);
+  });
+
+  maybeIt('allows a symlink whose target stays within the archive (#1381)', async () => {
+    // Let's Encrypt ships `live/<n>/cert.pem -> ../../archive/<n>/certN.pem` in
+    // NPM's config; the target resolves inside the extraction root, so it must
+    // be allowed — else no NPM-cert box could create a backup.
+    const src = mktmpDir('insym-src');
+    fs.mkdirSync(path.join(src, 'archive', 'npm-1'), { recursive: true });
+    fs.writeFileSync(path.join(src, 'archive', 'npm-1', 'cert1.pem'), 'CERT');
+    fs.mkdirSync(path.join(src, 'live', 'npm-1'), { recursive: true });
+    fs.symlinkSync('../../archive/npm-1/cert1.pem', path.join(src, 'live', 'npm-1', 'cert.pem'));
+    const archive = makeArchive({ prefix: 'insym', workingDir: src, entries: ['archive', 'live'] });
+
+    const dest = mktmpDir('dest-insym');
+    await safeTarExtract(archive, dest); // must not throw
+    expect(fs.readFileSync(path.join(dest, 'live', 'npm-1', 'cert.pem'), 'utf8')).toBe('CERT');
   });
 });
