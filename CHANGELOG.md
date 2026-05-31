@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.67.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.66.1...servicebay-v4.67.0) (2026-05-31)
+
+
+### Features
+
+* **tui:** channel switch — flip the running box to dev/latest/test ([#1417](https://github.com/mdopp/servicebay/issues/1417)) ([1511984](https://github.com/mdopp/servicebay/commit/15119843b70135ae7f3da443d3d379ac79b599f6))
+
 ## [4.66.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.66.0...servicebay-v4.66.1) (2026-05-31)
 
 
