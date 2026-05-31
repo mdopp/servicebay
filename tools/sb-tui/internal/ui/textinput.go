@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -97,13 +99,18 @@ func (t textInput) display(focused bool) string {
 	return string(disp[:c]) + "▌" + string(disp[c:])
 }
 
-// render draws the field as `label: value` with the caret at the cursor when
-// focused, masking the value when secret. Matches the old fieldRow framing
-// (❯ + highlight when focused) so panels look unchanged apart from the caret.
+// render draws the field as the build form's standard input row — a static,
+// padded label followed by the editable value in an input box (`❯ Label  [ value ]`),
+// with a block caret when focused and bullets when secret. Shared by every
+// simple panel (login, usb-boot, NAS upload) so they match the build wizard.
 func (t textInput) render(label string, focused bool) string {
-	body := label + ": " + t.display(focused)
+	ls, is := labelStyle, inputStyle
 	if focused {
-		return selectedStyle.Render("❯ " + body)
+		ls, is = labelFocused, inputFocused
 	}
-	return normalStyle.Render("  " + body)
+	cursor := "  "
+	if focused {
+		cursor = "❯ "
+	}
+	return cursor + ls.Render(fmt.Sprintf("%-22s", label)) + is.Render(" "+t.display(focused)+" ")
 }
