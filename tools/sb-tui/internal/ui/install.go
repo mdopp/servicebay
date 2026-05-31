@@ -265,22 +265,41 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case " ":
 		m.checked[m.cursor] = !m.checked[m.cursor]
 	case "enter":
-		if names := m.selectedNames(); len(names) > 0 {
+		// Assemble against the selected stacks' TEMPLATES, not the stack
+		// names: the box assembler resolves templates (getTemplateYaml), and a
+		// stack name isn't a template — sending stack names silently assembled
+		// an empty manifest and installed nothing.
+		if templates := m.selectedTemplates(); len(templates) > 0 {
 			m.stage = stageStarting
-			return m, m.startCmd(names)
+			return m, m.startCmd(templates)
 		}
 	}
 	return m, nil
 }
 
-func (m InstallModel) selectedNames() []string {
-	var names []string
+// selectedTemplates is the de-duplicated union of every checked stack's
+// templates (`spec.templates`) — the actual deployable units. A stack with no
+// templates in the catalog falls back to its own name (best-effort) so a
+// selection never silently expands to nothing.
+func (m InstallModel) selectedTemplates() []string {
+	seen := map[string]bool{}
+	var out []string
 	for i, s := range m.stacks {
-		if m.checked[i] {
-			names = append(names, s.Name)
+		if !m.checked[i] {
+			continue
+		}
+		tmpls := s.Templates
+		if len(tmpls) == 0 {
+			tmpls = []string{s.Name}
+		}
+		for _, t := range tmpls {
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
 		}
 	}
-	return names
+	return out
 }
 
 // View renders the panel per stage.

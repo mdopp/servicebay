@@ -10,11 +10,16 @@ import (
 
 // Stack is one installable stack from the box catalog (GET /api/system/stacks).
 // Tier is "core" or "feature"; Description is best-effort from the manifest.
+// Templates is the stack's constituent template names (`spec.templates`) — the
+// units the install pipeline actually deploys. A stack name itself is NOT a
+// deployable template (the assembler resolves templates, not stacks), so the
+// install flow must expand a selected stack into these before assembling.
 type Stack struct {
 	Name        string
 	Tier        string
 	Description string
 	Installed   bool
+	Templates   []string
 }
 
 // ListStacks enumerates the installable stack catalog. Core stacks sort first,
@@ -28,9 +33,10 @@ func (c *Client) ListStacks(ctx context.Context) ([]Stack, error) {
 		Stacks []struct {
 			Name     string `json:"name"`
 			Manifest *struct {
-				Tier        string `json:"tier"`
-				Description string `json:"description"`
-				DisplayName string `json:"displayName"`
+				Tier        string   `json:"tier"`
+				Description string   `json:"description"`
+				DisplayName string   `json:"displayName"`
+				Templates   []string `json:"templates"`
 			} `json:"manifest"`
 			Health *struct {
 				Installed bool `json:"installed"`
@@ -51,6 +57,7 @@ func (c *Client) ListStacks(ctx context.Context) ([]Stack, error) {
 			if st.Description == "" {
 				st.Description = s.Manifest.DisplayName
 			}
+			st.Templates = s.Manifest.Templates
 		}
 		if s.Health != nil {
 			st.Installed = s.Health.Installed
