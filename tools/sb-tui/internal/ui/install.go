@@ -148,6 +148,7 @@ func (m InstallModel) applyProgress(msg progressMsg) (tea.Model, tea.Cmd) {
 		m.errMsg = friendlyErr(msg.err)
 		return m, tea.Tick(installPollInterval, func(time.Time) tea.Msg { return pollTickMsg{} })
 	}
+	m.errMsg = "" // a successful poll clears any earlier transient poll error
 	p := msg.p
 	m.phase, m.percent, m.offset = p.Phase, p.Percent, p.NextOffset
 	if p.NewLogs != "" {
@@ -282,14 +283,42 @@ func tierSuffix(s rest.Stack) string {
 }
 
 func (m InstallModel) viewInstalling(b *strings.Builder, width int) {
-	phase := m.phase
-	if phase == "" {
-		phase = "starting"
-	}
-	b.WriteString(phaseStyle.Render("Installing — "+phase) + "\n")
+	b.WriteString(phaseStyle.Render("Installing — "+phaseLabel(m.phase)) + "\n")
 	b.WriteString(detailStyle.Render(progressBar(m.percent, min(width-8, 40))) + "\n\n")
+
+	// The box paused for config (passwords/variables) the TUI can't collect yet.
+	// Point the operator at the web UI rather than spinning here forever.
+	if m.phase == "needs_credentials" {
+		b.WriteString(detailStyle.Render(cfgErrStyle.Render("⚠ This stack needs configuration the TUI can't enter yet.")) + "\n")
+		b.WriteString(detailStyle.Render("Finish it in the web UI: "+cfgValueStyle.Render(m.client.BaseURL+"/")) + "\n\n")
+	}
+
 	b.WriteString(logTailView(m.logTail, 10))
+
+	// Error management: a failing progress poll must be visible, not look frozen
+	// at 0%. The job keeps running on the box; this just reports the poll state.
+	if m.errMsg != "" {
+		b.WriteString("\n" + detailStyle.Render(cfgErrStyle.Render("⚠ progress unavailable: "+m.errMsg)) + "\n")
+	}
 	b.WriteString("\n" + footerStyle.Render("q detach (install keeps running on the box)"))
+}
+
+// phaseLabel maps a raw job phase to a human label for the monitor.
+func phaseLabel(phase string) string {
+	switch phase {
+	case "":
+		return "starting…"
+	case "running":
+		return "running"
+	case "needs_credentials":
+		return "waiting for configuration"
+	case "done", "complete":
+		return "done"
+	case "failed", "error":
+		return "failed"
+	default:
+		return phase
+	}
 }
 
 func (m InstallModel) viewDone(b *strings.Builder, width int) {

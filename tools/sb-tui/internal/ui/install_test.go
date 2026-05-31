@@ -105,3 +105,27 @@ func TestProgressBar(t *testing.T) {
 		t.Errorf("expected 5 filled blocks, got %q", bar)
 	}
 }
+
+// TestInstallSurfacesPollError: a failing progress poll must be visible in the
+// installing view, not silently leave it frozen at 0%.
+func TestInstallSurfacesPollError(t *testing.T) {
+	m := InstallModel{client: &rest.Client{BaseURL: "http://box:5888"}, stage: stageInstalling, jobID: "j1"}
+	mi, _ := m.Update(progressMsg{err: &rest.APIError{Status: 404, Message: "job not found"}})
+	m = mi.(InstallModel)
+	v := m.View()
+	if !strings.Contains(v, "progress unavailable") || !strings.Contains(v, "job not found") {
+		t.Errorf("installing view should surface the poll error, got:\n%s", v)
+	}
+}
+
+// TestInstallNeedsCredentials: a needs_credentials phase points the operator at
+// the web UI instead of spinning forever.
+func TestInstallNeedsCredentials(t *testing.T) {
+	m := InstallModel{client: &rest.Client{BaseURL: "http://box:5888"}, stage: stageInstalling, jobID: "j1"}
+	mi, _ := m.Update(progressMsg{p: &rest.Progress{Phase: "needs_credentials", Active: true}})
+	m = mi.(InstallModel)
+	v := m.View()
+	if !strings.Contains(v, "needs configuration") || !strings.Contains(v, "http://box:5888/") {
+		t.Errorf("needs_credentials should point to the web UI, got:\n%s", v)
+	}
+}
