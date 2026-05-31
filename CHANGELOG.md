@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.63.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.2...servicebay-v4.63.3) (2026-05-31)
+
+
+### Bug Fixes
+
+* **frontend:** make the Home health headline agree with the core-stack banner ([#1403](https://github.com/mdopp/servicebay/issues/1403)) ([0dac46b](https://github.com/mdopp/servicebay/commit/0dac46bcfe6126f547b2b7e2966af3f68ac94a27))
+
 ## [4.63.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.1...servicebay-v4.63.2) (2026-05-31)
 
 
