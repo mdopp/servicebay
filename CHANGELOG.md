@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.66.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.66.0...servicebay-v4.66.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* two bugs surfaced by on-box 4.66.0 verification ([#1413](https://github.com/mdopp/servicebay/issues/1413)) ([8ff3360](https://github.com/mdopp/servicebay/commit/8ff33603547652d418bc0bc18a8e44fe6b16b1c9))
+
 ## [4.66.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.65.0...servicebay-v4.66.0) (2026-05-31)
 
 
