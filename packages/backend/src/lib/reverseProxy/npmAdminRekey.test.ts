@@ -12,6 +12,7 @@ const state = {
   config: {} as any,
   fetchStatus: 200,
   fetchThrows: false,
+  fetchBody: {} as any,
 };
 
 vi.mock('@/lib/services/ServiceManager', () => ({
@@ -25,7 +26,7 @@ vi.mock('@/lib/agent/manager', () => ({ agentManager: { ensureAgent: vi.fn() } }
 
 vi.stubGlobal('fetch', vi.fn(async () => {
   if (state.fetchThrows) throw new Error('refused');
-  return { ok: state.fetchStatus < 400, status: state.fetchStatus } as Response;
+  return { ok: state.fetchStatus < 400, status: state.fetchStatus, json: async () => state.fetchBody } as unknown as Response;
 }));
 
 import { npmAdminCredStatus } from './npmAdminRekey';
@@ -37,6 +38,7 @@ beforeEach(() => {
   state.config = { reverseProxy: { npm: { email: 'a@b.c', password: 'pw' } } };
   state.fetchStatus = 200;
   state.fetchThrows = false;
+  state.fetchBody = {};
 });
 
 describe('npmAdminCredStatus', () => {
@@ -58,6 +60,18 @@ describe('npmAdminCredStatus', () => {
   it("returns 'rejected' when NPM 401s the stored creds (→ re-key)", async () => {
     state.fetchStatus = 401;
     expect(await npmAdminCredStatus('Local')).toBe('rejected');
+  });
+
+  it("returns 'rejected' on NPM's HTTP 400 'error.invalid-auth' (jc21 uses 400, not 401)", async () => {
+    state.fetchStatus = 400;
+    state.fetchBody = { error: { code: 400, message: 'Invalid email or password', message_i18n: 'error.invalid-auth' } };
+    expect(await npmAdminCredStatus('Local')).toBe('rejected');
+  });
+
+  it("returns 'unknown' on a malformed-request 400 (not an auth rejection)", async () => {
+    state.fetchStatus = 400;
+    state.fetchBody = { error: { code: 400, message: 'secret must NOT have fewer than 1 characters' } };
+    expect(await npmAdminCredStatus('Local')).toBe('unknown');
   });
 
   it("returns 'unknown' when NPM is unreachable (skip, don't re-key blindly)", async () => {
