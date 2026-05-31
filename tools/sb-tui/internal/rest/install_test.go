@@ -16,7 +16,7 @@ func TestListStacksSortsCoreFirst(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"stacks": []any{
 			map[string]any{"name": "zebra", "manifest": map[string]any{"tier": "feature", "description": "Z"}},
 			map[string]any{"name": "core-b", "manifest": map[string]any{"tier": "core"}},
-			map[string]any{"name": "core-a", "manifest": map[string]any{"tier": "core", "templates": []string{"nginx", "auth", "adguard"}}, "health": map[string]any{"installed": true}},
+			map[string]any{"name": "core-a", "manifest": map[string]any{"tier": "core", "templates": []string{"nginx", "auth", "adguard"}}, "health": map[string]any{"hasAnySignal": true}},
 		}})
 	}))
 	defer srv.Close()

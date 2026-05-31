@@ -48,7 +48,11 @@ func (c *Client) ListStacks(ctx context.Context) ([]Stack, error) {
 				Lifecycle   string   `json:"lifecycle"`
 			} `json:"manifest"`
 			Health *struct {
-				Installed bool `json:"installed"`
+				// `hasAnySignal` (NOT a nonexistent `installed` field) is the
+				// box's installed signal — true once any of the stack's
+				// templates has a health signal in the twin. The web UI's
+				// "Not installed" badge is exactly `!hasAnySignal`.
+				HasAnySignal bool `json:"hasAnySignal"`
 			} `json:"health"`
 		} `json:"stacks"`
 	}
@@ -70,7 +74,7 @@ func (c *Client) ListStacks(ctx context.Context) ([]Stack, error) {
 			st.Lifecycle = s.Manifest.Lifecycle
 		}
 		if s.Health != nil {
-			st.Installed = s.Health.Installed
+			st.Installed = s.Health.HasAnySignal
 		}
 		out = append(out, st)
 	}

@@ -8,6 +8,7 @@
 import { registerProbe } from './registry';
 import { getConfig } from '../../config';
 import { findNpmAdminUrl } from './npmAdmin';
+import { isInvalidAuth } from '@/lib/reverseProxy/npmAdminRekey';
 
 export const NPM_AUTH_MESSAGE_PREFIX = 'npm_auth:';
 
@@ -44,7 +45,10 @@ registerProbe({
           signal: AbortSignal.timeout(4000),
         });
         if (res.ok) return encode({ status: 'ok', detail: 'NPM accepts the stored admin credentials.' });
-        if (res.status === 401) {
+        // NPM (jc21) returns HTTP 400 `error.invalid-auth` — NOT 401 — for a
+        // wrong password. Treat either as the stale-credentials failure;
+        // otherwise a real stale-creds box never flags (found via on-box verify).
+        if (res.status === 401 || (res.status === 400 && (await isInvalidAuth(res)))) {
           return encode({
             status: 'fail',
             detail: 'Nginx Proxy Manager is rejecting the stored admin credentials. This usually means a previous install left an admin password in the NPM database that no longer matches.',

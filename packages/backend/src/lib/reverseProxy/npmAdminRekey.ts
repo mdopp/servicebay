@@ -61,10 +61,23 @@ export async function npmTokenStatus(
     });
     if (res.ok) return 'ok';
     if (res.status === 401) return 'unauthorized';
+    // NPM (jc21) returns HTTP 400 — NOT 401 — for a wrong password, with
+    // `error.message_i18n: 'error.invalid-auth'`. Treat that as a credential
+    // rejection (→ re-key), distinct from a genuinely malformed request
+    // (e.g. empty secret), which stays 'error'. Found via on-box verify.
+    if (res.status === 400 && (await isInvalidAuth(res))) return 'unauthorized';
     return 'error';
   } catch {
     return 'error';
   }
+}
+
+/** True iff an NPM /api/tokens 400 body is the "invalid email or password"
+ *  rejection (rather than a malformed-request 400). */
+export async function isInvalidAuth(res: Response): Promise<boolean> {
+  const body = (await res.json().catch(() => null)) as { error?: { message_i18n?: string; message?: string } } | null;
+  const err = body?.error;
+  return err?.message_i18n === 'error.invalid-auth' || /invalid email or password/i.test(err?.message ?? '');
 }
 
 /**
