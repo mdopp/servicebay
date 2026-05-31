@@ -55,13 +55,13 @@ func TestActionsFor(t *testing.T) {
 	if got := ids(ActionsFor(Detect(true, BoxStatus{}))); !eq(got, []ActionID{UploadToNAS, BuildISO, WatchInstall, Quit}) {
 		t.Fatalf("iso-ready actions = %v", got)
 	}
-	// installing: stage + reinstall + watch + manage children (config/stacks/backups/boot-usb), then quit.
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{UploadToNAS, BuildISO, WatchInstall, EditConfig, InstallStacks, Backups, BootFromUSB, Quit}) {
+	// installing: stage + reinstall + watch + manage children (config/stacks/backups/channel/boot-usb), then quit.
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true}))); !eq(got, []ActionID{UploadToNAS, BuildISO, WatchInstall, EditConfig, InstallStacks, Backups, SwitchChannel, BootFromUSB, Quit}) {
 		t.Fatalf("installing actions = %v", got)
 	}
 	// ready: stage + reinstall + manage children, then quit. No Watch on an up box
 	// (step 3 is a done signpost); no Open-in-browser — URL is shown persistently.
-	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{UploadToNAS, BuildISO, InstallStacks, EditConfig, Backups, BootFromUSB, Quit}) {
+	if got := ids(ActionsFor(Detect(true, BoxStatus{Reachable: true, WizardDone: true}))); !eq(got, []ActionID{UploadToNAS, BuildISO, InstallStacks, EditConfig, Backups, SwitchChannel, BootFromUSB, Quit}) {
 		t.Fatalf("ready actions = %v", got)
 	}
 }
