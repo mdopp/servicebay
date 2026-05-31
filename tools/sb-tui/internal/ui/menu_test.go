@@ -28,7 +28,7 @@ func feed(m Model) Model {
 // TestMenuAutoRefreshPreservesCursor: a silent re-probe with an unchanged action
 // set must not yank the cursor back to the top.
 func TestMenuAutoRefreshPreservesCursor(t *testing.T) {
-	m := feed(New(readyDetect, "box", "5888"))
+	m := feed(New(readyDetect, "box", "5888", ""))
 	m.cursor = 1 // a selectable row (step 2 / reinstall)
 	m = feed(m)  // simulate an auto-refresh tick with identical rows
 	if m.cursor != 1 {
@@ -39,7 +39,7 @@ func TestMenuAutoRefreshPreservesCursor(t *testing.T) {
 // TestMenuShowsURLWhenReachable: the dashboard URL is rendered persistently
 // once the box is reachable, replacing the old Open-in-browser action.
 func TestMenuShowsURLWhenReachable(t *testing.T) {
-	m := feed(New(readyDetect, "192.168.1.5", "5888"))
+	m := feed(New(readyDetect, "192.168.1.5", "5888", ""))
 	v := m.View()
 	if !strings.Contains(v, "http://192.168.1.5:5888/") {
 		t.Error("reachable menu should show the dashboard URL")
@@ -56,7 +56,7 @@ func TestMenuFooterShowsVersion(t *testing.T) {
 	old := Version
 	Version = "9.9.9"
 	defer func() { Version = old }()
-	m := feed(New(readyDetect, "box", "5888"))
+	m := feed(New(readyDetect, "box", "5888", ""))
 	if v := m.View(); !strings.Contains(v, "sb-tui 9.9.9") {
 		t.Errorf("footer should show the version, got:\n%s", v)
 	}
@@ -66,7 +66,7 @@ func TestMenuFooterShowsVersion(t *testing.T) {
 // stage + connectivity dots so the operator sees progress without opening the
 // full monitor.
 func TestMenuInstallStatusLine(t *testing.T) {
-	m := feed(New(installingDetect, "192.168.178.100", "5888"))
+	m := feed(New(installingDetect, "192.168.178.100", "5888", ""))
 	// Before any probe answers, no stale line; after one, it renders the stage.
 	if strings.Contains(m.View(), "Installing ·") {
 		t.Error("status line should be absent until a probe answers")

@@ -9,8 +9,13 @@ export const dynamic = 'force-dynamic';
  * Resume a paused install by skipping the NPM credentials prompt.
  * Proxy routes won't be configured in this run; the operator can fix
  * this later via Settings → Integrations.
+ *
+ * `tokenScope: 'lifecycle'` lets the sb-tui install panel resolve a
+ * needs_credentials pause with its scoped `sb_` token — the same scope
+ * that already authorises `/api/install/start`, and strictly less
+ * powerful (it only continues an install the operator already started).
  */
-export const POST = withApiHandler({}, async ({ request }) => {
+export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request }) => {
   try {
     const body = (await request.json()) as { jobId?: string };
     if (!body.jobId) {

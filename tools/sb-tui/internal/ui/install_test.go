@@ -118,14 +118,25 @@ func TestInstallSurfacesPollError(t *testing.T) {
 	}
 }
 
-// TestInstallNeedsCredentials: a needs_credentials phase points the operator at
-// the web UI instead of spinning forever.
+// TestInstallNeedsCredentials: a needs_credentials phase offers the in-TUI skip
+// (and the web UI as an alternative) instead of spinning forever.
 func TestInstallNeedsCredentials(t *testing.T) {
 	m := InstallModel{client: &rest.Client{BaseURL: "http://box:5888"}, stage: stageInstalling, jobID: "j1"}
 	mi, _ := m.Update(progressMsg{p: &rest.Progress{Phase: "needs_credentials", Active: true}})
 	m = mi.(InstallModel)
 	v := m.View()
-	if !strings.Contains(v, "needs configuration") || !strings.Contains(v, "http://box:5888/") {
-		t.Errorf("needs_credentials should point to the web UI, got:\n%s", v)
+	if !strings.Contains(v, "NPM credentials") || !strings.Contains(v, "skip") || !strings.Contains(v, "http://box:5888/") {
+		t.Errorf("needs_credentials should offer skip + web UI, got:\n%s", v)
+	}
+}
+
+// TestInstallReattachOn409: a start that hits "install already in progress"
+// reattaches to the existing job rather than erroring out.
+func TestInstallReattachOn409(t *testing.T) {
+	m := InstallModel{client: &rest.Client{BaseURL: "http://box:5888"}, stage: stageStarting, checked: map[int]bool{}}
+	mi, cmd := m.Update(installStartedMsg{err: &rest.InstallInProgressError{JobID: "existing-1"}})
+	m = mi.(InstallModel)
+	if m.stage != stageInstalling || m.jobID != "existing-1" || cmd == nil {
+		t.Fatalf("409 should reattach: stage=%v jobID=%q", m.stage, m.jobID)
 	}
 }

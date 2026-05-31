@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"servicebay-tui/internal/phase"
+	"servicebay-tui/internal/rest"
 	"servicebay-tui/internal/watch"
 )
 
@@ -50,6 +51,10 @@ type autoRefreshMsg struct{}
 // port) for the compact live line shown during the Installing phase.
 type installStatusMsg struct{ probe watch.Probe }
 
+// currentInstallMsg carries the active stack-install job summary (or nil) from
+// the token-gated poll on a reachable box.
+type currentInstallMsg struct{ job *rest.CurrentJob }
+
 // Model is the Bubble Tea model for the launcher menu. It is hosted by App
 // (app.go): selecting an action emits a menuSelectedMsg the App routes, rather
 // than quitting the program itself, so the launcher stays one continuous app.
@@ -58,6 +63,7 @@ type installStatusMsg struct{ probe watch.Probe }
 type Model struct {
 	detect        DetectFunc
 	host, port    string
+	token         string // scoped token, for polling the running-install summary
 	state         *phase.State
 	rows          []phase.JourneyRow
 	cursor        int
@@ -67,12 +73,16 @@ type Model struct {
 	// one Enter away on the Watch row). Nil outside Installing / before the first
 	// probe answers.
 	installStatus *watch.Probe
+	// installJob is the active stack-install job on an up box (token-polled), so
+	// the menu can surface "install in progress" + offer to attach to it.
+	installJob *rest.CurrentJob
 }
 
 // New builds a launcher model with the phase-detection function and the box
-// target (host/port, shown as the dashboard URL when reachable).
-func New(detect DetectFunc, host, port string) Model {
-	return Model{detect: detect, host: host, port: port}
+// target (host/port, shown as the dashboard URL when reachable). token (may be
+// empty) authenticates the running-install poll.
+func New(detect DetectFunc, host, port, token string) Model {
+	return Model{detect: detect, host: host, port: port, token: token}
 }
 
 func (m Model) detectCmd() tea.Cmd {
@@ -96,6 +106,48 @@ func installProbeCmd(host, port string) tea.Cmd {
 	}
 }
 
+// currentInstallCmd polls the box for an active stack-install job (token-gated,
+// sanitized). Errors resolve to "no job" — the line just doesn't show.
+func (m Model) currentInstallCmd() tea.Cmd {
+	host, port, token := m.host, m.port, m.token
+	return func() tea.Msg {
+		client, err := rest.New(host, port, token)
+		if err != nil {
+			return currentInstallMsg{}
+		}
+		job, err := client.CurrentInstall(context.Background())
+		if err != nil {
+			return currentInstallMsg{}
+		}
+		return currentInstallMsg{job: job}
+	}
+}
+
+// rebuildRows recomputes the menu rows from the current phase + any active
+// install job: when an install is running it prepends a recommended "Watch the
+// running install" row. Resets the cursor only when the row set changes.
+func (m *Model) rebuildRows() {
+	if m.state == nil {
+		return
+	}
+	rows := phase.Journey(*m.state)
+	if m.installJob != nil && m.installJob.Active {
+		attach := phase.JourneyRow{
+			Action: phase.Action{
+				ID:     phase.AttachInstall,
+				Label:  "Watch the running install",
+				Detail: "Connect to the install already running on the box and see live progress (abort or skip from there).",
+			},
+			Recommended: true,
+		}
+		rows = append([]phase.JourneyRow{attach}, rows...)
+	}
+	if !sameRowIDs(m.rows, rows) || m.cursor >= len(rows) {
+		m.cursor = defaultCursor(rows)
+	}
+	m.rows = rows
+}
+
 // Init kicks off the first phase detection.
 func (m Model) Init() tea.Cmd { return m.detectCmd() }
 
@@ -104,25 +156,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case phaseMsg:
 		s := msg.state
-		next := phase.Journey(s)
-		// Preserve the cursor across silent auto-refreshes when the row set is
-		// unchanged, so a periodic re-probe doesn't yank the selection while the
-		// operator is navigating; otherwise land on the recommended next step.
-		if !sameRowIDs(m.rows, next) || m.cursor >= len(next) {
-			m.cursor = defaultCursor(next)
-		}
 		m.state = &s
-		m.rows = next
-		// While an install is running, also fetch a lightweight status probe so
-		// the menu shows a compact live line; clear it in every other phase.
+		m.rebuildRows()
+		cmds := []tea.Cmd{tickCmd()}
+		// While the initial system install runs (splash), fetch a lightweight
+		// ping/port/stage probe for the compact line; clear it otherwise.
 		if s.Phase == phase.Installing && m.host != "" {
-			return m, tea.Batch(tickCmd(), installProbeCmd(m.host, m.port))
+			cmds = append(cmds, installProbeCmd(m.host, m.port))
+		} else {
+			m.installStatus = nil
 		}
-		m.installStatus = nil
-		return m, tickCmd()
+		// On a reachable box with a token, poll for an active stack-install job.
+		if s.BoxReachable && m.token != "" {
+			cmds = append(cmds, m.currentInstallCmd())
+		} else {
+			m.installJob = nil
+		}
+		return m, tea.Batch(cmds...)
 	case installStatusMsg:
 		p := msg.probe
 		m.installStatus = &p
+		return m, nil
+	case currentInstallMsg:
+		m.installJob = msg.job
+		m.rebuildRows()
 		return m, nil
 	case autoRefreshMsg:
 		return m, m.detectCmd()
@@ -154,9 +211,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			// Hand the choice to the App, which routes it (open a panel, or
-			// quit the App so the entrypoint runs a bootstrap leg).
-			id := a.ID
-			return m, func() tea.Msg { return menuSelectedMsg{id: id} }
+			// quit the App so the entrypoint runs a bootstrap leg). AttachInstall
+			// carries the active jobId so the App can reattach to it.
+			sel := menuSelectedMsg{id: a.ID}
+			if a.ID == phase.AttachInstall && m.installJob != nil {
+				sel.jobID = m.installJob.ID
+			}
+			return m, func() tea.Msg { return sel }
 		}
 	}
 	return m, nil
@@ -234,6 +295,11 @@ func (m Model) View() string {
 	if m.state.Phase == phase.Installing && m.installStatus != nil {
 		b.WriteString(detailStyle.Render(installStatusLine(*m.installStatus, m.port, time.Now())) + "\n")
 	}
+	// A stack install running on the up box — surface it + offer to attach (the
+	// "Watch the running install" row, prepended by rebuildRows).
+	if m.installJob != nil && m.installJob.Active {
+		b.WriteString(detailStyle.Render(installJobLine(m.installJob)) + "\n")
+	}
 	b.WriteString("\n")
 
 	for i, r := range m.rows {
@@ -245,6 +311,24 @@ func (m Model) View() string {
 	}
 	b.WriteString(footerStyle.Render("↑/↓ move · enter select · auto-refreshing · ctrl+c quit  ·  sb-tui " + Version))
 	return frame(b.String(), m.width, m.height)
+}
+
+// installJobLine renders the "install in progress" glance for a stack install
+// running on an up box: the current template and deployed/total count, or a
+// paused-for-credentials note.
+func installJobLine(j *rest.CurrentJob) string {
+	if j.Phase == "needs_credentials" {
+		return cfgErrStyle.Render("● install paused") + " — waiting for NPM credentials (attach to skip)"
+	}
+	item := j.CurrentItem
+	if item == "" {
+		item = "starting…"
+	}
+	line := cfgOKStyle.Render("● install in progress") + " — " + item
+	if j.Total > 0 {
+		line += fmt.Sprintf("  (%d/%d)", j.Deployed, j.Total)
+	}
+	return line
 }
 
 // installStatusLine renders the compact one-line install glance for the menu:

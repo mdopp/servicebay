@@ -14,9 +14,13 @@ const Body = z.object({ jobId: z.string().min(1) });
  * credentials prompt. The deploy loop transitions the job's phase to
  * `aborted` cleanly. Idempotent — calling on an already-aborted job
  * is a no-op.
+ *
+ * `tokenScope: 'lifecycle'` lets the sb-tui install panel abort a stuck
+ * job with its scoped `sb_` token — the same scope `/api/install/start`
+ * already holds, and strictly less powerful (it only stops an install).
  */
 export const POST = withApiHandler<z.infer<typeof Body>>(
-  { body: Body },
+  { body: Body, tokenScope: 'lifecycle' },
   async ({ body }) => {
     try {
       abortJob(body.jobId);
