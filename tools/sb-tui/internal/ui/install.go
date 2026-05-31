@@ -33,6 +33,8 @@ type installStage int
 const (
 	stageLoading installStage = iota
 	stageSelect
+	stageConfirm // confirm pending uninstalls before applying
+	stageWiping  // running stack uninstalls
 	stageStarting
 	stageInstalling
 	stageDone
@@ -46,8 +48,18 @@ type InstallModel struct {
 
 	stage   installStage
 	stacks  []rest.Stack
-	checked map[int]bool
-	cursor  int
+	checked map[int]bool // desired state: should this stack be installed?
+	// installed is the immutable baseline (what's on the box at load time),
+	// so the panel can diff desired-vs-current into install/reinstall/uninstall.
+	installed map[int]bool
+	// reinstall marks installed+checked rows the operator explicitly wants
+	// redeployed (otherwise an installed+checked row is left untouched).
+	reinstall map[int]bool
+	cursor    int
+
+	// Pending plan, computed at apply time and carried through confirm→wipe→install.
+	pendingInstall   []string // template names to deploy (install + reinstall)
+	pendingUninstall []string // stack names to wipe
 
 	jobID    string
 	offset   int
@@ -83,15 +95,18 @@ type actionResultMsg struct {
 	err  error
 }
 
+// wipesDoneMsg carries the per-stack uninstall results (one line each).
+type wipesDoneMsg struct{ results []string }
+
 // NewInstall builds the stack-install model against an authenticated client.
 func NewInstall(client *rest.Client) InstallModel {
-	return InstallModel{client: client, stage: stageLoading, checked: map[int]bool{}}
+	return InstallModel{client: client, stage: stageLoading, checked: map[int]bool{}, installed: map[int]bool{}, reinstall: map[int]bool{}}
 }
 
 // NewInstallAttach builds the panel reattached to an already-running job: it
 // skips the catalog/select step and goes straight to live progress for jobID.
 func NewInstallAttach(client *rest.Client, jobID string) InstallModel {
-	return InstallModel{client: client, stage: stageInstalling, jobID: jobID, attached: true, checked: map[int]bool{}}
+	return InstallModel{client: client, stage: stageInstalling, jobID: jobID, attached: true, checked: map[int]bool{}, installed: map[int]bool{}, reinstall: map[int]bool{}}
 }
 
 func (m InstallModel) loadCmd() tea.Cmd {
@@ -114,6 +129,66 @@ func (m InstallModel) startCmd(names []string) tea.Cmd {
 		jobID, err := client.StartInstall(context.Background(), manifest)
 		return installStartedMsg{jobID: jobID, err: err}
 	}
+}
+
+// plan diffs desired (checked) against the installed baseline into the
+// templates to deploy (new installs + explicit reinstalls, de-duplicated) and
+// the stacks to uninstall (installed but now unchecked, excluding atomic-wipe
+// which can't be unchecked). Pure — unit-tested.
+func (m InstallModel) plan() (install []string, uninstall []string) {
+	seen := map[string]bool{}
+	for i, s := range m.stacks {
+		inst, want := m.installed[i], m.checked[i]
+		switch {
+		case want && (!inst || m.reinstall[i]):
+			tmpls := s.Templates
+			if len(tmpls) == 0 {
+				tmpls = []string{s.Name} // best-effort if the catalog carries no templates
+			}
+			for _, t := range tmpls {
+				if !seen[t] {
+					seen[t] = true
+					install = append(install, t)
+				}
+			}
+		case inst && !want && !s.AtomicWipe():
+			uninstall = append(uninstall, s.Name)
+		}
+	}
+	return install, uninstall
+}
+
+// wipeCmd uninstalls each pending stack sequentially, one result line each.
+func (m InstallModel) wipeCmd(names []string) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		res := make([]string, 0, len(names))
+		for _, n := range names {
+			if err := client.WipeStack(context.Background(), n); err != nil {
+				res = append(res, "✗ "+n+": "+friendlyErr(err))
+			} else {
+				res = append(res, "✓ uninstalled "+n)
+			}
+		}
+		return wipesDoneMsg{results: res}
+	}
+}
+
+// apply runs the pending plan: uninstalls first (so a teardown can't race a
+// redeploy of a shared template), then the install job. Returns the next stage
+// + command.
+func (m InstallModel) apply() (InstallModel, tea.Cmd) {
+	if len(m.pendingUninstall) > 0 {
+		m.stage = stageWiping
+		return m, m.wipeCmd(m.pendingUninstall)
+	}
+	if len(m.pendingInstall) > 0 {
+		m.stage = stageStarting
+		return m, m.startCmd(m.pendingInstall)
+	}
+	m.note = "No changes to apply."
+	m.stage = stageSelect
+	return m, nil
 }
 
 func (m InstallModel) pollCmd() tea.Cmd {
@@ -158,6 +233,20 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.stacks, m.stage = msg.stacks, stageSelect
+		// Desired-state baseline: pre-check whatever's already installed so
+		// the panel reflects current reality and acts on the delta.
+		for i, s := range msg.stacks {
+			m.installed[i] = s.Installed
+			m.checked[i] = s.Installed
+		}
+		return m, nil
+	case wipesDoneMsg:
+		m.logTail = append(m.logTail, msg.results...)
+		if len(m.pendingInstall) > 0 {
+			m.stage = stageStarting
+			return m, m.startCmd(m.pendingInstall)
+		}
+		m.stage = stageDone // uninstall-only apply
 		return m, nil
 	case installStartedMsg:
 		if msg.err != nil {
@@ -228,23 +317,33 @@ func (m InstallModel) applyProgress(msg progressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c":
+	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
+	}
+	// Uninstall-confirmation gate — intercept before the generic q/esc so
+	// they cancel back to the list rather than leaving the panel.
+	if m.stage == stageConfirm {
+		switch msg.String() {
+		case "y", "enter":
+			return m.apply()
+		case "n", "esc", "q":
+			m.stage, m.note = stageSelect, "Cancelled — nothing changed."
+		}
+		return m, nil
+	}
+	switch msg.String() {
 	case "q", "esc":
-		// Leaving mid-install only detaches the watcher; the server job keeps
-		// running. Safe because progress is resumable by jobId.
-		if m.stage != stageStarting {
+		// Leaving mid-apply only detaches; the server job keeps running
+		// (resumable by jobId). Don't bail mid-wipe/mid-start though.
+		if m.stage != stageStarting && m.stage != stageWiping {
 			return m, backCmd()
 		}
 	case "a":
-		// Abort the running job.
 		if m.stage == stageInstalling && m.jobID != "" {
 			m.note = "Aborting…"
 			return m, m.abortCmd()
 		}
 	case "s":
-		// Skip the NPM credentials prompt (continue with the generated fallback).
 		if m.stage == stageInstalling && m.phase == "needs_credentials" && m.jobID != "" {
 			m.note = "Skipping credentials…"
 			return m, m.skipCredsCmd()
@@ -253,6 +352,13 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.stage != stageSelect {
 		return m, nil
 	}
+	return m.handleSelectKey(msg)
+}
+
+// handleSelectKey drives the desired-state catalog: ↑/↓ move, space toggles
+// the desired install state, r marks an installed row for reinstall, enter
+// applies the diff.
+func (m InstallModel) handleSelectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if len(m.stacks) > 0 {
@@ -263,43 +369,37 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor = (m.cursor + 1) % len(m.stacks)
 		}
 	case " ":
-		m.checked[m.cursor] = !m.checked[m.cursor]
-	case "enter":
-		// Assemble against the selected stacks' TEMPLATES, not the stack
-		// names: the box assembler resolves templates (getTemplateYaml), and a
-		// stack name isn't a template — sending stack names silently assembled
-		// an empty manifest and installed nothing.
-		if templates := m.selectedTemplates(); len(templates) > 0 {
-			m.stage = stageStarting
-			return m, m.startCmd(templates)
+		// Toggle desired state. A core (atomic-wipe) stack that's installed
+		// can't be unchecked here — teardown is FACTORY-RESET-only.
+		s := m.stacks[m.cursor]
+		if m.checked[m.cursor] && m.installed[m.cursor] && s.AtomicWipe() {
+			m.note = s.Name + " is a core stack — uninstall via Factory Reset, not here."
+		} else {
+			m.checked[m.cursor] = !m.checked[m.cursor]
+			m.note = ""
 		}
+	case "r":
+		// Explicit reinstall, only meaningful for an installed+selected row.
+		if m.installed[m.cursor] && m.checked[m.cursor] {
+			m.reinstall[m.cursor] = !m.reinstall[m.cursor]
+			m.note = ""
+		} else {
+			m.note = "Reinstall (r) applies to already-installed, selected stacks."
+		}
+	case "enter":
+		install, uninstall := m.plan()
+		if len(install) == 0 && len(uninstall) == 0 {
+			m.note = "No changes — select to install, deselect to uninstall, or r to reinstall."
+			return m, nil
+		}
+		m.pendingInstall, m.pendingUninstall = install, uninstall
+		if len(uninstall) > 0 {
+			m.stage = stageConfirm // destructive — confirm first
+			return m, nil
+		}
+		return m.apply()
 	}
 	return m, nil
-}
-
-// selectedTemplates is the de-duplicated union of every checked stack's
-// templates (`spec.templates`) — the actual deployable units. A stack with no
-// templates in the catalog falls back to its own name (best-effort) so a
-// selection never silently expands to nothing.
-func (m InstallModel) selectedTemplates() []string {
-	seen := map[string]bool{}
-	var out []string
-	for i, s := range m.stacks {
-		if !m.checked[i] {
-			continue
-		}
-		tmpls := s.Templates
-		if len(tmpls) == 0 {
-			tmpls = []string{s.Name}
-		}
-		for _, t := range tmpls {
-			if !seen[t] {
-				seen[t] = true
-				out = append(out, t)
-			}
-		}
-	}
-	return out
 }
 
 // View renders the panel per stage.
@@ -320,6 +420,10 @@ func (m InstallModel) View() string {
 		b.WriteString(footerStyle.Render("q quit"))
 	case stageSelect:
 		m.viewSelect(&b)
+	case stageConfirm:
+		m.viewConfirm(&b)
+	case stageWiping:
+		b.WriteString(phaseStyle.Render("Uninstalling selected stacks…"))
 	case stageStarting:
 		b.WriteString(phaseStyle.Render("Assembling manifest and starting install…"))
 	case stageInstalling:
@@ -330,43 +434,65 @@ func (m InstallModel) View() string {
 	return frame(b.String(), m.width, m.height)
 }
 
+// rowAction maps a row's desired-vs-installed state to a verb + style.
+func (m InstallModel) rowAction(i int) (string, lipgloss.Style) {
+	inst, want := m.installed[i], m.checked[i]
+	switch {
+	case want && !inst:
+		return "install", checkedStyle
+	case want && inst && m.reinstall[i]:
+		return "reinstall", coreTierStyle
+	case want && inst:
+		return "✓ installed", cfgEmptyStyle
+	case inst && !want:
+		return "UNINSTALL", cfgErrStyle
+	default:
+		return "", cfgEmptyStyle
+	}
+}
+
 func (m InstallModel) viewSelect(b *strings.Builder) {
-	b.WriteString(phaseStyle.Render("Select stacks to install, then press Enter.") + "\n\n")
+	b.WriteString(phaseStyle.Render("Desired state — what should be installed?") + "\n\n")
 	for i, s := range m.stacks {
 		box := "[ ]"
 		if m.checked[i] {
 			box = checkedStyle.Render("[x]")
 		}
-		label := s.Name
+		name := s.Name
 		if s.Tier == "core" {
-			label = coreTierStyle.Render(s.Name + " (core)")
+			name += " (core)"
 		}
-		if s.Installed {
-			label += cfgEmptyStyle.Render(" — installed")
+		action, st := m.rowAction(i)
+		suffix := ""
+		if action != "" {
+			suffix = "  → " + st.Render(action)
 		}
-		line := "  " + box + " " + label
+		row := box + " " + name
 		if i == m.cursor {
-			line = selectedStyle.Render("❯ "+box+" "+s.Name) + tierSuffix(s)
+			b.WriteString(selectedStyle.Render("❯ "+row) + suffix + "\n")
+		} else {
+			b.WriteString("  " + row + suffix + "\n")
 		}
-		b.WriteString(line + "\n")
 	}
 	if m.cursor < len(m.stacks) && m.stacks[m.cursor].Description != "" {
-		b.WriteString(detailStyle.Render(m.stacks[m.cursor].Description) + "\n")
+		b.WriteString("\n" + detailStyle.Render(m.stacks[m.cursor].Description) + "\n")
 	}
-	b.WriteString(footerStyle.Render("↑/↓ move · space toggle · enter install · q quit"))
+	if m.note != "" {
+		b.WriteString("\n" + detailStyle.Render(m.note) + "\n")
+	}
+	b.WriteString("\n" + footerStyle.Render("↑/↓ move · space install/uninstall · r reinstall · enter apply · q quit"))
 }
 
-// tierSuffix appends the core/installed annotations to the highlighted row
-// without double-styling the selected background.
-func tierSuffix(s rest.Stack) string {
-	var suffix string
-	if s.Tier == "core" {
-		suffix += " (core)"
+// viewConfirm gates destructive uninstalls behind an explicit y/n.
+func (m InstallModel) viewConfirm(b *strings.Builder) {
+	b.WriteString(phaseStyle.Render(cfgErrStyle.Render("Confirm uninstall — this stops the services and removes the data for:")) + "\n\n")
+	for _, n := range m.pendingUninstall {
+		b.WriteString(detailStyle.Render("  • "+n) + "\n")
 	}
-	if s.Installed {
-		suffix += " — installed"
+	if len(m.pendingInstall) > 0 {
+		b.WriteString("\n" + detailStyle.Render(fmt.Sprintf("Then %d template(s) get (re)installed.", len(m.pendingInstall))) + "\n")
 	}
-	return suffix
+	b.WriteString("\n" + footerStyle.Render("y/enter confirm · n/esc cancel"))
 }
 
 func (m InstallModel) viewInstalling(b *strings.Builder, width int) {
@@ -423,10 +549,14 @@ func phaseLabel(phase string) string {
 }
 
 func (m InstallModel) viewDone(b *strings.Builder, width int) {
-	if m.failed {
+	switch {
+	case m.failed:
 		b.WriteString(phaseStyle.Render(cfgErrStyle.Render("Install failed.")) + "\n")
 		b.WriteString(detailStyle.Render(m.errMsg) + "\n\n")
-	} else {
+	case m.jobID == "":
+		// Uninstall-only apply — no install job ran.
+		b.WriteString(phaseStyle.Render(cfgOKStyle.Render("✓ Changes applied.")) + "\n\n")
+	default:
 		b.WriteString(phaseStyle.Render(cfgOKStyle.Render("✓ Install complete.")) + "\n\n")
 	}
 	b.WriteString(logTailView(m.logTail, 12))

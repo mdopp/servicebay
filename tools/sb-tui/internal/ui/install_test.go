@@ -33,9 +33,9 @@ func TestInstallSelectThenStart(t *testing.T) {
 	if !m.checked[0] {
 		t.Fatal("space should check the cursor row")
 	}
-	// immich here has no Templates → selectedTemplates falls back to the name.
-	if names := m.selectedTemplates(); len(names) != 1 || names[0] != "immich" {
-		t.Fatalf("selectedTemplates = %v", names)
+	// immich here has no Templates → plan falls back to the stack name.
+	if names, _ := m.plan(); len(names) != 1 || names[0] != "immich" {
+		t.Fatalf("plan install = %v", names)
 	}
 	mi, cmd = m.Update(namedKey(tea.KeyEnter))
 	m = mi.(InstallModel)
@@ -46,7 +46,7 @@ func TestInstallSelectThenStart(t *testing.T) {
 
 // A selected STACK must expand to its constituent templates (deduped across
 // stacks) — not the stack name, which the box assembler would silently drop.
-func TestInstallSelectedTemplatesExpandsStacks(t *testing.T) {
+func TestInstallPlanExpandsStacks(t *testing.T) {
 	m := NewInstall(&rest.Client{})
 	mi, _ := m.Update(stacksLoadedMsg{stacks: []rest.Stack{
 		{Name: "basic", Tier: "core", Templates: []string{"nginx", "auth", "adguard"}},
@@ -56,10 +56,64 @@ func TestInstallSelectedTemplatesExpandsStacks(t *testing.T) {
 	m.checked[0] = true
 	m.checked[1] = true
 
-	got := m.selectedTemplates()
+	got, _ := m.plan()
 	want := []string{"nginx", "auth", "adguard", "immich"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("selectedTemplates = %v, want %v", got, want)
+		t.Fatalf("plan install = %v, want %v", got, want)
+	}
+}
+
+// Desired-state diff: installed+kept → no-op; installed+deselected → uninstall
+// (unless atomic-wipe); installed+reinstall → redeploy; new → install.
+func TestInstallPlanDesiredState(t *testing.T) {
+	m := NewInstall(&rest.Client{})
+	mi, _ := m.Update(stacksLoadedMsg{stacks: []rest.Stack{
+		{Name: "basic", Templates: []string{"nginx", "auth"}, Installed: true, Lifecycle: "atomic-wipe"},
+		{Name: "cloud", Templates: []string{"immich"}, Installed: true},
+		{Name: "home", Templates: []string{"hass"}, Installed: false},
+	}})
+	m = mi.(InstallModel)
+	// Baseline: installed stacks pre-checked, the rest not.
+	if !m.checked[0] || !m.checked[1] || m.checked[2] {
+		t.Fatalf("baseline checked = %v", m.checked)
+	}
+	// Keep basic (installed, untouched), uninstall cloud (deselect), install home.
+	m.checked[1] = false // cloud → uninstall
+	m.checked[2] = true  // home → install
+	install, uninstall := m.plan()
+	if strings.Join(install, ",") != "hass" {
+		t.Errorf("install = %v, want [hass] (basic kept → not redeployed)", install)
+	}
+	if strings.Join(uninstall, ",") != "cloud" {
+		t.Errorf("uninstall = %v, want [cloud]", uninstall)
+	}
+
+	// Reinstall basic → its templates redeploy; atomic-wipe never uninstalls.
+	m.reinstall[0] = true
+	install2, uninstall2 := m.plan()
+	if strings.Join(install2, ",") != "nginx,auth,hass" {
+		t.Errorf("install w/ reinstall = %v", install2)
+	}
+	if len(uninstall2) != 1 || uninstall2[0] != "cloud" {
+		t.Errorf("uninstall2 = %v (atomic-wipe basic must never be in it)", uninstall2)
+	}
+}
+
+// An installed atomic-wipe (core) stack can't be unchecked in the panel.
+func TestInstallAtomicWipeCannotBeDeselected(t *testing.T) {
+	m := NewInstall(&rest.Client{})
+	mi, _ := m.Update(stacksLoadedMsg{stacks: []rest.Stack{
+		{Name: "basic", Tier: "core", Installed: true, Lifecycle: "atomic-wipe"},
+	}})
+	m = mi.(InstallModel)
+	// space on the core row must NOT uncheck it.
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = mi.(InstallModel)
+	if !m.checked[0] {
+		t.Fatal("atomic-wipe stack should stay checked (uninstall blocked)")
+	}
+	if m.note == "" {
+		t.Error("expected a note explaining why it can't be unchecked")
 	}
 }
 

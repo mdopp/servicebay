@@ -20,7 +20,15 @@ type Stack struct {
 	Description string
 	Installed   bool
 	Templates   []string
+	// Lifecycle mirrors `servicebay.lifecycle` ("atomic-wipe" | "wipeable").
+	// atomic-wipe stacks (the core stack) refuse the wipe endpoint — they're
+	// FACTORY-RESET-only — so the install panel blocks uninstalling them.
+	Lifecycle string
 }
+
+// AtomicWipe reports whether this stack can't be uninstalled via the wipe
+// endpoint (core/identity stacks; teardown is gated behind FACTORY RESET).
+func (s Stack) AtomicWipe() bool { return s.Lifecycle == "atomic-wipe" }
 
 // ListStacks enumerates the installable stack catalog. Core stacks sort first,
 // then alphabetically — matching the web wizard's ordering.
@@ -37,6 +45,7 @@ func (c *Client) ListStacks(ctx context.Context) ([]Stack, error) {
 				Description string   `json:"description"`
 				DisplayName string   `json:"displayName"`
 				Templates   []string `json:"templates"`
+				Lifecycle   string   `json:"lifecycle"`
 			} `json:"manifest"`
 			Health *struct {
 				Installed bool `json:"installed"`
@@ -58,6 +67,7 @@ func (c *Client) ListStacks(ctx context.Context) ([]Stack, error) {
 				st.Description = s.Manifest.DisplayName
 			}
 			st.Templates = s.Manifest.Templates
+			st.Lifecycle = s.Manifest.Lifecycle
 		}
 		if s.Health != nil {
 			st.Installed = s.Health.Installed
@@ -170,6 +180,16 @@ func (c *Client) CurrentInstall(ctx context.Context) (*CurrentJob, error) {
 		Deployed:    len(doc.Job.Progress.DeployedNames),
 		Total:       doc.Job.Progress.TotalCount,
 	}, nil
+}
+
+// WipeStack uninstalls a feature stack (stops its services + removes its
+// data) via POST /api/system/stacks/<name>/wipe. The endpoint requires the
+// `WIPE-<name>` confirmation token and hard-refuses atomic-wipe/core stacks,
+// so a stray call can't tear down anything load-bearing.
+func (c *Client) WipeStack(ctx context.Context, name string) error {
+	body := map[string]string{"confirm": "WIPE-" + name}
+	_, err := c.do(ctx, "POST", "/api/system/stacks/"+url.PathEscape(name)+"/wipe", body)
+	return err
 }
 
 // AbortInstall stops a running install job.
