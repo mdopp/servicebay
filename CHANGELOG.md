@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.65.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.64.0...servicebay-v4.65.0) (2026-05-31)
+
+
+### Features
+
+* **install:** auto re-key NPM admin during install when creds are stale ([#1409](https://github.com/mdopp/servicebay/issues/1409)) ([88f5cf6](https://github.com/mdopp/servicebay/commit/88f5cf6a92f6c93f918191589e41d4d143f281d6))
+
 ## [4.64.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.4...servicebay-v4.64.0) (2026-05-31)
 
 
