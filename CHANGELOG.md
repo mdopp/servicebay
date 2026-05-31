@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.61.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.60.1...servicebay-v4.61.0) (2026-05-31)
+
+
+### Features
+
+* **tui:** backup-file picker for the NAS upload ([af32c6b](https://github.com/mdopp/servicebay/commit/af32c6bacebd0ade161fc7123d36f57c1965f0de))
+* **tui:** direct-FTP backup upload + numbered setup-journey UX ([77afca7](https://github.com/mdopp/servicebay/commit/77afca72bd36d2ef9706dc45d9881a04acb99682))
+* **tui:** numbered setup-journey menu plus ungated NAS upload and live install line ([b038b72](https://github.com/mdopp/servicebay/commit/b038b72ce7f7a5f8fd21c922da8749f6ed61b82f))
+* **tui:** optional backup-staging step in Express ([725dae0](https://github.com/mdopp/servicebay/commit/725dae0f5b2bc9bd80df8f46145e47e19a4eec3d))
+* **tui:** self-explaining menu labels + guided upload panel ([160c2e4](https://github.com/mdopp/servicebay/commit/160c2e4a883727c4026a740c8e563fd1fe1b8a1b))
+* **tui:** upload a Home Assistant backup to the NAS via direct FTP ([a305823](https://github.com/mdopp/servicebay/commit/a3058239b02e4c7c78d6077ab64d54ccd4fdbee2))
+
+
+### Bug Fixes
+
+* **backup:** allow within-root symlinks so NPM cert backups can be created ([74bf5ef](https://github.com/mdopp/servicebay/commit/74bf5ef58d381c502f6f5148f8ec74dafec8f208))
+* **backup:** allow within-root symlinks so NPM cert backups can be created ([1b2c00a](https://github.com/mdopp/servicebay/commit/1b2c00a36bbb321689d78afcdf2ba2d5bd46aa23)), closes [#1381](https://github.com/mdopp/servicebay/issues/1381)
+* **boot:** sudo the reinstall reboot so it actually reboots ([467090a](https://github.com/mdopp/servicebay/commit/467090aa791f3c87362a98b7b35c7d3d37741f42))
+* **boot:** sudo the reinstall reboot so it actually reboots ([ba613e2](https://github.com/mdopp/servicebay/commit/ba613e2b0ae93ae5588ff1835174c2b4eaa4b832))
+
 ## [4.60.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.60.0...servicebay-v4.60.1) (2026-05-30)
 
 
