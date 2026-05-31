@@ -166,11 +166,15 @@ func (t *Tracker) Apply(p Probe, now time.Time) {
 	t.icmpUp = p.ICMP
 }
 
-// Conn derives the connection-badge level for a probe given the tracker's
-// current consecutive-failure count.
+// Conn derives the connection-badge level from raw reachability: an open port is
+// "connected", ping-only (port closed, e.g. mid-reboot) is "reconnecting", and
+// neither is "offline". It deliberately does NOT key off whether an install
+// status is being published — a box serving its real app (no splash status) is
+// still connected, not "reconnecting". Status freshness is shown separately by
+// the "updated … ago" meta line.
 func (t *Tracker) Conn(p Probe) ConnLevel {
 	switch {
-	case t.ConsecutiveFails == 0 && p.TCP:
+	case p.TCP:
 		return Connected
 	case p.ICMP:
 		return Reconnecting
@@ -276,11 +280,11 @@ func Render(host, port string, t *Tracker, p Probe, now time.Time, width int) st
 		glyph(p.ICMP), glyph(p.TCP), port, usbGlyph(p.USB), badge(t.Conn(p)))
 	switch p.USB {
 	case USBNotReady:
-		b.WriteString("           " + warnStyle.Render("USB boot not ready — insert the USB stick, then press u to enable") + "\n")
+		b.WriteString("           " + warnStyle.Render("no USB detected — plug the install USB into THIS server, then press u") + "\n")
 	case USBReady:
-		b.WriteString("           " + grayStyle.Render("can boot from USB — press u to set it for the next reboot") + "\n")
+		b.WriteString("           " + grayStyle.Render("USB detected — press u to arm one-shot USB boot, then reboot the box") + "\n")
 	case USBWillBoot:
-		b.WriteString("           " + upStyle.Render("✓ will boot from USB on the next reboot") + "\n")
+		b.WriteString("           " + upStyle.Render("✓ USB boot armed — reboot the box now to boot the installer from USB") + "\n")
 	}
 	meta := "  Meta     elapsed " + FmtDur(now.Sub(t.Start))
 	if t.Stage != "" {
@@ -307,6 +311,10 @@ func Render(host, port string, t *Tracker, p Probe, now time.Time, width int) st
 	} else {
 		b.WriteString("  (no log content yet — splash quadlet may still be starting)\n")
 	}
-	b.WriteString("\nCtrl+C to exit\n")
+	foot := "q quit"
+	if p.USB != USBUnknown {
+		foot = "u arm USB boot  ·  " + foot
+	}
+	b.WriteString("\n" + foot + "\n")
 	return b.String()
 }

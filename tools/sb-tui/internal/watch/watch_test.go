@@ -128,6 +128,11 @@ func TestConnLevels(t *testing.T) {
 	if tr.Conn(Probe{ICMP: true, TCP: false}) != Reconnecting {
 		t.Error("want Reconnecting when ping up but port/status not ready")
 	}
+	// Port open is "connected" even with no fresh install status (e.g. the box
+	// serving its real app) — connectivity, not splash presence, drives the badge.
+	if tr.Conn(Probe{ICMP: true, TCP: true}) != Connected {
+		t.Error("want Connected when the port is open regardless of status freshness")
+	}
 }
 
 func TestRenderContent(t *testing.T) {
@@ -174,11 +179,11 @@ func TestRenderUSBBoot(t *testing.T) {
 	if !strings.Contains(will, "usb-boot") {
 		t.Error("status row should include the usb-boot label")
 	}
-	if !strings.Contains(will, "will boot from USB") {
-		t.Error("USBWillBoot should show the will-boot hint")
+	if !strings.Contains(will, "armed") || !strings.Contains(will, "reboot the box") {
+		t.Error("USBWillBoot should tell the operator it's armed and to reboot")
 	}
 	notReady := Render("h", "5888", tr, Probe{ICMP: true, TCP: true, USB: USBNotReady}, now, 80)
-	if !strings.Contains(notReady, "not ready") {
-		t.Error("USBNotReady should show the not-ready hint")
+	if !strings.Contains(notReady, "no USB detected") {
+		t.Error("USBNotReady should show the no-USB-detected hint")
 	}
 }
