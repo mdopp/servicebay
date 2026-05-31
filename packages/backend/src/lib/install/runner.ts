@@ -232,6 +232,39 @@ export function isServiceReady(
   });
 }
 
+/**
+ * Install-time template variables ServiceBay injects on top of the
+ * operator-supplied ones, keyed by template.
+ *
+ * `auth`: always force LLDAP to re-key its admin bind to *this install's*
+ * `LLDAP_ADMIN_PASSWORD` via `LLDAP_FORCE_LDAP_USER_PASS_RESET=always`.
+ * LLDAP seeds the admin password from env only on first DB init; on a
+ * reinstall over a preserved `users.db` the DB keeps its old admin
+ * password while Authelia binds with the new one → "Invalid Credentials"
+ * (LDAP code 49) and an endless Authelia crash loop.
+ *
+ * `always` (NOT `true`, which one-shot resets then *exits* demanding a
+ * restart without the flag — fatal with the flag baked permanently into
+ * the pod env) re-syncs the admin password on every start AND keeps
+ * serving. It only re-keys the admin account; LLDAP user accounts are
+ * preserved.
+ *
+ * This is deliberately NOT gated on "was the secret freshly generated?".
+ * The old heuristic (`isRegenerated ? 'always' : 'false'`) assumed a
+ * reused/saved `LLDAP_ADMIN_PASSWORD` already matched a preserved
+ * `users.db` — but once the saved secret and the DB diverge across
+ * repeated reinstalls, the reused path never re-syncs and the bind fails
+ * forever. Forcing `always` on every auth deploy closes that gap
+ * idempotently (#666 / ARCH-15; the credential-reconciliation
+ * "auto-rekey when safe" path for LLDAP).
+ */
+export function authDynamicVars(itemName: string): Record<string, string> {
+  if (itemName === 'auth') {
+    return { LLDAP_FORCE_LDAP_USER_PASS_RESET: 'always' };
+  }
+  return {};
+}
+
 /** Settle-wait: poll the digital twin in-process until every newly
  *  deployed service is ready.
  *
@@ -367,17 +400,8 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     return acc;
   }, {});
 
-  // Inject dynamic variables for self-healing and template rendering
-  if (item.name === 'auth') {
-    const isRegenerated = !ctx.reusedSecretNames.has('LLDAP_ADMIN_PASSWORD');
-    // 'always' (not 'true'): in LLDAP 0.6.x the bare `true` is a break-glass
-    // one-shot that resets the admin password and then *exits* asking to be
-    // restarted without the flag — fatal here, where the flag is baked into the
-    // pod env permanently, so LLDAP reset-exits-restart-loops and never serves.
-    // 'always' re-syncs the password to the config secret on every start AND
-    // keeps serving, which is the self-healing behaviour this is meant to give.
-    view['LLDAP_FORCE_LDAP_USER_PASS_RESET'] = isRegenerated ? 'always' : 'false';
-  }
+  // Inject dynamic variables for self-healing and template rendering.
+  Object.assign(view, authDynamicVars(item.name));
   // Render YAML with unified template renderer
   const yamlContent = renderTemplate(item.yaml, view);
   const kubeContent =
@@ -885,17 +909,18 @@ async function runJob(jobId: string): Promise<void> {
     }
   }
 
-  // LLDAP admin-password drift detection (#666) & Self-Healing (ARCH-15).
-  // The pathological combination is "wipe secrets, preserve identity": the wizard
-  // generates a fresh LLDAP_ADMIN_PASSWORD, but the LLDAP image does not rotate
-  // the admin password from env on subsequent starts. We solve this by dynamically
-  // injecting `LLDAP_FORCE_LDAP_USER_PASS_RESET=always` into the environment, which
-  // forces LLDAP to synchronize its database credentials to the freshly generated
-  // password in config.json, avoiding user lockouts.
-  //
-  // Here, we detect if drift occurred and log a helpful message confirming that
-  // the self-healing password reset mechanism was activated.
-  if (authIncluded && !reusedSecretNames.has('LLDAP_ADMIN_PASSWORD')) {
+  // LLDAP admin-password self-heal (#666 / ARCH-15). LLDAP only seeds its
+  // admin password from env on first DB init; on a reinstall over a
+  // preserved users.db the DB keeps its old admin password while Authelia
+  // binds with this install's LLDAP_ADMIN_PASSWORD → "Invalid Credentials"
+  // crash loop. `authDynamicVars` forces LLDAP_FORCE_LDAP_USER_PASS_RESET=
+  // always on every auth deploy to re-sync it (idempotent, non-destructive
+  // — user accounts are preserved). This block just surfaces a log when an
+  // existing DB is present so the operator sees why the bind gets re-keyed.
+  // Note: deliberately NOT gated on `!reusedSecretNames.has(...)` — once a
+  // saved secret and a preserved DB diverge, that heuristic misses the
+  // mismatch and the bind fails forever.
+  if (authIncluded) {
     try {
       const { agentManager } = await import('@/lib/agent/manager');
       const { getConfig } = await import('@/lib/config');
@@ -909,7 +934,7 @@ async function runJob(jobId: string): Promise<void> {
       });
       const dbPresent = (probe.stdout || '').trim() === 'present';
       if (dbPresent) {
-        await log(jobId, `🔄 LLDAP admin-password drift detected: existing users.db at ${lldapDbPath} has a password mismatch with the freshly generated secret. Automatically synchronizing the database credentials via LLDAP_FORCE_LDAP_USER_PASS_RESET to keep the stack functional.`);
+        await log(jobId, `🔄 Existing LLDAP database found — re-syncing the admin bind to this install's password (LLDAP_FORCE_LDAP_USER_PASS_RESET=always) so a preserved users.db can't lock Authelia out. User accounts are preserved.`);
       }
     } catch (e) {
       await log(jobId, `(note) LLDAP drift probe failed: ${e instanceof Error ? e.message : String(e)} — continuing.`);

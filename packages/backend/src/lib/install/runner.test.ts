@@ -35,7 +35,7 @@ vi.mock('@/lib/auth/internalToken', () => ({
   getInternalApiToken: () => 'test-token',
 }));
 
-import { isServiceReady, waitForDependencies, ensureProxyHosts } from './runner';
+import { isServiceReady, waitForDependencies, ensureProxyHosts, authDynamicVars } from './runner';
 import type { StackVariable } from '@/lib/stackInstall/postInstall';
 
 const fetchSpy = vi.spyOn(globalThis, 'fetch');
@@ -44,6 +44,29 @@ beforeEach(() => {
   twinStub.nodes = {};
   bootstrapMock.mockClear();
   fetchSpy.mockReset();
+});
+
+describe('authDynamicVars (LLDAP admin re-key self-heal #666)', () => {
+  it('forces LLDAP_FORCE_LDAP_USER_PASS_RESET=always for the auth template', () => {
+    expect(authDynamicVars('auth')).toEqual({ LLDAP_FORCE_LDAP_USER_PASS_RESET: 'always' });
+  });
+
+  it('is unconditional — never emits the old reused-secret "false"', () => {
+    // Regression guard: the old `isRegenerated ? 'always' : 'false'`
+    // heuristic emitted 'false' for a reused secret, which left a
+    // diverged users.db locking Authelia out forever (LDAP code 49).
+    // It must ALWAYS be 'always' — and never 'true', which one-shot
+    // resets then exits, crash-looping with the flag baked into env.
+    const v = authDynamicVars('auth').LLDAP_FORCE_LDAP_USER_PASS_RESET;
+    expect(v).toBe('always');
+    expect(v).not.toBe('false');
+    expect(v).not.toBe('true');
+  });
+
+  it('injects nothing for non-auth templates', () => {
+    expect(authDynamicVars('nginx')).toEqual({});
+    expect(authDynamicVars('immich')).toEqual({});
+  });
 });
 
 describe('isServiceReady', () => {
