@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.66.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.65.0...servicebay-v4.66.0) (2026-05-31)
+
+
+### Features
+
+* **tui:** desired-state stack panel — install / reinstall / uninstall ([#1411](https://github.com/mdopp/servicebay/issues/1411)) ([09141d1](https://github.com/mdopp/servicebay/commit/09141d120c0f00e208031d49cf346c2827e3d1e9))
+
 ## [4.65.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.64.0...servicebay-v4.65.0) (2026-05-31)
 
 
