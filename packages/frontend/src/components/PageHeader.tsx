@@ -3,7 +3,6 @@
 import { ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import SectionHelp from './SectionHelp';
-import ConnectionIndicator from './ConnectionIndicator';
 import ModeBadge from './ModeBadge';
 
 interface PageHeaderProps {
@@ -51,7 +50,6 @@ export default function PageHeader({ title, children, actions, showBack = false,
       <div className={`flex items-center gap-3 shrink-0 ${children ? '' : 'ml-auto'}`}>
         {actions}
         <ModeBadge />
-        <ConnectionIndicator inline />
       </div>
     </div>
   );
