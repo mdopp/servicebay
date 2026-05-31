@@ -54,6 +54,7 @@ const (
 	Express       ActionID = "express"
 	BuildISO      ActionID = "build-iso"
 	WatchInstall  ActionID = "watch-install"
+	AttachInstall ActionID = "attach-install"
 	EditConfig    ActionID = "edit-config"
 	InstallStacks ActionID = "install-stacks"
 	Backups       ActionID = "backups"

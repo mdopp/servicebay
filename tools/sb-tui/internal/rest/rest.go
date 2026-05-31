@@ -37,6 +37,7 @@ var ErrUnauthorized = errors.New("unauthorized: token missing, expired, or lacks
 type APIError struct {
 	Status  int
 	Message string
+	Body    json.RawMessage // the raw error body, for callers that parse extra fields (e.g. a 409's jobId)
 }
 
 func (e *APIError) Error() string {
@@ -113,7 +114,7 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body any, authe
 		return nil, ErrUnauthorized
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &APIError{Status: resp.StatusCode, Message: serverError(raw, resp.StatusCode)}
+		return nil, &APIError{Status: resp.StatusCode, Message: serverError(raw, resp.StatusCode), Body: json.RawMessage(raw)}
 	}
 	return json.RawMessage(raw), nil
 }

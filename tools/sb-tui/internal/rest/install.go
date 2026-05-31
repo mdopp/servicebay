@@ -82,13 +82,31 @@ func (c *Client) AssembleManifest(ctx context.Context, names []string, prefilled
 	return c.do(ctx, "POST", "/api/install/assemble", body)
 }
 
+// InstallInProgressError signals that the box already has an active install
+// (the start route's 409). It carries that job's id so the panel can reattach
+// to it instead of dead-ending.
+type InstallInProgressError struct{ JobID string }
+
+func (e *InstallInProgressError) Error() string {
+	return "an install is already in progress on the box"
+}
+
 // StartInstall kicks off a server-side install job for an assembled manifest
-// and returns the jobId to poll. A 409 (install already running) surfaces as an
-// *APIError the panel reports rather than starting a second job.
+// and returns the jobId to poll. A 409 (install already running) is returned as
+// an *InstallInProgressError carrying the existing jobId, so the panel reattaches
+// rather than starting a second job.
 func (c *Client) StartInstall(ctx context.Context, manifest json.RawMessage) (string, error) {
 	body := map[string]any{"source": "sb-tui", "input": manifest}
 	raw, err := c.do(ctx, "POST", "/api/install/start", body)
 	if err != nil {
+		if ae, ok := err.(*APIError); ok && ae.Status == 409 {
+			var r struct {
+				JobID string `json:"jobId"`
+			}
+			if json.Unmarshal(ae.Body, &r) == nil && r.JobID != "" {
+				return "", &InstallInProgressError{JobID: r.JobID}
+			}
+		}
 		return "", err
 	}
 	var resp struct {
@@ -98,6 +116,66 @@ func (c *Client) StartInstall(ctx context.Context, manifest json.RawMessage) (st
 		return "", &APIError{Message: "install started but no jobId returned"}
 	}
 	return resp.JobID, nil
+}
+
+// CurrentJob is the sanitized summary of the active install job (if any), from
+// GET /api/install/current — id + phase + progress counts, no secrets.
+type CurrentJob struct {
+	ID          string
+	Phase       string
+	Active      bool
+	CurrentItem string
+	Deployed    int
+	Total       int
+}
+
+// CurrentInstall returns the active install job summary, or nil when none is
+// running. Lets the launcher surface + reattach to a running install without
+// already knowing the jobId.
+func (c *Client) CurrentInstall(ctx context.Context) (*CurrentJob, error) {
+	raw, err := c.do(ctx, "GET", "/api/install/current", nil)
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Job *struct {
+			ID       string `json:"id"`
+			Phase    string `json:"phase"`
+			Progress struct {
+				CurrentItem   string   `json:"currentItem"`
+				DeployedNames []string `json:"deployedNames"`
+				TotalCount    int      `json:"totalCount"`
+			} `json:"progress"`
+		} `json:"job"`
+		Active bool `json:"jobIsActive"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, &APIError{Message: "malformed current-install response: " + err.Error()}
+	}
+	if doc.Job == nil {
+		return nil, nil
+	}
+	return &CurrentJob{
+		ID:          doc.Job.ID,
+		Phase:       doc.Job.Phase,
+		Active:      doc.Active,
+		CurrentItem: doc.Job.Progress.CurrentItem,
+		Deployed:    len(doc.Job.Progress.DeployedNames),
+		Total:       doc.Job.Progress.TotalCount,
+	}, nil
+}
+
+// AbortInstall stops a running install job.
+func (c *Client) AbortInstall(ctx context.Context, jobID string) error {
+	_, err := c.do(ctx, "POST", "/api/install/abort", map[string]string{"jobId": jobID})
+	return err
+}
+
+// SkipCredentials resolves a needs_credentials pause, continuing the install
+// with the auto-generated fallback NPM credentials.
+func (c *Client) SkipCredentials(ctx context.Context, jobID string) error {
+	_, err := c.do(ctx, "POST", "/api/install/skip-credentials", map[string]string{"jobId": jobID})
+	return err
 }
 
 // Progress is a snapshot of a running install job, polled from the public

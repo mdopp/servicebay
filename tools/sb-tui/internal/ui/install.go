@@ -58,7 +58,9 @@ type InstallModel struct {
 	percent  int
 	logTail  []string
 	failed   bool
+	attached bool   // reattached to a pre-existing job (skip the catalog/select step)
 	errMsg   string // populated in stageError / failed
+	note     string // transient action note (abort/skip in flight or rejected)
 }
 
 type stacksLoadedMsg struct {
@@ -75,9 +77,21 @@ type progressMsg struct {
 }
 type pollTickMsg struct{}
 
+// actionResultMsg carries the outcome of an abort / skip-credentials action.
+type actionResultMsg struct {
+	verb string
+	err  error
+}
+
 // NewInstall builds the stack-install model against an authenticated client.
 func NewInstall(client *rest.Client) InstallModel {
 	return InstallModel{client: client, stage: stageLoading, checked: map[int]bool{}}
+}
+
+// NewInstallAttach builds the panel reattached to an already-running job: it
+// skips the catalog/select step and goes straight to live progress for jobID.
+func NewInstallAttach(client *rest.Client, jobID string) InstallModel {
+	return InstallModel{client: client, stage: stageInstalling, jobID: jobID, attached: true, checked: map[int]bool{}}
 }
 
 func (m InstallModel) loadCmd() tea.Cmd {
@@ -110,8 +124,30 @@ func (m InstallModel) pollCmd() tea.Cmd {
 	}
 }
 
-// Init kicks off the catalog load.
-func (m InstallModel) Init() tea.Cmd { return m.loadCmd() }
+// Init kicks off the catalog load, or jumps straight to polling when reattached
+// to an existing job.
+func (m InstallModel) Init() tea.Cmd {
+	if m.attached {
+		return m.pollCmd()
+	}
+	return m.loadCmd()
+}
+
+// abortCmd stops the running job; skipCredsCmd resolves a needs_credentials
+// pause with the generated fallback. Both report via actionResultMsg.
+func (m InstallModel) abortCmd() tea.Cmd {
+	client, jobID := m.client, m.jobID
+	return func() tea.Msg {
+		return actionResultMsg{verb: "abort", err: client.AbortInstall(context.Background(), jobID)}
+	}
+}
+
+func (m InstallModel) skipCredsCmd() tea.Cmd {
+	client, jobID := m.client, m.jobID
+	return func() tea.Msg {
+		return actionResultMsg{verb: "skip", err: client.SkipCredentials(context.Background(), jobID)}
+	}
+}
 
 // Update folds in load/start/progress results and handles input.
 func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -125,6 +161,12 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case installStartedMsg:
 		if msg.err != nil {
+			// An install is already running — reattach to it instead of erroring.
+			if inProgress, ok := msg.err.(*rest.InstallInProgressError); ok {
+				m.jobID, m.stage = inProgress.JobID, stageInstalling
+				m.note = "Reattached to an install already running on the box."
+				return m, m.pollCmd()
+			}
 			m.stage, m.errMsg = stageError, friendlyErr(msg.err)
 			return m, nil
 		}
@@ -132,6 +174,15 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.pollCmd()
 	case progressMsg:
 		return m.applyProgress(msg)
+	case actionResultMsg:
+		if msg.err != nil {
+			m.note = "✗ " + msg.verb + " failed: " + friendlyErr(msg.err)
+		} else if msg.verb == "abort" {
+			m.note = "Aborting…"
+		} else {
+			m.note = "Skipped — continuing with generated credentials."
+		}
+		return m, m.pollCmd() // reflect the new phase on the next poll
 	case pollTickMsg:
 		return m, m.pollCmd()
 	case tea.WindowSizeMsg:
@@ -186,6 +237,18 @@ func (m InstallModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.stage != stageStarting {
 			return m, backCmd()
 		}
+	case "a":
+		// Abort the running job.
+		if m.stage == stageInstalling && m.jobID != "" {
+			m.note = "Aborting…"
+			return m, m.abortCmd()
+		}
+	case "s":
+		// Skip the NPM credentials prompt (continue with the generated fallback).
+		if m.stage == stageInstalling && m.phase == "needs_credentials" && m.jobID != "" {
+			m.note = "Skipping credentials…"
+			return m, m.skipCredsCmd()
+		}
 	}
 	if m.stage != stageSelect {
 		return m, nil
@@ -233,7 +296,7 @@ func (m InstallModel) View() string {
 	case stageLoading:
 		b.WriteString(phaseStyle.Render("Loading stack catalog…"))
 	case stageError:
-		b.WriteString(phaseStyle.Render(cfgErrStyle.Render("Couldn't load stacks:")) + "\n")
+		b.WriteString(phaseStyle.Render(cfgErrStyle.Render("Install panel error:")) + "\n")
 		b.WriteString(detailStyle.Render(m.errMsg) + "\n")
 		b.WriteString(footerStyle.Render("q quit"))
 	case stageSelect:
@@ -298,11 +361,11 @@ func (m InstallModel) viewInstalling(b *strings.Builder, width int) {
 	b.WriteString(phaseStyle.Render(head) + "\n")
 	b.WriteString(detailStyle.Render(progressBar(m.percent, min(width-8, 40))) + "\n\n")
 
-	// The box paused for config (passwords/variables) the TUI can't collect yet.
-	// Point the operator at the web UI rather than spinning here forever.
+	// The box paused on the NPM credentials prompt. Skipping continues with the
+	// auto-generated fallback (proxy routes can be set later in the web UI).
 	if m.phase == "needs_credentials" {
-		b.WriteString(detailStyle.Render(cfgErrStyle.Render("⚠ This stack needs configuration the TUI can't enter yet.")) + "\n")
-		b.WriteString(detailStyle.Render("Finish it in the web UI: "+cfgValueStyle.Render(m.client.BaseURL+"/")) + "\n\n")
+		b.WriteString(detailStyle.Render(cfgErrStyle.Render("⚠ Waiting for NPM credentials. Press s to skip and continue with generated ones.")) + "\n")
+		b.WriteString(detailStyle.Render("(Or set them in the web UI: "+cfgValueStyle.Render(m.client.BaseURL+"/")+")") + "\n\n")
 	}
 
 	b.WriteString(logTailView(m.logTail, 10))
@@ -312,7 +375,14 @@ func (m InstallModel) viewInstalling(b *strings.Builder, width int) {
 	if m.errMsg != "" {
 		b.WriteString("\n" + detailStyle.Render(cfgErrStyle.Render("⚠ progress unavailable: "+m.errMsg)) + "\n")
 	}
-	b.WriteString("\n" + footerStyle.Render("q detach (install keeps running on the box)"))
+	if m.note != "" {
+		b.WriteString("\n" + detailStyle.Render(m.note) + "\n")
+	}
+	foot := "a abort · q detach (install keeps running)"
+	if m.phase == "needs_credentials" {
+		foot = "s skip credentials · a abort · q detach"
+	}
+	b.WriteString("\n" + footerStyle.Render(foot))
 }
 
 // phaseLabel maps a raw job phase to a human label for the monitor.

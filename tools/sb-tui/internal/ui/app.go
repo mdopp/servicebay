@@ -22,7 +22,11 @@ import (
 // Navigation messages routed by the App.
 type (
 	// menuSelectedMsg is emitted by the menu when the operator picks an action.
-	menuSelectedMsg struct{ id phase.ActionID }
+	// jobID is set only for AttachInstall (the active install's id to reattach to).
+	menuSelectedMsg struct {
+		id    phase.ActionID
+		jobID string
+	}
 	// backMsg is emitted by a sub-view to pop back to the menu.
 	backMsg struct{}
 )
@@ -67,7 +71,7 @@ type App struct {
 // NewApp builds the root model. token may be a pre-resolved credential (env or
 // the saved per-host file); empty means the box-control views will log in first.
 func NewApp(detect DetectFunc, host, port, token string, save TokenSaver, build BuildConfig) App {
-	return App{host: host, port: port, token: token, save: save, build: build, screen: appMenu, menu: New(detect, host, port)}
+	return App{host: host, port: port, token: token, save: save, build: build, screen: appMenu, menu: New(detect, host, port, token)}
 }
 
 // Init starts the menu's phase detection.
@@ -87,7 +91,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case menuSelectedMsg:
-		return m.route(msg.id)
+		return m.route(msg.id, msg.jobID)
 
 	case authSucceededMsg:
 		m.token = msg.token
@@ -114,7 +118,7 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case backMsg:
 		// Pop back to the menu and re-detect so its phase/actions refresh.
 		m.screen, m.active = appMenu, nil
-		m.menu = New(m.menu.detect, m.host, m.port)
+		m.menu = New(m.menu.detect, m.host, m.port, m.token)
 		return m, m.menu.Init()
 	}
 
@@ -133,8 +137,20 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // if needed); watch + open-box open in-app too (no auth) and return to the
 // menu; only the build/express bootstrap legs quit the App for the entrypoint,
 // since build is an interactive stdin wizard whose USB flash needs a real TTY.
-func (m App) route(id phase.ActionID) (tea.Model, tea.Cmd) {
+func (m App) route(id phase.ActionID, jobID string) (tea.Model, tea.Cmd) {
 	switch id {
+	case phase.AttachInstall:
+		// Reattach to the install already running on the box — straight to live
+		// progress (the menu only offers this when a token-polled job is active,
+		// so a token is present).
+		client, err := rest.New(m.host, m.port, m.token)
+		if err != nil {
+			m.screen, m.active = appMenu, nil
+			return m, nil
+		}
+		m.active = NewInstallAttach(client, jobID)
+		m.screen = appPanel
+		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
 	case phase.UploadToNAS:
 		// FTP-only: the upload talks straight to the FritzBox NAS, never the
 		// ServiceBay box — so it needs no token and no login, and works even
