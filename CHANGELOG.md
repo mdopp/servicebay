@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.63.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.3...servicebay-v4.63.4) (2026-05-31)
+
+
+### Bug Fixes
+
+* **install:** always re-key LLDAP admin on auth deploy (kill the crash-loop) ([#1405](https://github.com/mdopp/servicebay/issues/1405)) ([3dc3f68](https://github.com/mdopp/servicebay/commit/3dc3f68d8b107877af79ede1d0f2618ae10bedb4))
+
 ## [4.63.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.2...servicebay-v4.63.3) (2026-05-31)
 
 
