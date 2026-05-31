@@ -48,7 +48,7 @@ registerProbe({
           return encode({
             status: 'fail',
             detail: 'Nginx Proxy Manager is rejecting the stored admin credentials. This usually means a previous install left an admin password in the NPM database that no longer matches.',
-            hint: 'If you know the password NPM is actually using, click "Use existing password" below to save it (no data loss). Otherwise "Reset NPM data" wipes the database and re-seeds with the wizard credentials.',
+            hint: 'Click "Re-key NPM admin (keep data)" to set a fresh password in place — no proxy routes are lost and you don\'t need the current one. (If you DO know the password NPM is using, "Use existing password" saves it; "Reset NPM data" is the last resort — it wipes the database.)',
           });
         }
         return encode({ status: 'info', detail: `NPM auth probe returned HTTP ${res.status} — assuming transient.` });
