@@ -128,6 +128,21 @@ func TestBuildConfirmedHandsOffPlan(t *testing.T) {
 	}
 }
 
+// TestUploadToNASRoutesWithoutLogin: the NAS upload is FTP-only (no ServiceBay
+// box/token), so it must open its panel directly even with no token — never the
+// login view. This is the pre-install backup-staging step.
+func TestUploadToNASRoutesWithoutLogin(t *testing.T) {
+	app, _ := newTestApp("") // no token
+	mi, _ := app.Update(menuSelectedMsg{id: phase.UploadToNAS})
+	app = mi.(App)
+	if app.screen != appPanel {
+		t.Fatalf("screen = %v, want appPanel (not login)", app.screen)
+	}
+	if _, ok := app.active.(NasUploadModel); !ok {
+		t.Errorf("active = %T, want NasUploadModel", app.active)
+	}
+}
+
 // TestWatchRunsInApp: watch opens as an in-app sub-view (no auth) and does NOT
 // set Chosen / quit the app.
 func TestWatchRunsInApp(t *testing.T) {

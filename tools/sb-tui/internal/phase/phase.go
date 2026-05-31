@@ -113,70 +113,143 @@ type Action struct {
 func buildAction(s State) Action {
 	switch {
 	case s.BoxReachable:
-		return Action{BuildISO, "Reinstall — create install ISO + write it to a USB stick",
+		return Action{BuildISO, "Reinstall — build a new install USB from scratch",
 			"Bake a fresh ServiceBay installer and write it to a USB stick to reinstall this server from scratch."}
 	case s.ISOBuilt:
-		return Action{BuildISO, "Rebuild install ISO + write it to a USB stick",
+		return Action{BuildISO, "Rebuild the install USB  ·  fresh secrets + config",
 			"Re-bake the installer ISO with fresh secrets / config and write it to a USB stick."}
 	default:
-		return Action{BuildISO, "Create install ISO + write it to a USB stick",
-			"Bake a ServiceBay installer ISO from Fedora CoreOS and write it to a USB stick."}
+		return Action{BuildISO, "Build the install USB  ·  server config baked in",
+			"Bake a ServiceBay installer ISO from Fedora CoreOS — with your server config baked in — and write it to a USB stick."}
 	}
 }
 
-// ActionsFor returns the menu entries relevant to a phase. The list is
-// comprehensive — every action that makes sense in the phase is shown, with
-// the recommended next step first — rather than a single-action stub.
-func ActionsFor(s State) []Action {
-	var a []Action
+// quitAction closes the launcher. The menu auto-refreshes its phase on a timer,
+// so there's no manual "Refresh" entry.
+var quitAction = Action{Quit, "Quit", "Exit the launcher."}
+
+// StepStatus / journey rows ---------------------------------------------------
+
+// JourneyRow is one line of the setup-journey map the launcher menu renders: the
+// build → boot → install → manage arc, top to bottom, so an operator always sees
+// where they are and what's next. Numbered rows (Num 1..4) are the arc itself;
+// Num 0 rows are helpers (Express, Quit) or the management sub-actions under
+// step 4. A row whose Action.ID is empty is a non-selectable signpost — either a
+// future step shown greyed for orientation (Ahead) or a section header.
+type JourneyRow struct {
+	Action      Action
+	Num         int  // 1..4 journey step; 0 = helper / sub-item
+	Done        bool // already accomplished — rendered with a ✓
+	Ahead       bool // not actionable yet — rendered greyed
+	Recommended bool // the default cursor target for this phase
+}
+
+// Selectable reports whether the cursor can land on (and enter) this row.
+// Signposts and section headers carry an empty Action.ID and are skipped.
+func (r JourneyRow) Selectable() bool { return r.Action.ID != "" }
+
+// uploadStep frames the NAS-staging action for the operator's current phase: a
+// "stage your backups first" prompt before install (when it matters most, and
+// reachable over plain FTP with no box yet), a routine re-stage afterwards.
+func uploadStep(s State) Action {
+	if s.BoxReachable {
+		return uploadToNASAction
+	}
+	return Action{UploadToNAS, "Stage existing backups on the NAS",
+		"Migrating? Send your Home Assistant backup to the FritzBox NAS first, so the fresh install restores it. Skip if you have nothing to migrate."}
+}
+
+// watchStep frames the boot+watch action: a "boot the USB then watch" prompt
+// before the box is up, a plain "watch the logs" once it's installing.
+func watchStep(s State) Action {
+	if s.BoxReachable {
+		return Action{WatchInstall, "Watch the install logs",
+			"Live-track the running install until ServiceBay's setup wizard takes over."}
+	}
+	return Action{WatchInstall, "Boot the box from USB, then watch the install",
+		"Power the box on from the USB stick; this live-tracks the install until the setup wizard is up."}
+}
+
+// signpost is a non-selectable journey row (empty ID): a future step shown for
+// orientation, or a section header.
+func signpost(label, detail string) Action { return Action{"", label, detail} }
+
+// Journey returns the full setup-journey map for a phase — the numbered arc plus
+// helpers — including non-selectable signposts for steps that aren't reachable
+// yet, so the menu can render the whole path top-to-bottom with a "you are here"
+// cursor on the recommended next step.
+func Journey(s State) []JourneyRow {
+	afterBoot := signpost("After boot: install stacks / tweak config",
+		"Server config is baked into the USB at build time, so this step is optional — add services or adjust settings once the box is up.")
+	manage := signpost("Manage your server", "")
 	switch s.Phase {
 	case NoISO:
-		// Nothing built and no box — express (guided) is the recommended path,
-		// with a plain build available for operators who want only the ISO.
-		a = append(a, expressAction, buildAction(s))
+		return []JourneyRow{
+			{Action: uploadStep(s), Num: 1, Recommended: true},
+			{Action: buildAction(s), Num: 2},
+			{Action: signpost("Boot the box from USB + watch the install",
+				"Available once you've built the USB: power the box on from it and watch the install through to the setup wizard."), Num: 3, Ahead: true},
+			{Action: afterBoot, Num: 4, Ahead: true},
+			{Action: expressAction},
+			{Action: quitAction},
+		}
 	case ISOReady:
-		// ISO baked, box not up yet — rebuild, or boot-then-watch.
-		a = append(a,
-			buildAction(s),
-			Action{WatchInstall, "Boot the USB, then watch the install",
-				"Power on the box from the USB stick; this live-tracks the install until the setup wizard is up."})
+		return []JourneyRow{
+			{Action: uploadStep(s), Num: 1},
+			{Action: buildAction(s), Num: 2, Done: true},
+			{Action: watchStep(s), Num: 3, Recommended: true},
+			{Action: afterBoot, Num: 4, Ahead: true},
+			{Action: quitAction},
+		}
 	case Installing:
-		// Box is up mid-install — watch it, or start managing it / reinstall.
-		// The dashboard URL is shown persistently by the menu, so there's no
-		// separate "open in browser" action.
-		a = append(a,
-			Action{WatchInstall, "Watch the server's install logs",
-				"Live-track the running install until ServiceBay's setup wizard takes over."},
-			editConfigAction,
-			installStacksAction,
-			backupsAction,
-			uploadToNASAction,
-			bootFromUSBAction,
-			buildAction(s))
+		return []JourneyRow{
+			{Action: uploadStep(s), Num: 1, Done: true},
+			{Action: buildAction(s), Num: 2, Done: true},
+			{Action: watchStep(s), Num: 3, Recommended: true},
+			{Action: manage, Num: 4},
+			{Action: editConfigAction},
+			{Action: installStacksAction},
+			{Action: backupsAction},
+			{Action: bootFromUSBAction},
+			{Action: quitAction},
+		}
 	case Ready:
-		// Box is fully up — manage it in-TUI, or reinstall. No Watch (nothing to
-		// watch on an up box) and no "open in browser" (the URL is always shown).
-		a = append(a,
-			editConfigAction,
-			installStacksAction,
-			backupsAction,
-			uploadToNASAction,
-			bootFromUSBAction,
-			buildAction(s))
+		return []JourneyRow{
+			{Action: uploadStep(s), Num: 1, Done: true},
+			{Action: buildAction(s), Num: 2, Done: true},
+			{Action: signpost("Install complete — setup wizard finished", ""), Num: 3, Done: true},
+			{Action: manage, Num: 4},
+			{Action: installStacksAction, Recommended: true},
+			{Action: editConfigAction},
+			{Action: backupsAction},
+			{Action: bootFromUSBAction},
+			{Action: quitAction},
+		}
 	}
-	// Quit closes the launcher. Status auto-refreshes on a timer, so there's no
-	// manual "Refresh" action.
-	a = append(a, Action{Quit, "Quit", "Exit the launcher."})
-	return a
+	return nil
+}
+
+// ActionsFor returns just the selectable menu entries for a phase, in journey
+// order — the build → boot → install → manage arc with the recommended next
+// step surfaced. It is the selectable projection of Journey.
+func ActionsFor(s State) []Action {
+	rows := Journey(s)
+	out := make([]Action, 0, len(rows))
+	for _, r := range rows {
+		if r.Selectable() {
+			out = append(out, r.Action)
+		}
+	}
+	return out
 }
 
 // Describe is the one-line phase summary shown above the menu.
 func Describe(s State) string {
 	switch s.Phase {
 	case NoISO:
-		return "No install ISO built yet — start by baking one."
+		return "Fresh setup — follow the steps below. Stage any backups first, then build the install USB."
 	case ISOReady:
-		return "Install ISO is ready. Boot the box from the USB, then watch the install."
+		return "Install USB is ready. Stage backups if you're migrating, then boot the box and watch it install."
 	case Installing:
 		return "Box is reachable; an install is actively running."
 	case Ready:

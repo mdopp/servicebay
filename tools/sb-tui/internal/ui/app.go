@@ -135,7 +135,14 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // since build is an interactive stdin wizard whose USB flash needs a real TTY.
 func (m App) route(id phase.ActionID) (tea.Model, tea.Cmd) {
 	switch id {
-	case phase.EditConfig, phase.InstallStacks, phase.Backups, phase.UploadToNAS:
+	case phase.UploadToNAS:
+		// FTP-only: the upload talks straight to the FritzBox NAS, never the
+		// ServiceBay box — so it needs no token and no login, and works even
+		// before any box exists (the pre-install backup-staging step).
+		m.active = NewNasUpload()
+		m.screen = appPanel
+		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
+	case phase.EditConfig, phase.InstallStacks, phase.Backups:
 		if m.token == "" {
 			m.pending = id
 			m.screen = appLogin
@@ -181,8 +188,6 @@ func (m App) openPanel(id phase.ActionID) (tea.Model, tea.Cmd) {
 		m.active = NewInstall(client)
 	case phase.Backups:
 		m.active = NewBackup(client)
-	case phase.UploadToNAS:
-		m.active = NewNasUpload() // direct-FTP HA-backup upload; no REST client needed
 	default:
 		m.screen, m.active = appMenu, nil
 		return m, nil
