@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.63.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.1...servicebay-v4.63.2) (2026-05-31)
+
+
+### Bug Fixes
+
+* **tui:** expand selected stacks into their templates before install ([#1401](https://github.com/mdopp/servicebay/issues/1401)) ([8e08b83](https://github.com/mdopp/servicebay/commit/8e08b832d2269768502f02f11e3a0190409e3eb1))
+
 ## [4.63.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.63.0...servicebay-v4.63.1) (2026-05-31)
 
 
