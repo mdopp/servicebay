@@ -38,11 +38,25 @@ Track progress at `.claude/state/autoloop-state.json`. Shape:
   ],
   "blocked": [
     {"issue": 1086, "reason": "scope too large for single PR; needs split"}
+  ],
+  "awaiting_user": [
+    {"issue": 1311, "comment_url": "https://github.com/mdopp/servicebay/issues/1311#issuecomment-…", "author": "wenghuiming1987", "since": "2026-05-30T07:23:19Z"}
   ]
 }
 ```
 
 Update it at every state transition. If the file doesn't exist, create it with empty arrays.
+
+## Comment hygiene (every comment the loop posts)
+
+Every GitHub comment this loop posts — the ambiguous-question ask (Step 2), the >40-min blocker, the CI-red notices (Step 0.3, merge-gate), the epic dependency DAG (track b), the lint refactor-ticket link — must end with the AI marker (memory `feedback_ai_comment_marker`):
+
+```
+<!-- sb-ai-comment -->
+🤖 _AI-generated, acting for @mdopp._
+```
+
+It posts as `mdopp`, so without the marker no one can tell the comment is AI-written. The marker is also what the exclusion filter and `/comment-responder` read to decide a thread is or isn't already AI-answered. The loop **never** posts replies to external human commenters (see the exclusion filter) — those go through `/comment-responder` with the user confirming. Keep comments short and sharp (memory `feedback_concise_answers`).
 
 ## Step 0 — Preflight (every invocation)
 
@@ -69,7 +83,8 @@ gh issue list --state open --limit 100 --json number,title,labels,body
 ### Exclusion filter (drop any issue matching any of these)
 
 - Labels include any of: `postponed`, `wontfix`, `duplicate`, `autoloop-open`. (`oscar`-labelled issues are **in scope** — they go through normal classification below.)
-- Issue number appears in `state.completed[]`, `state.skipped[]`, or `state.blocked[]` of the state file.
+- Issue number appears in `state.completed[]`, `state.skipped[]`, `state.blocked[]`, or `state.awaiting_user[]` of the state file.
+- **Unaddressed external comment** — an external human had the last word and we haven't replied. Fetch comments (`gh api repos/mdopp/servicebay/issues/<N>/comments`); the issue is parked if the **chronologically-last comment** is authored by a non-owner (`login != mdopp`), non-`Bot` account whose body lacks the `<!-- sb-ai-comment -->` marker. Do **not** work it — move it to `state.awaiting_user[]` (`{issue, comment_url, author, since}`) and skip. The loop never replies to external commenters itself (no human to confirm the draft); replying is the `/comment-responder` skill's job. Re-checked every run, so the ticket auto-clears from `awaiting_user[]` once an owner reply lands and becomes eligible again.
 - Issue title or body is clearly multi-PR scope: words like "audit", "strategy", "epic", or describes work that obviously spans multiple changes. Mark these as `blocked` in state with reason `"needs scoping"` and move on — *or*, in a refine pass (track b) or when the user asks, **decompose** it into bite-sized child issues (see track b's "Decomposing an epic") and keep this one open as the tracking umbrella.
 
 ### Classification (everything that survives the filter)
@@ -372,6 +387,7 @@ Tell the user and **do not schedule another /loop firing** if any of these hit:
 - Does not auto-merge any issue carrying the `security` label (opens as draft) or filter-in any `postponed` issue (still excluded). `oscar`-labelled issues are no longer excluded — they run through normal flow (triage-to-`mdopp/oscar` first per Step 1's classification note), subject to the same scope/`/verify`/blocked gates.
 - Does not skip the real-box `/verify` step on path-mandated PRs.
 - Does not file new issues to track follow-ups; comments on the existing issue instead.
+- Does not post a comment without the AI marker (memory `feedback_ai_comment_marker`), and does not reply to external human commenters — it parks those tickets on `state.awaiting_user[]` for `/comment-responder` + human confirm.
 - Does not exceed the lint-sweep size guard (≤2 source files, ≤120 LOC net diff). Structural warnings are fair game when a *bite-sized* extraction clears them; the loop never attempts a 2000-LOC dashboard decomposition in one PR — that's still the user's job.
 - Does not touch a file that an open non-loop PR or a non-blocked open issue is already working — collision avoidance check runs before every lint-sweep file selection.
 
