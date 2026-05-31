@@ -101,14 +101,19 @@ func (c *Client) StartInstall(ctx context.Context, manifest json.RawMessage) (st
 }
 
 // Progress is a snapshot of a running install job, polled from the public
-// jobId-gated endpoint.
+// jobId-gated endpoint. Percent is derived from deployed/total (the box reports
+// no percentage of its own — job.progress is {currentItem, deployedNames,
+// totalCount}).
 type Progress struct {
-	Phase      string
-	Percent    int
-	Error      string
-	Active     bool
-	NewLogs    string
-	NextOffset int
+	Phase       string
+	CurrentItem string // the item the runner is deploying right now ("" between items)
+	Deployed    int    // count of items deployed so far
+	Total       int    // total items in this job
+	Percent     int    // deployed/total as 0–100
+	Error       string
+	Active      bool
+	NewLogs     string
+	NextOffset  int
 }
 
 // InstallProgress polls /api/install/progress for a job. sinceOffset is the
@@ -123,8 +128,12 @@ func (c *Client) InstallProgress(ctx context.Context, jobID string, sinceOffset 
 	var doc struct {
 		Job struct {
 			Phase    string `json:"phase"`
-			Progress int    `json:"progress"`
 			Error    string `json:"error"`
+			Progress struct {
+				CurrentItem   string   `json:"currentItem"`
+				DeployedNames []string `json:"deployedNames"`
+				TotalCount    int      `json:"totalCount"`
+			} `json:"progress"`
 		} `json:"job"`
 		Active     bool   `json:"jobIsActive"`
 		Logs       string `json:"logs"`
@@ -133,12 +142,20 @@ func (c *Client) InstallProgress(ctx context.Context, jobID string, sinceOffset 
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, &APIError{Message: "malformed progress response: " + err.Error()}
 	}
+	deployed, total := len(doc.Job.Progress.DeployedNames), doc.Job.Progress.TotalCount
+	percent := 0
+	if total > 0 {
+		percent = deployed * 100 / total
+	}
 	return &Progress{
-		Phase:      doc.Job.Phase,
-		Percent:    doc.Job.Progress,
-		Error:      doc.Job.Error,
-		Active:     doc.Active,
-		NewLogs:    doc.Logs,
-		NextOffset: doc.LogsOffset,
+		Phase:       doc.Job.Phase,
+		CurrentItem: doc.Job.Progress.CurrentItem,
+		Deployed:    deployed,
+		Total:       total,
+		Percent:     percent,
+		Error:       doc.Job.Error,
+		Active:      doc.Active,
+		NewLogs:     doc.Logs,
+		NextOffset:  doc.LogsOffset,
 	}, nil
 }

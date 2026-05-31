@@ -117,8 +117,18 @@ func TestInstallProgressIsUnauthenticated(t *testing.T) {
 		if r.URL.Query().Get("jobId") != "job-1" || r.URL.Query().Get("logsSince") != "42" {
 			t.Errorf("query = %s", r.URL.RawQuery)
 		}
+		// Mirror the real backend shape: job.progress is an OBJECT
+		// {currentItem, deployedNames, totalCount}, not a number. Percent is
+		// derived (3 of 5 deployed → 60%).
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"job":         map[string]any{"phase": "running", "progress": 60},
+			"job": map[string]any{
+				"phase": "running",
+				"progress": map[string]any{
+					"currentItem":   "immich",
+					"deployedNames": []string{"a", "b", "c"},
+					"totalCount":    5,
+				},
+			},
 			"jobIsActive": true,
 			"logs":        "deploying immich\n",
 			"logsOffset":  108,
@@ -130,7 +140,7 @@ func TestInstallProgressIsUnauthenticated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InstallProgress: %v", err)
 	}
-	if p.Phase != "running" || p.Percent != 60 || !p.Active || p.NextOffset != 108 {
+	if p.Phase != "running" || p.Percent != 60 || p.CurrentItem != "immich" || p.Deployed != 3 || p.Total != 5 || !p.Active || p.NextOffset != 108 {
 		t.Errorf("progress = %+v", p)
 	}
 }
