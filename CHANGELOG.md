@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.68.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.67.0...servicebay-v4.68.0) (2026-05-31)
+
+
+### Features
+
+* **tui:** channel switch in the interactive menu (not just the CLI) ([#1431](https://github.com/mdopp/servicebay/issues/1431)) ([fd44d75](https://github.com/mdopp/servicebay/commit/fd44d75497b98a34860ef8e1dec87c14860c5d62))
+
 ## [4.67.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.66.1...servicebay-v4.67.0) (2026-05-31)
 
 
