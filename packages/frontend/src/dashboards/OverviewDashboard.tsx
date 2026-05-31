@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Box, Network, Activity, Terminal, Settings, ArrowRight, AlertCircle, CheckCircle2, Wrench } from 'lucide-react';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
 import InstallProgressCard from '@/components/InstallProgressCard';
+import { useCoreHealth } from '@/hooks/useCoreHealth';
 
 /**
  * Home / Overview dashboard (#803).
@@ -41,8 +42,16 @@ export default function OverviewDashboard() {
 
   const gatewayUp = data?.gateway?.upstreamStatus === 'up';
 
+  // Same signal the CoreHealthBanner uses. The twin only carries systemd
+  // `activeState`, so a core service that's "active" but crash-looping
+  // (e.g. authelia failing its LDAP bind) counted as healthy here — which
+  // contradicted the banner's "Core stack unhealthy". Reading core-health
+  // directly keeps the headline and the banner in agreement.
+  const { unhealthy: coreUnhealthy } = useCoreHealth();
+
   const healthHeadline = (() => {
     if (!hasFirstSnapshot) return { tone: 'neutral' as const, text: 'Reading status…' };
+    if (coreUnhealthy) return { tone: 'bad' as const, text: 'Core services need attention' };
     if (failedCount > 0) return { tone: 'bad' as const, text: `${failedCount} service${failedCount === 1 ? '' : 's'} need${failedCount === 1 ? 's' : ''} attention` };
     if (totalCount === 0) return { tone: 'neutral' as const, text: 'No services installed yet' };
     if (!gatewayUp) return { tone: 'warn' as const, text: 'Internet gateway is unreachable' };

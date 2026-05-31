@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import Link from 'next/link';
+import { useCoreHealth } from '@/hooks/useCoreHealth';
 
 /**
  * Core-stack health banner (#627 / Phase 3B, enriched in #635 /
@@ -10,35 +11,17 @@ import Link from 'next/link';
  *
  * Shows at the top of every dashboard page when any `tier: core` stack
  * reports `health.ready !== true`. Sourced from the live stack
- * manifests via `/api/system/core-health` so the membership list isn't
- * hardcoded anymore.
+ * manifests via `/api/system/core-health` (shared with the Home
+ * dashboard's health headline through {@link useCoreHealth}, so the two
+ * can't disagree).
  *
- * Polls every 15s, dismissable per browser session (sessionStorage).
+ * Dismissable per browser session (sessionStorage).
  */
 
-const POLL_INTERVAL_MS = 15_000;
 const DISMISS_KEY = 'sb:core-health-banner-dismissed';
 
-interface UnhealthyCause {
-  summary: string;
-  action?: { label: string; href: string };
-}
-
-interface DegradedNotReady {
-  template: string;
-  state: 'unhealthy' | 'unknown';
-  /** Populated when a known config-side cause matches (#665 — S5). */
-  cause?: UnhealthyCause;
-}
-
-interface DegradedEntry {
-  stack: string;
-  label: string;
-  notReady: DegradedNotReady[];
-}
-
 export default function CoreHealthBanner() {
-  const [degraded, setDegraded] = useState<DegradedEntry[]>([]);
+  const { degraded } = useCoreHealth();
   // Read once at construct time. sessionStorage is synchronous; only the
   // server side has to guard against it being undefined. Doing this in
   // useState's initialiser avoids the synchronous-setState-in-effect
@@ -46,25 +29,6 @@ export default function CoreHealthBanner() {
   const [dismissed, setDismissed] = useState<boolean>(() =>
     typeof window !== 'undefined' && sessionStorage.getItem(DISMISS_KEY) === '1',
   );
-
-  useEffect(() => {
-    if (dismissed) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const res = await fetch('/api/system/core-health');
-        if (!res.ok) return;
-        const data = await res.json() as { degraded: DegradedEntry[] };
-        if (cancelled) return;
-        setDegraded(Array.isArray(data.degraded) ? data.degraded : []);
-      } catch {
-        /* keep previous state */
-      }
-    };
-    void tick();
-    const id = setInterval(tick, POLL_INTERVAL_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [dismissed]);
 
   if (dismissed || degraded.length === 0) return null;
 
