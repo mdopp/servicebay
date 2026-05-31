@@ -3,6 +3,7 @@ import { MobileTopBar, MobileBottomBar } from '@/components/MobileNav';
 import OnboardingWizard from '@/components/OnboardingWizard';
 import RestoreStatusBanner from '@/components/RestoreStatusBanner';
 import CoreHealthBanner from '@/components/CoreHealthBanner';
+import OfflineBanner from '@/components/OfflineBanner';
 
 // Dashboard pages depend on the live Digital Twin state and SSH-pool
 // connectivity; never try to pre-render them at build time.
@@ -16,6 +17,7 @@ export default function DashboardLayout({
   return (
     <div className="flex flex-col md:flex-row h-dvh w-full bg-gray-50 dark:bg-[#070709] overflow-hidden md:p-4 md:gap-4">
       <OnboardingWizard />
+      <OfflineBanner />
       <RestoreStatusBanner />
       <CoreHealthBanner />
       <div className="hidden md:flex h-full shrink-0">
