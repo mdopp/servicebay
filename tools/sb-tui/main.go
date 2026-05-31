@@ -33,6 +33,12 @@ import (
 	"servicebay-tui/internal/watch"
 )
 
+// version is the released ServiceBay version this binary was built from. It
+// defaults to "dev" for local `go run`/`go build` and is overridden at release
+// build time via -ldflags "-X main.version=<x.y.z>" (see release-binaries.yml),
+// so the shipped curl|sh binary self-reports which release it carries.
+var version = "dev"
+
 func detect(ctx context.Context) (bool, phase.BoxStatus) {
 	return probes.ISOBuilt(), probes.BoxStatus(ctx)
 }
@@ -299,8 +305,16 @@ func main() {
 	// Subcommands skip the menu and run one leg directly. `watch` is used by the
 	// install scripts' auto-launch; `build` runs the native ISO-build wizard
 	// (the same path the menu's BuildISO action takes).
+	// Surface the version into the UI layer so the menu can show it.
+	ui.Version = version
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "version", "--version", "-v":
+			// Print and exit before touching the TTY, so `sb-tui version` works
+			// in a pipe / non-interactive shell.
+			fmt.Printf("sb-tui %s\n", version)
+			return
 		case "watch":
 			os.Exit(runWatch())
 		case "build":

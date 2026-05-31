@@ -51,6 +51,17 @@ func TestMenuShowsURLWhenReachable(t *testing.T) {
 	}
 }
 
+// TestMenuFooterShowsVersion: the launcher footer self-reports the build version.
+func TestMenuFooterShowsVersion(t *testing.T) {
+	old := Version
+	Version = "9.9.9"
+	defer func() { Version = old }()
+	m := feed(New(readyDetect, "box", "5888"))
+	if v := m.View(); !strings.Contains(v, "sb-tui 9.9.9") {
+		t.Errorf("footer should show the version, got:\n%s", v)
+	}
+}
+
 // TestMenuInstallStatusLine: while installing, a compact live line shows the
 // stage + connectivity dots so the operator sees progress without opening the
 // full monitor.

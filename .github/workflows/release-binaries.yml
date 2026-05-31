@@ -59,10 +59,13 @@ jobs:
           arch="${{ matrix.target }}"; arch="${arch#*/}"
           out="sb-tui-${os}-${arch}"
           [ "$os" = windows ] && out="${out}.exe"
+          # Stamp the binary with the repo version so `sb-tui version` and the
+          # launcher footer self-report which release it carries.
+          ver=$(jq -r .version ../../package.json)
           mkdir -p dist
-          echo "Building dist/${out} (GOOS=${os} GOARCH=${arch})"
+          echo "Building dist/${out} (GOOS=${os} GOARCH=${arch}) version=${ver}"
           CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-            go build -trimpath -ldflags "-s -w" -o "dist/${out}" .
+            go build -trimpath -ldflags "-s -w -X main.version=${ver}" -o "dist/${out}" .
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
