@@ -27,7 +27,7 @@ type LoginModel struct {
 	host, port    string
 	width, height int
 
-	username, password string
+	username, password textInput
 	focus              int // 0 = username, 1 = password
 	submitting         bool
 	errMsg             string
@@ -35,11 +35,16 @@ type LoginModel struct {
 
 // NewLogin builds the login view for a target box.
 func NewLogin(host, port string) LoginModel {
-	return LoginModel{host: host, port: port}
+	return LoginModel{
+		host:     host,
+		port:     port,
+		username: newTextInput("", false),
+		password: newTextInput("", true),
+	}
 }
 
 func (m LoginModel) loginCmd() tea.Cmd {
-	host, port, user, pass := m.host, m.port, m.username, m.password
+	host, port, user, pass := m.host, m.port, m.username.Value(), m.password.Value()
 	return func() tea.Msg {
 		tok, err := rest.Login(context.Background(), host, port, user, pass)
 		return loginResultMsg{token: tok, err: err}
@@ -57,7 +62,7 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.submitting = false
 		if msg.err != nil {
 			m.errMsg = friendlyErr(msg.err)
-			m.password = "" // wrong creds: clear the password, keep username
+			m.password.SetValue("") // wrong creds: clear the password, keep username
 			m.focus = 1
 			return m, nil
 		}
@@ -78,31 +83,24 @@ func (m LoginModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		return m, func() tea.Msg { return backMsg{} }
-	case "tab", "down":
+	case "tab", "down", "shift+tab", "up":
 		m.focus = (m.focus + 1) % 2
-	case "shift+tab", "up":
-		m.focus = (m.focus + 1) % 2
+		return m, nil
 	case "enter":
 		// Submit when both fields are filled; otherwise advance to the next.
-		if m.username != "" && m.password != "" {
+		if m.username.Value() != "" && m.password.Value() != "" {
 			m.submitting, m.errMsg = true, ""
 			return m, m.loginCmd()
 		}
 		m.focus = (m.focus + 1) % 2
-	case "backspace":
-		if m.focus == 0 && m.username != "" {
-			m.username = m.username[:len(m.username)-1]
-		} else if m.focus == 1 && m.password != "" {
-			m.password = m.password[:len(m.password)-1]
-		}
-	default:
-		if msg.Type == tea.KeyRunes {
-			if m.focus == 0 {
-				m.username += string(msg.Runes)
-			} else {
-				m.password += string(msg.Runes)
-			}
-		}
+		return m, nil
+	}
+	// Everything else (caret movement, backspace/delete, runes) edits the
+	// focused field.
+	if m.focus == 0 {
+		m.username.handleKey(msg)
+	} else {
+		m.password.handleKey(msg)
 	}
 	return m, nil
 }
@@ -120,8 +118,8 @@ func (m LoginModel) View() string {
 	b.WriteString(detailStyle.Render("dashboard at http://"+m.host+":"+m.port+". The TUI then creates + saves its own") + "\n")
 	b.WriteString(detailStyle.Render("access token for this box, so you won't be asked again.") + "\n\n")
 
-	b.WriteString(fieldRow("Username", m.username, m.focus == 0, false) + "\n")
-	b.WriteString(fieldRow("Password", m.password, m.focus == 1, true) + "\n")
+	b.WriteString(m.username.render("Username", m.focus == 0) + "\n")
+	b.WriteString(m.password.render("Password", m.focus == 1) + "\n")
 
 	if m.submitting {
 		b.WriteString("\n" + detailStyle.Render("Signing in…") + "\n")
@@ -130,21 +128,4 @@ func (m LoginModel) View() string {
 	}
 	b.WriteString("\n" + footerStyle.Render("tab switch · enter submit · esc back"))
 	return frame(b.String(), m.width, m.height)
-}
-
-// fieldRow renders one labelled input, masking secrets and marking focus.
-func fieldRow(label, value string, focused, secret bool) string {
-	shown := value
-	if secret {
-		shown = strings.Repeat("•", len(value))
-	}
-	caret := ""
-	if focused {
-		caret = "▌"
-	}
-	body := label + ": " + shown + caret
-	if focused {
-		return selectedStyle.Render("❯ " + body)
-	}
-	return normalStyle.Render("  " + body)
 }

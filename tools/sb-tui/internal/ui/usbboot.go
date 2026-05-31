@@ -28,17 +28,24 @@ type USBBootModel struct {
 	host, port    string
 	width, height int
 
-	username, password string
+	username, password textInput
 	focus              int
 	submitting         bool
 	errMsg             string
 }
 
 // NewUSBBoot builds the flow for a target box.
-func NewUSBBoot(host, port string) USBBootModel { return USBBootModel{host: host, port: port} }
+func NewUSBBoot(host, port string) USBBootModel {
+	return USBBootModel{
+		host:     host,
+		port:     port,
+		username: newTextInput("", false),
+		password: newTextInput("", true),
+	}
+}
 
 func (m USBBootModel) submitCmd() tea.Cmd {
-	host, port, user, pass := m.host, m.port, m.username, m.password
+	host, port, user, pass := m.host, m.port, m.username.Value(), m.password.Value()
 	return func() tea.Msg {
 		msg, err := rest.EnsureUSBBoot(context.Background(), host, port, user, pass)
 		return usbBootResultMsg{msg: msg, err: err}
@@ -56,7 +63,8 @@ func (m USBBootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.submitting = false
 		if msg.err != nil {
 			m.errMsg = friendlyErr(msg.err)
-			m.password, m.focus = "", 1
+			m.password.SetValue("")
+			m.focus = 1
 			return m, nil
 		}
 		host, port := m.host, m.port
@@ -79,26 +87,21 @@ func (m USBBootModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg { return backMsg{} }
 	case "tab", "down", "up", "shift+tab":
 		m.focus = (m.focus + 1) % 2
+		return m, nil
 	case "enter":
-		if m.username != "" && m.password != "" {
+		if m.username.Value() != "" && m.password.Value() != "" {
 			m.submitting, m.errMsg = true, ""
 			return m, m.submitCmd()
 		}
 		m.focus = (m.focus + 1) % 2
-	case "backspace":
-		if m.focus == 0 && m.username != "" {
-			m.username = m.username[:len(m.username)-1]
-		} else if m.focus == 1 && m.password != "" {
-			m.password = m.password[:len(m.password)-1]
-		}
-	default:
-		if msg.Type == tea.KeyRunes {
-			if m.focus == 0 {
-				m.username += string(msg.Runes)
-			} else {
-				m.password += string(msg.Runes)
-			}
-		}
+		return m, nil
+	}
+	// Everything else (caret movement, backspace/delete, runes) edits the
+	// focused field.
+	if m.focus == 0 {
+		m.username.handleKey(msg)
+	} else {
+		m.password.handleKey(msg)
 	}
 	return m, nil
 }
@@ -115,8 +118,8 @@ func (m USBBootModel) View() string {
 	b.WriteString(detailStyle.Render("Make sure the USB stick is plugged into the server first. Sign in with the") + "\n")
 	b.WriteString(detailStyle.Render("box admin login; this sets a one-shot UEFI boot to the USB and reboots it.") + "\n\n")
 
-	b.WriteString(fieldRow("Username", m.username, m.focus == 0, false) + "\n")
-	b.WriteString(fieldRow("Password", m.password, m.focus == 1, true) + "\n")
+	b.WriteString(m.username.render("Username", m.focus == 0) + "\n")
+	b.WriteString(m.password.render("Password", m.focus == 1) + "\n")
 
 	if m.submitting {
 		b.WriteString("\n" + detailStyle.Render("Signing in and setting USB boot…") + "\n")

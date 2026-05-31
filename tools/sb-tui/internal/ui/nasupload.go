@@ -28,7 +28,7 @@ type nasUploadResultMsg struct {
 type NasUploadModel struct {
 	width, height int
 
-	path, ftpHost, ftpUser, ftpPass string
+	path, ftpHost, ftpUser, ftpPass textInput
 	focus                           int // 0 path, 1 host, 2 user, 3 password
 	submitting                      bool
 	status                          string
@@ -44,7 +44,12 @@ func NewNasUpload() NasUploadModel {
 	if host == "" {
 		host = "192.168.178.1" // FritzBox's default LAN IP — a sensible starting guess
 	}
-	return NasUploadModel{ftpHost: host, ftpUser: c.User, ftpPass: c.Password}
+	return NasUploadModel{
+		path:    newTextInput("", false),
+		ftpHost: newTextInput(host, false),
+		ftpUser: newTextInput(c.User, false),
+		ftpPass: newTextInput(c.Password, true),
+	}
 }
 
 // fieldHints explains the focused field, so the operator isn't guessing what
@@ -57,7 +62,7 @@ var fieldHints = [nasUploadFields]string{
 }
 
 func (m NasUploadModel) uploadCmd() tea.Cmd {
-	path, host, user, pass := m.path, m.ftpHost, m.ftpUser, m.ftpPass
+	path, host, user, pass := m.path.Value(), m.ftpHost.Value(), m.ftpUser.Value(), m.ftpPass.Value()
 	return func() tea.Msg {
 		tar, err := habackup.ExtractAndFilter(path, habackup.HomeAssistantIncludes)
 		if err != nil {
@@ -107,41 +112,36 @@ func (m NasUploadModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, backCmd()
 	case "tab", "down":
 		m.focus = (m.focus + 1) % nasUploadFields
+		return m, nil
 	case "up", "shift+tab":
 		m.focus = (m.focus - 1 + nasUploadFields) % nasUploadFields
+		return m, nil
 	case "enter":
-		if m.path != "" && m.ftpHost != "" && m.ftpUser != "" && m.ftpPass != "" {
+		if m.path.Value() != "" && m.ftpHost.Value() != "" && m.ftpUser.Value() != "" && m.ftpPass.Value() != "" {
 			m.submitting, m.status = true, ""
 			return m, m.uploadCmd()
 		}
 		m.focus = (m.focus + 1) % nasUploadFields
-	case "backspace":
-		m.editFocused(func(s string) string {
-			if s == "" {
-				return s
-			}
-			return s[:len(s)-1]
-		})
-	default:
-		if msg.Type == tea.KeyRunes {
-			r := string(msg.Runes)
-			m.editFocused(func(s string) string { return s + r })
-		}
+		return m, nil
 	}
+	// Everything else (caret movement, backspace/delete, runes) edits the
+	// focused field.
+	m.focusedField().handleKey(msg)
 	return m, nil
 }
 
-// editFocused applies edit to whichever field has focus.
-func (m *NasUploadModel) editFocused(edit func(string) string) {
+// focusedField returns a pointer to whichever field has focus, so caret edits
+// land on it.
+func (m *NasUploadModel) focusedField() *textInput {
 	switch m.focus {
 	case 0:
-		m.path = edit(m.path)
+		return &m.path
 	case 1:
-		m.ftpHost = edit(m.ftpHost)
+		return &m.ftpHost
 	case 2:
-		m.ftpUser = edit(m.ftpUser)
-	case 3:
-		m.ftpPass = edit(m.ftpPass)
+		return &m.ftpUser
+	default:
+		return &m.ftpPass
 	}
 }
 
@@ -157,10 +157,10 @@ func (m NasUploadModel) View() string {
 	b.WriteString(detailStyle.Render("Backup: a Home Assistant OS (Supervisor) backup .tar from Settings → Backups.") + "\n")
 	b.WriteString(detailStyle.Render("It's extracted + filtered locally (config only, no DB) and sent straight to the NAS.") + "\n\n")
 
-	b.WriteString(fieldRow("HA backup .tar", m.path, m.focus == 0, false) + "\n")
-	b.WriteString(fieldRow("FritzBox host", m.ftpHost, m.focus == 1, false) + "\n")
-	b.WriteString(fieldRow("FritzBox FTP user", m.ftpUser, m.focus == 2, false) + "\n")
-	b.WriteString(fieldRow("FritzBox FTP password", m.ftpPass, m.focus == 3, true) + "\n")
+	b.WriteString(m.path.render("HA backup .tar", m.focus == 0) + "\n")
+	b.WriteString(m.ftpHost.render("FritzBox host", m.focus == 1) + "\n")
+	b.WriteString(m.ftpUser.render("FritzBox FTP user", m.focus == 2) + "\n")
+	b.WriteString(m.ftpPass.render("FritzBox FTP password", m.focus == 3) + "\n")
 
 	// Contextual help for whichever field is focused — so no field is a guess.
 	b.WriteString("\n" + detailStyle.Render("→ "+fieldHints[m.focus]) + "\n")
