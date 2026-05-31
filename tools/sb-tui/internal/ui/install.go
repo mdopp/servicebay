@@ -7,6 +7,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -48,13 +49,16 @@ type InstallModel struct {
 	checked map[int]bool
 	cursor  int
 
-	jobID   string
-	offset  int
-	phase   string
-	percent int
-	logTail []string
-	failed  bool
-	errMsg  string // populated in stageError / failed
+	jobID    string
+	offset   int
+	phase    string
+	current  string // item being deployed right now
+	deployed int
+	total    int
+	percent  int
+	logTail  []string
+	failed   bool
+	errMsg   string // populated in stageError / failed
 }
 
 type stacksLoadedMsg struct {
@@ -151,6 +155,7 @@ func (m InstallModel) applyProgress(msg progressMsg) (tea.Model, tea.Cmd) {
 	m.errMsg = "" // a successful poll clears any earlier transient poll error
 	p := msg.p
 	m.phase, m.percent, m.offset = p.Phase, p.Percent, p.NextOffset
+	m.current, m.deployed, m.total = p.CurrentItem, p.Deployed, p.Total
 	if p.NewLogs != "" {
 		for _, line := range strings.Split(strings.TrimRight(p.NewLogs, "\n"), "\n") {
 			if line != "" {
@@ -283,7 +288,14 @@ func tierSuffix(s rest.Stack) string {
 }
 
 func (m InstallModel) viewInstalling(b *strings.Builder, width int) {
-	b.WriteString(phaseStyle.Render("Installing — "+phaseLabel(m.phase)) + "\n")
+	head := "Installing — " + phaseLabel(m.phase)
+	if m.current != "" {
+		head += ": " + m.current
+	}
+	if m.total > 0 {
+		head += fmt.Sprintf("  (%d/%d)", m.deployed, m.total)
+	}
+	b.WriteString(phaseStyle.Render(head) + "\n")
 	b.WriteString(detailStyle.Render(progressBar(m.percent, min(width-8, 40))) + "\n\n")
 
 	// The box paused for config (passwords/variables) the TUI can't collect yet.
