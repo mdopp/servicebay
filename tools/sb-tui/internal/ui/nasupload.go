@@ -87,7 +87,7 @@ var fieldHints = [nasUploadFields]string{
 }
 
 func (m NasUploadModel) uploadCmd() tea.Cmd {
-	path, host, user, pass := expandHome(m.path.Value()), m.ftpHost.Value(), m.ftpUser.Value(), m.ftpPass.Value()
+	path, host, user, pass := resolvePath(m.path.Value()), m.ftpHost.Value(), m.ftpUser.Value(), m.ftpPass.Value()
 	return func() tea.Msg {
 		tar, err := habackup.ExtractAndFilter(path, habackup.HomeAssistantIncludes)
 		if err != nil {
@@ -255,12 +255,20 @@ func (m NasUploadModel) selectedCandidate() (habackup.Candidate, bool) {
 
 // pathIsFile reports whether v names an existing regular file.
 func pathIsFile(v string) bool {
-	v = strings.TrimSpace(v)
-	if v == "" {
+	if strings.TrimSpace(v) == "" {
 		return false
 	}
-	info, err := os.Stat(expandHome(v))
+	info, err := os.Stat(resolvePath(v))
 	return err == nil && info.Mode().IsRegular()
+}
+
+// resolvePath turns typed text into a path the OS can open: it trims surrounding
+// whitespace, drops a stray leading ":" (never valid at the start of a path — an
+// easy fat-finger), and expands a leading ~ to the home dir.
+func resolvePath(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, ":")
+	return expandHome(v)
 }
 
 // View renders the form.
@@ -342,7 +350,7 @@ func candidateRow(c habackup.Candidate, selected bool) string {
 	if c.IsHA {
 		mark = "✓"
 	}
-	name := filepath.Base(c.Path)
+	name := truncName(filepath.Base(c.Path), 40)
 	meta := fmt.Sprintf("%s · %s · %s", abbrevHome(filepath.Dir(c.Path)), humanSize(c.Size), fmtAge(time.Since(c.Mod)))
 	if selected {
 		return selectedStyle.Render("❯ " + mark + " " + name + "   " + meta)
@@ -369,6 +377,16 @@ func expandHome(p string) string {
 		return filepath.Join(home, p[2:])
 	}
 	return p
+}
+
+// truncName shortens a filename to max runes with a trailing ellipsis, so a long
+// backup name can't wrap the picker row.
+func truncName(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
 }
 
 // fmtAge renders how long ago a file was modified, compactly: "just now",

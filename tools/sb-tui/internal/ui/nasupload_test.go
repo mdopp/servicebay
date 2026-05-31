@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -8,6 +10,26 @@ import (
 
 	"servicebay-tui/internal/habackup"
 )
+
+// TestResolvePath: typed paths are made openable — whitespace trimmed, a stray
+// leading colon dropped, and ~ expanded (the bug behind "open :~/…: no such file").
+func TestResolvePath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	cases := map[string]string{
+		"  ~/x.tar ":  filepath.Join(home, "x.tar"),
+		":~/x.tar":    filepath.Join(home, "x.tar"),
+		"/abs/x.tar":  "/abs/x.tar",
+		":/abs/x.tar": "/abs/x.tar",
+	}
+	for in, want := range cases {
+		if got := resolvePath(in); got != want {
+			t.Errorf("resolvePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
 
 func sampleCandidates() []habackup.Candidate {
 	return []habackup.Candidate{

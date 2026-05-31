@@ -24,13 +24,24 @@ type Candidate struct {
 }
 
 const (
-	scanMaxDepth = 2   // how deep below each root to descend
+	scanMaxDepth = 3   // how deep below each root to descend
 	scanMaxFiles = 400 // hard cap on .tar files examined, to bound pathological trees
 	scanMaxPeek  = 40  // only validate the newest N as HA backups (peeking opens the tar)
 )
 
+// buildDir mirrors probes.BuildDir (kept duplicated to avoid an import cycle):
+// SB_BUILD_DIR, else ./build/fcos. It's where ServiceBay stages its own
+// artifacts, and a place operators drop backups, so it's an explicit scan root.
+func buildDir() string {
+	if d := os.Getenv("SB_BUILD_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join("build", "fcos")
+}
+
 // candidateRoots is the set of likely places an operator's backup .tar lives:
-// the browser's download dir, home, the current dir, and removable-media mounts.
+// the browser's download dir, home, the current dir, the ServiceBay build dir,
+// and removable-media mounts.
 func candidateRoots() []string {
 	var roots []string
 	if home, err := os.UserHomeDir(); err == nil {
@@ -39,6 +50,7 @@ func candidateRoots() []string {
 	if cwd, err := os.Getwd(); err == nil {
 		roots = append(roots, cwd)
 	}
+	roots = append(roots, buildDir())
 	return append(roots, "/media", "/run/media", "/mnt")
 }
 

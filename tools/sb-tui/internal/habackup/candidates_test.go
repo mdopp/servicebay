@@ -45,6 +45,19 @@ func TestIsHABackup(t *testing.T) {
 	}
 }
 
+func TestCandidateRootsIncludesBuildDir(t *testing.T) {
+	t.Setenv("SB_BUILD_DIR", "/tmp/sb-build-xyz")
+	found := false
+	for _, r := range candidateRoots() {
+		if r == "/tmp/sb-build-xyz" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("candidateRoots should include SB_BUILD_DIR, got %v", candidateRoots())
+	}
+}
+
 func TestScanDirsNewestFirstAndFlagsHA(t *testing.T) {
 	root := t.TempDir()
 	sub := filepath.Join(root, "sub")
