@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, Github, Users, ExternalLink, Sparkles, Home, Wrench, User as UserIcon, LogOut } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
+import DomainTag from './DomainTag';
 import { typedFetch, InstallStatusResponseSchema } from '@servicebay/api-client';
 import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
 
@@ -285,6 +286,11 @@ export default function Sidebar() {
                     )}
                 </div>
             )}
+            {/* Where this ServiceBay lives — "<user> on <domain>" (#249,
+                relocated here from the page header's ModeBadge). */}
+            <div className={isCollapsed ? '' : 'px-3.5 py-0.5'}>
+                <DomainTag username={currentUser ? currentUser.username : null} collapsed={isCollapsed} />
+            </div>
             {currentUser && (
                 <button
                     type="button"
