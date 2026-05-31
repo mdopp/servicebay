@@ -53,14 +53,26 @@ describe('provisionPortalRouting', () => {
     expect(ensureWildcardRewrite).not.toHaveBeenCalled();
   });
 
-  it('reports failed (worth retrying) when AdGuard is up but its creds are not written yet', async () => {
-    // AdGuard deployed and active, but no creds in config → a real,
-    // transient cold-start condition the retry loop should keep hitting.
-    state.services = [{ name: 'adguard', active: true }];
+  it('reports failed (worth retrying) when AdGuard is part of the install but not ready yet', async () => {
+    // AdGuard deployed but still cold-starting (active:false) and no creds
+    // written yet → a real, transient condition the retry loop should keep
+    // hitting. Existence, not active-state, is what marks it as "ours".
+    state.services = [{ name: 'adguard', active: false }];
     const res = await provisionPortalRouting();
     expect(res.ok).toBe(false);
     expect(Object.values(res.rewrites!)).toEqual(['failed', 'failed', 'failed']);
     expect(res.detail).toContain('dopp.cloud:failed');
+    expect(res.detail).not.toMatch(/nothing to wire up/i);
+  });
+
+  it('reports proxy failed (not skipped) when nginx is installed but not yet active', async () => {
+    // The reverse proxy was installed but is still starting — must not be
+    // reported as "nothing to wire up".
+    state.services = [{ name: 'nginx', active: false }];
+    const res = await provisionPortalRouting();
+    expect(res.ok).toBe(false);
+    expect(res.proxyHost).toBe('failed');
+    expect(res.detail).not.toMatch(/nothing to wire up/i);
   });
 
   it('writes the apex/www/wildcard rewrites once AdGuard creds are present', async () => {

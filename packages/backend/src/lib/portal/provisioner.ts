@@ -111,9 +111,12 @@ async function provisionNpmProxyHost(domain: string): Promise<ProvisionResult['p
     const nginx = services.find(s =>
       s.name === 'nginx' || s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
     );
-    if (!nginx?.active) {
-      return 'skipped';
-    }
+    // No nginx in this install → nothing to wire up ('skipped'). nginx
+    // deployed but not up yet → 'failed' so the retry loop keeps trying
+    // and an honest warning fires if it never comes up — we must not
+    // pretend there's nothing to do when the operator installed it.
+    if (!nginx) return 'skipped';
+    if (!nginx.active) return 'failed';
   } catch {
     return 'skipped';
   }
@@ -161,21 +164,23 @@ async function provisionNpmProxyHost(domain: string): Promise<ProvisionResult['p
   }
 }
 
-/** Whether an AdGuard service is actually deployed and running on this
- *  node. Mirrors the nginx check in {@link provisionNpmProxyHost}: it
- *  lets us tell "AdGuard isn't part of this install" (→ rewrites are
- *  'skipped', nothing to do) apart from "AdGuard is up but the rewrite
- *  POST failed / its creds aren't written yet" (→ 'failed', worth a
- *  retry + warning). Without this split a minimal install that never
- *  deployed AdGuard reported every rewrite as 'failed' and lit up the
- *  alarming "Portal routing did not fully provision" warning on a
- *  perfectly healthy fresh box. */
+/** Whether an AdGuard service is part of this install at all — i.e. a
+ *  matching service *exists*, regardless of whether it's active yet.
+ *  Mirrors the nginx check in {@link provisionNpmProxyHost}: it lets us
+ *  tell "AdGuard isn't part of this install" (→ rewrites 'skipped',
+ *  nothing to do) apart from "AdGuard is being installed but isn't ready
+ *  yet / its creds aren't written" (→ 'failed', worth a retry + an
+ *  honest warning).
+ *
+ *  Existence — NOT `active` — is the right signal: during a fresh
+ *  install AdGuard is deployed but may still be cold-starting when this
+ *  runs, and treating that as "not installed" would falsely report
+ *  "nothing to wire up" for an install that explicitly included it. */
 async function isAdguardDeployed(): Promise<boolean> {
   try {
     const services = await ServiceManager.listServices('Local');
     return services.some(s =>
-      (s.name === 'adguard' || s.name === 'adguardhome' || (s.name.includes('adguard') && !s.name.startsWith('install-')))
-      && s.active,
+      s.name === 'adguard' || s.name === 'adguardhome' || (s.name.includes('adguard') && !s.name.startsWith('install-')),
     );
   } catch {
     return false;

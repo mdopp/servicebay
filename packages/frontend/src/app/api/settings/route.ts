@@ -63,6 +63,16 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
       ...currentConfig.notifications,
       ...validated.notifications,
     } : currentConfig.notifications,
+    // Deep-merge reverseProxy (same one-level merge as notifications) so a
+    // caller sending a single nested field — e.g. the sb-tui edit-config
+    // panel writing `{ reverseProxy: { publicDomain } }` — doesn't blow
+    // away the rest of the block (npm creds, lanDomain, lanIp). The web UI
+    // edits the domain via its own server action / /api/system/mode, not
+    // here, so this never narrows an existing caller.
+    reverseProxy: validated.reverseProxy ? {
+      ...currentConfig.reverseProxy,
+      ...validated.reverseProxy,
+    } : currentConfig.reverseProxy,
   };
 
   await saveConfig(newConfig);
