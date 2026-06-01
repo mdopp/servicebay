@@ -26,7 +26,7 @@ You may **read** anything (source, tests, diffs, the changelog) to understand a 
 
 ### Hard boundary against the builder
 
-- **Never touch `packages/**`, `tools/**`, `scripts/**`, `.claude/skills/**`, `.claude/state/autoloop-state.json`, or any file outside the fileset above.** Those are the builder's. Editing them risks a working-tree collision and a lost commit.
+- **Never touch `packages/**`, `tools/**`, `scripts/**`, `.claude/skills/**`, `.claude/state/work-queue.json` (the pipeline's shared queue), or any file outside the fileset above.** Those are the builder's. Editing them risks a working-tree collision and a lost commit.
 - **Never bump versions / edit `CHANGELOG.md`, `package.json`, `.release-please-manifest.json`.** release-please owns those (memory: *"NEVER manually bump versions"*). You *read* `CHANGELOG.md` to know what shipped; you never write it.
 - **Never merge or touch the builder's in-flight PRs/branches.** You only open and merge your own `docs/*` branches.
 
@@ -42,7 +42,7 @@ Every `ScheduleWakeup` from this skill uses **`delaySeconds: 480` (8 minutes) or
 
 ## State file
 
-Track progress at `.claude/state/docs-coherence-state.json` (note: a **separate** file from the builder's `autoloop-state.json`, so the two loops never write the same state). Shape:
+Track progress at `.claude/state/docs-coherence-state.json` (note: a **separate** file from the pipeline's `work-queue.json`, so the two loops never write the same state). Shape:
 
 ```json
 {

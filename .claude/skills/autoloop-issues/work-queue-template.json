@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "started": null,
+  "last_invocation": null,
+  "batch": null,
+  "queue": [],
+  "in_progress": null,
+  "needs_refinement": [],
+  "awaiting_user": [],
+  "review": [],
+  "blocked": [],
+  "box_verify": null,
+  "completed": [],
+  "lint_sweep": [],
+  "release_warnings": [],
+  "last_codebase_eval": null,
+  "notes": []
+}
