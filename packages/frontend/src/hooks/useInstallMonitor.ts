@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
+import { latestPostDeployProgress, type PostDeployProgress } from '@/components/postDeployProgress';
 
 // Lenient schemas — only the fields the Home install card reads. The
 // canonical job shape lives in @/lib/install/jobStore; passthrough keeps
@@ -45,6 +46,13 @@ export interface InstallMonitorState {
   percent: number;
   needsCredentials: boolean;
   logs: string[];
+  /**
+   * Latest structured progress emitted by the current item's post-deploy
+   * script (e.g. an OSCAR `ollama` model pull), parsed out of the log tail.
+   * `null` when no progress line is in flight — the card renders the bar
+   * only while a post-deploy phase is reporting (#1288).
+   */
+  postDeployProgress: PostDeployProgress | null;
 }
 
 const ACTIVE_POLL_MS = 1500;
@@ -131,6 +139,10 @@ export function useInstallMonitor(): { state: InstallMonitorState | null; skipCr
         percent: total > 0 ? Math.floor((deployed * 100) / total) : 0,
         needsCredentials: d.job.phase === 'needs_credentials' || !!d.job.needsCredentials,
         logs: logsRef.current.slice(-12),
+        // Scan the fuller buffer, not just the visible tail: a post-deploy
+        // progress tick is throttled (~15s) and can scroll past the last 12
+        // log lines during a busy model pull, but the bar should persist.
+        postDeployProgress: latestPostDeployProgress(logsRef.current),
       });
     };
 

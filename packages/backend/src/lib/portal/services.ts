@@ -27,7 +27,7 @@ import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getTemplateUserGuide } from '@/lib/registry';
 import { logger } from '@/lib/logger';
-import { parseUserGuide, type PortalIconName, type RecommendedApp, type SetupAsset } from './userGuide';
+import { parseUserGuide, type PortalIconName, type RecommendedApp, type SetupAsset, type ManualPairing } from './userGuide';
 
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 
@@ -57,6 +57,10 @@ export interface PortalCard {
   body: string;
   recommendedApps: RecommendedApp[];
   setupAssets: SetupAsset[];
+  /** Static "manual action required" steps — inherently-interactive
+   *  pairing the operator runs by hand (e.g. `signal-cli link`).
+   *  Informational only; the portal shows the command, not a runner. */
+  manualPairing: ManualPairing[];
 }
 
 /** Read a template's variables.json (best-effort, returns empty record on miss).
@@ -189,6 +193,7 @@ async function buildPortalCardEntry(
     tagline?: string;
     recommended_apps?: RecommendedApp[];
     setup_assets?: SetupAsset[];
+    manual_pairing?: ManualPairing[];
   },
   templateLabel: string,
   parsedBody: string,
@@ -211,6 +216,7 @@ async function buildPortalCardEntry(
     body: parsedBody,
     recommendedApps: def.recommended_apps ?? [],
     setupAssets: def.setup_assets ?? [],
+    manualPairing: def.manual_pairing ?? [],
   };
 }
 
@@ -254,6 +260,7 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
         tagline: parsed.frontmatter.tagline,
         recommended_apps: parsed.frontmatter.recommended_apps,
         setup_assets: parsed.frontmatter.setup_assets,
+        manual_pairing: parsed.frontmatter.manual_pairing,
       }];
 
     for (const def of cardDefs) {

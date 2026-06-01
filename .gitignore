@@ -67,3 +67,6 @@ secret.key
 
 # docs-coherence parallel agent worktree (see .claude/skills/docs-coherence)
 .docs-coherence-worktree/
+
+# Playwright e2e run artifacts
+test-results/
