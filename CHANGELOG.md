@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.76.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.75.0...servicebay-v4.76.0) (2026-06-01)
+
+
+### Features
+
+* **autoloop:** mirror blocked / needs-refinement / box_verify to GitHub labels ([d4ed323](https://github.com/mdopp/servicebay/commit/d4ed323444a10ae5e94bfd9f2eca2f877b26a250))
+* **autoloop:** mirror blocked / needs-refinement / box_verify to GitHub labels ([bc02208](https://github.com/mdopp/servicebay/commit/bc022089a941d81a402bb0afdce03adcd32bab15))
+* **backup:** nightly + on-demand triggers for FritzBox NAS config backup ([3ee5ebd](https://github.com/mdopp/servicebay/commit/3ee5ebde683825331af2a74e97534906af8e6abf)), closes [#1217](https://github.com/mdopp/servicebay/issues/1217)
+* install secret regen, PUBLIC_DOMAIN prefill, nightly NAS backup + lint sweeps ([a1ad9ed](https://github.com/mdopp/servicebay/commit/a1ad9ed20608050c2c07f76d6055c909b8460093))
+
+
+### Bug Fixes
+
+* **health:** extract helpers to clear lint warnings ([f20cb0c](https://github.com/mdopp/servicebay/commit/f20cb0c19d49ea5b9efa564f894049f42e51faf6))
+* **install:** pre-fill PUBLIC_DOMAIN from reverseProxy.publicDomain + add help text ([fb3753f](https://github.com/mdopp/servicebay/commit/fb3753fa1cd161c1b96229be2ff8ab211f65b2e7)), closes [#1252](https://github.com/mdopp/servicebay/issues/1252)
+* **install:** regenerate secret.key + .auth-secret.env after stack reset wipe ([333c28e](https://github.com/mdopp/servicebay/commit/333c28eecb0231645936a828c7dd3f906bf48b7b)), closes [#1246](https://github.com/mdopp/servicebay/issues/1246)
+
 ## [4.75.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.74.0...servicebay-v4.75.0) (2026-06-01)
 
 
