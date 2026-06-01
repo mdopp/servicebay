@@ -22,6 +22,31 @@ export type RouterCallResult = {
 };
 
 /**
+ * Build the DHCP DNS SOAP payload and credentials for FritzBox.
+ * Extracted from setFritzBoxDhcpDns to reduce function size.
+ */
+function buildDhcpDnsPayload(
+  targetIp: string,
+  gateway: { host: string; username?: string; password?: string; ssl?: boolean },
+): {
+  url: string;
+  body: string;
+  auth: string;
+} {
+  const url = `${gateway.ssl ? 'https' : 'http'}://${gateway.host}:${gateway.ssl ? 49443 : 49000}/upnp/control/lanhostconfigmgm`;
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:SetDNSServers xmlns:u="urn:dslforum-org:service:LANHostConfigManagement:1">
+<NewDNSServers>${targetIp}</NewDNSServers>
+</u:SetDNSServers>
+</s:Body>
+</s:Envelope>`;
+  const auth = `Basic ${Buffer.from(`${gateway.username}:${gateway.password}`).toString('base64')}`;
+  return { url, body, auth };
+}
+
+/**
  * Tell the FritzBox to hand out `targetIp` as the DHCP DNS server
  * (option 6) on the LAN — typically AdGuard's IP. Returns
  * `'ok' | 'no_gateway' | 'no_credentials' | 'failed'` so the action
@@ -50,27 +75,7 @@ export async function setFritzBoxDhcpDns(targetIp: string): Promise<RouterCallRe
   });
 
   try {
-    // FritzBox's `LANHostConfigManagement.SetDNSServers` accepts a
-    // comma-separated list; passing just our target IP makes it the
-    // sole DHCP-handed DNS server. Devices on existing leases keep
-    // their old DNS until the lease renews (typically a few hours
-    // on the FritzBox default of 24h).
-    //
-    // Reflection access: FritzBoxClient doesn't expose soapRequest
-    // publicly today; for the v1 we shell out to the same SOAP
-    // endpoint via fetch. Once this stabilizes we can move it onto
-    // the client class proper.
-    const url = `${gateway.ssl ? 'https' : 'http'}://${gateway.host}:${gateway.ssl ? 49443 : 49000}/upnp/control/lanhostconfigmgm`;
-    const body = `<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-<s:Body>
-<u:SetDNSServers xmlns:u="urn:dslforum-org:service:LANHostConfigManagement:1">
-<NewDNSServers>${targetIp}</NewDNSServers>
-</u:SetDNSServers>
-</s:Body>
-</s:Envelope>`;
-
-    const auth = `Basic ${Buffer.from(`${gateway.username}:${gateway.password}`).toString('base64')}`;
+    const { url, body, auth } = buildDhcpDnsPayload(targetIp, gateway);
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -100,6 +105,43 @@ export async function setFritzBoxDhcpDns(targetIp: string): Promise<RouterCallRe
       detail: e instanceof Error ? e.message : String(e),
     };
   }
+}
+
+/**
+ * Build WAN DNS SOAP payload and credentials for FritzBox.
+ * Extracted from setFritzBoxWanDns to reduce function size.
+ */
+function buildWanDnsPayload(
+  targetIp: string,
+  gateway: { host: string; username?: string; password?: string; ssl?: boolean },
+): {
+  scheme: string;
+  port: number;
+  auth: string;
+  attempts: Array<{ serviceType: string; controlUrl: string }>;
+} {
+  const scheme = gateway.ssl ? 'https' : 'http';
+  const port = gateway.ssl ? 49443 : 49000;
+  const auth = `Basic ${Buffer.from(`${gateway.username}:${gateway.password}`).toString('base64')}`;
+  const attempts = [
+    { serviceType: 'urn:dslforum-org:service:WANIPConnection:1', controlUrl: '/upnp/control/wanipconnection1' },
+    { serviceType: 'urn:dslforum-org:service:WANPPPConnection:1', controlUrl: '/upnp/control/wanpppconn1' },
+  ];
+  return { scheme, port, auth, attempts };
+}
+
+/**
+ * Build SOAP body for WAN DNS SetDNSServers call.
+ */
+function buildWanDnsSoapBody(targetIp: string, serviceType: string): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:SetDNSServers xmlns:u="${serviceType}">
+<NewDNSServers>${targetIp}</NewDNSServers>
+</u:SetDNSServers>
+</s:Body>
+</s:Envelope>`;
 }
 
 /**
@@ -136,26 +178,12 @@ export async function setFritzBoxWanDns(targetIp: string): Promise<RouterCallRes
     };
   }
 
-  const scheme = gateway.ssl ? 'https' : 'http';
-  const port = gateway.ssl ? 49443 : 49000;
-  const auth = `Basic ${Buffer.from(`${gateway.username}:${gateway.password}`).toString('base64')}`;
-  const attempts: Array<{ serviceType: string; controlUrl: string }> = [
-    { serviceType: 'urn:dslforum-org:service:WANIPConnection:1', controlUrl: '/upnp/control/wanipconnection1' },
-    { serviceType: 'urn:dslforum-org:service:WANPPPConnection:1', controlUrl: '/upnp/control/wanpppconn1' },
-  ];
-
+  const { scheme, port, auth, attempts } = buildWanDnsPayload(targetIp, gateway);
   const errors: string[] = [];
   for (const a of attempts) {
     try {
       const url = `${scheme}://${gateway.host}:${port}${a.controlUrl}`;
-      const body = `<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-<s:Body>
-<u:SetDNSServers xmlns:u="${a.serviceType}">
-<NewDNSServers>${targetIp}</NewDNSServers>
-</u:SetDNSServers>
-</s:Body>
-</s:Envelope>`;
+      const body = buildWanDnsSoapBody(targetIp, a.serviceType);
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -190,6 +218,82 @@ export async function setFritzBoxWanDns(targetIp: string): Promise<RouterCallRes
 }
 
 /**
+ * Build SOAP payload for WAN ForceTermination call.
+ */
+function buildForceTerminationPayload(
+  gateway: { host: string; username?: string; password?: string; ssl?: boolean },
+): {
+  port: number;
+  scheme: string;
+  attempts: Array<{ serviceType: string; controlUrl: string }>;
+} {
+  const port = gateway.ssl ? 49443 : 49000;
+  const scheme = gateway.ssl ? 'https' : 'http';
+  const attempts = [
+    { serviceType: 'urn:dslforum-org:service:WANIPConnection:1', controlUrl: '/upnp/control/wanipconnection1' },
+    { serviceType: 'urn:dslforum-org:service:WANPPPConnection:1', controlUrl: '/upnp/control/wanpppconn1' },
+  ];
+  return { port, scheme, attempts };
+}
+
+/**
+ * Build SOAP body for ForceTermination call.
+ */
+function buildForceTerminationBody(serviceType: string): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:ForceTermination xmlns:u="${serviceType}"/>
+</s:Body>
+</s:Envelope>`;
+}
+
+/**
+ * Try ForceTermination on each WAN service endpoint.
+ * Extracted from reconnectFritzBox to reduce function size.
+ */
+async function waitForFritzBoxReconnect(
+  gateway: { host: string; username?: string; password?: string; ssl?: boolean },
+  port: number,
+  scheme: string,
+  attempts: Array<{ serviceType: string; controlUrl: string }>,
+): Promise<{ ok: boolean; errors: string[] }> {
+  const errors: string[] = [];
+  for (const attempt of attempts) {
+    try {
+      const url = `${scheme}://${gateway.host}:${port}${attempt.controlUrl}`;
+      const body = buildForceTerminationBody(attempt.serviceType);
+      const res = await fetchWithDigest(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/xml; charset=utf-8',
+            'SoapAction': `${attempt.serviceType}#ForceTermination`,
+          },
+          body,
+          signal: AbortSignal.timeout(8_000),
+        },
+        { username: gateway.username, password: gateway.password },
+      );
+      if (res.ok) {
+        logger.info('router:dnsConfig', `FritzBox ForceTermination accepted via ${attempt.serviceType}`);
+        return { ok: true, errors: [] };
+      }
+      const text = await res.text().catch(() => '');
+      if (res.status === 401) {
+        errors.push('401');
+        break;
+      }
+      errors.push(`${attempt.serviceType}: HTTP ${res.status} ${text.slice(0, 120)}`);
+    } catch (e) {
+      errors.push(`${attempt.serviceType}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { ok: false, errors };
+}
+
+/**
  * Force the FritzBox to drop its WAN connection and reconnect. The box
  * does this automatically within ~5–30s; on DSL/cable installs the
  * external IP usually changes, on FTTH/static-IP installs it doesn't.
@@ -208,10 +312,6 @@ export async function setFritzBoxWanDns(targetIp: string): Promise<RouterCallRes
  * Tries `WANIPConnection:1` first, falls back to `WANPPPConnection:1`
  * (DSL/PPPoE installs); whichever one the box exposes will accept the
  * `ForceTermination` action and return 200 with an empty body.
- *
- * Mirrors `setFritzBoxDhcpDns`'s credential resolution + result shape
- * so the calling probe-action handler doesn't need to know which
- * helper it invoked.
  */
 export async function reconnectFritzBox(): Promise<RouterCallResult> {
   const config = await getConfig();
@@ -226,56 +326,16 @@ export async function reconnectFritzBox(): Promise<RouterCallResult> {
     };
   }
 
-  const port = gateway.ssl ? 49443 : 49000;
-  const scheme = gateway.ssl ? 'https' : 'http';
-  // ForceTermination lives on whichever WAN-connection service the box
-  // actually publishes. The fixed paths below match every FritzBox
-  // firmware in the wild — the service-discovery dance in
-  // `FritzBoxClient.detectServiceType` is overkill for this one-shot
-  // call. We just try IP first, PPP as fallback.
-  const attempts: Array<{ serviceType: string; controlUrl: string }> = [
-    { serviceType: 'urn:dslforum-org:service:WANIPConnection:1', controlUrl: '/upnp/control/wanipconnection1' },
-    { serviceType: 'urn:dslforum-org:service:WANPPPConnection:1', controlUrl: '/upnp/control/wanpppconn1' },
-  ];
-  const errors: string[] = [];
-  for (const attempt of attempts) {
-    try {
-      const url = `${scheme}://${gateway.host}:${port}${attempt.controlUrl}`;
-      const body = `<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-<s:Body>
-<u:ForceTermination xmlns:u="${attempt.serviceType}"/>
-</s:Body>
-</s:Envelope>`;
-      const res = await fetchWithDigest(
-        url,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/xml; charset=utf-8',
-            'SoapAction': `${attempt.serviceType}#ForceTermination`,
-          },
-          body,
-          signal: AbortSignal.timeout(8_000),
-        },
-        { username: gateway.username, password: gateway.password },
-      );
-      if (res.ok) {
-        logger.info('router:dnsConfig', `FritzBox ForceTermination accepted via ${attempt.serviceType}`);
-        return { result: 'ok' };
-      }
-      const text = await res.text().catch(() => '');
-      // 401 = bad credentials — same for both services, no point retrying.
-      if (res.status === 401) {
-        return {
-          result: 'no_credentials',
-          detail: 'FritzBox rejected the TR-064 credentials. Re-check Settings → Gateway.',
-        };
-      }
-      errors.push(`${attempt.serviceType}: HTTP ${res.status} ${text.slice(0, 120)}`);
-    } catch (e) {
-      errors.push(`${attempt.serviceType}: ${e instanceof Error ? e.message : String(e)}`);
-    }
+  const { port, scheme, attempts } = buildForceTerminationPayload(gateway);
+  const { ok, errors } = await waitForFritzBoxReconnect(gateway, port, scheme, attempts);
+
+  if (ok) return { result: 'ok' };
+
+  if (errors[0] === '401') {
+    return {
+      result: 'no_credentials',
+      detail: 'FritzBox rejected the TR-064 credentials. Re-check Settings → Gateway.',
+    };
   }
   logger.warn('router:dnsConfig', `FritzBox reconnect failed: ${errors.join(' | ')}`);
   return {
