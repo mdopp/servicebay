@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.69.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.69.2...servicebay-v4.69.3) (2026-06-01)
+
+
+### Bug Fixes
+
+* **install:** warn when a pod-YAML variable renders empty ([15e300c](https://github.com/mdopp/servicebay/commit/15e300c52f053fb760dd3c204ff1051d6bc8ebbd))
+* **install:** warn when a pod-YAML variable renders empty ([e4c57b8](https://github.com/mdopp/servicebay/commit/e4c57b8fa3f58ca2c9771fc3b06ad2f165d24d79))
+
 ## [4.69.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.69.1...servicebay-v4.69.2) (2026-06-01)
 
 
