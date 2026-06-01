@@ -11,12 +11,21 @@ let socket: Socket;
  *  401 handler in DigitalTwinProvider. */
 const ANONYMOUS_PATHS = new Set(['/login', '/portal']);
 
+/** How long we wait for the *initial* connect to report `connected`
+ *  before forcing a fresh reconnect attempt (#1509). The dashboard's
+ *  hydration gate sits on "Connecting to ServiceBay" until `isConnected`
+ *  flips; a single stalled first connect (stale socket from a prior
+ *  navigation, a connect that never completed the handshake) left it
+ *  hung for 30s+ with only a hard reload as recovery. A bounded kick
+ *  turns that into a few-second self-recovery. */
+const INITIAL_CONNECT_RETRY_MS = 3000;
+
 export const useSocket = () => {
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
     if (!socket) {
-        socket = io({ path: '/socket.io' }); 
+        socket = io({ path: '/socket.io' });
     }
 
     function onConnect() {
@@ -63,9 +72,32 @@ export const useSocket = () => {
 
     if (socket.connected) {
         onConnect();
+    } else {
+        // The singleton socket persists across client-side navigations.
+        // If a prior mount left it disconnected (a connect that never
+        // completed, or an explicit disconnect), nothing re-initiates it
+        // on a fresh mount — the gate then hangs on the socket phase
+        // until a hard reload recreates the page. Kick the connect
+        // explicitly; `socket.connect()` is a no-op when already
+        // connecting/connected (#1509).
+        socket.connect();
     }
 
+    // Bounded retry on the *initial* connect: if the handshake hasn't
+    // reported `connected` within the window, force one fresh reconnect
+    // cycle. Socket.IO's own backoff handles repeated transport errors,
+    // but a connect that silently stalls before `connect`/`connect_error`
+    // fires isn't covered by that — this is the missing self-recovery the
+    // hydration gate needs (#1509).
+    const retryTimer = setTimeout(() => {
+      if (!socket.connected) {
+        socket.disconnect();
+        socket.connect();
+      }
+    }, INITIAL_CONNECT_RETRY_MS);
+
     return () => {
+      clearTimeout(retryTimer);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('connect_error', onConnectError);

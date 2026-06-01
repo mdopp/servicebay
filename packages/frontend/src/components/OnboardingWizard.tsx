@@ -1218,14 +1218,26 @@ export default function OnboardingWizard() {
               // Stalled-detection (#727): if the runner hasn't touched
               // the job state for STALL_THRESHOLD_MS we treat it as a
               // ghost lock left behind by a crashed session, and offer
-              // resume / start-fresh affordances instead of the
-              // ambiguous force-clear-or-switch-tab copy.
+              // resume / start-fresh affordances.
+              //
+              // We ONLY surface this banner when the job is stalled
+              // (#1503). A *live* install in progress is almost always
+              // the box's own first-boot install, not "another session
+              // racing you" — and the wizard already auto-attaches to any
+              // active job on open (see the status effect above), while
+              // the dashboard renders the live install directly. The old
+              // "Concurrent Pipeline Active / Force-clear lock" copy
+              // false-alarmed on the box's own install and offered a
+              // destructive force-clear over a healthy run, so it's gone:
+              // a non-stalled job shows nothing here and the operator
+              // follows the dashboard's integrated install view.
               const STALL_THRESHOLD_MS = 5 * 60_000;
               const updatedAt = status.installInProgress.updatedAt;
               const inactiveMs = updatedAt
                 ? Date.now() - new Date(updatedAt).getTime()
                 : 0;
               const stalled = inactiveMs >= STALL_THRESHOLD_MS;
+              if (!stalled) return null;
               const inactiveMin = Math.floor(inactiveMs / 60_000);
               return (
                 <div className="mb-10 p-6 rounded-[2rem] border border-amber-500/20 bg-amber-500/5 backdrop-blur-md animate-in slide-in-from-top-4 duration-700">
@@ -1234,47 +1246,42 @@ export default function OnboardingWizard() {
                         <AlertTriangle size={20} />
                     </div>
                     <h4 className="font-bold text-base">
-                      {stalled ? 'Previous install appears stalled' : 'Concurrent Pipeline Active'}
+                      Previous install appears stalled
                     </h4>
                   </div>
                   <p className="text-sm text-amber-200/70 leading-relaxed mb-6">
-                    {stalled
-                      ? `The install runner hasn't written to the job log in ~${inactiveMin} min, which usually means the previous session crashed before the run could finish. You can resume from where it left off, or clear the lock and start fresh.`
-                      : 'Another session is currently driving an installation. Racing two pipelines will corrupt the system state. Switch to the active tab or force-clear if it’s a ghost lock.'}
+                    {`The install runner hasn't written to the job log in ~${inactiveMin} min, which usually means the previous session crashed before the run could finish. You can resume from where it left off, or clear the lock and start fresh.`}
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
-                    {stalled && (
-                      <Button
-                        variant="outline"
-                        className="!py-2 !px-4 !text-xs !border-blue-500/40 hover:!bg-blue-500/10 text-blue-500"
-                        onClick={async () => {
-                          // Resume = attach this tab to the existing
-                          // job. The runner is still the source of
-                          // truth — we just re-subscribe to its log /
-                          // progress stream.
-                          await installFlow.attachToJob(status.installInProgress!.jobId);
-                          // attachToJob hydrates installFlow.phase from
-                          // the server's JobState — phase=running
-                          // drives stackInstallStep='installing' via
-                          // the derived union above.
-                          setCurrentStep('stacks');
-                        }}
-                      >
-                        Resume install
-                      </Button>
-                    )}
+                    <Button
+                      variant="outline"
+                      className="!py-2 !px-4 !text-xs !border-blue-500/40 hover:!bg-blue-500/10 text-blue-500"
+                      onClick={async () => {
+                        // Resume = attach this tab to the existing
+                        // job. The runner is still the source of
+                        // truth — we just re-subscribe to its log /
+                        // progress stream.
+                        await installFlow.attachToJob(status.installInProgress!.jobId);
+                        // attachToJob hydrates installFlow.phase from
+                        // the server's JobState — phase=running
+                        // drives stackInstallStep='installing' via
+                        // the derived union above.
+                        setCurrentStep('stacks');
+                      }}
+                    >
+                      Resume install
+                    </Button>
                     <Button
                       variant="outline"
                       className="!py-2 !px-4 !text-xs !border-amber-500/30 hover:!bg-amber-500/10 text-amber-500"
                       onClick={async () => {
-                        const verb = stalled ? 'Clear the stalled install and start fresh?' : 'Force-clear the install lock?';
-                        if (!confirm(verb)) return;
+                        if (!confirm('Clear the stalled install and start fresh?')) return;
                         await forceClearInstallLock();
                         const fresh = await checkOnboardingStatus();
                         setStatus(fresh);
                       }}
                     >
-                      {stalled ? 'Start fresh' : 'Force-clear lock'}
+                      Start fresh
                     </Button>
                   </div>
                 </div>
