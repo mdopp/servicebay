@@ -48,16 +48,8 @@ npx vitest run --changed   # tests transitively affected by this unit's changes
 - Body ends with `Closes #<N>` — **one line per member issue** for a cluster.
 - **No push, no PR, no CI.** Then update the queue: unit `status:"built"`, append member issues to `batch.units`, bump `batch.count` by the issue count, clear `in_progress`. Return.
 
-### Security-gate unit (`gate:"security"`) — the one exception to the batch branch
-A security fix must **not** ride the auto-merged batch. Build it on its **own** branch off `main`, run the fast gate, push, and open a **draft** PR:
-```bash
-git checkout main && git pull --ff-only && git checkout -b fix/issue-<N>-<slug>
-# implement, fast gate, commit (Closes #N)
-git push -u origin fix/issue-<N>-<slug>
-gh pr create --draft --title "<subject>" --body "<see PR body below>"
-gh issue edit <N> --add-label autoloop-open
-```
-Add `{issue, pr, reason:"security gate; draft PR #<n> awaiting human review"}` to `review[]`. **Never merge it.** Return to the batch branch state untouched.
+### `security: true` unit — full loop, flagged for post-deploy review
+A security/sensitive unit rides the batch **like any other unit** — implement it onto the batch branch, fast gate, commit with `Closes #<N>`, no draft, no separate branch. The only difference: it is **flagged** so the human reviews it after it deploys. At **seal** (step 4 below), append `{issue, pr, flag:"security", merged_at}` to `review[]` (the post-deploy review list) for each shipped `security:true` unit. `review[]` is informational — it never blocks the merge or the release.
 
 ### Lint-sweep unit
 Implement the one file/rule named in the unit. Size guard: **≤2 source files** (+ their `*.test.*`), **≤120 LOC net** (subtractive can be larger), one warning class or one file. If even a bite-size extraction won't fit, mark it in `blocked[]` (`"lint-sweep size guard exceeded; needs decomposition ticket"`) and return. Lint-sweep commits ride the batch branch like any other unit (no `Closes #`). Append `{file, rule}` context to `lint_sweep[]` at seal time.
@@ -115,7 +107,7 @@ gh pr checks <PR#> --watch
 ### 4. Hand off to Box-Verify
 If **any** merged file is under a path-mandated path (list below), set `box_verify = {sha:"<merge SHA>", status:"owed", detail:"<which paths>", since:<now>}`. The orchestrator will dispatch Box-Verify next; the release PR stays blocked until it's green. Otherwise leave `box_verify` as-is.
 
-Move the batch's units → `completed[]` (`{issue|unit, pr, gate, merged_at}`), mark lint-sweep entries in `lint_sweep[]`, and **reset `batch` to `null`**. Note: the release PR itself is merged later by the orchestrator preflight, *after* box-verify is green — not here.
+Move the batch's units → `completed[]` (`{issue|unit, pr, gate, merged_at}`), mark lint-sweep entries in `lint_sweep[]`, and **reset `batch` to `null`**. For every shipped `security:true` unit, also append `{issue, pr, flag:"security", merged_at}` to `review[]` (the human's post-deploy review list). Note: the release PR itself is merged later by the orchestrator preflight, *after* box-verify is green — not here.
 
 ### Path-mandated paths (trigger `box_verify=owed`)
 ```
@@ -136,8 +128,7 @@ packages/frontend/src/components/OnboardingWizard.tsx (or its decomposition)
 
 ## Never
 - Never run the full `npm test` per unit (that's the seal's job) — fast gate only mid-batch.
-- Never push / open a non-draft PR / trigger CI / merge while mid-batch (`count<8` and planned units remain).
-- Never merge a `security` unit, or put it on the batch branch.
+- Never push / open a PR / trigger CI / merge while mid-batch (`count<8` and planned units remain).
 - Never guess past an ambiguous issue — bounce to `needs_refinement[]`.
 - Never bump versions or edit `CHANGELOG.md`/`package.json`/the release manifest.
 - Never reply to external commenters; never post a comment without the AI marker.

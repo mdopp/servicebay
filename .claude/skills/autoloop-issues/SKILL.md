@@ -1,6 +1,6 @@
 ---
 name: autoloop-issues
-description: Orchestrates an autonomous issue-resolution pipeline — Planner → Builder → Box-Verify — coordinated through a shared work queue, spawning each stage as a fresh sub-agent so the loop session stays clean. Fast per-issue gates, expensive pipeline (CI + release + real-box /verify) once per batch. `security`-labelled issues open as draft and wait for human review. Resumable via .claude/state/work-queue.json. Use when the user asks to "burn down the backlog", "work the issues autonomously", or invokes /loop with this skill.
+description: Orchestrates an autonomous issue-resolution pipeline — Planner → Builder → Box-Verify — coordinated through a shared work queue, spawning each stage as a fresh sub-agent so the loop session stays clean. Fast per-issue gates, expensive pipeline (CI + release + real-box /verify) once per batch. `security`-labelled issues run the full loop too and are flagged in the deployed list for post-deploy review. Resumable via .claude/state/work-queue.json. Use when the user asks to "burn down the backlog", "work the issues autonomously", or invokes /loop with this skill.
 ---
 
 # Autoloop orchestrator
@@ -30,11 +30,11 @@ The user's recurring rules (in `~/.claude/projects/-home-mdopp-servicebay/memory
 `.claude/state/work-queue.json` is the single source of truth between stages. Stage agents read it, do their work, **write their results back into it**, and return a one-line summary. You re-read it after every spawn. Schema in `work-queue-template.json` (same dir); create from that template if absent.
 
 Key fields:
-- `queue[]` — **units** the builder consumes, in selection order. A unit is `{id, kind: "cluster"|"issue"|"lint-sweep", issues[], theme, region, scope, acceptance, gate: "normal"|"verify"|"security", status: "planned"|"in_progress"|"built"|"blocked", pr, notes}`. A cluster is the work-unit; its member issues never appear as standalone units.
+- `queue[]` — **units** the builder consumes, in selection order. A unit is `{id, kind: "cluster"|"issue"|"lint-sweep", issues[], theme, region, scope, acceptance, gate: "normal"|"verify", security: false, status: "planned"|"in_progress"|"built"|"blocked", pr, notes}`. A cluster is the work-unit; its member issues never appear as standalone units. `gate` is purely the verification level (path-mandated ⇒ `verify`); `security: true` flags a sensitive change for **post-deploy** review — it does **not** block the merge.
 - `batch` — the persistent integration branch: `{branch, units[], count, sealed}`. **Survives across firings.** Reset to `null` after its release PR merges.
 - `needs_refinement[]` — **the human's worklist.** `{issue, question, comment_url, since}`. The planner parks any issue it can't make actionable without a human decision here, with the *specific* question. This is the one queue a human is expected to drain.
 - `awaiting_user[]` — external human comment unanswered; `/comment-responder`'s job, never the pipeline's.
-- `review[]` — security-gate draft PRs awaiting human review; never auto-merged.
+- `review[]` — **your post-deploy review list**: `{issue, pr, flag, merged_at}` for shipped `security:true` (and other sensitive) changes. Informational — the loop merges and deploys them like anything else; this is just what you eyeball after the fact. **Not** a merge gate.
 - `box_verify` — `{sha, status: "owed"|"red"|"green", detail, since}`. Gates the release PR.
 - `blocked[]`, `completed[]`, `lint_sweep[]`, `release_warnings[]`, `last_codebase_eval`, `notes[]` — as before.
 
@@ -61,7 +61,7 @@ Pick **exactly one** stage this tick, by the first rule that matches, and spawn 
 1. **Box-Verify** — if `box_verify.status == "owed"` (a path-mandated change merged but isn't `:dev`-verified). Verifying clears the release gate, so it comes first.
 2. **Builder — seal** — if a `batch` exists and (`batch.count >= 8` **or** `queue[]` has no `status:"planned"` unit) and the batch isn't already merged. The builder pushes the accumulated branch, runs full gates + CI, merges, and sets `box_verify=owed` if any merged file was path-mandated.
 3. **Builder — build** — if `queue[]` has a `planned` unit and `batch.count < 8`. The builder implements the next unit onto the batch branch with fast gates only.
-4. **Planner** — if there is no actionable unit (queue has no `planned` units and no open batch to seal). The planner refills the queue: groom + cluster open issues, decompose epics, park refinement/awaiting-user/security, or (queue genuinely dry) enqueue lint-sweep units or run a codebase eval.
+4. **Planner** — if there is no actionable unit (queue has no `planned` units and no open batch to seal). The planner refills the queue: groom + cluster open issues, decompose epics, park refinement/awaiting-user (security issues become normal `security:true` units, not parked), or (queue genuinely dry) enqueue lint-sweep units or run a codebase eval.
 
 If a rule's preconditions are met but you're mid-batch (`batch.count < 8` and planned units remain), **never** jump to seal/verify/release — that's the prime-directive violation. Keep building.
 
@@ -77,7 +77,7 @@ The shared queue is .claude/state/work-queue.json — read it, write your result
 return ONE line: what you did + the queue mutations you made. Do not narrate.
 ```
 
-Builder mode (`build` vs `seal`) is passed in the context line. For the builder, also pass the gate (`normal`/`verify`/`security`) of the unit.
+Builder mode (`build` vs `seal`) is passed in the context line. For the builder, also pass the unit's `gate` (`normal`/`verify`) and `security` flag.
 
 After the agent returns: **re-read `work-queue.json`** (the agent is authoritative; trust the file, not the summary), append the agent's one-liner to your own running tally, and go back to Step 1.
 
@@ -122,7 +122,7 @@ Autoloop firing complete.
   Built this firing: <unit ids> → batch/<id> (count N/8)
   Merged batches:    PR #<n> (closes #a #b …)
   Box-verify:        green @ <sha> | owed | red (<detail>)
-  Security drafts:   #<pr> (#<issue>)
+  Review post-deploy: #<issue> (#<pr>) — security-flagged, shipped   ← eyeball these
   Needs refinement:  #<issue> — "<question>"   ← your worklist
   Awaiting user:     #<issue> (external comment)
 Next: <building #x | sealing batch | verifying | planner refill | idle heartbeat>.
@@ -134,7 +134,7 @@ The **Needs refinement** line is the point of the whole pipeline — it's what y
 
 1. A stage agent reports CI red twice on the same SHA with no code change between.
 2. Release-PR CI is red and preflight auto-merge failed twice (a regression hides under the bump — human eyes needed).
-3. `review[]` has >3 security drafts unreviewed (review backlog, not a code problem).
+3. _(reserved)_ — security changes no longer block the loop; they ship and are flagged in `review[]` for post-deploy review.
 4. Working tree was dirty at preflight on two consecutive firings (another session is active here).
 5. A box `/verify` failed twice on the same SHA with no change between, **or** the `:dev`→`:latest` flip-back failed (box must never be stranded on `:dev`).
 6. Both the planner's issue queue and lint set are empty **and** the codebase eval was run within the last ~5 firings (truly nothing mechanical left).

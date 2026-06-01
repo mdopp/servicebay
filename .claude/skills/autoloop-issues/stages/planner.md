@@ -32,7 +32,7 @@ Break it into bite-size child issues, filed in the repo, so the pipeline ships i
 - Comment the dependency DAG on the parent (AI marker) and keep the parent **open** as the tracking umbrella.
 
 ### Classification of build-ready survivors
-- **Security gate** (`security` label) → the unit's `gate` is `"security"`. The builder opens it as a **draft PR on its own branch** and never merges it; it lands in `review[]`. Keep security issues **solo** (don't cluster them with normal work, or the normal work waits on human review).
+- **Security/sensitive** (`security` label) → set `security: true` on the unit and gate it by path like anything else (`verify` if path-mandated, else `normal`). It runs the **full loop** — built, merged, verified, deployed — and is **flagged for post-deploy review** (lands in `review[]` at seal). It does **not** open as a draft and does **not** block the loop. Keep a security issue as its **own unit** (don't cluster it with unrelated work) so its deployed-review entry stays cleanly attributable.
 - **`oscar`-labelled** → triage first: if it's genuinely OSCAR-side (Hermes skills, `oscar-household` template, voice-gatekeeper), migrate it to `mdopp/oscar` and close it here (AI-marker comment). Keep only true ServiceBay glue (install path, asset-transport, MCP wiring SB owns) — then it's normal flow.
 - **Everything else** → `gate` is `"normal"`, unless its files are path-mandated (Step 3 of `builder.md` lists them) → `gate` is `"verify"`.
 
@@ -42,9 +42,9 @@ The payoff is collapsing N pipeline runs into one per cluster.
 - **Dedup / close-at-HEAD.** If the symptom file/line no longer matches or a merged PR already fixed it, close the issue with a one-line AI-marker comment linking the fix, and drop it. Only on clear evidence — don't guess.
 - **Cluster by code region / theme.** Group survivors touching the **same files or subsystem** (e.g. a frontend-layout cluster, an install/credential cluster, a diagnose-probe cluster). Cap at what stays reviewable: **≤4 issues / ≤~400 LOC net / one coherent theme**; beyond that, split into two clusters.
   - **Attribution must survive** — only cluster issues in-scope of each other, so a red CI points at one theme, not a random bisect. Don't cluster unrelated issues by default.
-  - **Gate inheritance** — a cluster's gate is the *strongest* member: any `verify` member ⇒ the cluster is `verify` (one box flip covers it); any `security` member ⇒ keep it solo (don't drag normal issues into human-review limbo).
+  - **Gate inheritance** — a cluster's `gate` is the *strongest* member: any `verify` member ⇒ the cluster is `verify` (one box flip covers it). A `security` issue is its own unit (not clustered), so security never propagates into a cluster.
 
-Write each unit into `queue[]` as `{id, kind, issues[], theme, region, scope, acceptance, gate, status:"planned", pr:null, notes}`. `scope` = one line on what to do; `acceptance` = how the builder knows it's done. Order `queue[]` by selection priority (Step 4).
+Write each unit into `queue[]` as `{id, kind, issues[], theme, region, scope, acceptance, gate, security, status:"planned", pr:null, notes}` (`security` defaults `false`). `scope` = one line on what to do; `acceptance` = how the builder knows it's done. Order `queue[]` by selection priority (Step 4).
 
 ## Step 4 — Selection order (how to order `queue[]`)
 
@@ -93,6 +93,6 @@ One line, e.g.: `Planner: enqueued 3 units (fe-layout #1420+#1424, install-creds
 ## Never
 - Never guess past an ambiguous requirement — bounce it to `needs_refinement[]` with a precise question.
 - Never reply to external human commenters; park on `awaiting_user[]`.
-- Never cluster a `security` issue with normal work.
+- Never cluster a `security` issue with other work — keep it its own unit (clean post-deploy-review attribution), but it still runs the full loop (no draft, no block).
 - Never post a comment without the AI marker.
 - Never write code or touch the batch branch — that's the builder.
