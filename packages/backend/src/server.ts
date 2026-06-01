@@ -611,19 +611,23 @@ app.prepare().then(() => {
       logger.warn('Server', `Bootstrap-token expiry init failed: ${err instanceof Error ? err.message : String(err)}`),
     );
 
-    // Sync domain-reachability health checks with the configured
-    // proxy hosts. Catches entries that pre-date the feature, and
-    // removes orphans for hosts that were deleted while ServiceBay
-    // was down. Fire-and-forget — failures degrade to "no dot" in
-    // the UI, never block boot.
-    (async () => {
-      try {
-        const { syncDomainChecks } = await import('./lib/health/domainChecks');
-        await syncDomainChecks();
-      } catch (err) {
-        logger.warn('Server', `Domain-check sync failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    })();
+    // Sync domain-reachability health checks with the live NPM route table
+    // (#1416): a check per reverse-proxy host the agent reports, not just the
+    // SB-provisioned ones. Run once at boot and then on a 60s timer — boot-time
+    // routes are usually empty before the agent's first NPM poll, and NPM can
+    // gain hosts at runtime. Fire-and-forget; idempotent; never blocks boot.
+    {
+      const runDomainCheckSync = async () => {
+        try {
+          const { syncDomainChecks } = await import('./lib/health/domainChecks');
+          await syncDomainChecks();
+        } catch (err) {
+          logger.warn('Server', `Domain-check sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      };
+      void runDomainCheckSync();
+      setInterval(() => { void runDomainCheckSync(); }, 60_000);
+    }
 
     // Per-public-domain DNS routing health checks (15 min interval).
     // Replaces the old continuous letsdebug sweep (#letsdebug-429) —
