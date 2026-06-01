@@ -415,6 +415,18 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     },
   });
 
+  // #1218 entry point 1 — restore this service's config from the NAS before its
+  // pod starts, on a reinstall into an empty data dir. No-op otherwise; never
+  // throws (see autoRestoreServiceOnReinstall). Mirrors the cert-archive restore.
+  {
+    const { autoRestoreServiceOnReinstall } = await import('@/lib/externalBackup/restore');
+    await autoRestoreServiceOnReinstall(
+      item.name,
+      { cleanInstall: input.cleanInstall, node: input.node },
+      line => log(jobId, line),
+    );
+  }
+
   const view = (input.variables as StackVariable[]).reduce<Record<string, string>>((acc, v) => {
     acc[v.name] = v.value;
     return acc;

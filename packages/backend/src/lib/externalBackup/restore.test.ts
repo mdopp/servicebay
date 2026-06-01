@@ -14,7 +14,7 @@ const { mockNas, mockCfg } = vi.hoisted(() => ({
 vi.mock('./nasClient', () => mockNas);
 vi.mock('../config', () => mockCfg);
 
-import { restoreServiceBackup, isFreshDataDir } from './restore';
+import { restoreServiceBackup, isFreshDataDir, autoRestoreServiceOnReinstall } from './restore';
 import { NAS_BACKUP_DIR } from './producer';
 
 let tmpRoot: string;
@@ -100,5 +100,63 @@ describe('isFreshDataDir', () => {
     expect(await isFreshDataDir(empty)).toBe(true);
     await fs.writeFile(path.join(empty, 'f'), 'x');
     expect(await isFreshDataDir(empty)).toBe(false);
+  });
+});
+
+describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
+  /** NAS has a home-assistant.tar; serve its contents on download. */
+  function nasHasHomeAssistantBackup() {
+    mockNas.nasList.mockResolvedValue([{ name: 'home-assistant.tar', size: 1024 }]);
+    serveTar(buildServiceTarSync());
+  }
+  // buildServiceTar is async; pre-build once per test via a small wrapper.
+  let _tar: Buffer;
+  function buildServiceTarSync() { return _tar; }
+
+  beforeEach(async () => {
+    _tar = await buildServiceTar({ 'configuration.yaml': 'restored:', '.storage/zwave_js': '{"k":1}' });
+  });
+
+  it('restores on a clean install into an empty data dir (Local node)', async () => {
+    nasHasHomeAssistantBackup();
+    const logs: string[] = [];
+    await autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: true, node: 'Local' }, async l => { logs.push(l); });
+    expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('restored:');
+    expect(logs.some(l => l.includes('restored') && l.includes('home-assistant'))).toBe(true);
+  });
+
+  it('is a no-op when it is not a clean install (a normal add-a-service install)', async () => {
+    nasHasHomeAssistantBackup();
+    const logs: string[] = [];
+    await autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: false, node: 'Local' }, async l => { logs.push(l); });
+    expect(await isFreshDataDir(dataDir)).toBe(true); // nothing written
+    expect(logs).toEqual([]);
+  });
+
+  it('is a no-op on a remote node (restore primitive is local-fs only)', async () => {
+    nasHasHomeAssistantBackup();
+    const logs: string[] = [];
+    await autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: true, node: 'edge-node' }, async l => { logs.push(l); });
+    expect(await isFreshDataDir(dataDir)).toBe(true);
+    expect(logs).toEqual([]);
+  });
+
+  it('is a silent no-op when no backup exists for the service', async () => {
+    mockNas.nasList.mockResolvedValue([]); // empty NAS
+    const logs: string[] = [];
+    await autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: true, node: 'Local' }, async l => { logs.push(l); });
+    expect(logs).toEqual([]);
+  });
+
+  it('never clobbers a non-empty data dir, and never throws', async () => {
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(path.join(dataDir, 'live.yaml'), 'live');
+    nasHasHomeAssistantBackup();
+    const logs: string[] = [];
+    await expect(
+      autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: true, node: 'Local' }, async l => { logs.push(l); }),
+    ).resolves.toBeUndefined();
+    expect(await fs.readFile(path.join(dataDir, 'live.yaml'), 'utf8')).toBe('live'); // untouched
+    expect(logs.some(l => l.includes('restored'))).toBe(false);
   });
 });

@@ -18,7 +18,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { fetchServiceBackup, resolveServiceDataDir, type ServiceBackupMeta } from './producer';
+import { fetchServiceBackup, listServiceBackups, resolveServiceDataDir, type ServiceBackupMeta } from './producer';
 import { getServiceManifest } from './serviceManifest';
 import { safeTarExtract } from '../systemBackup';
 import { logger } from '../logger';
@@ -88,4 +88,36 @@ export async function restoreServiceBackup(
   const files = await countFiles(dataDir);
   logger.info('ExternalBackup', `Restored "${service}" from NAS into ${dataDir} (${files} files)`);
   return { service, dataDir, files, meta };
+}
+
+/**
+ * #1218 entry point 1 — auto-restore a service's config from the NAS during a
+ * **reinstall**, before its pod starts. No-op (and never throws) unless:
+ *  - this is a clean install / reinstall (`cleanInstall`), AND
+ *  - the node is Local (the restore primitive uses the backend's own fs), AND
+ *  - a `<service>.tar` exists on the NAS, AND
+ *  - the service's data dir is empty (`restoreServiceBackup` also refuses a
+ *    non-empty dir, so a live service's config is never clobbered).
+ * Logs each step through the injected `log` so it shows on the install stream.
+ * Best-effort: a restore failure is logged and swallowed so it can't block the
+ * deploy. The install runner calls this from `deployItem` (epic #1190).
+ */
+export async function autoRestoreServiceOnReinstall(
+  service: string,
+  opts: { cleanInstall?: boolean; node?: string | null },
+  log: (line: string) => Promise<void>,
+): Promise<void> {
+  if (!opts.cleanInstall) return;
+  if (opts.node && opts.node !== 'Local') return;
+  try {
+    const hasBackup = (await listServiceBackups()).some(b => b.service === service);
+    if (!hasBackup) return;
+    if (!(await isFreshDataDir(await resolveServiceDataDir(service)))) return;
+    await log(`💾 ${service}: found a config backup on the FritzBox NAS and the data dir is empty — restoring before first start…`);
+    const r = await restoreServiceBackup(service);
+    await log(`✅ ${service}: restored ${r.files} config file(s) from the NAS${r.meta ? ` (backed up ${r.meta.createdAt.slice(0, 10)} from ${r.meta.nodeId})` : ''}.`);
+  } catch (e) {
+    // A restore failure must never block the deploy — log a breadcrumb and continue.
+    await log(`(note) ${service}: NAS config restore skipped — ${e instanceof Error ? e.message : String(e)}.`);
+  }
 }
