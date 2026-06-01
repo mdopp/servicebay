@@ -22,7 +22,7 @@ gh issue list --state open --limit 100 --json number,title,labels,body
 For each survivor, decide if it's **build-ready**. Build-ready means: a clear symptom + a discernible acceptance/goal + at least a starting-point file or subsystem you can name from the body or a quick `git grep`. Memory `feedback_issue_scope`: a good issue is symptom + repro + starting files (+ optional acceptance), **not** a fix-plan.
 
 - **Build-ready** → it becomes (or joins) a unit in Step 3.
-- **Needs a human decision** (ambiguous requirement, competing options, unclear desired behaviour, missing acceptance you can't infer) → **do not work it, do not guess.** Post one short, specific question on the issue (with the AI marker), and add `{issue, question, comment_url, since}` to `needs_refinement[]`. Phrase the question so the human can answer in a sentence. This is the high-value output — be precise, not vague ("which of A/B?" beats "please clarify").
+- **Needs a human decision** (ambiguous requirement, competing options, unclear desired behaviour, missing acceptance you can't infer) → **do not work it, do not guess.** Post one short, specific question on the issue (with the AI marker), and add `{issue, question, comment_url, since}` to `needs_refinement[]` (Step 6 mirrors it to the `autoloop:needs-refinement` label). Phrase the question so the human can answer in a sentence. This is the high-value output — be precise, not vague ("which of A/B?" beats "please clarify").
 - **Multi-PR scope / epic** ("audit", "strategy", "epic", or obviously spans many changes) → **decompose** it (Step 2a). Don't park it as "needs scoping" if you can break it down mechanically; only send to `needs_refinement[]` if the decomposition itself needs a product decision.
 
 ### Step 2a — Decomposing an epic
@@ -59,7 +59,7 @@ A unit sorts into the highest-priority bucket any member would land in:
 ## Step 5 — Queue empty? Choose a filler track
 
 If no build-ready survivors remain, **do not exit and do not auto-default to lint.** Pick one:
-- **(b) Refine & unblock** — walk `blocked[]`: for each, re-check whether a recent merge or a smaller scoping makes it actionable now (don't trust the stale label — memory `feedback_autoloop_unpark_recheck`); if so, remove it and make a unit (or a `needs_refinement[]` question). Re-run the dedup/cluster pass.
+- **(b) Refine & unblock** — walk `blocked[]`: for each, re-check whether a recent merge or a smaller scoping makes it actionable now (don't trust the stale label — memory `feedback_autoloop_unpark_recheck`); if so, remove it and make a unit (or a `needs_refinement[]` question). Re-run the dedup/cluster pass. (Removing it from `blocked[]` clears its `autoloop:blocked` label in Step 6.)
 - **(c) Codebase eval** — run the standing eval (below) against HEAD and **file Category-2 findings as new issues** (symptom-style, no patch plan — memory `feedback_issue_scope`) so the queue refills. Record Category-1 in `notes[]` only. Set `last_codebase_eval`. This is the one sanctioned exception to "don't file new issues".
 - **(a) Lint sweep** — enqueue **lint-sweep units** for the builder: run `npm run lint 2>&1 | tee /tmp/lint.out` then `grep -oE "[a-zA-Z@/][a-zA-Z0-9@/-]*$" /tmp/lint.out | sort | uniq -c | sort -rn`. For the most-warned file (skipping any file an open non-loop PR or a non-blocked open issue already touches), add a unit `{id, kind:"lint-sweep", file, rule, scope, gate, status:"planned"}`. Bulk is fine — enqueue **10–20 warnings' worth** of units per run (memory `feedback_lint_sweep_bulk`), one file/rule per unit. `gate` is `verify` only if the file is path-mandated.
 
@@ -86,6 +86,25 @@ a) Point to the exact active file(s) and line number range where the flaw reside
 b) Briefly explain the actual real-world consequence if we choose to ignore it.
 c) Provide a brief outline of how to patch the live code to resolve it.
 ```
+
+## Step 6 — Mirror status to labels (reconcile)
+
+The shared queue is the **source of truth**; GitHub labels are a **one-way projection** of the two human-facing per-issue states, so a human sees the same worklist the loop does (and can filter `is:open label:autoloop:blocked` / `label:autoloop:needs-refinement`). Run this **every pass**, after Steps 2–5 have settled the queue. It is the *one* authoritative place labels are set/cleared — idempotent, so it self-heals drift and crash-partial updates. (The builder may also add `autoloop:needs-refinement` inline when it bounces a unit mid-batch; this reconcile is what keeps the set correct.)
+
+Compute the **effective** sets from the queue, gated on **actual GitHub open-state** (the robust truth — `completed[]` can be stale, so don't rely on it; a closed issue simply never gets a label):
+- `refine` = `{ needs_refinement[].issue }` that are **open**.
+- `block` = `{ blocked[].issue }` that are **open**, minus any issue currently **in-flight** (in a `queue[]` unit or `batch.units`) and minus `refine`. Skip `blocked[]` entries with no real issue number (lint-sweep size-guard items).
+
+Then make GitHub match, for **open** issues only:
+```bash
+# add where missing
+for n in <refine>; do gh issue edit "$n" --add-label "autoloop:needs-refinement"; done
+for n in <block>;  do gh issue edit "$n" --add-label "autoloop:blocked"; done
+# remove where stale: any open issue carrying the label but NOT in the effective set
+gh issue list --state open --label "autoloop:needs-refinement" --json number --jq '.[].number'   # ∉ refine → --remove-label
+gh issue list --state open --label "autoloop:blocked"          --json number --jq '.[].number'   # ∉ block  → --remove-label
+```
+A label and its work-queue array are never both edited by hand here — derive the label state from the file, every run. Never set `autoloop:blocked`/`needs-refinement` on a closed issue (a merge closes it; the label is moot). Leave the human-reserved `autoloop-open` alone — different meaning (planner-skip).
 
 ## Return
 One line, e.g.: `Planner: enqueued 3 units (fe-layout #1420+#1424, install-creds #1430, lint-sweep×12); refinement-bounced #1399 ("LAN or public default?"); parked #1311 awaiting-user.`
