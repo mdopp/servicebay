@@ -24,6 +24,10 @@ export interface PerformStackResetOptions {
   preserve?: unknown;
   /** Optional node name; defaults to the first node in the twin. */
   node?: string;
+  /** #1495 — also wipe all container images on the node (`podman rmi -af`) so
+   *  the next install re-pulls a fresh set (the escalating factory-reset level
+   *  (b)). Default false. */
+  wipeImages?: boolean;
 }
 
 export interface PerformStackResetResult {
@@ -255,6 +259,17 @@ export async function performStackReset(
       await agent.sendCommand('exec', { command: `rm -rf ${JSON.stringify(p)}` });
     }
     wipeStepsRun.push(`${id} (always-wipe)`);
+  }
+
+  // #1495 — factory-reset level (b): wipe all container images so the next
+  // install re-pulls a fresh, known set. Runs after the service teardown above
+  // (no in-use images left to block removal). Best-effort: a failure here must
+  // not fail the whole reset.
+  if (options.wipeImages) {
+    await agent.sendCommand('exec', {
+      command: 'podman rmi -af 2>/dev/null; podman image prune -af 2>/dev/null || true',
+    });
+    wipeStepsRun.push('images (podman rmi -af — re-pulled on next install)');
   }
 
   return {
