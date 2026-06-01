@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.74.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.73.0...servicebay-v4.74.0) (2026-06-01)
+
+
+### Features
+
+* **autoloop:** run Box-Verify async in background, let builder build-ahead ([22bc1f8](https://github.com/mdopp/servicebay/commit/22bc1f82b9157063cbf0751c09ff859fa1fb4643))
+
 ## [4.73.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.72.0...servicebay-v4.73.0) (2026-06-01)
 
 
