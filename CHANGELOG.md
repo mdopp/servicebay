@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.71.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.70.0...servicebay-v4.71.0) (2026-06-01)
+
+
+### Features
+
+* **mcp:** re-activate the bootstrap token from Settings ([87f774c](https://github.com/mdopp/servicebay/commit/87f774c41ec99d9878c0906eba088c1f6587a963))
+* **portal:** cap user access requests at a configurable max-users limit ([22b63ab](https://github.com/mdopp/servicebay/commit/22b63ab5b6008e7502d635ef2b6623725ce942d5))
+
+
+### Bug Fixes
+
+* **install:** self-heal an empty/diverged NPM admin password before provisioning ([40b86d3](https://github.com/mdopp/servicebay/commit/40b86d3dbd86b07d86e83ecbc2020e3f03cd4d71))
+* **network-map:** group ports by host so multi-IP cards don't balloon ([894573b](https://github.com/mdopp/servicebay/commit/894573bf0b355948fe693f2066138781bc66e190))
+* **sidebar:** drop the duplicated username from the account widget ([11b9eb6](https://github.com/mdopp/servicebay/commit/11b9eb6e4007c2f7c61f3704e829959b4125ef09))
+
 ## [4.70.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.69.3...servicebay-v4.70.0) (2026-06-01)
 
 
