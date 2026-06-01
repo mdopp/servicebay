@@ -5,6 +5,7 @@ import { CheckConfig } from '@/lib/health/types';
 import { v4 as uuidv4 } from 'uuid';
 import { withApiHandler } from '@/lib/api/handler';
 import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
+import { getDiagnoseChecksEnriched } from '@/lib/diagnose/diagnoseChecks';
 
 export const GET = withApiHandler({}, async () => {
   const checks = HealthStore.getChecks();
@@ -28,7 +29,11 @@ export const GET = withApiHandler({}, async () => {
       history
     };
   });
-  return NextResponse.json(enrichedChecks);
+  // #1423: fold the daily self-diagnose probes into the unified Checks
+  // list. They live as synthetic `diagnose:<probeId>` result rows (never
+  // in checks.json), so merge them in at read time.
+  const diagnoseChecks = getDiagnoseChecksEnriched();
+  return NextResponse.json([...enrichedChecks, ...diagnoseChecks]);
 });
 
 const CheckPostBody = z.object({
