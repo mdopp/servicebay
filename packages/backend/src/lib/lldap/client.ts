@@ -141,8 +141,19 @@ function classifyCreateUserResponse(data: CreateUserResponse, input: CreateUserI
   if (data.errors?.length) {
     const msg = data.errors[0]?.message ?? 'Unknown LLDAP error.';
     const lower = msg.toLowerCase();
-    if (lower.includes('already exists') || lower.includes('duplicate')) {
-      return { ok: false, reason: 'username_taken', message: `The username "${input.id}" is already in use in LLDAP.` };
+    // A duplicate surfaces either as LLDAP's friendly "already exists"/"duplicate"
+    // text or as the raw SQLite UNIQUE-constraint error (e.g.
+    // "UNIQUE constraint failed: users.lowercase_email") — map both to a coherent
+    // "already in use" outcome so the raw DB error never reaches the operator (#1425).
+    if (lower.includes('already exists') || lower.includes('duplicate') || lower.includes('unique constraint')) {
+      const byEmail = lower.includes('email');
+      return {
+        ok: false,
+        reason: 'username_taken',
+        message: byEmail
+          ? `A user with the email "${input.email}" already exists in LLDAP.`
+          : `The username "${input.id}" is already in use in LLDAP.`,
+      };
     }
     return { ok: false, reason: 'graphql_error', message: msg };
   }
