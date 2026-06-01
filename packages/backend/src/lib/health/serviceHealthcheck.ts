@@ -94,8 +94,7 @@ function asInt(value: unknown): number | null {
   return null;
 }
 
-function parseDurations(obj: Record<string, unknown>): { intervalMs: number; timeoutMs: number; startupTimeoutMs: number; errors: string[] } {
-  const errors: string[] = [];
+function validateIntervalDuration(obj: Record<string, unknown>, errors: string[]): number {
   let intervalMs = DEFAULT_INTERVAL_MS;
   if (obj.interval !== undefined && obj.interval !== null) {
     const ms = parseDuration(obj.interval);
@@ -107,19 +106,84 @@ function parseDurations(obj: Record<string, unknown>): { intervalMs: number; tim
       intervalMs = ms;
     }
   }
+  return intervalMs;
+}
+
+function validateTimeoutDuration(obj: Record<string, unknown>, errors: string[]): number {
   let timeoutMs = DEFAULT_TIMEOUT_MS;
   if (obj.timeout !== undefined && obj.timeout !== null) {
     const ms = parseDuration(obj.timeout);
     if (ms === null) errors.push(`field \`timeout\` must be a duration; got ${JSON.stringify(obj.timeout)}`);
     else timeoutMs = ms;
   }
+  return timeoutMs;
+}
+
+function validateStartupTimeoutDuration(obj: Record<string, unknown>, errors: string[]): number {
   let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
   if (obj.startup_timeout !== undefined && obj.startup_timeout !== null) {
     const ms = parseDuration(obj.startup_timeout);
     if (ms === null) errors.push(`field \`startup_timeout\` must be a duration; got ${JSON.stringify(obj.startup_timeout)}`);
     else startupTimeoutMs = ms;
   }
+  return startupTimeoutMs;
+}
+
+function parseDurations(obj: Record<string, unknown>): { intervalMs: number; timeoutMs: number; startupTimeoutMs: number; errors: string[] } {
+  const errors: string[] = [];
+  const intervalMs = validateIntervalDuration(obj, errors);
+  const timeoutMs = validateTimeoutDuration(obj, errors);
+  const startupTimeoutMs = validateStartupTimeoutDuration(obj, errors);
   return { intervalMs, timeoutMs, startupTimeoutMs, errors };
+}
+
+function parseHttpHealthcheck(obj: Record<string, unknown>, errors: string[], permissive: boolean): string | undefined {
+  const urlRaw = obj.url;
+  if (urlRaw === undefined || urlRaw === null) {
+    errors.push('field `url` is required for `kind: http`');
+    return undefined;
+  }
+  if (typeof urlRaw !== 'string' || urlRaw.trim() === '') {
+    errors.push(`field \`url\` must be a non-empty string; got ${JSON.stringify(urlRaw)}`);
+    return undefined;
+  }
+  const url = urlRaw.trim();
+  const hasMustache = MUSTACHE_RE.test(url);
+  if (!hasMustache || !permissive) {
+    try {
+      new URL(url);
+    } catch {
+      errors.push(`field \`url\` is not a valid URL: ${JSON.stringify(url)}`);
+      return undefined;
+    }
+  }
+  return url;
+}
+
+function parseTcpHealthcheck(obj: Record<string, unknown>, errors: string[], permissive: boolean): { host?: string; port?: number } {
+  const result: { host?: string; port?: number } = {};
+  const hostRaw = obj.host;
+  if (hostRaw === undefined) {
+    errors.push('field `host` is required for `kind: tcp`');
+  } else if (typeof hostRaw !== 'string' || hostRaw.trim() === '') {
+    errors.push(`field \`host\` must be a non-empty string; got ${JSON.stringify(hostRaw)}`);
+  } else {
+    result.host = hostRaw.trim();
+  }
+  const portRaw = obj.port;
+  if (portRaw === undefined) {
+    errors.push('field `port` is required for `kind: tcp`');
+  } else {
+    const p = asInt(portRaw);
+    if (p === null) {
+      if (!permissive || typeof portRaw !== 'string' || !MUSTACHE_RE.test(portRaw)) {
+        errors.push(`field \`port\` must be a positive integer; got ${JSON.stringify(portRaw)}`);
+      }
+    } else {
+      result.port = p;
+    }
+  }
+  return result;
 }
 
 /**
@@ -163,52 +227,13 @@ export function parseHealthcheckYaml(
   let port: number | undefined;
 
   if (kind === 'http') {
-    const urlRaw = obj.url;
-    if (urlRaw === undefined || urlRaw === null) {
-      errors.push('field `url` is required for `kind: http`');
-    } else if (typeof urlRaw !== 'string' || urlRaw.trim() === '') {
-      errors.push(`field \`url\` must be a non-empty string; got ${JSON.stringify(urlRaw)}`);
-    } else {
-      url = urlRaw.trim();
-      // Permissive: opaque Mustache strings survive validation
-      // (the runtime parser re-checks after substitution).
-      // Strict: any unresolved `{{VAR}}` would make `new URL()` throw
-      // → the error surfaces here, which is what strict mode is for.
-      const hasMustache = MUSTACHE_RE.test(url);
-      if (!hasMustache || !permissive) {
-        try {
-          new URL(url);
-        } catch {
-          errors.push(`field \`url\` is not a valid URL: ${JSON.stringify(url)}`);
-        }
-      }
-    }
+    url = parseHttpHealthcheck(obj, errors, permissive);
   }
 
   if (kind === 'tcp') {
-    const hostRaw = obj.host;
-    if (hostRaw === undefined) {
-      errors.push('field `host` is required for `kind: tcp`');
-    } else if (typeof hostRaw !== 'string' || hostRaw.trim() === '') {
-      errors.push(`field \`host\` must be a non-empty string; got ${JSON.stringify(hostRaw)}`);
-    } else {
-      host = hostRaw.trim();
-    }
-    const portRaw = obj.port;
-    if (portRaw === undefined) {
-      errors.push('field `port` is required for `kind: tcp`');
-    } else {
-      const p = asInt(portRaw);
-      // Permissive: a Mustache placeholder string survives as port = null
-      // (asInt returns null). Surface a clear error in strict mode.
-      if (p === null) {
-        if (!permissive || typeof portRaw !== 'string' || !MUSTACHE_RE.test(portRaw)) {
-          errors.push(`field \`port\` must be a positive integer; got ${JSON.stringify(portRaw)}`);
-        }
-      } else {
-        port = p;
-      }
-    }
+    const tcp = parseTcpHealthcheck(obj, errors, permissive);
+    host = tcp.host;
+    port = tcp.port;
   }
 
   const { intervalMs, timeoutMs, startupTimeoutMs, errors: durationErrors } = parseDurations(obj);
