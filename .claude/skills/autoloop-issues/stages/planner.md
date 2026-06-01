@@ -28,11 +28,12 @@ gh issue list --state open --limit 100 --json number,title,labels,body
 - `"capability:browser-verify"` — needs the headless browser-verify harness; clears when **#1473 merges** (one check clears the whole class: #1288/#1252/#1253/#1218/#1233/#1423).
 - `"capability:real-box-verify"` — needs a human-driven real-box `/verify` session; clears only when a relevant merge/edit lands or a human runs it.
 - `"decomposition"` — too big for one unit, needs a decomposition ticket (e.g. lint-sweep size-guard); clears when a human/the planner files children.
-- `"epic"` — a tracking umbrella (e.g. #1190); **not really blocked** → reclassify (don't carry `autoloop:blocked`, keep as an open tracker, don't re-examine as workable).
+- `"epic:#<a> #<b>…"` — a tracking umbrella whose **children are the work-units** (e.g. #1190, decomposed into #1214–#1219). It **stays blocked while any listed child is open** and **keeps `autoloop:blocked`** — it's transitively blocked and the human should see that. The umbrella itself is **never unit-ized/built**; when all children close, the resolution is to **close the epic as complete** (Tier 1).
 
 **Tier 1 — cheap condition check, ALL blocked entries, every run** (just `gh`/`git` queries, no code reading):
 - `"#N"` → `gh issue view N --json state` ⇒ tripped if `CLOSED`.
 - `"capability:browser-verify"` → tripped if #1473 is `CLOSED`/merged (or the harness is present in-repo).
+- `"epic:#a #b…"` → check each child's state; when **all children are CLOSED**, the epic is done → **close it** (AI-marker comment) and drop from `blocked[]`. While any child is open it stays put (do *not* unit-ize the umbrella).
 - any entry whose issue was **edited since `since`** (`updatedAt > since`), or a **merge since `since` touched its named region/files** → tripped.
 - issue is itself `CLOSED` → drop from `blocked[]` (already done).
 - **Missing `blocked_by`** (legacy entry) → treat as **tripped** (migration: deep-examine once, then re-park *with* a structured `blocked_by`).
@@ -52,7 +53,7 @@ For each survivor, decide if it's **build-ready**. Build-ready means: a clear sy
 Break it into bite-size child issues, filed in the repo, so the pipeline ships it incrementally:
 - Each child is an independently-shippable PR-unit; land **foundational modules first** (pure data/helpers, clients), then consumers. No dead-code stubs — every child is a genuine testable unit.
 - **File in dependency order so ascending issue number == dependency order.** Each child body: deliverable + starting-point files + a `Depends on #N` line for any sibling that must merge first.
-- Comment the dependency DAG on the parent (AI marker) and keep the parent **open** as the tracking umbrella.
+- Comment the dependency DAG on the parent (AI marker) and keep the parent **open** as the tracking umbrella. **Park the parent in `blocked[]`** with `blocked_by:"epic:#<all children>"` so Step 1b closes it automatically once every child ships (and it carries `autoloop:blocked` meanwhile).
 
 ### Classification of build-ready survivors
 - **Security/sensitive** (`security` label) → set `security: true` on the unit and gate it by path like anything else (`verify` if path-mandated, else `normal`). It runs the **full loop** — built, merged, verified, deployed — and is **flagged for post-deploy review** (lands in `review[]` at seal). It does **not** open as a draft and does **not** block the loop. Keep a security issue as its **own unit** (don't cluster it with unrelated work) so its deployed-review entry stays cleanly attributable.
