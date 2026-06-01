@@ -8,6 +8,7 @@ import { logger } from '@/lib/logger';
 import { agentManager } from '@/lib/agent/manager';
 import { listNodes } from '@/lib/nodes';
 import { AUTHELIA_LOCATION_HEADERS } from '@/lib/stackInstall/forwardAuth';
+import { withLanDeniedPage, deployLanDeniedPage } from '@/lib/reverseProxy/lanDeniedPage';
 
 export const dynamic = 'force-dynamic';
 
@@ -396,20 +397,34 @@ async function patchProxyHostAdvancedConfig(
     if (!newAdvancedConfig) return { updated: false };
     if (existingAdvancedConfig === newAdvancedConfig) return { updated: false };
     const hasForwardAuth = (s: string) => /auth_request\s+\/authelia/.test(s);
-    if (!hasForwardAuth(newAdvancedConfig)) return { updated: false };
-    if (hasForwardAuth(existingAdvancedConfig)) return { updated: false }; // already wired — leave manual edits alone
+    // #1415 — also backfill the LAN-only 403 explainer onto an existing host
+    // whose config predates it (the marker is the idempotency key).
+    const hasLanExplainer = (s: string) => s.includes('servicebay-lan-only-explainer');
+    const addsForwardAuth = hasForwardAuth(newAdvancedConfig) && !hasForwardAuth(existingAdvancedConfig);
+    const addsExplainer = hasLanExplainer(newAdvancedConfig) && !hasLanExplainer(existingAdvancedConfig);
+    // Nothing new to land → leave the existing config (and any manual edits) alone.
+    if (!addsForwardAuth && !addsExplainer) return { updated: false };
+    // When forward-auth is being added we adopt the template's full config
+    // (the legacy #991 behaviour); `newAdvancedConfig` already carries the
+    // explainer for LAN hosts (injected in the POST loop). When ONLY the
+    // explainer is missing, append it to the EXISTING config so manual
+    // operator edits are preserved.
+    const configToWrite = addsForwardAuth
+        ? newAdvancedConfig
+        : withLanDeniedPage(existingAdvancedConfig);
     try {
         const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ advanced_config: newAdvancedConfig }),
+            body: JSON.stringify({ advanced_config: configToWrite }),
             signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) {
             logger.warn('ProxyHosts', `Failed to backfill advanced_config for ${domain} (NPM PUT returned ${res.status})`);
             return { updated: false };
         }
-        logger.info('ProxyHosts', `Backfilled advanced_config for ${domain} (added Authelia forward-auth that was missing on the existing host)`);
+        const added = [addsForwardAuth ? 'Authelia forward-auth' : null, addsExplainer ? 'LAN-only 403 explainer' : null].filter(Boolean).join(' + ');
+        logger.info('ProxyHosts', `Backfilled advanced_config for ${domain} (added ${added} missing on the existing host)`);
         return { updated: true };
     } catch (e) {
         logger.warn('ProxyHosts', `Failed to backfill advanced_config for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
@@ -858,6 +873,18 @@ export const POST = withApiHandler({}, async ({ request }) => {
             ? await ensureLanAccessList(npm.apiUrl, token, npm.nodeIp)
             : null;
 
+        // #1415 — Ship the branded "this host is LAN-only" 403 explainer into
+        // NPM's data volume once per batch when any host binds the LAN access
+        // list. The per-host `advanced_config` (below) wires `error_page 403`
+        // → an internal SSI location that aliases this file, so a denied
+        // off-LAN client sees a self-explaining page (with its own IP) instead
+        // of the bare openresty 403. Best-effort: a write hiccup just leaves
+        // the old bare 403 in place. Only attempt if the access list actually
+        // bound — without it the deny rule (and thus the 403) never fires.
+        if (lanAccessListId !== null) {
+            await deployLanDeniedPage(node);
+        }
+
         const results: { domain: string; success: boolean; error?: string; certIssued?: boolean; certError?: string; lanRestricted?: boolean }[] = [];
 
         for (const host of hosts) {
@@ -868,6 +895,17 @@ export const POST = withApiHandler({}, async ({ request }) => {
             }
             const wantsLanList = host.exposure === 'lan' || host.exposure === 'internal';
             const accessListId = wantsLanList && lanAccessListId !== null ? lanAccessListId : 0;
+            // #1415 — When this host is actually behind the LAN access list
+            // (i.e. its deny-all rule will produce the 403), wire the branded
+            // explainer into its `advanced_config`. Idempotent; preserves any
+            // existing directives (forward-auth, timeouts, …). The access rule
+            // itself is UNCHANGED — only the denied-response body differs.
+            if (accessListId !== 0) {
+                host.proxyConfig = {
+                    ...host.proxyConfig,
+                    advanced_config: withLanDeniedPage(host.proxyConfig?.advanced_config),
+                };
+            }
             let createdHost: { id?: number } | null = null;
             try {
                 createdHost = await createProxyHost(npm.apiUrl, token, host, accessListId);
