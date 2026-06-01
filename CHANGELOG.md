@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.69.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.68.0...servicebay-v4.69.0) (2026-06-01)
+
+
+### Features
+
+* **autoloop:** batched dev-channel box verify, no more deferral ([93886b3](https://github.com/mdopp/servicebay/commit/93886b37774ea2957b3595cb914c73231e3462d9))
+* **autoloop:** batched dev-channel box verify, no more deferral ([7635c34](https://github.com/mdopp/servicebay/commit/7635c34810ebdff25262efc7d1f944a756c24ddc))
+* **autoloop:** groom and cluster the queue before selection ([430d801](https://github.com/mdopp/servicebay/commit/430d80124fcfd9b27f402f581870c65a7d4aea6c))
+* **autoloop:** groom and cluster the queue before selection ([bee32a0](https://github.com/mdopp/servicebay/commit/bee32a084f1196d95184cf1d20b7ecf24a4b9787))
+* **docs-coherence:** parallel agent to keep docs in sync as PRs land ([82310aa](https://github.com/mdopp/servicebay/commit/82310aa4161f2d6129a9306a03c02225ffb99a86))
+* **docs-coherence:** parallel agent to keep docs in sync as PRs land ([4d1010e](https://github.com/mdopp/servicebay/commit/4d1010e68092ad66d24358ba288a4edaf471907e))
+
 ## [4.68.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.67.0...servicebay-v4.68.0) (2026-05-31)
 
 
