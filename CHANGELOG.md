@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.69.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.69.1...servicebay-v4.69.2) (2026-06-01)
+
+
+### Bug Fixes
+
+* **health:** register domain checks from the live NPM route table ([9bfd06b](https://github.com/mdopp/servicebay/commit/9bfd06bff34bf64c76296c145df4b45af5e0817d))
+* **health:** register domain checks from the live NPM route table ([912f4e9](https://github.com/mdopp/servicebay/commit/912f4e90090bc3a79b836a3dd3928955c094e245))
+
 ## [4.69.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.69.0...servicebay-v4.69.1) (2026-06-01)
 
 
