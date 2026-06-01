@@ -127,6 +127,74 @@ export interface PodValidationResult {
     error?: PodValidationError;
 }
 
+/**
+ * Validate that every volumeMount.name matches a declared volume.
+ * Catches typographical bugs where a mount points at a non-existent volume.
+ */
+function validateVolumeMounts(
+    pod: z.infer<typeof PodSchema>,
+): PodValidationError | null {
+    const declared = new Set((pod.spec.volumes ?? []).map(v => v.name));
+    const containers = [...pod.spec.containers, ...(pod.spec.initContainers ?? [])];
+    for (const c of containers) {
+        for (const vm of c.volumeMounts ?? []) {
+            if (!declared.has(vm.name)) {
+                return {
+                    path: `spec.containers[${c.name}].volumeMounts[${vm.name}]`,
+                    message: `references volume "${vm.name}" which is not declared in spec.volumes`,
+                };
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Validate that every container port either has hostPort, or the pod
+ * is hostNetwork. The same rule the consistency suite enforces for
+ * shipped templates — moved to runtime so user-uploaded YAML can't
+ * produce a service that "deploys" but is unreachable from the host.
+ */
+function validatePortReachability(
+    pod: z.infer<typeof PodSchema>,
+): PodValidationError | null {
+    const hostNetwork = pod.spec.hostNetwork === true;
+    if (!hostNetwork) {
+        for (const c of pod.spec.containers) {
+            for (const p of c.ports ?? []) {
+                if (!p.hostPort) {
+                    return {
+                        path: `spec.containers[${c.name}].ports[containerPort=${p.containerPort}].hostPort`,
+                        message: 'port has no hostPort and pod is not hostNetwork — would be unreachable from the host',
+                    };
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Validate PVC documents in a multi-doc YAML. Basic shape only;
+ * podman creates the volume on first deploy regardless of most fields.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function validatePvcDocs(docs: any[]): PodValidationError | null {
+    for (const doc of docs) {
+        if (doc?.kind === 'PersistentVolumeClaim') {
+            const pvcResult = PvcSchema.safeParse(doc);
+            if (!pvcResult.success) {
+                const issue = pvcResult.error.issues[0];
+                return {
+                    path: `(PVC).${issue.path.join('.')}`,
+                    message: issue.message,
+                };
+            }
+        }
+    }
+    return null;
+}
+
 /** Parse + validate a YAML Pod manifest. Multi-doc support: a Pod + PVC
  *  bundle is normal (file-share since 3.6.4), the validator finds the Pod
  *  by `kind` and validates the PVC alongside if present. */
@@ -163,63 +231,22 @@ export function validatePodManifest(yamlContent: string): PodValidationResult {
     }
 
     // Cross-reference: every volumeMount.name must match a declared volume.
-    // Catches the typo-class bug where the YAML parses cleanly but a mount
-    // points at a volume that doesn't exist (`podman play kube` would
-    // accept this in some versions, then the container starts with the
-    // expected mountPath empty).
-    const declared = new Set((podResult.data.spec.volumes ?? []).map(v => v.name));
-    const containers = [...podResult.data.spec.containers, ...(podResult.data.spec.initContainers ?? [])];
-    for (const c of containers) {
-        for (const vm of c.volumeMounts ?? []) {
-            if (!declared.has(vm.name)) {
-                return {
-                    ok: false,
-                    error: {
-                        path: `spec.containers[${c.name}].volumeMounts[${vm.name}]`,
-                        message: `references volume "${vm.name}" which is not declared in spec.volumes`,
-                    },
-                };
-            }
-        }
+    const vmError = validateVolumeMounts(podResult.data);
+    if (vmError) {
+        return { ok: false, error: vmError };
     }
 
     // Reachability: every container port either has hostPort, or the pod
-    // is hostNetwork. The same rule the consistency suite enforces for
-    // shipped templates — moved to runtime so user-uploaded YAML can't
-    // produce a service that "deploys" but is unreachable from the host.
-    const hostNetwork = podResult.data.spec.hostNetwork === true;
-    if (!hostNetwork) {
-        for (const c of podResult.data.spec.containers) {
-            for (const p of c.ports ?? []) {
-                if (!p.hostPort) {
-                    return {
-                        ok: false,
-                        error: {
-                            path: `spec.containers[${c.name}].ports[containerPort=${p.containerPort}].hostPort`,
-                            message: 'port has no hostPort and pod is not hostNetwork — would be unreachable from the host',
-                        },
-                    };
-                }
-            }
-        }
+    // is hostNetwork.
+    const portError = validatePortReachability(podResult.data);
+    if (portError) {
+        return { ok: false, error: portError };
     }
 
-    // PVC docs (if any) — basic shape only; podman creates the volume on
-    // first deploy regardless of most fields.
-    for (const doc of docs) {
-        if (doc?.kind === 'PersistentVolumeClaim') {
-            const pvcResult = PvcSchema.safeParse(doc);
-            if (!pvcResult.success) {
-                const issue = pvcResult.error.issues[0];
-                return {
-                    ok: false,
-                    error: {
-                        path: `(PVC).${issue.path.join('.')}`,
-                        message: issue.message,
-                    },
-                };
-            }
-        }
+    // PVC docs (if any)
+    const pvcError = validatePvcDocs(docs);
+    if (pvcError) {
+        return { ok: false, error: pvcError };
     }
 
     return { ok: true };
