@@ -71,7 +71,7 @@ export function InstallProgressCardView({
 
       {/* The runner paused on the NPM credentials prompt. Skipping
           continues with the auto-generated fallback; proxy routes can
-          be set later in Settings → Integrations. */}
+          be set later in Settings → Networking & Access. */}
       {needsCredentials && (
         <div className="rounded-xl border border-amber-300/60 dark:border-amber-800/50 bg-amber-50/80 dark:bg-amber-950/20 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">

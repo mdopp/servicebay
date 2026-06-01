@@ -38,7 +38,7 @@ export const POST = withApiHandlerParams<undefined, undefined, Params>(
     const emailEnabled = config.notifications?.email?.enabled;
     if (!emailEnabled) {
       return NextResponse.json(
-        { error: 'SMTP is not configured under Settings → Integrations → Email Notifications.' },
+        { error: 'SMTP is not configured under Settings → Notifications.' },
         { status: 412 },
       );
     }

@@ -1,0 +1,4 @@
+# Playwright run artifacts — never commit
+.report/
+test-results/
+playwright-report/

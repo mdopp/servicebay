@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 /**
  * Resume a paused install by skipping the NPM credentials prompt.
  * Proxy routes won't be configured in this run; the operator can fix
- * this later via Settings → Integrations.
+ * this later via Settings → Security.
  *
  * `tokenScope: 'lifecycle'` lets the sb-tui install panel resolve a
  * needs_credentials pause with its scoped `sb_` token — the same scope

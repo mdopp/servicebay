@@ -2,15 +2,18 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Database, Layers, Loader2, Plug, Server, Settings } from 'lucide-react';
+import { Bell, Database, Layers, Loader2, Network, Server, Settings, Share2, ShieldCheck } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { SettingsProvider, useSettings } from './_lib/SettingsContext';
 
 const TABS = [
   { id: 'nodes', label: 'Nodes', icon: Server },
-  { id: 'stacks', label: 'Stacks', icon: Layers },
   { id: 'system', label: 'System', icon: Settings },
-  { id: 'integrations', label: 'Integrations', icon: Plug },
+  { id: 'networking', label: 'Networking & Access', icon: Network },
+  { id: 'security', label: 'Security', icon: ShieldCheck },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
+  { id: 'sharing', label: 'Sharing', icon: Share2 },
+  { id: 'stacks', label: 'Stacks', icon: Layers },
   { id: 'backups', label: 'Backups', icon: Database },
 ] as const;
 
