@@ -34,6 +34,40 @@ function getKey(): Buffer {
   return CACHED_KEY;
 }
 
+/**
+ * Invalidate the in-memory key cache so the next `encrypt`/`decrypt`
+ * re-reads `secret.key` from disk. Used by the stack-reset engine after
+ * it regenerates the key file in-process — without this, the running
+ * container keeps encrypting with the wiped-then-regenerated key's
+ * predecessor held in `CACHED_KEY`, so values sealed after the reset
+ * couldn't be decrypted by a freshly-booted container reading the new
+ * on-disk key. See #1246.
+ */
+export function resetCachedKey(): void {
+  CACHED_KEY = null;
+}
+
+/**
+ * Write a fresh 32-byte `secret.key` to disk and adopt it as the cached
+ * key for this process. Overwrites any existing file (the reset engine
+ * has just wiped it) and invalidates the cache so subsequent
+ * `encrypt`/`decrypt` use the new key. Returns the path written.
+ *
+ * Companion to the boot-only `servicebay-secret-key-init` unit — runs
+ * the same regeneration in-process so a reset without an OS reboot
+ * doesn't leave `secret.key` missing (which crash-loops the container on
+ * its next restart). See #1246.
+ */
+export function regenerateSecretKey(): string {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  const key = crypto.randomBytes(32); // 256 bits, raw — matches aes-256-gcm
+  fs.writeFileSync(SECRET_KEY_PATH, key, { mode: 0o600 });
+  CACHED_KEY = key;
+  return SECRET_KEY_PATH;
+}
+
 /** Per-process flag — once a decrypt fails because the loaded
  *  `secret.key` can't validate an `enc:v1:…` value, future failures
  *  stay quiet so a config full of stale ciphertexts doesn't drown
