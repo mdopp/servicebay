@@ -35,8 +35,9 @@ export function credentials(): { username: string; password: string } {
 export async function login(page: Page): Promise<void> {
   const { username, password } = credentials()
   await page.goto('/login')
-  await page.getByLabel('Username').fill(username)
-  await page.getByLabel('Password').fill(password)
+  // The login form uses unassociated <label> elements (no for/id), so match by placeholder.
+  await page.getByPlaceholder('System username').fill(username)
+  await page.getByPlaceholder('System password').fill(password)
   await page.getByRole('button', { name: 'Login' }).click()
   // The login handler pushes to /services on success.
   await page.waitForURL(/\/(services|dashboard)\b/, { timeout: 30_000 })
