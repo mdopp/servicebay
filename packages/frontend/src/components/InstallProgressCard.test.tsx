@@ -17,6 +17,7 @@ const base: InstallMonitorState = {
   percent: 50,
   needsCredentials: false,
   logs: ['🔑 Reusing 7 saved secrets', 'Deploying immich…'],
+  postDeployProgress: null,
 };
 
 describe('InstallProgressCardView', () => {
@@ -44,5 +45,36 @@ describe('InstallProgressCardView', () => {
     const btn = screen.getByText(/skip credentials/i).closest('button')!;
     fireEvent.click(btn);
     expect(onSkip).toHaveBeenCalledOnce();
+  });
+
+  it('renders no post-deploy bar when none is in flight', () => {
+    render(<InstallProgressCardView state={base} onSkipCredentials={() => {}} />);
+    expect(screen.queryByText(/ollama:pull/)).toBeNull();
+    expect(screen.queryByText(/MB/)).toBeNull();
+  });
+
+  it('renders the post-deploy progress bar with tag and MB readout', () => {
+    render(
+      <InstallProgressCardView
+        state={{
+          ...base,
+          postDeployProgress: { tag: 'ollama:pull', percent: 42, completedMb: 4200, totalMb: 10000 },
+        }}
+        onSkipCredentials={() => {}}
+      />,
+    );
+    expect(screen.getByText('ollama:pull')).toBeDefined();
+    expect(screen.getByText('4200 / 10000 MB · 42%')).toBeDefined();
+  });
+
+  it('falls back to percent-only when MB fields are absent', () => {
+    render(
+      <InstallProgressCardView
+        state={{ ...base, postDeployProgress: { tag: 'ollama:pull', percent: 7 } }}
+        onSkipCredentials={() => {}}
+      />,
+    );
+    expect(screen.getByText('7%')).toBeDefined();
+    expect(screen.queryByText(/MB/)).toBeNull();
   });
 });

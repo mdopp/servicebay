@@ -42,7 +42,7 @@ export function InstallProgressCardView({
   state: InstallMonitorState;
   onSkipCredentials: () => void;
 }) {
-  const { phase, currentItem, deployed, total, percent, needsCredentials, logs } = state;
+  const { phase, currentItem, deployed, total, percent, needsCredentials, logs, postDeployProgress } = state;
   return (
     <div className="rounded-2xl p-5 glass-panel border border-blue-500/20 bg-gradient-to-br from-blue-500/10 to-indigo-500/5 space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -68,6 +68,30 @@ export function InstallProgressCardView({
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{percent}%</p>
       </div>
+
+      {/* Post-deploy progress bar (#1288). A template's post-deploy step
+          (e.g. OSCAR ollama's multi-GB model pull) emits structured
+          progress on the install-log stream; we render it on the same bar
+          as image pulls so the longest install phase no longer looks like
+          a silent hang. Shows only while a tick is in flight. */}
+      {postDeployProgress && (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <span className="truncate">{postDeployProgress.tag ?? 'Post-deploy'}</span>
+            <span className="tabular-nums shrink-0">
+              {postDeployProgress.completedMb !== undefined && postDeployProgress.totalMb !== undefined
+                ? `${Math.round(postDeployProgress.completedMb)} / ${Math.round(postDeployProgress.totalMb)} MB · ${postDeployProgress.percent}%`
+                : `${postDeployProgress.percent}%`}
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-indigo-500 transition-[width] duration-500"
+              style={{ width: `${postDeployProgress.percent}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* The runner paused on the NPM credentials prompt. Skipping
           continues with the auto-generated fallback; proxy routes can
