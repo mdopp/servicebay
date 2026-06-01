@@ -364,7 +364,6 @@ func (m NasUploadModel) pickerView() string {
 		return detailStyle.Render(hint) + "\n"
 	}
 	var b strings.Builder
-	b.WriteString("\n")
 	shown := m.filtered
 	if len(shown) > maxCandidatesShown {
 		shown = shown[:maxCandidatesShown]
@@ -373,8 +372,11 @@ func (m NasUploadModel) pickerView() string {
 		b.WriteString(candidateRow(c, i == m.candCursor) + "\n")
 	}
 	if extra := len(m.filtered) - len(shown); extra > 0 {
-		b.WriteString(footerStyle.Render(fmt.Sprintf("   …and %d more — type to narrow", extra)) + "\n")
+		b.WriteString(footerStyle.Render(fmt.Sprintf("       …and %d more — type to narrow", extra)) + "\n")
 	}
+	// Blank line so the nested picker reads as a dropdown under the path field,
+	// not as a row glued to the FTP fields below it.
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -387,14 +389,17 @@ func candidateRow(c habackup.Candidate, selected bool) string {
 	}
 	name := truncName(filepath.Base(c.Path), 40)
 	meta := fmt.Sprintf("%s · %s · %s", abbrevHome(filepath.Dir(c.Path)), humanSize(c.Size), fmtAge(time.Since(c.Mod)))
+	// Indented so the picker nests visually under the path field — and so the
+	// selected row's "❯" sits at column 4, not column 0 where it would clash
+	// with the focused-field cursor and read as a second cursor.
 	if selected {
-		return selectedStyle.Render("❯ " + mark + " " + name + "   " + meta)
+		return "    " + selectedStyle.Render("❯ "+mark+" "+name+"   "+meta)
 	}
 	markPart := normalStyle.Render(mark)
 	if c.IsHA {
 		markPart = cfgOKStyle.Render(mark)
 	}
-	return normalStyle.Render("  ") + markPart + normalStyle.Render(" "+name) + footerStyle.Inline(true).Render("   "+meta)
+	return normalStyle.Render("      ") + markPart + normalStyle.Render(" "+name) + footerStyle.Inline(true).Render("   "+meta)
 }
 
 // expandHome turns a leading ~ into the user's home dir, so a typed
