@@ -380,6 +380,25 @@ interface DeployContext {
   reusedSecretNames: Set<string>;
 }
 
+/**
+ * #1318 — find direct `{{VAR}}` interpolations in a pod template that would
+ * render empty against `view`. Mustache turns an unfilled var into '', which
+ * silently deploys a broken pod (empty image tag / env / mount) with no
+ * breadcrumb. Section refs (`{{#VAR}}` / `{{^VAR}}` / `{{/VAR}}`) are
+ * conditionals that are legitimately empty (e.g. `{{#ZWAVE_DEVICE}}`), so a
+ * var used in a section is treated as optional and excluded; only *direct*
+ * interpolations are considered. The caller warns (does not hard-fail) — some
+ * direct refs are legitimately optional (an SSH key OR a password) and the
+ * variable schema carries no `required` flag to tell them apart.
+ */
+export function findEmptyYamlVars(yaml: string, view: Record<string, string>): string[] {
+  const sectionVars = new Set<string>();
+  for (const m of yaml.matchAll(/\{\{\s*[#^/]\s*([A-Z_][A-Z0-9_]*)\s*\}\}/g)) sectionVars.add(m[1]);
+  const directRefs = new Set<string>();
+  for (const m of yaml.matchAll(/\{\{\{?\s*([A-Z_][A-Z0-9_]*)\s*\}{2,3}/g)) directRefs.add(m[1]);
+  return [...directRefs].filter(r => !sectionVars.has(r) && (!(r in view) || view[r] === ''));
+}
+
 /** Deploy a single template via /api/services?stream=1. Returns true on
  *  successful deploy, false on terminal failure. Retries transient
  *  failures up to MAX_DEPLOY_ATTEMPTS. */
@@ -405,6 +424,18 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   Object.assign(view, authDynamicVars(item.name));
   // Render YAML with unified template renderer
   const yamlContent = renderTemplate(item.yaml, view);
+
+  // #1318 — the pod YAML had no missing-var guard (config files did), so an
+  // unfilled {{VAR}} rendered empty and deployed silently. Surface a
+  // breadcrumb for any direct ref that rendered empty so a crash-looping pod
+  // traces back to the unfilled variable. Warn rather than hard-fail: some
+  // direct refs are legitimately optional and there is no required flag.
+  const emptyYamlVars = findEmptyYamlVars(item.yaml, view);
+  if (emptyYamlVars.length > 0) {
+    await log(jobId, `⚠️ ${item.name}: pod template variable(s) rendered empty: ${emptyYamlVars.join(', ')}. ` +
+      `If any are required, go back to Configure and fill them in (or check the template's variables.json defaults) — an empty value can crash-loop the pod.`);
+  }
+
   const kubeContent =
     `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
 
