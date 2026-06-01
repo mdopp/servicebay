@@ -23,10 +23,11 @@ export const dynamic = 'force-dynamic';
 export const POST = withApiHandler({}, async ({ request }) => {
   try {
     const body = await request.json();
-    const { confirm, node: requestedNode, preserve: rawPreserve } = body as {
+    const { confirm, node: requestedNode, preserve: rawPreserve, wipeImages } = body as {
       confirm?: string;
       node?: string;
       preserve?: unknown;
+      wipeImages?: boolean;
     };
 
     if (confirm !== 'RESET') {
@@ -36,7 +37,7 @@ export const POST = withApiHandler({}, async ({ request }) => {
       );
     }
 
-    const result = await performStackReset({ node: requestedNode, preserve: rawPreserve });
+    const result = await performStackReset({ node: requestedNode, preserve: rawPreserve, wipeImages: wipeImages === true });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof StackResetError) {

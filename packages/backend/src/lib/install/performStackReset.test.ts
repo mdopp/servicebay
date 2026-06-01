@@ -109,3 +109,17 @@ describe('performStackReset — secrets regen (#1246)', () => {
     ).rejects.toThrow('disk full');
   });
 });
+
+describe('performStackReset — image wipe (#1495 level b)', () => {
+  it('wipes images when wipeImages is set', async () => {
+    const result = await performStackReset({ preserve: ['secrets'], node: 'node-1', wipeImages: true });
+    expect(sentCommands.some(c => c.includes('podman rmi -af'))).toBe(true);
+    expect(result.wipeStepsRun.some(s => s.startsWith('images'))).toBe(true);
+  });
+
+  it('does NOT touch images by default', async () => {
+    const result = await performStackReset({ preserve: ['secrets'], node: 'node-1' });
+    expect(sentCommands.some(c => c.includes('podman rmi'))).toBe(false);
+    expect(result.wipeStepsRun.some(s => s.startsWith('images'))).toBe(false);
+  });
+});
