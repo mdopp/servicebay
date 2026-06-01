@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.72.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.71.0...servicebay-v4.72.0) (2026-06-01)
+
+
+### Features
+
+* **mcp:** get_channel / set_channel tools for autonomous :dev verify ([30a2817](https://github.com/mdopp/servicebay/commit/30a2817890396b4491d27b6f45886a88c48eee53))
+* **mcp:** get_channel / set_channel tools for autonomous :dev verify ([fdfbfdb](https://github.com/mdopp/servicebay/commit/fdfbfdb95f6a907cc64cbcb47f2ec814f999b262))
+
 ## [4.71.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.70.0...servicebay-v4.71.0) (2026-06-01)
 
 
