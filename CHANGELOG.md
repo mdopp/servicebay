@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.80.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.79.0...servicebay-v4.80.0) (2026-06-01)
+
+
+### Features
+
+* **backup:** auto-restore service config from NAS on reinstall ([#1218](https://github.com/mdopp/servicebay/issues/1218) entry 1) ([d438737](https://github.com/mdopp/servicebay/commit/d438737a902fff66394f01ff6bb412a1b2300955))
+* **backup:** onboarding orphan-backup hint ([#1218](https://github.com/mdopp/servicebay/issues/1218) entry 2) ([388daa2](https://github.com/mdopp/servicebay/commit/388daa2b296ac96b6acdb650e05e9a9832925dae))
+* **backup:** onboarding orphan-backup hint ([#1218](https://github.com/mdopp/servicebay/issues/1218) entry 2) ([802f5cd](https://github.com/mdopp/servicebay/commit/802f5cdb491246f098a03db810cc8dea1610ef22))
+* **install:** factory-reset image-wipe level ([#1495](https://github.com/mdopp/servicebay/issues/1495)) ([a9535bd](https://github.com/mdopp/servicebay/commit/a9535bd6e38b56d307cbea48c4695e5ca5ec02e8))
+* **install:** factory-reset image-wipe level ([#1495](https://github.com/mdopp/servicebay/issues/1495)) ([dddf000](https://github.com/mdopp/servicebay/commit/dddf000eeb577873317b570d287021b4ad858a4a))
+* **tui,install:** factory-fresh install toggle ([#1496](https://github.com/mdopp/servicebay/issues/1496)) ([523fda2](https://github.com/mdopp/servicebay/commit/523fda2931d7a97733a09278b452bd234b916fd2))
+* **tui,install:** factory-fresh install toggle in the build form ([#1496](https://github.com/mdopp/servicebay/issues/1496)) ([970159c](https://github.com/mdopp/servicebay/commit/970159cc55adcfd49f44b2f1b8207d5249d4dd52))
+* **tui:** chain post-boot sign-in + restore + install into Express ([#1233](https://github.com/mdopp/servicebay/issues/1233)) ([f85654e](https://github.com/mdopp/servicebay/commit/f85654e1cacec32c7344ded78e7303da9a2a7c5d))
+* **tui:** chain post-boot sign-in + restore + install into Express ([#1233](https://github.com/mdopp/servicebay/issues/1233)) ([2a80a4e](https://github.com/mdopp/servicebay/commit/2a80a4e575f9e1619a3db69eefa53b83b83fcafc))
+
+
+### Bug Fixes
+
+* **install:** apply variables.json defaults on reinstall for newly-added vars ([50daef5](https://github.com/mdopp/servicebay/commit/50daef555d85fb6a84478c636ca40b6872a8a4dc))
+* **install:** apply variables.json defaults on reinstall for newly-added vars ([79d608b](https://github.com/mdopp/servicebay/commit/79d608b424e1e64ee8e55d69c415e76c14b89d1a))
+
 ## [4.79.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.78.0...servicebay-v4.79.0) (2026-06-01)
 
 
