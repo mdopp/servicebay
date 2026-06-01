@@ -65,120 +65,117 @@ export interface DeleteBundleResult {
     missingFiles: string[];
 }
 
-export async function discoverSystemdServices(connection?: PodmanConnection): Promise<DiscoveredService[]> {
-    if (!connection) {
-        return [];
+async function parseSystemdUnitLine(
+    serviceName: string,
+    executor: Executor
+): Promise<{ unitFile?: string; sourcePath?: string }> {
+    let unitFile: string | undefined;
+    let sourcePath: string | undefined;
+
+    try {
+        // #1097: route systemctl through execArgv so the shell never
+        // sees serviceName as part of a command-line string. The
+        // upstream regex validator already constrains the input, but
+        // argv-based exec removes the shell-injection class entirely
+        // and matches the convention the rest of the codebase uses.
+        let { stdout } = await executor.execArgv(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', serviceName]);
+
+        // If empty output or properties missing, try appending .service if not present
+        if ((!stdout || (!stdout.includes('FragmentPath=') && !stdout.includes('SourcePath='))) && !serviceName.endsWith('.service')) {
+             const res = await executor.execArgv(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', `${serviceName}.service`]);
+             stdout = res.stdout;
+        }
+
+        const lines = stdout.split('\n');
+        for (const line of lines) {
+            if (line.startsWith('FragmentPath=')) unitFile = line.substring(13);
+            if (line.startsWith('SourcePath=')) sourcePath = line.substring(11);
+        }
+
+        // Fallback: Check common locations if unitFile is still empty
+        if (!unitFile) {
+             // Get home dir dynamically (remote or local)
+             const { stdout: homeDir } = await executor.exec('echo $HOME');
+             const cleanHome = homeDir.trim();
+
+             const commonPaths = [
+                 path.join(cleanHome, '.config/systemd/user', serviceName),
+                 path.join(cleanHome, '.config/systemd/user', `${serviceName}.service`),
+                 `/etc/systemd/user/${serviceName}`,
+                 `/etc/systemd/user/${serviceName}.service`
+             ];
+
+             for (const p of commonPaths) {
+                 if (await executor.exists(p)) {
+                     unitFile = p;
+                     break;
+                 }
+             }
+        }
+    } catch (e) {
+        logger.error('discovery', `Failed to inspect service ${serviceName}`, e);
     }
+
+    return { unitFile, sourcePath };
+}
+
+function determineServiceType(serviceName: string, sourcePath?: string): DiscoveredService['type'] {
+    if (serviceName.includes('podman-compose')) {
+        return 'compose';
+    }
+    if (sourcePath) {
+        if (sourcePath.endsWith('.kube')) return 'kube';
+        if (sourcePath.endsWith('.container')) return 'container';
+        if (sourcePath.endsWith('.pod')) return 'pod';
+    }
+    return 'other';
+}
+
+function determineServiceStatus(type: DiscoveredService['type'], sourcePath?: string): DiscoveredService['status'] {
+    if ((type === 'kube' || type === 'container' || type === 'pod') && sourcePath?.includes('.config/containers/systemd')) {
+        return 'managed';
+    }
+    return 'unmanaged';
+}
+
+function buildDiscoveryHints(unitFile?: string, sourcePath?: string, podId?: string, containerIds?: string[]): string[] {
+    const hints: string[] = [];
+    if (unitFile) hints.push(`Unit: ${unitFile}`);
+    if (sourcePath && sourcePath !== unitFile) hints.push(`Source: ${sourcePath}`);
+    if (podId) hints.push(`Pod: ${podId}`);
+    if (containerIds?.length) hints.push(`Containers: ${containerIds.map(id => id.substring(0, 12)).join(', ')}`);
+    return hints;
+}
+
+export async function discoverSystemdServices(connection?: PodmanConnection): Promise<DiscoveredService[]> {
+    if (!connection) return [];
     const executor = getExecutor(connection);
     const containers = await getPodmanPs(connection);
     const servicesMap = new Map<string, { names: string[], ids: string[], podId?: string }>();
-    const nodeLabel = connection?.Name || 'Local';
 
-    // Group containers by systemd unit
     for (const container of containers) {
         const unit = container.Labels?.['PODMAN_SYSTEMD_UNIT'];
-        if (unit) {
-            const current: { names: string[], ids: string[], podId?: string } = servicesMap.get(unit) || { names: [], ids: [], podId: container.Pod };
-            // Clean up container name
-            const name = container.Names && container.Names.length > 0 ? container.Names[0].replace(/^\//, '') : container.Id.substring(0, 12);
-
-            current.names.push(name);
-            current.ids.push(container.Id);
-
-            servicesMap.set(unit, current);
-        }
+        if (!unit) continue;
+        const current: { names: string[], ids: string[], podId?: string } = servicesMap.get(unit) || { names: [], ids: [], podId: container.Pod };
+        const name = container.Names?.[0]?.replace(/^\//, '') ?? container.Id.substring(0, 12);
+        current.names.push(name);
+        current.ids.push(container.Id);
+        servicesMap.set(unit, current);
     }
 
+    const nodeLabel = connection?.Name || 'Local';
     const results: DiscoveredService[] = [];
-
     for (const [serviceName, data] of servicesMap.entries()) {
-        const containerNames = data.names;
-        const containerIds = data.ids;
-        const podId = data.podId;
-        let unitFile: string | undefined;
-        let sourcePath: string | undefined;
-        let type: DiscoveredService['type'] = 'other';
-        let status: DiscoveredService['status'] = 'unmanaged';
-        const discoveryHints: string[] = [];
-
-        try {
-            // #1097: route systemctl through execArgv so the shell never
-            // sees serviceName as part of a command-line string. The
-            // upstream regex validator already constrains the input, but
-            // argv-based exec removes the shell-injection class entirely
-            // and matches the convention the rest of the codebase uses.
-            let { stdout } = await executor.execArgv(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', serviceName]);
-
-            // If empty output or properties missing, try appending .service if not present
-            if ((!stdout || (!stdout.includes('FragmentPath=') && !stdout.includes('SourcePath='))) && !serviceName.endsWith('.service')) {
-                 const res = await executor.execArgv(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', `${serviceName}.service`]);
-                 stdout = res.stdout;
-            }
-
-            const lines = stdout.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('FragmentPath=')) unitFile = line.substring(13);
-                if (line.startsWith('SourcePath=')) sourcePath = line.substring(11);
-            }
-
-            // Fallback: Check common locations if unitFile is still empty
-            if (!unitFile) {
-                 // Get home dir dynamically (remote or local)
-                 const { stdout: homeDir } = await executor.exec('echo $HOME');
-                 const cleanHome = homeDir.trim();
-
-                 const commonPaths = [
-                     path.join(cleanHome, '.config/systemd/user', serviceName),
-                     path.join(cleanHome, '.config/systemd/user', `${serviceName}.service`),
-                     `/etc/systemd/user/${serviceName}`,
-                     `/etc/systemd/user/${serviceName}.service`
-                 ];
-
-                 for (const p of commonPaths) {
-                     if (await executor.exists(p)) {
-                         unitFile = p;
-                         break;
-                     }
-                 }
-            }
-
-        } catch (e) {
-            logger.error('discovery', `Failed to inspect service ${serviceName}`, e);
-        }
-
-        // Determine Type
-        if (serviceName.includes('podman-compose')) {
-            type = 'compose';
-        } else if (sourcePath) {
-             if (sourcePath.endsWith('.kube')) type = 'kube';
-             else if (sourcePath.endsWith('.container')) type = 'container';
-             else if (sourcePath.endsWith('.pod')) type = 'pod';
-        }
-
-        // Determine Status (Managed by ServiceBay?)
-        // ServiceBay currently manages .kube files in the SYSTEMD_DIR
-        // We need to check if sourcePath is within SYSTEMD_DIR
-        // Since paths might be absolute or relative, and we are remote, this is tricky.
-        // But usually SYSTEMD_DIR is ~/.config/containers/systemd
-
-        if ((type === 'kube' || type === 'container' || type === 'pod') && sourcePath && sourcePath.includes('.config/containers/systemd')) {
-            status = 'managed';
-        }
-
-        // Filter out empty paths if they are empty strings
-        if (!unitFile) unitFile = undefined;
-        if (!sourcePath) sourcePath = undefined;
-
-        if (unitFile) discoveryHints.push(`Unit: ${unitFile}`);
-        if (sourcePath && sourcePath !== unitFile) discoveryHints.push(`Source: ${sourcePath}`);
-        if (podId) discoveryHints.push(`Pod: ${podId}`);
-        if (containerIds.length > 0) discoveryHints.push(`Containers: ${containerIds.map(id => id.substring(0, 12)).join(', ')}`);
+        const { unitFile, sourcePath } = await parseSystemdUnitLine(serviceName, executor);
+        const type = determineServiceType(serviceName, sourcePath);
+        const status = determineServiceStatus(type, sourcePath);
+        const discoveryHints = buildDiscoveryHints(unitFile, sourcePath, data.podId, data.ids);
 
         results.push({
             serviceName,
-            containerNames,
-            containerIds,
-            podId,
+            containerNames: data.names,
+            containerIds: data.ids,
+            podId: data.podId,
             unitFile,
             sourcePath,
             status,
@@ -187,62 +184,16 @@ export async function discoverSystemdServices(connection?: PodmanConnection): Pr
             discoveryHints
         });
     }
-
     return results;
 }
 
-export async function deleteBundleResources(bundle: ServiceBundle, connection?: PodmanConnection): Promise<DeleteBundleResult> {
-    if (!bundle) {
-        throw new Error('Bundle is required for deletion.');
-    }
-
-    const executor = getExecutor(connection);
-    const stoppedUnits: string[] = [];
+async function removeUnitFiles(
+    executor: Executor,
+    fileCandidates: Set<string>,
+    homeDir: string | undefined
+): Promise<{ removedFiles: string[]; missingFiles: string[] }> {
     const removedFiles: string[] = [];
     const missingFiles: string[] = [];
-
-    const serviceUnits = new Set<string>();
-    const fileCandidates = new Set<string>();
-
-    bundle.services.forEach(service => {
-        if (service.serviceName) {
-            const normalized = service.serviceName.endsWith('.service') ? service.serviceName : `${service.serviceName}.service`;
-            serviceUnits.add(normalized);
-        }
-        if (service.unitFile) {
-            fileCandidates.add(service.unitFile);
-        }
-        if (service.sourcePath) {
-            fileCandidates.add(service.sourcePath);
-        }
-    });
-
-    bundle.assets?.forEach(asset => {
-        if (asset.path) {
-            fileCandidates.add(asset.path);
-        }
-    });
-
-    for (const unit of serviceUnits) {
-        try {
-            await executor.execArgv(['systemctl', '--user', 'disable', '--now', unit]);
-            await executor.execArgv(['systemctl', '--user', 'reset-failed', unit]);
-            stoppedUnits.push(unit);
-        } catch (error) {
-            logger.warn('discovery', `Failed to disable unmanaged unit ${unit}`, error);
-        }
-    }
-
-    const needsHomeDir = Array.from(fileCandidates).some(candidate => candidate && !candidate.trim().startsWith('/'));
-    let homeDir: string | undefined;
-    if (needsHomeDir) {
-        try {
-            const { stdout } = await executor.exec('echo $HOME');
-            homeDir = stdout.trim() || undefined;
-        } catch (error) {
-            logger.warn('discovery', 'Unable to resolve remote home directory for bundle deletion', error);
-        }
-    }
 
     const normalizeRemotePath = (raw: string | undefined): string | null => {
         if (!raw) return null;
@@ -278,6 +229,56 @@ export async function deleteBundleResources(bundle: ServiceBundle, connection?: 
             logger.warn('discovery', `Failed to remove bundle asset ${absolutePath}`, error);
         }
     }
+
+    return { removedFiles, missingFiles };
+}
+
+export async function deleteBundleResources(bundle: ServiceBundle, connection?: PodmanConnection): Promise<DeleteBundleResult> {
+    if (!bundle) {
+        throw new Error('Bundle is required for deletion.');
+    }
+
+    const executor = getExecutor(connection);
+    const stoppedUnits: string[] = [];
+    const fileCandidates = new Set<string>();
+
+    // Collect serviceUnits and fileCandidates from bundle
+    const serviceUnits = new Set<string>();
+    bundle.services.forEach(service => {
+        if (service.serviceName) {
+            const normalized = service.serviceName.endsWith('.service') ? service.serviceName : `${service.serviceName}.service`;
+            serviceUnits.add(normalized);
+        }
+    });
+
+    bundle.assets?.forEach(asset => {
+        if (asset.path) {
+            fileCandidates.add(asset.path);
+        }
+    });
+
+    for (const unit of serviceUnits) {
+        try {
+            await executor.execArgv(['systemctl', '--user', 'disable', '--now', unit]);
+            await executor.execArgv(['systemctl', '--user', 'reset-failed', unit]);
+            stoppedUnits.push(unit);
+        } catch (error) {
+            logger.warn('discovery', `Failed to disable unmanaged unit ${unit}`, error);
+        }
+    }
+
+    const needsHomeDir = Array.from(fileCandidates).some(candidate => candidate && !candidate.trim().startsWith('/'));
+    let homeDir: string | undefined;
+    if (needsHomeDir) {
+        try {
+            const { stdout } = await executor.exec('echo $HOME');
+            homeDir = stdout.trim() || undefined;
+        } catch (error) {
+            logger.warn('discovery', 'Unable to resolve remote home directory for bundle deletion', error);
+        }
+    }
+
+    const { removedFiles, missingFiles } = await removeUnitFiles(executor, fileCandidates, homeDir);
 
     try {
         await executor.exec('systemctl --user daemon-reload');

@@ -184,6 +184,108 @@ async function ensureTargetDir(target: BackupTarget): Promise<void> {
 
 // ─── Main Run ────────────────────────────────────────────────────────
 
+async function executeRsyncBackup(
+    args: string[],
+    config: BackupConfig,
+    startedAt: Date,
+    mountPath?: string,
+    previousStatus?: 'success' | 'error'
+): Promise<{ result: BackupRunResult; mountCleanup?: () => Promise<void> }> {
+    let mountCleanup: (() => Promise<void>) | undefined;
+
+    try {
+        // Mount if needed
+        if (mountPath && (config.target.type === 'smb' || config.target.type === 'nfs')) {
+            logger.info('Backup', `Mounting ${config.target.type} target at ${mountPath}`);
+            await mountTarget(config.target, mountPath);
+            mountCleanup = () => unmountTarget(mountPath);
+        }
+
+        // Ensure target directory exists
+        await ensureTargetDir(config.target);
+
+        // Run rsync
+        logger.info('Backup', `Running: rsync ${args.join(' ')}`);
+        const { stdout, stderr } = await execFileAsync('rsync', args, {
+            timeout: 24 * 60 * 60 * 1000, // 24h max
+            maxBuffer: 10 * 1024 * 1024, // 10MB
+        });
+
+        const completedAt = new Date();
+        const duration = Math.round((completedAt.getTime() - startedAt.getTime()) / 1000);
+        const stats = parseRsyncStats(stdout);
+
+        if (stderr && stderr.trim()) {
+            logger.warn('Backup', `rsync stderr: ${stderr.trim()}`);
+        }
+
+        const result: BackupRunResult = {
+            success: true,
+            startedAt: startedAt.toISOString(),
+            completedAt: completedAt.toISOString(),
+            duration,
+            message: `Backup completed. ${stats.filesTransferred ?? '?'} files synced.`,
+            ...stats,
+        };
+
+        logger.info('Backup', result.message);
+        await appendHistory(result);
+        await updateBackupStatus(true, result.message, duration);
+
+        // Send recovery email if previous run failed
+        if (previousStatus === 'error') {
+            sendEmailAlert(
+                'Backup Recovered',
+                `Backup sync has recovered.\n\n${result.message}\nDuration: ${duration}s\nTarget: ${describeTarget(config.target)}`
+            ).catch(e => logger.warn('Backup', `Failed to send recovery email: ${e}`));
+        }
+
+        return { result, mountCleanup };
+    } catch (error) {
+        if (mountCleanup) await mountCleanup();
+        throw error;
+    }
+}
+
+async function runBackupItems(
+    config: BackupConfig,
+    startedAt: Date,
+    previousStatus: 'success' | 'error' | undefined
+): Promise<BackupRunResult> {
+    logger.info('Backup', `Starting backup: ${config.sourcePath} → ${describeTarget(config.target)}`);
+
+    // Verify source exists
+    try {
+        await fs.access(config.sourcePath);
+    } catch {
+        throw new Error(`Source path does not exist: ${config.sourcePath}`);
+    }
+
+    // Build rsync command
+    const { args, mountPath } = buildRsyncArgs(
+        config.sourcePath,
+        config.target,
+        config.excludePatterns || []
+    );
+
+    const { result, mountCleanup } = await executeRsyncBackup(args, config, startedAt, mountPath, previousStatus);
+
+    try {
+        return result;
+    } finally {
+        if (mountCleanup) await mountCleanup();
+    }
+}
+
+async function loadBackupConfig(config?: BackupConfig): Promise<{ config: BackupConfig; previousStatus?: 'success' | 'error' }> {
+    if (!config) {
+        const appConfig = await getConfig();
+        return { config: appConfig.backup!, previousStatus: appConfig.backup?.lastStatus };
+    }
+    const appConfig = await getConfig();
+    return { config, previousStatus: appConfig.backup?.lastStatus };
+}
+
 export async function runBackup(config?: BackupConfig): Promise<BackupRunResult> {
     if (isRunning) {
         return {
@@ -197,91 +299,14 @@ export async function runBackup(config?: BackupConfig): Promise<BackupRunResult>
 
     isRunning = true;
     const startedAt = new Date();
+    let resolvedConfig: BackupConfig | undefined;
     let previousStatus: 'success' | 'error' | undefined;
 
     try {
-        if (!config) {
-            const appConfig = await getConfig();
-            config = appConfig.backup;
-            previousStatus = config?.lastStatus;
-        } else {
-            const appConfig = await getConfig();
-            previousStatus = appConfig.backup?.lastStatus;
-        }
-
-        if (!config) {
-            throw new Error('No backup configuration found');
-        }
-
-        logger.info('Backup', `Starting backup: ${config.sourcePath} → ${describeTarget(config.target)}`);
-
-        // Verify source exists
-        try {
-            await fs.access(config.sourcePath);
-        } catch {
-            throw new Error(`Source path does not exist: ${config.sourcePath}`);
-        }
-
-        // Build rsync command
-        const { args, mountPath } = buildRsyncArgs(
-            config.sourcePath,
-            config.target,
-            config.excludePatterns || []
-        );
-
-        let mountCleanup: (() => Promise<void>) | undefined;
-
-        try {
-            // Mount if needed
-            if (mountPath && (config.target.type === 'smb' || config.target.type === 'nfs')) {
-                logger.info('Backup', `Mounting ${config.target.type} target at ${mountPath}`);
-                await mountTarget(config.target, mountPath);
-                mountCleanup = () => unmountTarget(mountPath);
-            }
-
-            // Ensure target directory exists
-            await ensureTargetDir(config.target);
-
-            // Run rsync
-            logger.info('Backup', `Running: rsync ${args.join(' ')}`);
-            const { stdout, stderr } = await execFileAsync('rsync', args, {
-                timeout: 24 * 60 * 60 * 1000, // 24h max
-                maxBuffer: 10 * 1024 * 1024, // 10MB
-            });
-
-            const completedAt = new Date();
-            const duration = Math.round((completedAt.getTime() - startedAt.getTime()) / 1000);
-            const stats = parseRsyncStats(stdout);
-
-            if (stderr && stderr.trim()) {
-                logger.warn('Backup', `rsync stderr: ${stderr.trim()}`);
-            }
-
-            const result: BackupRunResult = {
-                success: true,
-                startedAt: startedAt.toISOString(),
-                completedAt: completedAt.toISOString(),
-                duration,
-                message: `Backup completed. ${stats.filesTransferred ?? '?'} files synced.`,
-                ...stats,
-            };
-
-            logger.info('Backup', result.message);
-            await appendHistory(result);
-            await updateBackupStatus(true, result.message, duration);
-
-            // Send recovery email if previous run failed
-            if (previousStatus === 'error') {
-                sendEmailAlert(
-                    'Backup Recovered',
-                    `Backup sync has recovered.\n\n${result.message}\nDuration: ${duration}s\nTarget: ${describeTarget(config!.target)}`
-                ).catch(e => logger.warn('Backup', `Failed to send recovery email: ${e}`));
-            }
-
-            return result;
-        } finally {
-            if (mountCleanup) await mountCleanup();
-        }
+        const loaded = await loadBackupConfig(config);
+        resolvedConfig = loaded.config;
+        previousStatus = loaded.previousStatus;
+        return await runBackupItems(resolvedConfig, startedAt, previousStatus);
     } catch (error) {
         const completedAt = new Date();
         const duration = Math.round((completedAt.getTime() - startedAt.getTime()) / 1000);
@@ -300,11 +325,11 @@ export async function runBackup(config?: BackupConfig): Promise<BackupRunResult>
         await appendHistory(result);
         await updateBackupStatus(false, message, duration);
 
-        // Send failure email (only on first failure, not repeated)
         if (previousStatus !== 'error') {
+            const target = resolvedConfig ? describeTarget(resolvedConfig.target) : 'unknown';
             sendEmailAlert(
                 'Backup Failed',
-                `Backup sync has failed.\n\nError: ${message}\nDuration: ${duration}s\nTarget: ${config ? describeTarget(config.target) : 'unknown'}`
+                `Backup sync has failed.\n\nError: ${message}\nDuration: ${duration}s\nTarget: ${target}`
             ).catch(e => logger.warn('Backup', `Failed to send failure email: ${e}`));
         }
 
@@ -335,6 +360,36 @@ async function updateBackupStatus(success: boolean, message: string, duration: n
 
 // ─── Scheduler ───────────────────────────────────────────────────────
 
+function getNextDateForSchedule(now: Date, schedule: string, dayOfWeek?: number, dayOfMonth?: number): Date {
+    const next = new Date(now);
+    switch (schedule) {
+        case 'hourly':
+            if (next <= now) next.setUTCHours(next.getUTCHours() + 1);
+            break;
+        case 'daily':
+            if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+            break;
+        case 'weekly': {
+            const targetDay = dayOfWeek ?? 0;
+            let daysUntil = targetDay - now.getUTCDay();
+            if (daysUntil < 0) daysUntil += 7;
+            if (daysUntil === 0 && next <= now) daysUntil = 7;
+            next.setUTCDate(next.getUTCDate() + daysUntil);
+            break;
+        }
+        case 'monthly': {
+            const targetDay = dayOfMonth ?? 1;
+            next.setUTCDate(targetDay);
+            if (next <= now) {
+                next.setUTCMonth(next.getUTCMonth() + 1);
+                next.setUTCDate(targetDay);
+            }
+            break;
+        }
+    }
+    return next;
+}
+
 function getNextRunTime(config: BackupConfig): Date {
     const now = new Date();
     const [hourStr, minuteStr] = (config.time || '02:00').split(':');
@@ -345,37 +400,7 @@ function getNextRunTime(config: BackupConfig): Date {
     next.setUTCSeconds(0, 0);
     next.setUTCHours(hour, minute);
 
-    switch (config.schedule) {
-        case 'hourly':
-            next.setUTCHours(now.getUTCHours(), minute);
-            if (next <= now) next.setUTCHours(next.getUTCHours() + 1);
-            break;
-
-        case 'daily':
-            if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
-            break;
-
-        case 'weekly': {
-            const targetDay = config.dayOfWeek ?? 0; // Sunday default
-            let daysUntil = targetDay - now.getUTCDay();
-            if (daysUntil < 0) daysUntil += 7;
-            if (daysUntil === 0 && next <= now) daysUntil = 7;
-            next.setUTCDate(next.getUTCDate() + daysUntil);
-            break;
-        }
-
-        case 'monthly': {
-            const targetDay = config.dayOfMonth ?? 1;
-            next.setUTCDate(targetDay);
-            if (next <= now) {
-                next.setUTCMonth(next.getUTCMonth() + 1);
-                next.setUTCDate(targetDay);
-            }
-            break;
-        }
-    }
-
-    return next;
+    return getNextDateForSchedule(next, config.schedule, config.dayOfWeek, config.dayOfMonth);
 }
 
 export function scheduleBackup(): void {
