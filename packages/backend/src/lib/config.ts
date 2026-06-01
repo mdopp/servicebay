@@ -294,6 +294,18 @@ export interface AppConfig {
   };
   backup?: BackupConfig;
   /**
+   * Nightly per-service config backup to the FritzBox NAS (#1217, epic #1190).
+   * Separate from `backup` (the full snapshot to the local backup target): this
+   * is the lightweight config-survival push that uses `config.gateway` as the
+   * NAS. Defaults to enabled at 03:30 UTC; the cron skips quietly when the
+   * gateway/NAS isn't configured (nothing to push to yet).
+   */
+  externalBackup?: {
+    enabled: boolean;
+    /** Daily run time in 24h `HH:MM` UTC. */
+    time?: string;
+  };
+  /**
    * LLDAP admin credentials, persisted by the install wizard so the user can
    * retrieve their auto-generated admin password from Settings → Integrations
    * after first install. Mirrors the `reverseProxy.npm` pattern.

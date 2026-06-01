@@ -164,6 +164,78 @@ function rewriteAutheliaUrl(existing: unknown, lanRoot: string, publicDomain: st
 }
 
 /**
+ * Rewrite the session cookie domain and authelia_url for the public migration.
+ */
+function rewriteSessionCookie(
+  doc: YamlNode,
+  lanRoot: string,
+  publicDomain: string,
+  changes: AutheliaRewriteChanges,
+): void {
+  const cookies = doc?.session?.cookies;
+  if (Array.isArray(cookies) && cookies.length > 0 && cookies[0] && typeof cookies[0] === 'object') {
+    const c = cookies[0];
+    changes.cookieDomain.from = typeof c.domain === 'string' ? c.domain : null;
+    c.domain = publicDomain;
+    changes.cookieAutheliaUrl.from = typeof c.authelia_url === 'string' ? c.authelia_url : null;
+    c.authelia_url = rewriteAutheliaUrl(c.authelia_url, lanRoot, publicDomain);
+    changes.cookieAutheliaUrl.to = c.authelia_url;
+  }
+}
+
+/**
+ * Rewrite access-control rules to twin domain entries for the public migration.
+ */
+function rewriteAccessControlRules(
+  doc: YamlNode,
+  lanRoot: string,
+  publicDomain: string,
+  changes: AutheliaRewriteChanges,
+): void {
+  const rules = doc?.access_control?.rules;
+  if (Array.isArray(rules)) {
+    for (const r of rules) {
+      if (!r || typeof r !== 'object' || !('domain' in r)) continue;
+      const before = r.domain;
+      const after = twinAccessControlDomain(before, lanRoot, publicDomain);
+      if (JSON.stringify(before) !== JSON.stringify(after)) {
+        r.domain = after;
+        changes.accessControlRuleDomains.push({ from: before, to: after });
+      }
+    }
+  }
+}
+
+/**
+ * Append public-domain redirect_uri twins to an OIDC client's redirect_uris.
+ * Idempotent — running the rewrite a second time on already-migrated config
+ * yields no changes (additive only, deduplicates).
+ */
+function appendOidcRedirectUriTwins(
+  client: YamlNode,
+  lanRoot: string,
+  publicDomain: string,
+): string[] {
+  const uris = client.redirect_uris;
+  if (!Array.isArray(uris)) return [];
+  const existing = new Set<string>();
+  for (const u of uris) {
+    if (typeof u === 'string') existing.add(u);
+  }
+  const added: string[] = [];
+  for (const u of uris.slice()) {
+    if (typeof u !== 'string') continue;
+    const twin = twinUri(u, lanRoot, publicDomain);
+    if (twin && !existing.has(twin)) {
+      existing.add(twin);
+      uris.push(twin);
+      added.push(twin);
+    }
+  }
+  return added;
+}
+
+/**
  * Re-emit yaml using the same serialisation defaults as the existing
  * `oidc-clients/route.ts` editor so diffs against an Authelia config
  * touched by either path stay readable.
@@ -196,54 +268,17 @@ export function rewriteAutheliaConfig(
   }
 
   // 1) Session cookie — single config value, hard cutover.
-  const cookies = doc?.session?.cookies;
-  if (Array.isArray(cookies) && cookies.length > 0 && cookies[0] && typeof cookies[0] === 'object') {
-    const c = cookies[0];
-    changes.cookieDomain.from = typeof c.domain === 'string' ? c.domain : null;
-    c.domain = publicDomain;
-
-    changes.cookieAutheliaUrl.from = typeof c.authelia_url === 'string' ? c.authelia_url : null;
-    c.authelia_url = rewriteAutheliaUrl(c.authelia_url, lanRoot, publicDomain);
-    changes.cookieAutheliaUrl.to = c.authelia_url;
-  }
+  rewriteSessionCookie(doc, lanRoot, publicDomain, changes);
 
   // 2) Access-control rules — additive twin.
-  const rules = doc?.access_control?.rules;
-  if (Array.isArray(rules)) {
-    for (const r of rules) {
-      if (!r || typeof r !== 'object' || !('domain' in r)) continue;
-      const before = r.domain;
-      const after = twinAccessControlDomain(before, lanRoot, publicDomain);
-      // Only log a change when something actually moved. Arrays compare
-      // structurally; strings compare directly.
-      if (JSON.stringify(before) !== JSON.stringify(after)) {
-        r.domain = after;
-        changes.accessControlRuleDomains.push({ from: before, to: after });
-      }
-    }
-  }
+  rewriteAccessControlRules(doc, lanRoot, publicDomain, changes);
 
   // 3) OIDC clients — append public-domain redirect_uri twins.
   const clients = doc?.identity_providers?.oidc?.clients;
   if (Array.isArray(clients)) {
     for (const client of clients) {
       if (!client || typeof client !== 'object') continue;
-      const uris = client.redirect_uris;
-      if (!Array.isArray(uris)) continue;
-      const existing = new Set<string>();
-      for (const u of uris) {
-        if (typeof u === 'string') existing.add(u);
-      }
-      const added: string[] = [];
-      for (const u of uris.slice()) {
-        if (typeof u !== 'string') continue;
-        const twin = twinUri(u, lanRoot, publicDomain);
-        if (twin && !existing.has(twin)) {
-          existing.add(twin);
-          uris.push(twin);
-          added.push(twin);
-        }
-      }
+      const added = appendOidcRedirectUriTwins(client, lanRoot, publicDomain);
       if (added.length > 0) {
         changes.oidcRedirectUriAdditions.push({
           clientId: typeof client.client_id === 'string' ? client.client_id : '(unknown)',

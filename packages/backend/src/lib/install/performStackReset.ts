@@ -13,6 +13,7 @@ import { getNodeIds } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { RESET_GROUPS, DEFAULT_PRESERVE, isAlwaysWipe, type ResetGroup } from './resetGroups';
 import { validateResetCombo } from './resetValidation';
+import { regenerateWipedKeys } from './regenSecrets';
 
 /** Service names the reset endpoint refuses to delete. */
 const PROTECTED_SERVICES = new Set(['servicebay']);
@@ -224,6 +225,23 @@ export async function performStackReset(
       command: `find /var/mnt/data/servicebay -mindepth 1 -maxdepth 1 ${findExclusions} -exec rm -rf {} +`,
     });
     wipeStepsRun.push('secrets (kept ssh/, install-jobs/, cert-archive/, scrubbed config.json)');
+
+    // 3) Regenerate the two boot-critical key files in-process (#1246).
+    //    The wipe above removed secret.key + .auth-secret.env, but the
+    //    units that regenerate them (servicebay-secret-key-init,
+    //    servicebay-auth-secret-init) only run on boot. A reset without
+    //    an OS reboot leaves both files missing — the running container
+    //    survives on its in-memory copies until its next restart (a
+    //    config-save firing servicebay-trigger.path, or an image
+    //    auto-update), then assertAuthSecret() throws on the missing
+    //    .auth-secret.env and the container crash-loops forever with no
+    //    self-recovery. Writing them now (same formats as the boot
+    //    units) means the next restart finds them — no reboot needed.
+    //    A failure here must NOT be swallowed: a green reset that left
+    //    the keys missing would re-create the exact outage this fixes
+    //    (feedback_dont_mask_failures).
+    regenerateWipedKeys();
+    wipeStepsRun.push('secrets regen (secret.key + .auth-secret.env written in-process)');
   }
 
   // alwaysWipe groups (quadlet-backup): always purged, even when their

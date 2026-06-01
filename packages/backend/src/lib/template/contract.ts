@@ -267,16 +267,22 @@ function readAnnotation(yamlText: string, annotation: string): string | undefine
 }
 
 /**
- * Parse a template.yml's manifest annotations. Pure function — caller
- * passes the YAML text plus optional context flags. Returns either a
- * complete manifest or a list of human-readable errors.
+ * Validate and extract template metadata fields from parsed annotations.
  */
-export function parseTemplateManifest(
+function validateTemplateMetadata(
   yamlText: string,
-  ctx: ParseContext = {},
-): ParseResult {
+  ctx: ParseContext,
+): {
+  label: string | undefined;
+  ports: string | undefined;
+  configMount: string | undefined;
+  schemaVersion: number;
+  tier: TemplateTier;
+  dependencies: string[];
+  requiresApi: TemplateApiVersions | undefined;
+  errors: string[];
+} {
   const errors: string[] = [];
-  const warnings: string[] = [];
 
   const label = readAnnotation(yamlText, 'servicebay.label');
   if (label === undefined) {
@@ -303,9 +309,6 @@ export function parseTemplateManifest(
   if (schemaRaw !== undefined) {
     const n = Number.parseInt(schemaRaw, 10);
     if (!Number.isFinite(n) || n < 1 || !/^\d+$/.test(schemaRaw)) {
-      // Strict: typos and stray decimals/letters surface as errors rather
-      // than silently defaulting to 1 (which was the old behavior and
-      // hid bugs).
       errors.push(
         `Annotation \`servicebay.schema-version\` must be a positive integer; got "${schemaRaw}".`,
       );
@@ -335,9 +338,6 @@ export function parseTemplateManifest(
     }
   }
 
-  // requiresApi (#588): per-API annotations of shape
-  // `servicebay.requires-api.<name>: "<integer>"`. Returns undefined
-  // when no such annotation exists so downstream code can short-circuit.
   let requiresApi: TemplateApiVersions | undefined;
   for (const api of Object.keys(SUPPORTED_API_VERSIONS) as TemplateApiName[]) {
     const raw = readAnnotation(yamlText, `servicebay.requires-api.${api}`);
@@ -351,6 +351,33 @@ export function parseTemplateManifest(
     }
     requiresApi = { ...(requiresApi ?? {}), [api]: n };
   }
+
+  return {
+    label,
+    ports,
+    configMount,
+    schemaVersion,
+    tier,
+    dependencies,
+    requiresApi,
+    errors,
+  };
+}
+
+/**
+ * Parse a template.yml's manifest annotations. Pure function — caller
+ * passes the YAML text plus optional context flags. Returns either a
+ * complete manifest or a list of human-readable errors.
+ */
+export function parseTemplateManifest(
+  yamlText: string,
+  ctx: ParseContext = {},
+): ParseResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const meta = validateTemplateMetadata(yamlText, ctx);
+  errors.push(...meta.errors);
 
   // healthcheckRaw (#626): pre-Mustache YAML body of the continuous health
   // probe. Pre-Mustache `{{VAR}}` placeholders in
@@ -372,13 +399,13 @@ export function parseTemplateManifest(
   return {
     ok: true,
     manifest: {
-      label: label!,
-      tier,
-      schemaVersion,
-      dependencies,
-      configMount,
-      ports,
-      requiresApi,
+      label: meta.label!,
+      tier: meta.tier,
+      schemaVersion: meta.schemaVersion,
+      dependencies: meta.dependencies,
+      configMount: meta.configMount,
+      ports: meta.ports,
+      requiresApi: meta.requiresApi,
       healthcheckRaw,
     },
     warnings,
@@ -399,17 +426,9 @@ export function tryParseTemplateManifest(
 }
 
 /**
- * Permissive extraction — returns a `Partial<TemplateManifest>` with
- * whatever annotations are present, no validation. Used by the legacy
- * per-field wrappers (templateLabel.ts, templateTier.ts,
- * templateSchemaVersion.ts, stackInstall/dependencies.ts) so they can
- * keep operating on fragmentary YAML (e.g. tests passing only one
- * annotation) without tripping the strict required-fields check.
- *
- * New code should NOT use this — call `parseTemplateManifest` and
- * surface the error list.
+ * Resolve optional annotations and apply permissive defaults.
  */
-export function readManifestAnnotations(yamlText: string): Partial<TemplateManifest> {
+function resolveAnnotationDefaults(yamlText: string): Partial<TemplateManifest> {
   const out: Partial<TemplateManifest> = {};
 
   const label = readAnnotation(yamlText, 'servicebay.label');
@@ -454,4 +473,19 @@ export function readManifestAnnotations(yamlText: string): Partial<TemplateManif
   if (healthcheckRaw !== undefined) out.healthcheckRaw = healthcheckRaw;
 
   return out;
+}
+
+/**
+ * Permissive extraction — returns a `Partial<TemplateManifest>` with
+ * whatever annotations are present, no validation. Used by the legacy
+ * per-field wrappers (templateLabel.ts, templateTier.ts,
+ * templateSchemaVersion.ts, stackInstall/dependencies.ts) so they can
+ * keep operating on fragmentary YAML (e.g. tests passing only one
+ * annotation) without tripping the strict required-fields check.
+ *
+ * New code should NOT use this — call `parseTemplateManifest` and
+ * surface the error list.
+ */
+export function readManifestAnnotations(yamlText: string): Partial<TemplateManifest> {
+  return resolveAnnotationDefaults(yamlText);
 }

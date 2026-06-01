@@ -216,6 +216,83 @@ export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEn
   return results;
 }
 
+// ─── Nightly scheduler (#1217) ───────────────────────────────────────
+//
+// Mirrors backup/service.ts scheduleBackup(): a self-rescheduling setTimeout
+// that fires once per day at a fixed UTC time. Kept separate from the full
+// systemBackup cron so the lightweight config push runs on its own slot
+// (default 03:30 UTC, offset from the 02:00 snapshot to avoid contention).
+
+let externalBackupTimer: ReturnType<typeof setTimeout> | null = null;
+
+const DEFAULT_EXTERNAL_BACKUP_TIME = '03:30';
+
+/**
+ * Next daily run for the external NAS backup, as ms-from-now. Exported for the
+ * scheduler test (the timer itself is awkward to assert directly).
+ */
+export function getNextExternalBackupDelayMs(time: string, now: Date = new Date()): number {
+  const [hourStr, minuteStr] = (time || DEFAULT_EXTERNAL_BACKUP_TIME).split(':');
+  const hour = Number(hourStr) || 0;
+  const minute = Number(minuteStr) || 0;
+
+  const next = new Date(now);
+  next.setUTCSeconds(0, 0);
+  next.setUTCHours(hour, minute);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+
+  return next.getTime() - now.getTime();
+}
+
+/**
+ * Schedule the nightly per-service config backup to the FritzBox NAS. Called
+ * once at server startup (alongside scheduleBackup()). Self-reschedules after
+ * each run. When the run fires but no NAS is configured, the producer reports
+ * every service as `ok:false` with the "not configured" error — the cron logs
+ * that and reschedules rather than throwing, so an unconfigured box quietly
+ * no-ops until the gateway is set.
+ */
+export function scheduleExternalNasBackup(): void {
+  if (externalBackupTimer) {
+    clearTimeout(externalBackupTimer);
+    externalBackupTimer = null;
+  }
+
+  getConfig()
+    .then(appConfig => {
+      const cfg = appConfig.externalBackup;
+      // Defaults: enabled unless explicitly disabled (config-survival is the
+      // safe default for a home box).
+      if (cfg?.enabled === false) {
+        logger.info('ExternalBackup', 'Nightly NAS config backup disabled');
+        return;
+      }
+
+      const time = cfg?.time || DEFAULT_EXTERNAL_BACKUP_TIME;
+      const delayMs = getNextExternalBackupDelayMs(time);
+      const nextRun = new Date(Date.now() + delayMs);
+      logger.info(
+        'ExternalBackup',
+        `Next nightly NAS config backup scheduled at ${nextRun.toISOString()} (in ${Math.round(delayMs / 60000)} min)`,
+      );
+
+      externalBackupTimer = setTimeout(async () => {
+        try {
+          const results = await backupInstalledServicesToNas();
+          const ok = results.filter(r => r.ok).length;
+          logger.info('ExternalBackup', `Nightly NAS config backup: ${ok}/${results.length} services backed up`);
+        } catch (e) {
+          logger.error('ExternalBackup', `Nightly NAS config backup failed: ${e}`);
+        } finally {
+          scheduleExternalNasBackup();
+        }
+      }, delayMs);
+    })
+    .catch(e => {
+      logger.error('ExternalBackup', `Failed to schedule nightly NAS config backup: ${e}`);
+    });
+}
+
 /**
  * Write an already-built `<service>.tar` buffer to the NAS in the canonical
  * restore layout (`sb-backup/<service>.tar` + `.meta.json`). Shared by the

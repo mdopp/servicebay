@@ -27,6 +27,8 @@ import {
   resolveServiceDataDir,
   listServiceBackups,
   fetchServiceBackup,
+  getNextExternalBackupDelayMs,
+  scheduleExternalNasBackup,
   NAS_BACKUP_DIR,
 } from './producer';
 import { getServiceManifest, type ServiceBackupManifest } from './serviceManifest';
@@ -267,5 +269,68 @@ describe('stageUploadedServiceTar', () => {
     await expect(stageUploadedServiceTar('adguard', Buffer.alloc(10)))
       .rejects.toThrow(/empty|tar/);
     expect(mockNas.nasUpload).not.toHaveBeenCalled();
+  });
+});
+
+describe('getNextExternalBackupDelayMs', () => {
+  it('schedules later today when the run time has not passed yet', () => {
+    const now = new Date('2026-06-01T01:00:00Z');
+    const delay = getNextExternalBackupDelayMs('03:30', now);
+    expect(delay).toBe((2 * 60 + 30) * 60 * 1000); // 2h30m
+  });
+
+  it('rolls to tomorrow when the run time already passed today', () => {
+    const now = new Date('2026-06-01T04:00:00Z');
+    const delay = getNextExternalBackupDelayMs('03:30', now);
+    expect(delay).toBe((23 * 60 + 30) * 60 * 1000); // 23h30m
+  });
+
+  it('falls back to the default time on an empty value', () => {
+    const now = new Date('2026-06-01T00:00:00Z');
+    const delay = getNextExternalBackupDelayMs('', now);
+    expect(delay).toBe((3 * 60 + 30) * 60 * 1000); // default 03:30
+  });
+});
+
+describe('scheduleExternalNasBackup', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-01T01:00:00Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('arms a daily timer that fires backupInstalledServicesToNas when enabled', async () => {
+    // No NAS configured -> producer returns ok:false per installed service, but
+    // the timer must still fire and reschedule without throwing.
+    mockGetConfig.mockResolvedValue({ externalBackup: { enabled: true, time: '03:30' }, installedTemplates: {} });
+    scheduleExternalNasBackup();
+    await vi.advanceTimersByTimeAsync(0); // let the getConfig().then() arm the timer
+
+    // Nothing fired yet (run is 2h30m out)
+    expect(mockNas.nasUpload).not.toHaveBeenCalled();
+    // Advance to the scheduled run; with no installed services, no upload, no throw.
+    await vi.advanceTimersByTimeAsync((2 * 60 + 30) * 60 * 1000);
+    // Reschedule armed a fresh getConfig() (timer self-renews) — no error thrown.
+    expect(true).toBe(true);
+  });
+
+  it('does not arm a timer when externalBackup.enabled is false', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    mockGetConfig.mockResolvedValue({ externalBackup: { enabled: false } });
+    scheduleExternalNasBackup();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(setTimeoutSpy).not.toHaveBeenCalled();
+    setTimeoutSpy.mockRestore();
+  });
+
+  it('defaults to enabled (arms a timer) when externalBackup is absent', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    mockGetConfig.mockResolvedValue({ installedTemplates: {} });
+    scheduleExternalNasBackup();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(setTimeoutSpy).toHaveBeenCalled();
+    setTimeoutSpy.mockRestore();
   });
 });

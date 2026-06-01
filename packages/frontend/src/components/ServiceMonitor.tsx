@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Terminal, Activity, Box, ArrowLeft, FileJson } from 'lucide-react';
+import { RefreshCw, Terminal, Activity, Box, ArrowLeft, FileJson, DatabaseBackup } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { logger } from '@servicebay/api-client';
 import ContainerList from './ContainerList';
@@ -52,6 +52,34 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
   const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
   const [networkData, setNetworkData] = useState<NetworkGraphNode | null>(null);
   const [loading, setLoading] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const baseName = serviceName.replace(/\.(service|scope|socket|timer)$/, '');
+
+  // On-demand "Back up config" to the FritzBox NAS (#1217). The backend rejects
+  // services without a backup manifest with a curated message, which we surface.
+  const handleBackupConfig = async () => {
+    setBackingUp(true);
+    setBackupMsg(null);
+    try {
+      const res = await fetch('/api/system/external-backup/backup-now', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service: baseName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) {
+        setBackupMsg({ text: data?.error || 'Backup failed', ok: false });
+      } else {
+        setBackupMsg({ text: 'Config backed up to NAS', ok: true });
+      }
+    } catch (e) {
+      setBackupMsg({ text: e instanceof Error ? e.message : 'Backup failed', ok: false });
+    } finally {
+      setBackingUp(false);
+    }
+  };
 
     const fetchLogs = async () => {
     setLoading(true);
@@ -172,11 +200,24 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
                             </button>
                             <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Monitor: {serviceName}</h1>
                     </div>
-                    <div className="flex gap-3">
-                            <button 
-                                    onClick={fetchLogs} 
+                    <div className="flex items-center gap-3">
+                            {backupMsg && (
+                                <span className={`text-sm ${backupMsg.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                    {backupMsg.text}
+                                </span>
+                            )}
+                            <button
+                                    onClick={handleBackupConfig}
+                                    disabled={backingUp}
+                                    className="px-3 py-2 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors disabled:opacity-50"
+                                    title="Back up this service's config to the FritzBox NAS"
+                            >
+                                    <DatabaseBackup size={18} className={backingUp ? 'animate-pulse' : ''} /> Back up config
+                            </button>
+                            <button
+                                    onClick={fetchLogs}
                                     disabled={loading}
-                                    className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" 
+                                    className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
                                     title="Refresh"
                             >
                                     <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />

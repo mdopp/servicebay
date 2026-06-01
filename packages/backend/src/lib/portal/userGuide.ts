@@ -226,83 +226,89 @@ function liftMobileApps(input: unknown): RecommendedApp[] {
     .filter((e): e is RecommendedApp => e !== null);
 }
 
+/** Extract frontmatter fields from parsed YAML data. */
+function parseUserGuideSection(data: Record<string, unknown>): UserGuideFrontmatter {
+  const fm: UserGuideFrontmatter = {};
+  if (typeof data.icon === 'string') fm.icon = data.icon;
+  if (typeof data.lucide_icon === 'string' && PORTAL_ICON_SET.has(data.lucide_icon)) {
+    fm.lucide_icon = data.lucide_icon as PortalIconName;
+  }
+  if (typeof data.tagline === 'string') fm.tagline = data.tagline;
+
+  // Prefer `recommended_apps` when present; fall back to lifting
+  // legacy `mobile_apps` so older guides keep working.
+  if (Array.isArray(data.recommended_apps)) {
+    const apps = parseRecommendedApps(data.recommended_apps);
+    if (apps.length > 0) fm.recommended_apps = apps;
+  } else if (Array.isArray(data.mobile_apps)) {
+    const lifted = liftMobileApps(data.mobile_apps);
+    if (lifted.length > 0) fm.recommended_apps = lifted;
+  }
+
+  if (Array.isArray(data.cards)) {
+    const cards = data.cards
+      .map((entry: unknown): UserGuideCard | null => {
+        if (!entry || typeof entry !== 'object') return null;
+        const e = entry as Record<string, unknown>;
+        if (typeof e.subdomain_var !== 'string' || !/^[A-Z][A-Z0-9_]*_SUBDOMAIN$/.test(e.subdomain_var)) {
+          return null;
+        }
+        const card: UserGuideCard = { subdomain_var: e.subdomain_var };
+        if (typeof e.label === 'string' && e.label.trim()) card.label = e.label.trim();
+        if (typeof e.icon === 'string') card.icon = e.icon;
+        if (typeof e.lucide_icon === 'string' && PORTAL_ICON_SET.has(e.lucide_icon)) {
+          card.lucide_icon = e.lucide_icon as PortalIconName;
+        }
+        if (typeof e.tagline === 'string') card.tagline = e.tagline;
+        if (Array.isArray(e.recommended_apps)) {
+          const apps = parseRecommendedApps(e.recommended_apps);
+          if (apps.length > 0) card.recommended_apps = apps;
+        }
+        if (Array.isArray(e.setup_assets)) {
+          const assets = (e.setup_assets as unknown[])
+            .map((a): SetupAsset | null => {
+              if (!a || typeof a !== 'object') return null;
+              const ae = a as Record<string, unknown>;
+              if (typeof ae.kind !== 'string' || !KNOWN_ASSET_KINDS.has(ae.kind as SetupAssetKind)) return null;
+              const out: SetupAsset = { kind: ae.kind as SetupAssetKind };
+              if (typeof ae.label === 'string' && ae.label.trim()) out.label = ae.label.trim();
+              if (typeof ae.description === 'string' && ae.description.trim()) out.description = ae.description.trim();
+              return out;
+            })
+            .filter((a): a is SetupAsset => a !== null);
+          if (assets.length > 0) card.setup_assets = assets;
+        }
+        return card;
+      })
+      .filter((c): c is UserGuideCard => c !== null);
+    if (cards.length > 0) fm.cards = cards;
+  }
+
+  if (Array.isArray(data.setup_assets)) {
+    const assets = data.setup_assets
+      .map((entry: unknown): SetupAsset | null => {
+        if (!entry || typeof entry !== 'object') return null;
+        const e = entry as Record<string, unknown>;
+        if (typeof e.kind !== 'string') return null;
+        if (!KNOWN_ASSET_KINDS.has(e.kind as SetupAssetKind)) return null;
+        const out: SetupAsset = { kind: e.kind as SetupAssetKind };
+        if (typeof e.label === 'string' && e.label.trim()) out.label = e.label.trim();
+        if (typeof e.description === 'string' && e.description.trim()) out.description = e.description.trim();
+        return out;
+      })
+      .filter((e): e is SetupAsset => e !== null);
+    if (assets.length > 0) fm.setup_assets = assets;
+  }
+
+  return fm;
+}
+
 export function parseUserGuide(raw: string | null, templateName: string): ParsedUserGuide | null {
   if (!raw || !raw.trim()) return null;
   try {
     const { data, content } = matter(raw);
-    const fm: UserGuideFrontmatter = {};
-    if (typeof data.icon === 'string') fm.icon = data.icon;
-    if (typeof data.lucide_icon === 'string' && PORTAL_ICON_SET.has(data.lucide_icon)) {
-      fm.lucide_icon = data.lucide_icon as PortalIconName;
-    }
-    if (typeof data.tagline === 'string') fm.tagline = data.tagline;
-
-    // Prefer `recommended_apps` when present; fall back to lifting
-    // legacy `mobile_apps` so older guides keep working.
-    if (Array.isArray(data.recommended_apps)) {
-      const apps = parseRecommendedApps(data.recommended_apps);
-      if (apps.length > 0) fm.recommended_apps = apps;
-    } else if (Array.isArray(data.mobile_apps)) {
-      const lifted = liftMobileApps(data.mobile_apps);
-      if (lifted.length > 0) fm.recommended_apps = lifted;
-    }
-
-    if (Array.isArray(data.cards)) {
-      const cards = data.cards
-        .map((entry: unknown): UserGuideCard | null => {
-          if (!entry || typeof entry !== 'object') return null;
-          const e = entry as Record<string, unknown>;
-          if (typeof e.subdomain_var !== 'string' || !/^[A-Z][A-Z0-9_]*_SUBDOMAIN$/.test(e.subdomain_var)) {
-            return null;
-          }
-          const card: UserGuideCard = { subdomain_var: e.subdomain_var };
-          if (typeof e.label === 'string' && e.label.trim()) card.label = e.label.trim();
-          if (typeof e.icon === 'string') card.icon = e.icon;
-          if (typeof e.lucide_icon === 'string' && PORTAL_ICON_SET.has(e.lucide_icon)) {
-            card.lucide_icon = e.lucide_icon as PortalIconName;
-          }
-          if (typeof e.tagline === 'string') card.tagline = e.tagline;
-          if (Array.isArray(e.recommended_apps)) {
-            const apps = parseRecommendedApps(e.recommended_apps);
-            if (apps.length > 0) card.recommended_apps = apps;
-          }
-          if (Array.isArray(e.setup_assets)) {
-            const assets = (e.setup_assets as unknown[])
-              .map((a): SetupAsset | null => {
-                if (!a || typeof a !== 'object') return null;
-                const ae = a as Record<string, unknown>;
-                if (typeof ae.kind !== 'string' || !KNOWN_ASSET_KINDS.has(ae.kind as SetupAssetKind)) return null;
-                const out: SetupAsset = { kind: ae.kind as SetupAssetKind };
-                if (typeof ae.label === 'string' && ae.label.trim()) out.label = ae.label.trim();
-                if (typeof ae.description === 'string' && ae.description.trim()) out.description = ae.description.trim();
-                return out;
-              })
-              .filter((a): a is SetupAsset => a !== null);
-            if (assets.length > 0) card.setup_assets = assets;
-          }
-          return card;
-        })
-        .filter((c): c is UserGuideCard => c !== null);
-      if (cards.length > 0) fm.cards = cards;
-    }
-
-    if (Array.isArray(data.setup_assets)) {
-      const assets = data.setup_assets
-        .map((entry: unknown): SetupAsset | null => {
-          if (!entry || typeof entry !== 'object') return null;
-          const e = entry as Record<string, unknown>;
-          if (typeof e.kind !== 'string') return null;
-          if (!KNOWN_ASSET_KINDS.has(e.kind as SetupAssetKind)) return null;
-          const out: SetupAsset = { kind: e.kind as SetupAssetKind };
-          if (typeof e.label === 'string' && e.label.trim()) out.label = e.label.trim();
-          if (typeof e.description === 'string' && e.description.trim()) out.description = e.description.trim();
-          return out;
-        })
-        .filter((e): e is SetupAsset => e !== null);
-      if (assets.length > 0) fm.setup_assets = assets;
-    }
-
-    return { frontmatter: fm, body: content };
+    const frontmatter = parseUserGuideSection(data as Record<string, unknown>);
+    return { frontmatter, body: content };
   } catch (e) {
     logger.warn('portal:userGuide', `Failed to parse user-guide for ${templateName}: ${e instanceof Error ? e.message : String(e)}`);
     return null;

@@ -23,6 +23,18 @@ const FRESHNESS_HOURS = 24;
 const TAIL_BYTES = 65_536;
 const safePath = (p: string) => /^\/[A-Za-z0-9_./-]+$/.test(p);
 
+function extractCertErrorDetail(failure: ReturnType<typeof parseLetsencryptTail>['failures'][number], categories: Set<FailureCategory>): CrfItem {
+  const detail = failure.detail.length > 140 ? `${failure.detail.slice(0, 140)}…` : failure.detail;
+  categories.add(failure.category);
+  return {
+    id: failure.domain,
+    label: failure.domain,
+    detail: `${categoryLabel(failure.category)} — ${failure.type} challenge: ${detail}`,
+    status: 'fail',
+    actionIds: ['show_log_tail', 'retry_request'],
+  };
+}
+
 function buildHint(categories: Set<FailureCategory>): string {
   if (categories.size === 1) {
     const [only] = Array.from(categories);
@@ -90,16 +102,8 @@ registerProbe({
       for (const f of parsed.failures) byDomain.set(f.domain, f);
       const items: CrfItem[] = [];
       const categories = new Set<FailureCategory>();
-      for (const [domain, f] of byDomain) {
-        const detail = f.detail.length > 140 ? `${f.detail.slice(0, 140)}…` : f.detail;
-        categories.add(f.category);
-        items.push({
-          id: domain,
-          label: domain,
-          detail: `${categoryLabel(f.category)} — ${f.type} challenge: ${detail}`,
-          status: 'fail',
-          actionIds: ['show_log_tail', 'retry_request'],
-        });
+      for (const f of parsed.failures) {
+        items.push(extractCertErrorDetail(f, categories));
       }
       if (parsed.rateLimited && items.length === 0) {
         categories.add('rate-limit');

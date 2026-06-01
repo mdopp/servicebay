@@ -81,6 +81,13 @@ async function readTemplateYaml(templateName: string): Promise<string | null> {
 }
 
 /**
+ * Build the externally-reachable scheme (http/https) based on mode.
+ */
+function resolveServiceScheme(config: AppConfig): string {
+  return getMode(config) === 'public' ? 'https' : 'http';
+}
+
+/**
  * Resolve the externally-reachable URL for a service. Used by both
  * the portal card builder (Open button) and the asset generators
  * (iOS profile hostname, abs:// deep link).
@@ -106,7 +113,7 @@ export async function resolveServiceUrl(
    *  subdomain variable in variables.json (single-subdomain case). */
   subdomainVar?: string,
 ): Promise<string | null> {
-  const scheme = getMode(config) === 'public' ? 'https' : 'http';
+  const scheme = resolveServiceScheme(config);
   const variables = await readVariables(templateName);
 
   // Resolve which variable to read.
@@ -169,6 +176,45 @@ export async function resolveServiceUrl(
 }
 
 /**
+ * Build a single portal card entry from a parsed definition.
+ */
+async function buildPortalCardEntry(
+  config: AppConfig,
+  svc: Awaited<ReturnType<typeof ServiceManager.listServices>>[number],
+  def: {
+    subdomain_var: string;
+    label?: string;
+    lucide_icon?: PortalIconName;
+    icon?: string;
+    tagline?: string;
+    recommended_apps?: RecommendedApp[];
+    setup_assets?: SetupAsset[];
+  },
+  templateLabel: string,
+  parsedBody: string,
+): Promise<PortalCard | null> {
+  const url = await resolveServiceUrl(config, svc.name, def.subdomain_var || undefined);
+  if (!url) {
+    logger.warn('portal', `Template ${svc.name} card (subdomain_var=${def.subdomain_var || '<auto>'}) couldn't resolve a URL — skipping`);
+    return null;
+  }
+  const subdomainVar = def.subdomain_var || (await firstSubdomainVar(svc.name)) || '';
+  return {
+    id: `${svc.name}:${subdomainVar || 'default'}`,
+    name: svc.name,
+    subdomainVar,
+    label: def.label ?? templateLabel,
+    lucideIcon: def.lucide_icon ?? null,
+    icon: def.icon ?? '',
+    tagline: def.tagline ?? '',
+    url,
+    body: parsedBody,
+    recommendedApps: def.recommended_apps ?? [],
+    setupAssets: def.setup_assets ?? [],
+  };
+}
+
+/**
  * Build the portal-card list. Async because it walks per-template
  * files; cheap enough to run on every /portal request (which is
  * already gated by mode).
@@ -211,25 +257,8 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
       }];
 
     for (const def of cardDefs) {
-      const url = await resolveServiceUrl(config, svc.name, def.subdomain_var || undefined);
-      if (!url) {
-        logger.warn('portal', `Template ${svc.name} card (subdomain_var=${def.subdomain_var || '<auto>'}) couldn't resolve a URL — skipping`);
-        continue;
-      }
-      const subdomainVar = def.subdomain_var || (await firstSubdomainVar(svc.name)) || '';
-      cards.push({
-        id: `${svc.name}:${subdomainVar || 'default'}`,
-        name: svc.name,
-        subdomainVar,
-        label: def.label ?? templateLabel,
-        lucideIcon: def.lucide_icon ?? null,
-        icon: def.icon ?? '',
-        tagline: def.tagline ?? '',
-        url,
-        body: parsed.body,
-        recommendedApps: def.recommended_apps ?? [],
-        setupAssets: def.setup_assets ?? [],
-      });
+      const card = await buildPortalCardEntry(config, svc, def, templateLabel, parsed.body);
+      if (card) cards.push(card);
     }
   }
   return cards;
