@@ -9,18 +9,23 @@ You are working a queue of open GitHub issues on this repo, with explicit exit c
 
 The user's recurring rules (in `~/.claude/projects/-home-mdopp-servicebay/memory/MEMORY.md`) override anything in this skill if they conflict. Read it before the first iteration of a fresh /loop run.
 
+**The ServiceBay box is a dev/test target for this loop, not production — exercise it freely.** Use SSH, the MCP token, the HTTP API, and Playwright/Chrome to implement and verify changes, and flip the `:dev` channel without hesitation — a brief service restart is expected and fine. **Do not ask the user for permission to use or flip the box**; driving the box is the loop's job, not a decision to escalate. (Access: memory `reference_mcp_servicebay_access`.)
+
 ## Per-invocation budget
 
-- **At most 8 PRs per invocation.** Then exit cleanly. `/loop` re-fires you.
+- **Work until 8 PRs *or* the eligible queue is empty — never stop after just 1.** Shipping a single PR and then sleeping wastes the whole firing. After each merge, immediately select the next head and work it, back-to-back **in the same turn**, until you hit the 8-PR budget or run out of eligible issues. Then `/loop` re-fires you.
 - This still counts security-gate drafts toward the budget — a draft PR is still one PR's worth of work.
 - **A cluster (grouped issues, Step 1 grooming) counts as one PR** toward the budget, even though it closes several issues — that's the whole point: fewer pipeline runs for the same backlog drain.
 - If you've spent >40 minutes on a single issue without a green PR, stop, post a comment on the issue explaining what's blocking, and move on.
 
 ## Wakeup cadence (dynamic /loop mode)
 
-Every `ScheduleWakeup` call from this skill uses **`delaySeconds: 480` (8 minutes) or less** — including the "release PR open" / "CI running" / "nothing to do" fallback heartbeats. This **overrides the /loop skill's general 1200–1800s suggestion** for cache-aware waits.
+**Never sleep while there is eligible work and budget remaining — keep working in the same turn.** A `ScheduleWakeup` is only warranted when:
+- **(a) the 8-PR budget is hit but the queue still has work** → re-fire with the **minimum delay (~60s)**, i.e. continue almost immediately; or
+- **(b) genuinely blocked on an external gate** (release-please CI still running, a `:dev` image still building / the box still restarting) → wait, but **≤480s**; or
+- **(c) the eligible queue is empty** → idle heartbeat **≤480s**.
 
-**Why:** the user wants the backlog drained quickly; long fallbacks stall progress when an external gate (release PR merge, CI completion) clears mid-window. Burning the prompt cache every 8 minutes is the accepted cost. See memory `feedback_autoloop_wakeup_cap`.
+**Do not insert an 8-minute break between issues when the queue is not empty** (explicit user directive — one-issue-then-nap firings are the waste this rule kills). Every `ScheduleWakeup` stays **≤480s**, and you prefer **~60s** whenever there is known remaining work. See memory `feedback_autoloop_wakeup_cap`.
 
 ## State file
 
