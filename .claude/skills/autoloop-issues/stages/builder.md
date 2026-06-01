@@ -19,7 +19,7 @@ Rationale: `check:arch` (global, fast) catches import/structure breakage per iss
 
 ### 1. Get on the batch branch
 - If `batch` is null in the queue: create it. `git checkout main && git pull --ff-only && git checkout -b batch/$(date +%Y-%m-%d)<letter>`. Set `batch = {branch, units:[], count:0, sealed:false}`.
-- Else: `git checkout <batch.branch>` (it persists across firings).
+- Else: `git checkout <batch.branch>` (it persists across firings). **If the branch is behind `main`, `git rebase origin/main` immediately** — otherwise an out-of-date batch (e.g. one created before a skill change) leaves the on-disk `stages/` playbooks stale or missing for the next stage dispatch. The rebase is conflict-free when the batch's filesets are disjoint from what moved on `main`.
 
 Set the unit's `status` to `"in_progress"` and `in_progress` to the unit id.
 
