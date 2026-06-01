@@ -37,7 +37,7 @@ import { readManifestAnnotations } from '@/lib/template/contract';
 import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { getConfig } from '@/lib/config';
 import { loadSavedSecrets, persistSingleSecret } from './savedSecrets';
-import type { JobInputItem, JobInputVariable } from './jobStore';
+import type { JobInput, JobInputItem, JobInputVariable } from './jobStore';
 
 /** A template the caller wants installed. Mirrors the wizard's
  *  `StackItemInput`. */
@@ -432,4 +432,50 @@ export async function assembleManifest(
   }
 
   return { items, variables };
+}
+
+/**
+ * #1297 — fill `variables.json` defaults into a JobInput for any template
+ * variable that's missing or empty. The wizard path resolves defaults inside
+ * `assembleManifest`; the **reinstall** path replays a saved JobInput verbatim
+ * (`jobStore`), so a variable ADDED to a template *after* the manifest was
+ * saved arrives empty and silently drops whatever depended on it (e.g. OSCAR's
+ * `GATEKEEPER_MCP_URL`). Run at the install entry point (`/api/install/start`)
+ * so every path — wizard and replayed reinstall — gets the same defaults
+ * applied. A non-empty manifest value always wins; a default only fills a
+ * missing/empty slot. Returns the input unchanged when nothing needed filling.
+ */
+export async function applyVariableDefaults(
+  input: JobInput,
+  templateSource?: string,
+): Promise<JobInput> {
+  // First template to declare a variable owns its default (mirrors
+  // assembleManifest's grouping), so only record the first non-empty default.
+  const defaults = new Map<string, string>();
+  for (const item of input.items) {
+    if (!item.checked || item.alreadyInstalled) continue;
+    const meta = await getTemplateVariables(item.name, templateSource).catch(() => null);
+    if (!meta) continue;
+    for (const [name, m] of Object.entries(meta)) {
+      if (m.default !== undefined && m.default !== '' && !defaults.has(name)) {
+        defaults.set(name, m.default);
+      }
+    }
+  }
+  if (defaults.size === 0) return input;
+
+  const next: JobInputVariable[] = input.variables.map(v => ({ ...v }));
+  const indexByName = new Map(next.map((v, i) => [v.name, i]));
+  let changed = false;
+  for (const [name, def] of defaults) {
+    const idx = indexByName.get(name);
+    if (idx === undefined) {
+      next.push({ name, value: def });
+      changed = true;
+    } else if (!next[idx].value) {
+      next[idx].value = def;
+      changed = true;
+    }
+  }
+  return changed ? { ...input, variables: next } : input;
 }
