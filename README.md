@@ -81,6 +81,14 @@ Combined: any stolen token has a bounded blast radius; everything is reversible;
 |-----------|------------|--------|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Network Map](docs/screenshots/network-map.png) | ![Health](docs/screenshots/monitoring.png) |
 
+**`sb-tui` — the lifecycle launcher (terminal):**
+
+| Launcher (phase-aware menu) | Express setup (guided happy path) |
+|---|---|
+| ![sb-tui menu](docs/screenshots/sb-tui-menu.png) | ![sb-tui express](docs/screenshots/sb-tui-express.png) |
+
+The menu tracks where the box is in its lifecycle (no ISO → booting → installing → up) and offers only the actions that apply; **Express** chains the whole happy path — build + flash the USB, boot, watch, then sign in, restore config from the NAS, and install your stacks.
+
 ## Quick Start
 
 ServiceBay runs on **Fedora CoreOS** as an immutable, self-updating appliance. The whole lifecycle is driven by **`sb-tui`** — a single static Go/Bubble Tea binary (no repo clone needed). See the [Installation Guide](docs/INSTALLATION.md) for the full build pipeline, first-boot sequence, and configuration options.
