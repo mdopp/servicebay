@@ -18,6 +18,7 @@
     "lint": "eslint",
     "knip": "knip",
     "test": "vitest run",
+    "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
     "gen-template-docs": "tsx scripts/gen-template-docs.ts",
     "sb-config-upload": "tsx scripts/sb-config-upload.ts",
     "check:invariants": "tsx scripts/check-invariants.ts",
@@ -57,6 +58,7 @@
   },
   "devDependencies": {
     "@next/env": "16.2.4",
+    "@playwright/test": "1.60.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.1",
@@ -100,7 +102,8 @@
     "workspaces": {
       ".": {
         "entry": [
-          "scripts/**/*.{ts,mjs}"
+          "scripts/**/*.{ts,mjs}",
+          "tests/e2e/**/*.e2e.ts"
         ],
         "ignoreDependencies": [
           "@servicebay/api-client",
