@@ -247,6 +247,24 @@ storage:
           # Check for existing auto-assembled arrays first, then try manual assembly, then create new.
           MD_DEV=""
 
+          # Factory-fresh "wipe-all-data" (#1496): the operator chose a BLANK box in
+          # the build form. Destroy any existing data array + superblock so the
+          # create-new path below reformats the disk from scratch (all service data
+          # gone). Gated entirely on the baked flag — never fires on a normal build.
+          if [[ "${FACTORY_FRESH}" == "wipe-all-data" ]]; then
+            echo "setup-raid: FACTORY_FRESH=wipe-all-data — wiping the entire data disk"
+            for part in "${RAID_DISK}p1" "${RAID_DISK}1" "$RAID_DISK"; do
+              [[ -e "$part" ]] || continue
+              for md in /dev/md[0-9]*; do
+                [[ -e "$md" ]] || continue
+                mdadm --detail "$md" 2>/dev/null | grep -q "$part" && mdadm --stop "$md" 2>/dev/null || true
+              done
+              mdadm --zero-superblock "$part" 2>/dev/null || true
+            done
+            wipefs -a "$RAID_DISK" 2>/dev/null || true
+            # MD_DEV stays empty → step 4 creates + formats a fresh array below.
+          fi
+
           # 1) Check if any md device already uses a partition from RAID_DISK
           for part in "${RAID_DISK}p1" "${RAID_DISK}1" "$RAID_DISK"; do
             [[ -e "$part" ]] || continue
@@ -335,6 +353,22 @@ storage:
 
           # Create data directories (no-op if they already exist)
           mkdir -p "$MOUNT_POINT/servicebay/ssh" "$MOUNT_POINT/stacks"
+
+          # Factory-fresh "wipe-configs" (#1496): clear ServiceBay's own identity
+          # so the install promotes the freshly-baked config instead of merging the
+          # old one back — fresh admin / secret.key / tokens — while KEEPING all
+          # service data under stacks/. (wipe-all-data already reformatted, so the
+          # dir is empty there and this is a no-op.) Gated on the baked flag.
+          if [[ "${FACTORY_FRESH}" == "wipe-configs" ]]; then
+            echo "setup-raid: FACTORY_FRESH=wipe-configs — clearing ServiceBay config/identity (keeping service data)"
+            rm -f "$MOUNT_POINT/servicebay/config.json" \
+                  "$MOUNT_POINT/servicebay/config.iso.json" \
+                  "$MOUNT_POINT/servicebay/secret.key" \
+                  "$MOUNT_POINT/servicebay/.auth-secret.env" \
+                  "$MOUNT_POINT/servicebay/api-tokens.json" 2>/dev/null || true
+            rm -f "$MOUNT_POINT/servicebay"/config.json.*bak* 2>/dev/null || true
+            rm -rf "$MOUNT_POINT/servicebay/quadlet-backup" 2>/dev/null || true
+          fi
 
           # Apply Ignition config into RAID
           if [[ -n "$IGNITION_TMP" && -d "$IGNITION_TMP/servicebay" ]]; then

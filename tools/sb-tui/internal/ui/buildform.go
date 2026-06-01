@@ -93,6 +93,9 @@ var settingsFields = []sfield{
 		get: func(s *build.Settings) string { return s.ServicebayChannel }, set: func(s *build.Settings, v string) { s.ServicebayChannel = v }},
 	{label: "Admin username", help: "Login for the ServiceBay web dashboard (and the in-TUI sign-in).",
 		get: func(s *build.Settings) string { return s.ServicebayAdminUser }, set: func(s *build.Settings, v string) { s.ServicebayAdminUser = v }},
+	{label: "Factory-fresh install", kind: fChoice, options: []string{"off", "wipe-configs", "wipe-all-data"},
+		help: "DESTRUCTIVE. off = normal reinstall (keeps config + data). wipe-configs = fresh ServiceBay (new admin/secrets/tokens), KEEPS service data. wipe-all-data = reformat the whole data disk (BLANK box, all service data gone).",
+		get:  func(s *build.Settings) string { return ffOrOff(s.FactoryFresh) }, set: func(s *build.Settings, v string) { s.FactoryFresh = v }},
 	{label: "Public domain", help: "Optional external domain for reverse-proxy/TLS. Blank to skip.",
 		get: func(s *build.Settings) string { return s.PublicDomain }, set: func(s *build.Settings, v string) { s.PublicDomain = v }},
 	{label: "FRITZ!Box host", help: "Optional. Router IP/hostname to enable FRITZ!Box automation. Blank to skip.",
@@ -132,6 +135,17 @@ func yn(v string) string {
 		return "Y"
 	}
 	return "N"
+}
+
+// ffOrOff normalises the factory-fresh choice for display: an empty/unknown
+// value reads as the safe "off" so the fChoice cycle has a valid starting point.
+func ffOrOff(v string) string {
+	switch v {
+	case "wipe-configs", "wipe-all-data":
+		return v
+	default:
+		return "off"
+	}
 }
 
 // BuildDeps injects the IO the form needs (so it's testable without network/USB).
