@@ -1,18 +1,55 @@
 'use client';
 
-import { Activity, CheckCircle, XCircle, AlertTriangle, Play, Edit, Trash2, History, Search } from 'lucide-react';
+import { Activity, CheckCircle, XCircle, AlertTriangle, AlertCircle, Play, Edit, Trash2, History, Search, Wrench } from 'lucide-react';
 import { Check } from '@servicebay/api-client';
+
+/** Four-way row status. Real checks are ok/fail/unknown; synthetic
+ *  diagnose rows (#1423) additionally carry `warn`/`info` in their
+ *  `diagnose` payload, which we surface here instead of folding warn
+ *  into fail. */
+export type RowStatus = 'ok' | 'warn' | 'fail' | 'unknown';
+export type StatusFilter = 'all' | RowStatus;
+
+/** Effective row status. Diagnose rows expose their true four-way status
+ *  via `check.diagnose.status` (the binary check-level status folds warn
+ *  into fail); everything else uses the check's own status. */
+export function rowStatus(check: Check): RowStatus {
+  const d = (check as Check & { diagnose?: { status?: string } }).diagnose;
+  if (d?.status) {
+    // `info` probes have run and aren't failing — show them as ok-tinted
+    // (the badge keeps the info nuance in the popup); warn/fail/ok pass
+    // through verbatim.
+    return d.status === 'info' ? 'ok' : (d.status as RowStatus);
+  }
+  return check.status as RowStatus;
+}
+
+/** A row is a self-diagnose probe (carries the self-repair payload). */
+export function isDiagnoseRow(check: Check): boolean {
+  return Boolean((check as Check & { diagnose?: unknown }).diagnose);
+}
+
+/** Per-row status presentation (icon tint + badge background). Module-level
+ *  so the row renderer stays a thin map. */
+const ROW_STATUS_META: Record<RowStatus, { color: string; bg: string; Icon: typeof CheckCircle }> = {
+  ok: { color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20', Icon: CheckCircle },
+  warn: { color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20', Icon: AlertTriangle },
+  fail: { color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20', Icon: XCircle },
+  unknown: { color: 'text-gray-400', bg: 'bg-gray-50 dark:bg-gray-800', Icon: AlertCircle },
+};
 
 interface HealthChecksProps {
   checks: Check[];
   containers: { Id: string; Names: string[]; Image: string }[];
   searchQuery: string;
-  statusFilter: 'all' | 'ok' | 'fail' | 'unknown';
-  setStatusFilter: (filter: 'all' | 'ok' | 'fail' | 'unknown') => void;
+  statusFilter: StatusFilter;
+  setStatusFilter: (filter: StatusFilter) => void;
   handleRun: (id: string) => void;
   handleOpenModal: (check?: Check) => void;
   handleOpenDeleteModal: (id: string) => void;
   handleViewHistory: (check: Check) => void;
+  /** Open the self-repair popup for a diagnose row. */
+  handleOpenRepair: (check: Check) => void;
 }
 
 export default function HealthChecks({
@@ -24,16 +61,24 @@ export default function HealthChecks({
   handleRun,
   handleOpenModal,
   handleOpenDeleteModal,
-  handleViewHistory
+  handleViewHistory,
+  handleOpenRepair
 }: HealthChecksProps) {
-  
+
   const filteredChecks = checks.filter(c => {
-    const matchesSearch = searchQuery === '' || 
+    const matchesSearch = searchQuery === '' ||
       c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.target.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' || rowStatus(c) === statusFilter;
     return matchesSearch && matchesStatus;
   });
+
+  const counts = {
+    ok: checks.filter(c => rowStatus(c) === 'ok').length,
+    warn: checks.filter(c => rowStatus(c) === 'warn').length,
+    fail: checks.filter(c => rowStatus(c) === 'fail').length,
+    unknown: checks.filter(c => rowStatus(c) === 'unknown').length,
+  };
 
   const formatLabel = (check: Check) => {
     const type = check.type;
@@ -53,9 +98,11 @@ export default function HealthChecks({
 
   return (
     <>
-      {/* Stats Overview & Filters */}
-      <div className="grid grid-cols-3 gap-2 px-2">
-        <button 
+      {/* Stats Overview & Filters — clickable counters that filter the
+          list. Diagnose rows surface their own warn/fail (warn is no
+          longer folded into fail). */}
+      <div className="grid grid-cols-4 gap-2 px-2">
+        <button
             onClick={() => setStatusFilter(statusFilter === 'ok' ? 'all' : 'ok')}
             className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'ok'
@@ -68,10 +115,26 @@ export default function HealthChecks({
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Healthy</p>
-              <p className="text-xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'ok').length}</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-white">{counts.ok}</p>
             </div>
         </button>
-        <button 
+        <button
+            onClick={() => setStatusFilter(statusFilter === 'warn' ? 'all' : 'warn')}
+            className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
+                statusFilter === 'warn'
+                ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 ring-2 ring-amber-500 ring-opacity-50'
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+            }`}
+        >
+            <div className="p-2 bg-amber-500/10 rounded-lg mb-1">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Warning</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-white">{counts.warn}</p>
+            </div>
+        </button>
+        <button
             onClick={() => setStatusFilter(statusFilter === 'fail' ? 'all' : 'fail')}
             className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'fail'
@@ -84,10 +147,10 @@ export default function HealthChecks({
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Failing</p>
-              <p className="text-xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'fail').length}</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-white">{counts.fail}</p>
             </div>
         </button>
-        <button 
+        <button
             onClick={() => setStatusFilter(statusFilter === 'unknown' ? 'all' : 'unknown')}
             className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'unknown'
@@ -96,11 +159,11 @@ export default function HealthChecks({
             }`}
         >
             <div className="p-2 bg-gray-500/10 rounded-lg mb-1">
-              <AlertTriangle className="w-5 h-5 text-gray-500" />
+              <AlertCircle className="w-5 h-5 text-gray-500" />
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Unknown</p>
-              <p className="text-xl font-bold text-gray-900 dark:text-white">{checks.filter(c => c.status === 'unknown').length}</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-white">{counts.unknown}</p>
             </div>
         </button>
       </div>
@@ -130,10 +193,9 @@ export default function HealthChecks({
         ) : (
           <>
             {filteredChecks.map((check, index) => {
-              const statusColor = check.status === 'ok' ? 'text-green-500' : check.status === 'fail' ? 'text-red-500' : 'text-gray-400';
-              const statusBg = check.status === 'ok' ? 'bg-green-50 dark:bg-green-900/20' : check.status === 'fail' ? 'bg-red-50 dark:bg-red-900/20' : 'bg-gray-50 dark:bg-gray-800';
-              const statusIcon = check.status === 'ok' ? <CheckCircle className="w-4 h-4" /> : check.status === 'fail' ? <XCircle className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />;
-              
+              const isDiagnose = isDiagnoseRow(check);
+              const { color: statusColor, bg: statusBg, Icon: StatusIcon } = ROW_STATUS_META[rowStatus(check)];
+
               return (
                 <div 
                     key={check.id}
@@ -142,7 +204,7 @@ export default function HealthChecks({
                     <div className="flex items-start justify-between">
                         <div className="flex items-start gap-3 flex-1">
                             <div className={`p-2 rounded-lg ${statusBg} ${statusColor}`}>
-                                {statusIcon}
+                                <StatusIcon className="w-4 h-4" />
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-1">
@@ -201,31 +263,45 @@ export default function HealthChecks({
                             <button
                                 onClick={() => handleRun(check.id)}
                                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                                title="Run check now"
+                                title={isDiagnose ? 'Re-run self-diagnose now' : 'Run check now'}
                             >
                                 <Play className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                             </button>
-                            <button
-                                onClick={() => handleViewHistory(check)}
-                                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                                title="View history"
-                            >
-                                <History className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-                            </button>
-                            <button
-                                onClick={() => handleOpenModal(check)}
-                                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                                title="Edit check"
-                            >
-                                <Edit className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-                            </button>
-                            <button
-                                onClick={() => handleOpenDeleteModal(check.id)}
-                                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                                title="Delete check"
-                            >
-                                <Trash2 className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-                            </button>
+                            {isDiagnose ? (
+                                /* Synthetic diagnose row: not editable config — expose the
+                                   self-repair popup instead of Edit/Delete (#1423). */
+                                <button
+                                    onClick={() => handleOpenRepair(check)}
+                                    className="p-2 hover:bg-violet-100 dark:hover:bg-violet-900/30 rounded-lg transition-colors"
+                                    title="Self-repair options"
+                                >
+                                    <Wrench className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                                </button>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={() => handleViewHistory(check)}
+                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        title="View history"
+                                    >
+                                        <History className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                    </button>
+                                    <button
+                                        onClick={() => handleOpenModal(check)}
+                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        title="Edit check"
+                                    >
+                                        <Edit className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                    </button>
+                                    <button
+                                        onClick={() => handleOpenDeleteModal(check.id)}
+                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        title="Delete check"
+                                    >
+                                        <Trash2 className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

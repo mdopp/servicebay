@@ -9,13 +9,13 @@ import PageHeader from '@/components/PageHeader';
 import { Autocomplete } from '@/components/Autocomplete';
 import ConfirmModal from '@/components/ConfirmModal';
 import LogViewer from '@/components/LogViewer';
-import HealthChecks from '@/components/HealthChecks';
+import HealthChecks, { type StatusFilter } from '@/components/HealthChecks';
 import { CheckConfig, CheckType, Check } from '@servicebay/api-client';
 import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
-import SelfDiagnoseSection from '@/app/(dashboard)/settings/_lib/sections/SelfDiagnoseSection';
+import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
 import ContainersDashboard from '@/dashboards/ContainersDashboard';
 
 interface Container {
@@ -31,7 +31,7 @@ interface HistoryItem {
   message?: string;
 }
 
-type HealthTab = 'checks' | 'diagnose' | 'logs' | 'system' | 'containers';
+type HealthTab = 'checks' | 'logs' | 'system' | 'containers';
 
 export default function HealthDashboard() {
   const [checks, setChecks] = useState<Check[]>([]);
@@ -48,7 +48,8 @@ export default function HealthDashboard() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [timeRange, setTimeRange] = useState<'1h' | '24h' | '3d' | '2w'>('24h');
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'fail' | 'unknown'>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [repairCheck, setRepairCheck] = useState<Check | null>(null);
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<HealthTab>('checks');
@@ -60,10 +61,14 @@ export default function HealthDashboard() {
   const searchParams = useSearchParams();
   const searchString = searchParams?.toString() ?? '';
   const tabParam = searchParams?.get('tab');
-  const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' || tabParam === 'diagnose' || tabParam === 'containers' ? (tabParam as HealthTab) : null;
+  const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' || tabParam === 'containers' ? (tabParam as HealthTab) : null;
 
   const closeOverlaysOnEscape = useCallback(() => {
     if (isDeleteModalOpen) return;
+    if (repairCheck) {
+      setRepairCheck(null);
+      return;
+    }
     if (historyCheck) {
       setHistoryCheck(null);
       setHistoryData([]);
@@ -73,9 +78,9 @@ export default function HealthDashboard() {
     if (isModalOpen) {
       setIsModalOpen(false);
     }
-  }, [historyCheck, isModalOpen, isDeleteModalOpen]);
+  }, [repairCheck, historyCheck, isModalOpen, isDeleteModalOpen]);
 
-  useEscapeKey(closeOverlaysOnEscape, Boolean(historyCheck || isModalOpen));
+  useEscapeKey(closeOverlaysOnEscape, Boolean(repairCheck || historyCheck || isModalOpen));
 
   useEffect(() => {
     if (!normalizedTab) return;
@@ -335,7 +340,31 @@ export default function HealthDashboard() {
     }
     };
 
+  // #1423: open the self-repair popup for a synthetic diagnose row. The
+  // probe payload (status, detail, hint, self-repair actions) rides on
+  // the check's `diagnose` field, so no extra fetch is needed.
+  const handleOpenRepair = useCallback((check: Check) => {
+    setRepairCheck(check);
+  }, []);
 
+  const repairProbe: DiagnoseProbe | null = repairCheck
+    ? (() => {
+        const d = (repairCheck as Check & { diagnose?: Partial<DiagnoseProbe> }).diagnose;
+        if (!d) return null;
+        return {
+          // The run-action endpoint dispatches by the *bare* probe id
+          // (e.g. `agent`), not the synthetic `diagnose:agent` check id.
+          // The enriched row stores the bare id in `target`.
+          id: repairCheck.target || repairCheck.id.replace(/^diagnose:/, ''),
+          label: d.label ?? repairCheck.name,
+          status: d.status ?? 'info',
+          detail: d.detail ?? '',
+          hint: d.hint,
+          actions: d.actions,
+          items: d.items,
+        };
+      })()
+    : null;
 
   return (
     <div className="h-full flex flex-col">
@@ -375,7 +404,6 @@ export default function HealthDashboard() {
       <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 px-2 shrink-0 overflow-x-auto">
         {([
           { id: 'checks' as const, label: 'Checks' },
-          { id: 'diagnose' as const, label: 'Self-Diagnose' },
           { id: 'containers' as const, label: 'Containers' },
           { id: 'logs' as const, label: 'Logs' },
           { id: 'system' as const, label: 'System' },
@@ -406,13 +434,8 @@ export default function HealthDashboard() {
           handleOpenModal={handleOpenModal}
           handleOpenDeleteModal={handleDelete}
           handleViewHistory={handleShowHistory}
+          handleOpenRepair={handleOpenRepair}
         />
-      )}
-
-      {activeTab === 'diagnose' && (
-        <div className="px-2">
-          <SelfDiagnoseSection />
-        </div>
       )}
 
       {activeTab === 'logs' && (
@@ -653,6 +676,36 @@ export default function HealthDashboard() {
                 </table>
                             </div>
                             )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Self-Repair Popup (#1423) — opened from a diagnose Checks row.
+          Reuses DiagnoseProbeList's action machinery so the recovery
+          path doesn't drift from Settings / the wizard. */}
+      {repairCheck && repairProbe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-2xl max-h-[85vh] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+              <div className="min-w-0">
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">Self-Repair</p>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">{repairProbe.label}</h3>
+              </div>
+              <button
+                onClick={() => setRepairCheck(null)}
+                className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              <DiagnoseProbeList
+                probes={[repairProbe]}
+                node={repairCheck.nodeName || 'Local'}
+                onRefresh={fetchData}
+              />
             </div>
           </div>
         </div>
