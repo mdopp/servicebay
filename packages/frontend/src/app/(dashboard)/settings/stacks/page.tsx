@@ -6,6 +6,8 @@ import { Loader2 } from 'lucide-react';
 import StackCard from '@/components/StackCard';
 import type { StackManifest } from '@/lib/template/stackContract';
 import type { StackHealth } from '@/lib/install/stackHealth';
+import TemplateRegistriesSection from '../_lib/sections/TemplateRegistriesSection';
+import TemplateVariablesSection from '../_lib/sections/TemplateVariablesSection';
 
 interface StackSummary {
   name: string;
@@ -23,6 +25,16 @@ interface StackSummary {
  * deployed and they need to wipe / reinstall a single feature stack.
  */
 export default function StacksPage() {
+  return (
+    <div className="space-y-6">
+      <ManagedStacks />
+      <TemplateRegistriesSection />
+      <TemplateVariablesSection />
+    </div>
+  );
+}
+
+function ManagedStacks() {
   const [stacks, setStacks] = useState<StackSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 

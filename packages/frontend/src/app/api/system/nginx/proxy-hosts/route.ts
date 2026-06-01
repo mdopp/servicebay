@@ -161,7 +161,7 @@ async function getNpmToken(
         candidates.push({ identity: providedCredentials.email, secret: providedCredentials.password });
     }
 
-    // Stored credentials — set by Settings → Integrations → Reverse Proxy
+    // Stored credentials — set by Settings → Networking & Access → Reverse Proxy
     try {
         const config = await getConfig();
         const stored = config.reverseProxy?.npm;
@@ -941,7 +941,7 @@ export const POST = withApiHandler({}, async ({ request }) => {
             // forward-auth (which requires https scheme) works.
             if (host.exposure === 'public' || host.exposure === 'internal') {
                 if (!leEmail) {
-                    const reason = 'No ACME registration email configured (set reverseProxy.npm.email in Settings → Integrations); skipped cert request.';
+                    const reason = 'No ACME registration email configured (set reverseProxy.npm.email in Settings → Networking & Access); skipped cert request.';
                     results[results.length - 1].certError = reason;
                     logger.warn('ProxyHosts', `Skip cert for ${host.domain}: ${reason}`);
                 } else if (typeof createdHost?.id !== 'number') {

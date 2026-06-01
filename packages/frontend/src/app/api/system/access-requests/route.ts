@@ -134,7 +134,7 @@ export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
   // Best-effort email notification — sendEmailAlert no-ops when
   // email isn't configured.
   const adminBase = getAdminBaseUrl(config);
-  const deepLink = adminBase ? `${adminBase}/settings/integrations#access-requests` : null;
+  const deepLink = adminBase ? `${adminBase}/settings/networking#access-requests` : null;
   void sendEmailAlert(
     'New access request',
     `${parsed.name} (${parsed.email}) has requested access to your home server.\n\n` +

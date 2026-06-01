@@ -212,7 +212,7 @@ export async function forceClearInstallLock(): Promise<void> {
 /**
  * Lock down MCP for fresh installs: read-only by default, dangerous-exec
  * patterns blocked. The operator opts into mutations from
- * Settings → Integrations → MCP Server. Existing installs (where the
+ * Settings → Security → MCP Server. Existing installs (where the
  * field is already set) are left alone — only fields not yet present in
  * the persisted config get the safe defaults.
  */

@@ -33,7 +33,7 @@ export function ServiceActionBar({ service, onMonitor, onEdit, onActions, onEdit
             <Activity size={16} />
           </Link>
           <Link
-            href="/settings/integrations#gateway"
+            href="/settings/networking#gateway"
             className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
             title="Edit Gateway"
           >
