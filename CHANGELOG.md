@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.69.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.69.0...servicebay-v4.69.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **lldap:** map UNIQUE-constraint duplicate to a friendly outcome ([3896008](https://github.com/mdopp/servicebay/commit/38960088f6475aa14ceeb93f74a59f2bc91d5e9b))
+* **lldap:** map UNIQUE-constraint duplicate to a friendly outcome ([f315fc1](https://github.com/mdopp/servicebay/commit/f315fc1e9e0d251eaef48d651844f9330c998354))
+
 ## [4.69.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.68.0...servicebay-v4.69.0) (2026-06-01)
 
 
