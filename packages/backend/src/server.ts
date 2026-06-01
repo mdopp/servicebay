@@ -40,6 +40,7 @@ import { reconcileLanIp } from './lib/lanIp';
 import { lazyInitializeExpiry as initBootstrapTokenExpiry } from './lib/mcp/bootstrapToken';
 import { createMcpServer } from './lib/mcp/server';
 import { scheduleBackup } from './lib/backup/service';
+import { scheduleExternalNasBackup } from './lib/externalBackup/producer';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { TerminalSessionManager } from './lib/terminal/sessionManager';
 import { ResourceBroadcast } from './lib/health/resourceBroadcast';
@@ -458,6 +459,9 @@ app.prepare().then(() => {
 
     // Schedule backup sync based on config
     scheduleBackup();
+
+    // Schedule the nightly per-service config backup to the FritzBox NAS (#1217)
+    scheduleExternalNasBackup();
 
     // Email the operator when a new ServiceBay release lands. No-op when
     // email isn't configured. Deduped per-release via config.autoUpdate.
