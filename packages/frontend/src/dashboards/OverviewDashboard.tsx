@@ -81,13 +81,13 @@ export default function OverviewDashboard() {
 
         {/* Setup wizard CTA banner shown when nothing has been installed yet (#902 followup) */}
         {hasFirstSnapshot && totalCount === 0 && (
-          <div className="rounded-2xl p-6 glass-panel premium-hover-card flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 pulse-glow-emerald">
+          <div className="rounded-2xl p-6 premium-hover-card flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50">
             <div className="space-y-1">
               <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <Wrench className="text-blue-500 shrink-0" size={22} />
                 Welcome to ServiceBay!
               </h2>
-              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-medium max-w-xl leading-relaxed">
+              <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-300 font-medium max-w-xl leading-relaxed">
                 You haven&apos;t installed any services yet. Start the setup wizard to configure your network, OIDC identity pool, SMTP notifications, and deploy your first home server stacks.
               </p>
             </div>
@@ -165,10 +165,10 @@ export default function OverviewDashboard() {
 
 function HealthHeadline({ tone, text }: { tone: 'good' | 'warn' | 'bad' | 'neutral'; text: string }) {
   const toneClasses: Record<typeof tone, string> = {
-    good: 'bg-emerald-50/80 dark:bg-emerald-950/20 border-emerald-200/50 dark:border-emerald-900/50 text-emerald-800 dark:text-emerald-300 backdrop-blur-md pulse-glow-emerald',
-    warn: 'bg-amber-50/80 dark:bg-amber-950/20 border-amber-200/50 dark:border-amber-900/50 text-amber-800 dark:text-amber-300 backdrop-blur-md pulse-glow-amber',
-    bad: 'bg-red-50/80 dark:bg-red-950/20 border-red-200/50 dark:border-red-900/50 text-red-800 dark:text-red-300 backdrop-blur-md pulse-glow-rose',
-    neutral: 'bg-gray-50/80 dark:bg-gray-900/40 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300 backdrop-blur-md',
+    good: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50 text-emerald-800 dark:text-emerald-300',
+    warn: 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50 text-amber-800 dark:text-amber-300',
+    bad: 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/50 text-red-800 dark:text-red-300',
+    neutral: 'bg-gray-50 dark:bg-gray-900/40 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300',
   };
   const Icon = tone === 'bad' || tone === 'warn' ? AlertCircle : CheckCircle2;
   return (
@@ -198,7 +198,7 @@ function OverviewCard({ href, title, metric, description, icon: Icon, tone }: Ov
   return (
     <Link
       href={href}
-      className="group block rounded-xl p-5 glass-panel premium-hover-card"
+      className="group block rounded-xl p-5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 premium-hover-card"
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <Icon size={20} className={accentClasses[tone]} />
@@ -206,7 +206,7 @@ function OverviewCard({ href, title, metric, description, icon: Icon, tone }: Ov
       </div>
       <h2 className="font-bold text-gray-900 dark:text-gray-100 tracking-wide text-base">{title}</h2>
       <p className={`text-sm font-semibold mt-1 ${accentClasses[tone]}`}>{metric}</p>
-      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 font-medium leading-relaxed">{description}</p>
+      <p className="text-xs text-gray-600 dark:text-gray-300 mt-2 font-medium leading-relaxed">{description}</p>
     </Link>
   );
 }

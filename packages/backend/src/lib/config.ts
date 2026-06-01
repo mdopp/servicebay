@@ -403,6 +403,15 @@ export interface AppConfig {
    */
   maxUsers?: number;
   /**
+   * When true, the family `/portal` page only renders for LAN-shaped
+   * clients (loopback / RFC1918 / ULA); public visitors get a short
+   * "available on the home network only" notice instead of the service
+   * grid. App-level gate (the page reads the request's real client IP);
+   * the request-access POST endpoint stays reachable so the cap and
+   * anti-spam guards remain the public surface. Default off. (#1456)
+   */
+  portalLanOnly?: boolean;
+  /**
    * Per-job log caps (#1098 Phase 1). Long-running installs and noisy
    * mass deploys can balloon `logs.db` without bound; these limits
    * give the logger a hard ceiling per job. Phase 2 wires the rotation

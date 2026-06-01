@@ -68,6 +68,7 @@ const AppConfigSchema = z.object({
   installManifest: looseObject.optional(),
   accessRequests: looseArray.optional(),
   maxUsers: z.number().int().positive().max(100000).optional(),
+  portalLanOnly: z.boolean().optional(),
 }).strict();
 
 /**

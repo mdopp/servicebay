@@ -269,6 +269,120 @@ export async function exportLldapDirectory(): Promise<LldapExportResult> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Group + lifecycle primitives used by the SSO verification module (#1453).
+// These mirror the GraphQL calls scripts/smoke/sso-verify.sh makes against the
+// admin token, but in-process: list the groups (so a caller can resolve the
+// `family`/`admins` group ids Authelia's rules key off), add a user to a
+// group, and delete a user (the smoke test's guaranteed teardown). Same
+// `{ ok, ... }` discriminated-union shape as the rest of the client.
+// ---------------------------------------------------------------------------
+
+const LIST_GROUPS_QUERY = `
+  query Groups {
+    groups { id displayName }
+  }
+`;
+
+const ADD_USER_TO_GROUP_MUTATION = `
+  mutation AddUserToGroup($userId: String!, $groupId: Int!) {
+    addUserToGroup(userId: $userId, groupId: $groupId) { ok }
+  }
+`;
+
+const DELETE_USER_MUTATION = `
+  mutation DeleteUser($userId: String!) {
+    deleteUser(userId: $userId) { ok }
+  }
+`;
+
+type LldapMutationReason =
+  | 'not_configured'
+  | 'unreachable'
+  | 'auth_failed'
+  | 'graphql_error'
+  | 'network_error';
+
+/** Run an authenticated GraphQL request against LLDAP, returning the parsed
+ *  `data`/`errors` body or a discriminated failure. Centralises the auth +
+ *  fetch + error-mapping boilerplate the group/lifecycle calls share. */
+async function runAuthedGraphql<T>(
+  query: string,
+  variables?: Record<string, unknown>,
+): Promise<{ ok: true; data: T } | { ok: false; reason: LldapMutationReason; message: string }> {
+  const auth = await authenticateWithLldap();
+  if (!auth.ok) return { ok: false, reason: auth.reason, message: auth.message };
+  try {
+    const res = await fetch(`${auth.baseUrl}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(GRAPHQL_TIMEOUT_MS),
+    });
+    const body = await res.json().catch(() => ({})) as { data?: T; errors?: Array<{ message?: string }> };
+    if (body.errors?.length) {
+      return { ok: false, reason: 'graphql_error', message: body.errors[0]?.message ?? 'Unknown LLDAP error.' };
+    }
+    if (body.data === undefined) {
+      return { ok: false, reason: 'graphql_error', message: 'LLDAP response had no data.' };
+    }
+    return { ok: true, data: body.data };
+  } catch (e) {
+    return { ok: false, reason: 'network_error', message: e instanceof Error ? e.message : 'Network error talking to LLDAP.' };
+  }
+}
+
+export interface LldapGroup {
+  id: number;
+  displayName: string;
+}
+
+export type LldapListGroupsResult =
+  | { ok: true; groups: LldapGroup[] }
+  | { ok: false; reason: LldapMutationReason; message: string };
+
+/** List every LLDAP group (id + displayName). Lets a caller resolve the
+ *  numeric group id for `family` / `admins` — Authelia's access rules key
+ *  off membership in those, and `addUserToGroup` takes the numeric id. */
+export async function listLldapGroups(): Promise<LldapListGroupsResult> {
+  const r = await runAuthedGraphql<{ groups?: LldapGroup[] }>(LIST_GROUPS_QUERY);
+  if (!r.ok) return r;
+  return { ok: true, groups: r.data.groups ?? [] };
+}
+
+export type LldapMutationResult =
+  | { ok: true }
+  | { ok: false; reason: LldapMutationReason; message: string };
+
+/** Add an existing user to a group by numeric group id. */
+export async function addUserToLldapGroup(userId: string, groupId: number): Promise<LldapMutationResult> {
+  const r = await runAuthedGraphql<{ addUserToGroup?: { ok?: boolean } }>(
+    ADD_USER_TO_GROUP_MUTATION,
+    { userId, groupId },
+  );
+  if (!r.ok) return r;
+  if (r.data.addUserToGroup?.ok !== true) {
+    return { ok: false, reason: 'graphql_error', message: `LLDAP did not confirm adding ${userId} to group ${groupId}.` };
+  }
+  return { ok: true };
+}
+
+/** Delete an LLDAP user by id. Used as the SSO-verify module's guaranteed
+ *  ephemeral-user teardown — safe to call even if the user was never fully
+ *  provisioned (a missing user surfaces as a graphql_error the caller can
+ *  treat as already-gone). */
+export async function deleteLldapUser(userId: string): Promise<LldapMutationResult> {
+  const r = await runAuthedGraphql<{ deleteUser?: { ok?: boolean } }>(
+    DELETE_USER_MUTATION,
+    { userId },
+  );
+  if (!r.ok) return r;
+  if (r.data.deleteUser?.ok !== true) {
+    return { ok: false, reason: 'graphql_error', message: `LLDAP did not confirm deletion of ${userId}.` };
+  }
+  return { ok: true };
+}
+
 /**
  * LLDAP's web UI URL for a specific user's detail page — used as the
  * deep-link target after auto-create so the admin lands directly on

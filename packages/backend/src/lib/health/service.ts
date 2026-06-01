@@ -10,6 +10,7 @@ import { sendEmailAlert } from '@/lib/email';
 import { NotificationBatcher } from './notificationBatcher';
 import { DATA_DIR } from '@/lib/dirs';
 import { getNodeTwins, subscribeToTwin } from '@/lib/store/repository';
+import { runDiagnoseChecks, DIAGNOSE_INTERVAL_SECONDS } from '@/lib/diagnose/diagnoseChecks';
 
 // In-memory interval tracking
 const intervals = new Map<string, NodeJS.Timeout>();
@@ -50,6 +51,13 @@ export class HealthService {
     //     the cold-start race. See NotificationBatcher for the
     //     coalescing rules.
     NotificationBatcher.start();
+
+    // 1c. Daily self-diagnose run (#1423). The diagnose suite is heavy
+    //     (multi-probe agent fan-out), so it runs once a day rather than
+    //     on the per-minute check cadence. Each probe is persisted as a
+    //     synthetic `diagnose:<probeId>` check result so the Checks tab
+    //     surfaces it with the same per-row stats as any other check.
+    this.startDiagnoseSchedule();
 
     // 2. Start initial scheduling
     this.restartAll();
@@ -133,6 +141,32 @@ export class HealthService {
     } catch (e) {
       logger.warn('Health', `Could not start checks.json watcher: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  private static diagnoseTimer: NodeJS.Timeout | null = null;
+
+  /** Kick off a daily self-diagnose run (#1423). Runs once shortly after
+   *  init, then every {@link DIAGNOSE_INTERVAL_SECONDS}. The first run is
+   *  deferred a short while so the agent has a chance to connect — an
+   *  eager run on cold boot would just report "agent not reachable". */
+  private static startDiagnoseSchedule() {
+    if (this.diagnoseTimer) return;
+    const tick = async () => {
+      try {
+        const results = await runDiagnoseChecks('Local');
+        if (this.io) {
+          for (const result of results) {
+            this.io.emit('health:update', { checkId: result.check_id, result });
+          }
+        }
+      } catch (e) {
+        logger.error('Health', 'Daily self-diagnose run failed:', e);
+      }
+    };
+    // Defer the first run ~60 s past boot so the agent is connected.
+    const FIRST_RUN_DELAY_MS = 60_000;
+    setTimeout(() => { void tick(); }, FIRST_RUN_DELAY_MS);
+    this.diagnoseTimer = setInterval(() => { void tick(); }, DIAGNOSE_INTERVAL_SECONDS * 1000);
   }
 
   static getChecks() {

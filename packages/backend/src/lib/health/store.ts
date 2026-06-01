@@ -83,6 +83,20 @@ export class HealthStore {
     }
   }
 
+  /** Every check_id that has a persisted result file on disk. Used by
+   *  the diagnose→checks bridge (#1423) to enumerate synthetic
+   *  `diagnose:<probeId>` rows, which never live in checks.json. */
+  static getResultCheckIds(): string[] {
+    if (!fs.existsSync(RESULTS_DIR)) return [];
+    try {
+      return fs.readdirSync(RESULTS_DIR)
+        .filter(f => f.endsWith('.json'))
+        .map(f => f.slice(0, -'.json'.length));
+    } catch {
+      return [];
+    }
+  }
+
   static getResults(checkId: string): CheckResult[] {
     const resultFile = path.join(RESULTS_DIR, `${checkId}.json`);
     if (!fs.existsSync(resultFile)) return [];

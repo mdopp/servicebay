@@ -143,6 +143,17 @@ export default function BackupsSettingsPage() {
   const [nginxDiag, setNginxDiag] = useState<{ reason: string; debug: string[]; node?: string; confDir?: string } | null>(null);
   const [nginxDiagExpanded, setNginxDiagExpanded] = useState(false);
 
+  // NAS (FritzBox) external-backup source — the config-survival backups the
+  // sb-tui upload stages under sb-backup/ (e.g. home-assistant.tar). #1440.
+  const [nasOverview, setNasOverview] = useState<{
+    configured: boolean;
+    connection: { ok: true } | { ok: false; error: string } | null;
+    backups: { service: string; tarName: string; size: number }[];
+  } | null>(null);
+  const [nasLoading, setNasLoading] = useState(true);
+  const [nasRestoring, setNasRestoring] = useState<string | null>(null);
+  const [nasRestoreTarget, setNasRestoreTarget] = useState<{ service: string; tarName: string } | null>(null);
+
   const fetchBackups = useCallback(async () => {
     setBackupsLoading(true);
     try {
@@ -221,6 +232,46 @@ export default function BackupsSettingsPage() {
   }, []);
 
   useEffect(() => { void checkNginxStatus(); }, [checkNginxStatus]);
+
+  const fetchNasOverview = useCallback(async () => {
+    setNasLoading(true);
+    try {
+      const res = await fetch('/api/system/external-backup/list');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Unable to read NAS backups');
+      setNasOverview({ configured: data.configured, connection: data.connection, backups: data.backups ?? [] });
+    } catch (error) {
+      // A failure here is informational (the source may just not be configured);
+      // show the empty/unconfigured state rather than a blocking toast.
+      console.error(error);
+      setNasOverview({ configured: false, connection: null, backups: [] });
+    } finally {
+      setNasLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void fetchNasOverview(); }, [fetchNasOverview]);
+
+  const confirmRestoreNasBackup = useCallback(async () => {
+    if (!nasRestoreTarget || nasRestoring) return;
+    const { service, tarName } = nasRestoreTarget;
+    setNasRestoring(service);
+    try {
+      const res = await fetch('/api/system/external-backup/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Restore failed');
+      addToast('success', 'Restored from NAS', `${tarName} → ${data.dataDir} (${data.files} files)`);
+    } catch (error) {
+      addToast('error', 'NAS restore failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setNasRestoring(null);
+      setNasRestoreTarget(null);
+    }
+  }, [nasRestoreTarget, nasRestoring, addToast]);
 
   // ─── Backup Sync handlers ─────────────────────────────────────────
   const buildBackupTarget = () => {
@@ -1018,6 +1069,88 @@ export default function BackupsSettingsPage() {
         </div>
       </div>
 
+      {/* NAS Backups (FritzBox) — the config-survival source the sb-tui upload
+          stages under sb-backup/, e.g. home-assistant.tar (#1440). */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-300">
+              <Network size={20} />
+            </div>
+            <div>
+              <h3 className="font-bold text-gray-900 dark:text-white">NAS Backups (FritzBox)</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Config backups staged on the FritzBox USB NAS — including a Home Assistant backup uploaded from the installer — that a fresh install can restore.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => void fetchNasOverview()}
+            disabled={nasLoading}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+          >
+            {nasLoading ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />} Verify connection
+          </button>
+        </div>
+        <div className="p-6">
+          {nasLoading ? (
+            <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+              <Loader2 className="animate-spin" size={18} /> Checking NAS…
+            </div>
+          ) : !nasOverview?.configured ? (
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              No NAS backup source registered. Upload a backup from the ServiceBay installer (TUI), or set the FritzBox gateway in{' '}
+              <span className="font-medium">Settings → Integrations</span>, and the box will discover backups staged on the NAS here.
+            </div>
+          ) : nasOverview.connection && !nasOverview.connection.ok ? (
+            <div className="flex items-start gap-2 text-sm text-red-600 dark:text-red-300">
+              <XCircle size={16} className="mt-0.5 shrink-0" />
+              <span>Could not reach the NAS: <span className="font-mono break-all">{nasOverview.connection.error}</span></span>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-300 mb-3">
+                <CheckCircle2 size={14} /> Connected to the FritzBox NAS.
+              </div>
+              {nasOverview.backups.length === 0 ? (
+                <div className="text-sm text-gray-500 dark:text-gray-400 italic">No backups staged on the NAS yet.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
+                        <th className="py-2 font-medium">Service</th>
+                        <th className="py-2 font-medium">File</th>
+                        <th className="py-2 font-medium">Size</th>
+                        <th className="py-2 font-medium text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                      {nasOverview.backups.map(b => (
+                        <tr key={b.tarName}>
+                          <td className="py-3 text-gray-700 dark:text-gray-200">{b.service}</td>
+                          <td className="py-3 font-mono text-xs text-blue-600 dark:text-blue-300 break-all">{b.tarName}</td>
+                          <td className="py-3 text-gray-700 dark:text-gray-300">{formatBytes(b.size)}</td>
+                          <td className="py-3">
+                            <div className="flex justify-end">
+                              <button
+                                onClick={() => setNasRestoreTarget({ service: b.service, tarName: b.tarName })}
+                                disabled={nasRestoring !== null}
+                                className="text-xs px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 dark:text-amber-300 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors flex items-center gap-1 disabled:opacity-60"
+                              >
+                                {nasRestoring === b.service ? <Loader2 className="animate-spin" size={14} /> : <RotateCcw size={14} />} Restore
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Backup Sync */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
@@ -1297,6 +1430,16 @@ export default function BackupsSettingsPage() {
         isDestructive
         onConfirm={confirmDeleteBackup}
         onCancel={() => !deletingBackup && setDeleteTarget(null)}
+      />
+
+      <ConfirmModal
+        isOpen={!!nasRestoreTarget}
+        title="Restore from NAS"
+        message={`Restore ${nasRestoreTarget?.tarName ?? 'this backup'} from the FritzBox NAS into ${nasRestoreTarget?.service ?? 'the service'}'s data dir? This only seeds a fresh/empty data dir; a service with existing data is left untouched.`}
+        confirmText={nasRestoring ? 'Restoring…' : 'Restore'}
+        confirmDisabled={nasRestoring !== null}
+        onConfirm={confirmRestoreNasBackup}
+        onCancel={() => nasRestoring === null && setNasRestoreTarget(null)}
       />
 
       <ConfirmModal

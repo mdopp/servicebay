@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,30 @@ import (
 
 	"servicebay-tui/internal/habackup"
 )
+
+type fakeRegistrar struct {
+	called                 bool
+	host, username, passwd string
+}
+
+func (f *fakeRegistrar) RegisterNasSource(_ context.Context, host, username, password string) error {
+	f.called, f.host, f.username, f.passwd = true, host, username, password
+	return nil
+}
+
+// TestNasUploadWithRegistrar: WithRegistrar attaches a registrar that the
+// upload command will call after a successful push (#1440); without it the
+// field stays nil (the FTP-only pre-install path).
+func TestNasUploadWithRegistrar(t *testing.T) {
+	if NewNasUpload().registrar != nil {
+		t.Error("registrar should be nil by default (FTP-only path)")
+	}
+	r := &fakeRegistrar{}
+	m := NewNasUpload().WithRegistrar(r)
+	if m.registrar == nil {
+		t.Fatal("WithRegistrar should attach the registrar")
+	}
+}
 
 // TestResolvePath: typed paths are made openable — whitespace trimmed, a stray
 // leading colon dropped, and ~ expanded (the bug behind "open :~/…: no such file").

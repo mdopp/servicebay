@@ -154,8 +154,15 @@ func (m App) route(id phase.ActionID, jobID string) (tea.Model, tea.Cmd) {
 	case phase.UploadToNAS:
 		// FTP-only: the upload talks straight to the FritzBox NAS, never the
 		// ServiceBay box — so it needs no token and no login, and works even
-		// before any box exists (the pre-install backup-staging step).
-		m.active = NewNasUpload()
+		// before any box exists (the pre-install backup-staging step). When a
+		// token IS present, attach a registrar so the upload also tells the box
+		// where its backup lives (#1440), making it discoverable by install/
+		// restore; without a token that registration happens later from Settings.
+		upload := NewNasUpload()
+		if client, err := rest.New(m.host, m.port, m.token); err == nil {
+			upload = upload.WithRegistrar(client)
+		}
+		m.active = upload
 		m.screen = appPanel
 		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
 	case phase.EditConfig, phase.InstallStacks, phase.Backups, phase.SwitchChannel:
