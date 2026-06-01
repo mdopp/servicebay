@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.77.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.76.0...servicebay-v4.77.0) (2026-06-01)
+
+
+### Features
+
+* **autoloop:** structured blocked_by + every-run two-tier unblock recheck ([2b51b93](https://github.com/mdopp/servicebay/commit/2b51b93320d4ca9db3cbccec376735cade0bfffc))
+* **autoloop:** structured blocked_by + every-run two-tier unblock recheck ([8a33485](https://github.com/mdopp/servicebay/commit/8a33485ac70aee2254d2c6186900d29f0ea55ed6))
+
+
+### Bug Fixes
+
+* **test:** exclude *-worktree/ dirs from vitest discovery ([7a5d117](https://github.com/mdopp/servicebay/commit/7a5d117f81cfba06fd6a17338195dcf83332e39c)), closes [#1476](https://github.com/mdopp/servicebay/issues/1476)
+
 ## [4.76.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.75.0...servicebay-v4.76.0) (2026-06-01)
 
 
