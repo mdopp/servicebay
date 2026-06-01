@@ -98,6 +98,10 @@ Two buckets — both produce a code PR; the difference is what happens at merge 
 
 ### Selection order within survivors
 
+0. **Priority overrides — jump the whole queue.** Two ways to pin work ahead of the normal buckets (use either or both; the operator sets these to front-load force-multiplier/infra work that speeds everything after):
+   - **Explicit, ordered:** any open issue whose number is listed in `state.priority[]`, worked **in the order listed there**. The loop does not mutate this list — completed issues simply stop matching (they're no longer open). This is the way to pin a specific sequence, e.g. `"priority": [1433, 1434, 1435]`.
+   - **By label:** any issue carrying the `priority` label, ascending issue number.
+   `state.priority[]` entries come first (in list order), then `priority`-labelled issues, then the buckets below. A priority issue still goes through the normal gates (CI, and `/verify` if it touches an install/config/auth/portal path) and the normal security-draft rule.
 1. `good first issue` label first.
 2. Then `bug` label.
 3. Then `testing` label.
