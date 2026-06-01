@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.75.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.74.0...servicebay-v4.75.0) (2026-06-01)
+
+
+### Features
+
+* **diagnose:** auto-run SSO verify post-install + surface it as a probe ([54879a9](https://github.com/mdopp/servicebay/commit/54879a93c1a7bddd0c9b4164239451f8254bf6a1)), closes [#1454](https://github.com/mdopp/servicebay/issues/1454) [#1455](https://github.com/mdopp/servicebay/issues/1455)
+* **health:** auto-run SSO verify post-install, self-repair popup and 4-way counters ([66784c9](https://github.com/mdopp/servicebay/commit/66784c98169e058ccff894b847b2fb3a3369f266))
+* **health:** self-repair popup + four-way counters, drop Self-Diagnose tab ([1ac2f13](https://github.com/mdopp/servicebay/commit/1ac2f1328947df1f806f09e5ae1db526667e93ba)), closes [#1423](https://github.com/mdopp/servicebay/issues/1423)
+
 ## [4.74.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.73.0...servicebay-v4.74.0) (2026-06-01)
 
 
