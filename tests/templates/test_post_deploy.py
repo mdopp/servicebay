@@ -698,6 +698,219 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertIn("already installed", out)
             self.assertIn("/auth/oidc/welcome answered", out)
 
+    def test_zwave_device_redetected_when_unset(self):
+        """#1511: a wipe-configs reinstall loses ZWAVE_DEVICE. When it's
+        unset but exactly one USB-serial stick is on the box, the script
+        re-detects it and writes the udev rule against the resolved path —
+        no operator step."""
+        m = load_script("home-assistant")
+        import urllib.error
+        import urllib.request
+
+        # Exactly one resolved device → auto-pick fires.
+        with mock.patch.object(m, "_detect_single_usb_serial_device", lambda: "/dev/ttyACM0"):
+            captured = {}
+
+            def fake_ensure(dev):
+                captured["dev"] = dev
+
+            env = {"HA_OIDC_AUTH_VERSION": "v0.6.0"}
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen",
+                                      lambda *_a, **_kw: (_ for _ in ()).throw(urllib.error.URLError("nope"))), \
+                    mock.patch.object(m, "ensure_udev_rule", fake_ensure), \
+                    mock.patch.object(m, "HA_READY_TIMEOUT", 0.01), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured.get("dev"), "/dev/ttyACM0")
+        self.assertIn("re-detected /dev/ttyACM0", out)
+
+    def test_zwave_device_not_redetected_when_ambiguous(self):
+        """Two sticks → don't guess; skip the udev rule. (Mirrors the
+        installer's 'auto-pick only when exactly one' rule.)"""
+        m = load_script("home-assistant")
+        import urllib.error
+        import urllib.request
+
+        with mock.patch.object(m, "_detect_single_usb_serial_device", lambda: None):
+            env = {"HA_OIDC_AUTH_VERSION": "v0.6.0"}
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen",
+                                      lambda *_a, **_kw: (_ for _ in ()).throw(urllib.error.URLError("nope"))), \
+                    mock.patch.object(m, "HA_READY_TIMEOUT", 0.01), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertIn("no single USB-serial stick detected", out)
+
+    def test_detect_single_usb_serial_resolves_and_dedupes(self):
+        """A multi-radio stick has several by-id symlinks pointing at one
+        tty — the resolver must collapse them to a single device and pick
+        it; two distinct ttys must yield None."""
+        import tempfile
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tty = os.path.join(tmp, "ttyACM0")
+            open(tty, "w").close()
+            by_id = os.path.join(tmp, "by-id")
+            os.makedirs(by_id)
+            os.symlink(tty, os.path.join(by_id, "usb-Foo-if00"))
+            os.symlink(tty, os.path.join(by_id, "usb-Foo-if01"))
+            with mock.patch.object(m, "ZWAVE_BY_ID_DIR", by_id):
+                self.assertEqual(m._detect_single_usb_serial_device(), os.path.realpath(tty))
+
+            # Add a second distinct device → ambiguous → None.
+            tty2 = os.path.join(tmp, "ttyUSB0")
+            open(tty2, "w").close()
+            os.symlink(tty2, os.path.join(by_id, "usb-Bar-if00"))
+            with mock.patch.object(m, "ZWAVE_BY_ID_DIR", by_id):
+                self.assertIsNone(m._detect_single_usb_serial_device())
+
+    def test_token_remint_via_login_when_user_already_onboarded(self):
+        """#1505: after a wipe-configs reinstall HA's user already exists
+        but ServiceBay lost the long-lived token. The script must log in as
+        the existing admin (no second user) and mint + persist a fresh
+        token."""
+        import tempfile
+        import urllib.request
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            def fake_urlopen(req, *_a, **_kw):
+                url = req.full_url if hasattr(req, "full_url") else str(req)
+                if "github.com" in url:
+                    raise AssertionError(f"unexpected download: {url}")
+
+                class _R:
+                    def __init__(self, status, body):
+                        self.status = status
+                        self._b = json.dumps(body).encode("utf-8") if body is not None else b"<html></html>"
+                    def read(self):
+                        return self._b
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+
+                if "/api/onboarding" in url:
+                    return _R(200, [{"step": "user", "done": True}])
+                if "/auth/login_flow/" in url:
+                    return _R(200, {"type": "create_entry", "result": "auth-code-xyz"})
+                if "/auth/login_flow" in url:
+                    return _R(200, {"flow_id": "flow-123"})
+                if "/auth/token" in url:
+                    return _R(200, {"access_token": "short-lived-tok"})
+                if "/auth/oidc/welcome" in url or url.rstrip("/").endswith("8123"):
+                    return _R(200, None)
+                # HA-readiness probe (GET /) + everything else → 200 html.
+                return _R(200, None)
+
+            minted = {}
+
+            def fake_mint(access_token):
+                minted["access"] = access_token
+                return "long-lived-tok"
+
+            env = {
+                "HA_OIDC_AUTH_VERSION": "v0.6.0",
+                "DATA_DIR": tmp,
+                "OSCAR_HA_ADMIN_USERNAME": "oscar",
+                "OSCAR_HA_ADMIN_PASSWORD": "pw",
+            }
+            # Pre-create the config dir + auth_oidc stamp so the OIDC install
+            # path short-circuits (no tarball download in the test).
+            ha_cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            oidc = os.path.join(ha_cfg, "custom_components", "auth_oidc")
+            os.makedirs(oidc, exist_ok=True)
+            with open(os.path.join(oidc, ".sb_installed_version"), "w") as fh:
+                fh.write("v0.6.0\n")
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch.object(m, "_mint_long_lived_token", fake_mint), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("Re-provisioning HA long-lived token from kept data", out)
+            self.assertEqual(minted.get("access"), "short-lived-tok")
+            token_file = os.path.join(tmp, "home-assistant", "homeassistant", ".oscar-long-lived-token")
+            self.assertTrue(os.path.isfile(token_file))
+            with open(token_file) as fh:
+                self.assertEqual(fh.read().strip(), "long-lived-tok")
+
+    def test_valid_existing_token_short_circuits_remint(self):
+        """If the persisted token still authenticates, the reconcile is a
+        no-op — no login_flow, no re-mint."""
+        import tempfile
+        import urllib.request
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            with open(os.path.join(cfg, ".oscar-long-lived-token"), "w") as fh:
+                fh.write("good-token\n")
+            # Stamp so the OIDC install path skips the tarball download.
+            oidc = os.path.join(cfg, "custom_components", "auth_oidc")
+            os.makedirs(oidc, exist_ok=True)
+            with open(os.path.join(oidc, ".sb_installed_version"), "w") as fh:
+                fh.write("v0.6.0\n")
+
+            def fake_urlopen(req, *_a, **_kw):
+                url = req.full_url if hasattr(req, "full_url") else str(req)
+                if "/auth/login_flow" in url:
+                    raise AssertionError("must not start a login flow when the token is valid")
+
+                class _R:
+                    status = 200
+                    def read(self):
+                        return b"<html></html>"
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+                return _R()
+
+            env = {
+                "HA_OIDC_AUTH_VERSION": "v0.6.0",
+                "DATA_DIR": tmp,
+                "OSCAR_HA_ADMIN_USERNAME": "oscar",
+                "OSCAR_HA_ADMIN_PASSWORD": "pw",
+            }
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("still authenticates — nothing to reconcile", out)
+
+    def test_kept_data_state_reported(self):
+        """#1512: the script states whether HA kept-data was found, so the
+        operator isn't left guessing why HA looks bare."""
+        import tempfile
+        import urllib.error
+        import urllib.request
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(os.path.join(cfg, ".storage"), exist_ok=True)
+            zwave = os.path.join(tmp, "home-assistant", "zwave-js")
+            os.makedirs(zwave, exist_ok=True)
+            open(os.path.join(zwave, "settings.json"), "w").close()
+
+            env = {"HA_OIDC_AUTH_VERSION": "v0.6.0", "DATA_DIR": tmp}
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen",
+                                      lambda *_a, **_kw: (_ for _ in ()).throw(urllib.error.URLError("nope"))), \
+                    mock.patch.object(m, "HA_READY_TIMEOUT", 0.01), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("kept-data found", out)
+            self.assertIn("re-wiring against the existing mesh", out)
+
 
 class ClaudeDevScript(unittest.TestCase):
     def test_emits_ssh_credential_when_password_set(self):

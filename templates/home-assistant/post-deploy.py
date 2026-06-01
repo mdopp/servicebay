@@ -72,6 +72,45 @@ def log(msg: str) -> None:
     sys.stdout.flush()
 
 
+# ── Z-Wave device re-detection (#1511) ─────────────────────────────────────────
+#
+# ZWAVE_DEVICE (the USB stick's /dev/tty* path) lives in ServiceBay's config,
+# which a `wipe-configs` reinstall wipes — while the kept zwave-js node DB +
+# network keys in <DATA_DIR>/home-assistant/zwave-js are stranded because the
+# fresh install never re-collected the device path. When ZWAVE_DEVICE is unset
+# we mirror the installer's "auto-pick when there's exactly one USB-serial
+# device" rule (src/app/api/system/devices/route.ts) right here on the box, so
+# the udev rule + zwave-js wiring re-establish themselves with no operator step.
+
+ZWAVE_BY_ID_DIR = "/dev/serial/by-id"
+
+
+def _detect_single_usb_serial_device() -> str | None:
+    """Resolve the canonical /dev/tty* path of the sole USB-serial stick on
+    the host, or None when there are zero or more than one. Mirrors the
+    installer endpoint: read /dev/serial/by-id symlinks, resolve to their
+    /dev/tty* targets, dedupe (a multi-radio stick has several by-id
+    symlinks pointing at one tty), and only auto-pick when exactly one
+    distinct device remains — guessing between two sticks would be worse
+    than leaving it unset."""
+    try:
+        entries = os.listdir(ZWAVE_BY_ID_DIR)
+    except OSError:
+        return None
+    resolved: set[str] = set()
+    for name in entries:
+        link = os.path.join(ZWAVE_BY_ID_DIR, name)
+        try:
+            target = os.path.realpath(link)
+        except OSError:
+            continue
+        if os.path.exists(target):
+            resolved.add(target)
+    if len(resolved) == 1:
+        return next(iter(resolved))
+    return None
+
+
 # ── udev ──────────────────────────────────────────────────────────────────────
 
 def _device_kernel_pattern(device_path: str) -> str:
@@ -377,6 +416,115 @@ def _mint_long_lived_token(access_token: str) -> str | None:
     return token or None
 
 
+def _token_authenticates(token: str) -> bool:
+    """True iff `token` is accepted by HA's authenticated API. After a
+    wipe-configs reinstall the persisted token file may survive in HA's
+    kept config dir but the matching refresh-token row in HA's auth store
+    could be gone (or the file is stale from an earlier HA instance) — a
+    401 there is exactly the #1505 symptom. We probe /api/ (the lightest
+    authenticated endpoint) and treat 401/403 as 'must re-mint'."""
+    if not token:
+        return False
+    try:
+        req = urllib.request.Request(
+            f"{HA_API}/api/",
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as e:
+        return e.code == 200
+    except (urllib.error.URLError, TimeoutError, OSError):
+        # Network blip ≠ bad token; don't churn the token on a transient.
+        # Returning True keeps an existing token in place; the health check
+        # will catch a genuinely-dead one on its own schedule.
+        return True
+
+
+def _login_existing_admin(username: str, password: str) -> str | None:
+    """Authenticate an already-existing HA admin via the login_flow API and
+    exchange the result for an access token. Used to re-mint a long-lived
+    token after a wipe-configs reinstall, where HA's user already exists
+    (so onboarding/users would 409) but ServiceBay lost the token. Returns
+    the short-lived access_token, or None on failure."""
+    start = json.dumps({
+        "client_id": HA_CLIENT_ID,
+        "handler": ["homeassistant", None],
+        "redirect_uri": HA_CLIENT_ID,
+    }).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"{HA_API}/auth/login_flow",
+            data=start,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            flow_id = json.loads(resp.read()).get("flow_id")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        log(f"   ⚠️ HA /auth/login_flow start failed: {e}")
+        return None
+    if not flow_id:
+        log("   ⚠️ HA /auth/login_flow returned no flow_id")
+        return None
+
+    step = json.dumps({
+        "client_id": HA_CLIENT_ID,
+        "username": username,
+        "password": password,
+    }).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"{HA_API}/auth/login_flow/{urllib.parse.quote(flow_id)}",
+            data=step,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read())
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        log(f"   ⚠️ HA /auth/login_flow step failed: {e}")
+        return None
+    auth_code = result.get("result")
+    if result.get("type") != "create_entry" or not auth_code:
+        log("   ⚠️ HA login_flow did not yield an auth code "
+            "(wrong OSCAR_HA_ADMIN_PASSWORD, or the admin user differs?).")
+        return None
+
+    form = urllib.parse.urlencode({
+        "client_id": HA_CLIENT_ID,
+        "grant_type": "authorization_code",
+        "code": auth_code,
+    }).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"{HA_API}/auth/token",
+            data=form,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read()).get("access_token")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        log(f"   ⚠️ HA /auth/token exchange (login) failed: {e}")
+        return None
+
+
+def _mint_and_persist_from_access_token(access_token: str, username: str) -> bool:
+    """Mint a fresh long-lived token from a short-lived access token and
+    persist it. Shared tail of both the fresh-onboarding and the
+    re-mint-after-wipe paths. Returns True on success."""
+    long_lived = _mint_long_lived_token(access_token)
+    if not long_lived:
+        return False
+    path = _persist_long_lived_token(long_lived)
+    if path:
+        log(f"✅ HA long-lived token (re)provisioned for '{username}' at {path}.")
+        return True
+    return False
+
+
 def _persist_long_lived_token(token: str) -> str | None:
     """Write the long-lived token under HA's config dir so downstream
     post-deploys (hermes, oscar-household) can pick it up via a fixed
@@ -392,6 +540,38 @@ def _persist_long_lived_token(token: str) -> str | None:
     return target
 
 
+def report_kept_data_state() -> None:
+    """Distinguish the two #1512 cases out loud so the post-deploy log says
+    which one happened, instead of leaving the operator guessing why HA
+    looks bare after a wipe-configs reinstall:
+
+      (1) kept-data present → integration reconciliation (token + Z-Wave,
+          handled below) re-establishes wiring against the existing data.
+      (2) no kept data → a genuinely fresh first install; nothing to
+          reconcile (and, on a reinstall, a data-keep regression worth a
+          loud warning since service data should never be lost).
+
+    Read-only; never aborts the deploy."""
+    config_dir = _ha_config_dir()
+    # HA writes .storage/ + configuration.yaml as soon as it has ever run.
+    ha_has_data = os.path.isfile(os.path.join(config_dir, "configuration.yaml")) or os.path.isdir(
+        os.path.join(config_dir, ".storage")
+    )
+    zwave_dir = _zwave_store_dir()
+    # zwave-js-ui persists its node DB + network keys under store/; the
+    # presence of settings.json (or any .jsonl node cache) means a mesh
+    # was previously built and its keys are kept.
+    zwave_has_data = os.path.isdir(zwave_dir) and any(
+        os.path.exists(os.path.join(zwave_dir, f)) for f in ("settings.json", "nodes.json")
+    )
+    if ha_has_data:
+        log(f"Home Assistant kept-data found at {config_dir} — reconciling integrations against it (#1512).")
+        if zwave_has_data:
+            log(f"   Z-Wave node DB / keys kept at {zwave_dir} — re-wiring against the existing mesh.")
+    else:
+        log(f"No existing Home Assistant data at {config_dir} — treating as a fresh first install.")
+
+
 def configure_oscar_ha_onboarding() -> None:
     """When OSCAR_HA_ADMIN_USERNAME and OSCAR_HA_ADMIN_PASSWORD are set,
     walk HA's onboarding API on a fresh install and mint a long-lived
@@ -405,28 +585,48 @@ def configure_oscar_ha_onboarding() -> None:
         log("OSCAR_HA_ADMIN_USERNAME / _PASSWORD not set — skipping auto-onboarding.")
         return
     token_file = os.path.join(_ha_config_dir(), HA_LONG_LIVED_TOKEN_PATH.lstrip("/"))
+
+    # Reconcile an existing token first (#1505). A wipe-configs reinstall can
+    # leave a token file behind in HA's kept config dir whose refresh-token
+    # row no longer exists in HA's auth store → a 401 on every authenticated
+    # call. Validate it; only short-circuit when it actually authenticates.
     if os.path.exists(token_file):
-        log(f"✅ HA long-lived token already persisted at {token_file} — skipping onboarding.")
-        return
-    log("Auto-onboarding HA admin user for OSCAR (no operator browser step required)...")
+        try:
+            with open(token_file, encoding="utf-8") as f:
+                existing = f.read().strip()
+        except OSError:
+            existing = ""
+        if _token_authenticates(existing):
+            log(f"✅ HA long-lived token at {token_file} still authenticates — nothing to reconcile.")
+            return
+        log("   Persisted HA long-lived token no longer authenticates (wipe-configs reinstall) — re-provisioning.")
+
     state = _onboarding_state()
     if state is None:
         log("   ⚠️ Could not reach HA /api/onboarding — skipping auto-onboarding.")
         return
+
     if state.get("user") is True:
-        log("   HA user-onboarding step already done — won't create a second admin. "
-            "Operator can mint a long-lived token via the HA UI or set OSCAR_HA_ADMIN_USERNAME='' to silence this.")
+        # HA's data was kept (user already onboarded) but ServiceBay lost the
+        # token. Re-mint by logging in as the existing admin instead of
+        # creating a second user — the LLDAP-FORCE_RESET-style self-heal for
+        # the HA token (#1505). Onboarding steps are already done; skip them.
+        log("Re-provisioning HA long-lived token from kept data (existing admin, no new user)...")
+        access_token = _login_existing_admin(username, password)
+        if not access_token:
+            log("   HA admin already exists but auto-login failed — mint a long-lived token via the "
+                "HA UI (Settings → Security → Long-lived access tokens) or set OSCAR_HA_ADMIN_USERNAME='' to silence this.")
+            return
+        _mint_and_persist_from_access_token(access_token, username)
         return
+
+    log("Auto-onboarding HA admin user for OSCAR (no operator browser step required)...")
     access_token = _onboard_admin_user(username, password)
     if not access_token:
         return
     _complete_remaining_onboarding_steps(access_token)
-    long_lived = _mint_long_lived_token(access_token)
-    if not long_lived:
-        return
-    path = _persist_long_lived_token(long_lived)
-    if path:
-        log(f"✅ HA admin '{username}' created + long-lived token persisted at {path}.")
+    if _mint_and_persist_from_access_token(access_token, username):
+        log(f"✅ HA admin '{username}' created + long-lived token persisted.")
 
 
 def _strip_first_component(member_path: str) -> str | None:
@@ -613,12 +813,21 @@ def configure_auth_oidc() -> None:
 def main() -> int:
     zwave_device = env("ZWAVE_DEVICE")
 
+    if not zwave_device:
+        # ZWAVE_DEVICE is lost on a wipe-configs reinstall (#1511). Re-detect
+        # the stick on the box so the kept node DB + keys re-attach without an
+        # operator browser step. Only auto-picks an unambiguous single stick.
+        detected = _detect_single_usb_serial_device()
+        if detected:
+            zwave_device = detected
+            log(f"ZWAVE_DEVICE unset but a single USB-serial stick is present — re-detected {detected}.")
+
     if zwave_device:
         log(f"Z-Wave stick configured ({zwave_device}) — ensuring host udev permissions...")
         ensure_udev_rule(zwave_device)
         log("✅ Z-Wave JS will have device access after each system boot.")
     else:
-        log("No ZWAVE_DEVICE set — skipping udev rule.")
+        log("No ZWAVE_DEVICE set and no single USB-serial stick detected — skipping udev rule.")
 
     log(f"Seeding Z-Wave JS WS server config (port {ZWAVEJS_WS_PORT})...")
     if ensure_zwave_external_settings():
@@ -627,9 +836,11 @@ def main() -> int:
 
     configure_auth_oidc()
 
-    # OSCAR auto-onboarding: only fires when OSCAR_HA_ADMIN_USERNAME +
-    # OSCAR_HA_ADMIN_PASSWORD are both set and HA isn't onboarded yet.
-    # No-op for operators using HA's first-boot UI wizard manually.
+    # wipe-configs reconciliation: HA's data is kept but the config that
+    # wired it (token, ZWAVE_DEVICE, integrations) lives in ServiceBay's
+    # wiped config. Report which case we're in (#1512), then re-provision
+    # the HA long-lived token from the kept data (#1505).
+    report_kept_data_state()
     if _wait_ha_ready():
         configure_oscar_ha_onboarding()
     else:
