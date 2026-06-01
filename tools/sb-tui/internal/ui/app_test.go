@@ -21,9 +21,15 @@ func buildflowPlanStub() buildflow.Plan {
 }
 
 func newTestApp(token string) (App, *[]string) {
-	var saved []string
+	app, saved, _ := newTestAppWithDelete(token)
+	return app, saved
+}
+
+func newTestAppWithDelete(token string) (App, *[]string, *[]string) {
+	var saved, deleted []string
 	save := func(host, tok string) error { saved = append(saved, host+"="+tok); return nil }
-	return NewApp(testDetect, "box", "5888", token, save, BuildConfig{}), &saved
+	del := func(host string) error { deleted = append(deleted, host); return nil }
+	return NewApp(testDetect, "box", "5888", token, save, del, BuildConfig{}), &saved, &deleted
 }
 
 // TestRouteToLoginWhenNoToken: picking a box-control action with no token opens
@@ -84,6 +90,42 @@ func TestBackReturnsToMenu(t *testing.T) {
 	app = mi.(App)
 	if app.screen != appMenu || app.active != nil {
 		t.Fatalf("after back: screen=%v active=%v", app.screen, app.active)
+	}
+}
+
+// TestReauthRequiredDropsStaleTokenAndReopensLogin: a panel reporting a rejected
+// token (reauthRequiredMsg) drops the in-memory + persisted token and re-opens
+// sign-in for the same panel, instead of dead-ending. Signing in then resumes
+// into the originally-requested panel. This is the post-reinstall stale-token
+// recovery (#1502).
+func TestReauthRequiredDropsStaleTokenAndReopensLogin(t *testing.T) {
+	app, _, deleted := newTestAppWithDelete("sb_stale")
+	// Open a panel (records pending=InstallStacks) — the box would 401 on its
+	// first call; the panel returns reauthRequiredMsg.
+	mi, _ := app.Update(menuSelectedMsg{id: phase.InstallStacks})
+	app = mi.(App)
+	mi, _ = app.Update(reauthRequiredMsg{})
+	app = mi.(App)
+	if app.screen != appLogin {
+		t.Fatalf("screen = %v, want appLogin after reauth", app.screen)
+	}
+	if app.token != "" {
+		t.Errorf("stale token not dropped: %q", app.token)
+	}
+	if len(*deleted) != 1 || (*deleted)[0] != "box" {
+		t.Errorf("persisted token not deleted: %v", *deleted)
+	}
+	if _, ok := app.active.(LoginModel); !ok {
+		t.Errorf("active = %T, want LoginModel", app.active)
+	}
+	// A fresh sign-in resumes into the panel that 401'd.
+	mi, _ = app.Update(authSucceededMsg{token: "sb_fresh"})
+	app = mi.(App)
+	if app.token != "sb_fresh" {
+		t.Errorf("token = %q after re-auth", app.token)
+	}
+	if _, ok := app.active.(InstallModel); !ok {
+		t.Errorf("active = %T, want InstallModel resumed after re-auth", app.active)
 	}
 }
 

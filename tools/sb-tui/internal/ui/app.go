@@ -29,6 +29,13 @@ type (
 	}
 	// backMsg is emitted by a sub-view to pop back to the menu.
 	backMsg struct{}
+	// reauthRequiredMsg is emitted by a box-control panel when the box rejects
+	// its token (rest.ErrUnauthorized). The App drops the stale credential and
+	// re-opens sign-in for the panel that failed, instead of letting the panel
+	// dead-end on a terminal "token rejected" message. This is the same
+	// destination as the no-token path; the difference is the persisted token is
+	// stale (e.g. after a reinstall) rather than absent.
+	reauthRequiredMsg struct{}
 )
 
 // backCmd emits backMsg. A sub-view uses it on esc/q: when hosted by the App it
@@ -36,9 +43,17 @@ type (
 // view's own Update catches backMsg and quits, so the same key works in both.
 func backCmd() tea.Cmd { return func() tea.Msg { return backMsg{} } }
 
+// reauthCmd emits reauthRequiredMsg. A box-control panel returns it (instead of
+// surfacing a terminal error) when the box answers rest.ErrUnauthorized.
+func reauthCmd() tea.Cmd { return func() tea.Msg { return reauthRequiredMsg{} } }
+
 // TokenSaver persists a freshly-minted token so future launches skip login.
 // Injected so the App is testable without touching the filesystem.
 type TokenSaver func(host, token string) error
+
+// TokenDeleter removes the persisted per-host token when the box rejects it, so
+// a re-auth replaces the stale file. Injected for the same testability reason.
+type TokenDeleter func(host string) error
 
 type appScreen int
 
@@ -53,6 +68,7 @@ type App struct {
 	host, port    string
 	token         string // current credential, "" until logged in
 	save          TokenSaver
+	del           TokenDeleter
 	build         BuildConfig
 	width, height int
 
@@ -70,8 +86,8 @@ type App struct {
 
 // NewApp builds the root model. token may be a pre-resolved credential (env or
 // the saved per-host file); empty means the box-control views will log in first.
-func NewApp(detect DetectFunc, host, port, token string, save TokenSaver, build BuildConfig) App {
-	return App{host: host, port: port, token: token, save: save, build: build, screen: appMenu, menu: New(detect, host, port, token)}
+func NewApp(detect DetectFunc, host, port, token string, save TokenSaver, del TokenDeleter, build BuildConfig) App {
+	return App{host: host, port: port, token: token, save: save, del: del, build: build, screen: appMenu, menu: New(detect, host, port, token)}
 }
 
 // Init starts the menu's phase detection.
@@ -114,6 +130,20 @@ func (m App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.active = NewWatchReinstall(msg.host, msg.port, m.token)
 		m.screen = appPanel
 		return m, tea.Batch(m.active.Init(), sizeCmd(m.width, m.height))
+
+	case reauthRequiredMsg:
+		// The open panel's call came back 401: the saved token is stale (typically
+		// after a reinstall). Drop it (in-memory + the persisted per-host file) and
+		// re-open sign-in for the same panel — the no-token path, just reached from
+		// a rejected token instead of an absent one. m.pending already names the
+		// panel (openPanel set it), so authSucceededMsg resumes into it.
+		m.token = ""
+		if m.del != nil {
+			_ = m.del(m.host)
+		}
+		m.screen = appLogin
+		m.active = NewLogin(m.host, m.port)
+		return m, sizeCmd(m.width, m.height)
 
 	case backMsg:
 		// Pop back to the menu and re-detect so its phase/actions refresh.
@@ -204,6 +234,9 @@ func (m App) openPanel(id phase.ActionID) (tea.Model, tea.Cmd) {
 		m.screen, m.active = appMenu, nil
 		return m, nil
 	}
+	// Remember the panel so a mid-panel re-auth (reauthRequiredMsg) re-opens the
+	// right one after sign-in.
+	m.pending = id
 	switch id {
 	case phase.EditConfig:
 		m.active = NewConfig(client)

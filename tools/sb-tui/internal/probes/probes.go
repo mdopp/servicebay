@@ -97,6 +97,17 @@ func SaveToken(host, token string) error {
 	return os.WriteFile(p, []byte(strings.TrimSpace(token)+"\n"), 0o600)
 }
 
+// DeleteToken removes the persisted per-host token. Called when the box rejects
+// the saved token (401) — after a reinstall the file holds a stale credential,
+// so dropping it lets the next launch fall through to the in-TUI sign-in instead
+// of dead-ending. A missing file is not an error (already clear).
+func DeleteToken(host string) error {
+	if err := os.Remove(tokenPath(host)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // tokenPath is ~/.config/servicebay/<host>.token (honoring XDG_CONFIG_HOME).
 func tokenPath(host string) string {
 	dir := os.Getenv("XDG_CONFIG_HOME")

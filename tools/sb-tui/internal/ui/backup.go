@@ -99,6 +99,9 @@ func (m BackupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case backupsLoadedMsg:
 		if msg.err != nil {
 			m.loadEr = msg.err
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		m.loadEr, m.backups, m.stage = nil, msg.backups, bkBrowse
@@ -110,6 +113,9 @@ func (m BackupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stage = bkBrowse
 		if msg.err != nil {
 			m.status = "✗ " + friendlyErr(msg.err)
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		m.status = "✓ created " + msg.backup.FileName
@@ -118,6 +124,9 @@ func (m BackupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stage = bkBrowse
 		if msg.err != nil {
 			m.status = "✗ restore failed: " + friendlyErr(msg.err)
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		m.status = "✓ restored " + msg.fileName

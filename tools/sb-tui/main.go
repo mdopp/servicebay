@@ -424,7 +424,7 @@ func main() {
 	// that quit the app, because build is an interactive stdin wizard and the
 	// rest are natural one-shots.
 	t := probes.ResolveTarget()
-	app := ui.NewApp(detect, t.Host, t.Port, probes.ResolveToken(t.Host), probes.SaveToken, buildConfig())
+	app := ui.NewApp(detect, t.Host, t.Port, probes.ResolveToken(t.Host), probes.SaveToken, probes.DeleteToken, buildConfig())
 	final, err := tea.NewProgram(app, tea.WithAltScreen()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
