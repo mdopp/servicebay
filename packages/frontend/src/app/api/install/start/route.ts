@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createJob, getCurrentJob, InstallInProgressError, type JobInput } from '@/lib/install/jobStore';
+import { applyVariableDefaults } from '@/lib/install/manifestAssembler';
 import { startJob } from '@/lib/install/runner';
 import { apiError } from '@/lib/api/errors';
 
@@ -43,7 +44,12 @@ export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request
       );
     }
     try {
-      const job = await createJob({ source: body.source ?? 'wizard', input });
+      // #1297 — a reinstall replays a saved JobInput verbatim, so a variable
+      // ADDED to a template after the manifest was saved arrives empty. Merge
+      // variables.json defaults for any missing/empty var (manifest value wins)
+      // so newly-added defaults take effect without a full re-wizard.
+      const withDefaults = await applyVariableDefaults(input);
+      const job = await createJob({ source: body.source ?? 'wizard', input: withDefaults });
       startJob(job.id);
       return NextResponse.json({ jobId: job.id });
     } catch (e) {
