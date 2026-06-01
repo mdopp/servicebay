@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.80.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.80.0...servicebay-v4.80.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **health:** color failing history-chart bars red, not dark-green ([#1507](https://github.com/mdopp/servicebay/issues/1507)) ([2116a58](https://github.com/mdopp/servicebay/commit/2116a583cf3f4a799bc9f9a1774e588ad1296107))
+* **health:** color failing history-chart bars red, not dark-green ([#1507](https://github.com/mdopp/servicebay/issues/1507)) ([30b1428](https://github.com/mdopp/servicebay/commit/30b1428a154178254ab7003ad817ffafe8c1034a))
+* **tui:** nest the NAS-upload backup picker under the path field ([7e91cee](https://github.com/mdopp/servicebay/commit/7e91ceeef64b6ec0c46adcdddbeda174483b8906))
+* **tui:** nest the NAS-upload backup picker under the path field ([bb2cce1](https://github.com/mdopp/servicebay/commit/bb2cce1f390d8fa01236df072b88a9ca1b36edff))
+
 ## [4.80.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.79.0...servicebay-v4.80.0) (2026-06-01)
 
 
